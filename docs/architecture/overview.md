@@ -2,6 +2,139 @@
 
 Maigie is an AI-powered student companion that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with an intelligent assistant (text + voice). The codebase is a monorepo managed with **Nx**. The frontend stack uses **Vite + shadcn-ui** for web and **Expo** for mobile (React Native). The backend is **FastAPI** with clear service separation and AI integrations (vector DB, embeddings, LLMs).
 
+# Maigie Architecture Overview
+
+## 1. System Overview
+
+Maigie is an AI-powered learning companion built on a distributed, scalable architecture using:
+
+* **FastAPI** for backend logic
+* **Vite + shadcn-ui** for the web frontend
+* **Expo** for mobile
+* **Nx** as the monorepo orchestrator
+* **LLM-powered services** for intent detection, content generation, and recommendation
+* **PostgreSQL + Prisma** as the database layer
+
+---
+
+## 2. High-Level Architecture
+
+```
+                 ┌──────────────────────────┐
+                 │        Frontend          │
+                 │ Web (Vite) / Mobile App │
+                 └─────────────┬────────────┘
+                               │
+                               ▼
+                  ┌────────────────────────┐
+                  │      API Gateway       │
+                  │     (FastAPI Root)     │
+                  └────────────┬───────────┘
+                               │
+               ┌───────────────┴────────────────┐
+               │                                │
+               ▼                                ▼
+   ┌──────────────────────┐         ┌─────────────────────────┐
+   │  Core API Services   │         │     AI Engine Service  │
+   │ Authentication        │         │ Intent Detection        │
+   │ Courses/Goals         │         │ Recommendation Engine   │
+   │ Schedules/Forecast    │         │ Prompt Orchestration    │
+   └──────────────────────┘         └─────────────────────────┘
+               │                                │
+               └──────────────┬─────────────────┘
+                              │
+                              ▼
+                   ┌──────────────────┐
+                   │ PostgreSQL DB    │
+                   │  (Prisma ORM)    │
+                   └──────────────────┘
+```
+
+---
+
+## 3. Backend Services
+
+### **3.1 Api Gateway**
+
+Handles routing, authentication validation, throttling, and core REST endpoints.
+
+### **3.2 AI Engine**
+
+* Intent detection
+* AI-created courses, schedules, goals, reminders
+* Recommendation engine
+* Voice assistant NLU integration
+
+### **3.3 Event System**
+
+Used for automatic AI actions.
+
+Events include:
+
+* `ai.course.created`
+* `ai.goal.created`
+* `ai.schedule.generated`
+* `ai.recommendation.created`
+* `ai.voice.transcript`
+
+---
+
+## 4. Frontend Architecture
+
+### Web (Vite + shadcn)
+
+* Modular UI components
+* Dashboard widgets for Courses, Goals, Schedules, Resources
+* Real-time AI chat interface
+* Subscription billing screens
+
+### Mobile (Expo)
+
+* Offline-first design
+* Same structure as web via shared logic
+* Push notifications for schedules and reminders
+
+---
+
+## 5. AI Flow
+
+1. User enters chat or voice command
+2. Message sent to `/ai/process`
+3. Intent engine classifies it
+4. Decision engine decides whether AI should:
+
+   * Create something
+   * Recommend resources
+   * Ask clarifying questions
+5. If creation intent → event fired
+6. Event handler updates DB
+7. UI receives update through polling or websocket
+
+---
+
+## 6. Database (Prisma)
+
+Includes: users, subscriptions, courses, goals, schedules, voice logs, intents, AI events.
+
+---
+
+## 7. Security Architecture
+
+* JWT-based auth
+* RBAC for organizations
+* Rate limits on `/ai` endpoints
+* Sanitization for LLM outputs
+* Encrypted storage for sensitive metadata
+
+---
+
+## 8. Scalability Approach
+
+* Horizontal API scaling
+* Async background jobs
+* Caching for frequently read resources
+* Streaming endpoints for conversational responses
+
 ---
 
 # High-level Requirements & Features
