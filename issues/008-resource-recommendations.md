@@ -131,6 +131,7 @@ ResourceRecommendation {
 }
 ```
 
+> **Note:** The `ResourceTopic` and `ResourceRecommendation` models defined above must also be included in the comprehensive backend infrastructure schema in [issue 011 (011-backend-infrastructure.md)](011-backend-infrastructure.md) for consistency.
 ## Subscription Tier Constraints
 
 ### Free Tier
