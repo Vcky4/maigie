@@ -76,6 +76,17 @@ poetry run python verify_setup.py
 python verify_setup.py
 ```
 
+To verify the Authentication Framework:
+
+```bash
+# Using Poetry
+cd apps/backend
+poetry run python verify_auth.py
+
+# Or using system Python (if dependencies are installed)
+python verify_auth.py
+```
+
 Or run the tests:
 ```bash
 nx test backend
@@ -93,14 +104,17 @@ poetry run pytest
 - `src/exceptions.py` - Custom exception classes and handlers
 
 ### Core Utilities (`src/core/`)
-- `core/security.py` - JWT utilities, password hashing
+- `core/security.py` - JWT utilities, password hashing (bcrypt)
+- `core/oauth.py` - OAuth provider base structure (Google, GitHub)
 - `core/database.py` - Database connection manager (placeholder for Prisma)
 - `core/cache.py` - Cache connection manager (placeholder for Redis)
 
 ### Feature Modules
 - `src/routes/` - API route handlers
+  - `routes/auth.py` - Authentication routes (login, register, OAuth)
 - `src/services/` - Business logic
 - `src/models/` - Pydantic schemas and ORM models
+  - `models/auth.py` - Authentication models (UserRegister, UserLogin, TokenResponse, etc.)
 - `src/db/` - Database connection and migrations
 - `src/tasks/` - Background tasks (Celery/Dramatiq)
 - `src/ai_client/` - LLM and embeddings clients
@@ -109,7 +123,8 @@ poetry run pytest
 
 ### Tests
 - `tests/` - Test files
-- `verify_setup.py` - Setup verification script
+- `verify_setup.py` - Application setup verification script
+- `verify_auth.py` - Authentication framework verification script
 
 ## Application Setup Status
 
@@ -119,14 +134,31 @@ poetry run pytest
 ✅ **Dependency injection system works** - FastAPI Depends pattern implemented  
 ✅ **Middleware stack is configured** - Logging, Security Headers, and CORS middleware
 
+## Authentication Framework Status
+
+✅ **JWT utilities are available** - Access and refresh token creation/decoding  
+✅ **Password hashing utilities work** - bcrypt-based password hashing and verification  
+✅ **OAuth base structure is in place** - Google and GitHub OAuth providers  
+✅ **Security middleware is configured** - Security headers and request logging
+
 ## API Endpoints
 
+### Core Endpoints
 - `GET /` - Root endpoint with app info
 - `GET /health` - Health check endpoint
 - `GET /ready` - Readiness check (includes DB and cache status)
 - `GET /docs` - Interactive API documentation (Swagger UI)
 - `GET /redoc` - Alternative API documentation (ReDoc)
 - `GET /openapi.json` - OpenAPI schema
+
+### Authentication Endpoints
+- `POST /api/v1/auth/register` - Register a new user
+- `POST /api/v1/auth/login` - Login with email/password
+- `POST /api/v1/auth/refresh` - Refresh access token
+- `GET /api/v1/auth/me` - Get current authenticated user (requires Bearer token)
+- `GET /api/v1/auth/oauth/{provider}/authorize` - Initiate OAuth flow (google, github)
+- `GET /api/v1/auth/oauth/{provider}/callback` - OAuth callback endpoint
+- `GET /api/v1/auth/oauth/providers` - List available OAuth providers
 
 ## Virtual Environment
 
@@ -160,7 +192,15 @@ See `.env.example` for available configuration options. Key settings:
 - `DEBUG` - Enable debug mode
 - `ENVIRONMENT` - Environment (development/production)
 - `SECRET_KEY` - Secret key for JWT tokens
+- `ALGORITHM` - JWT algorithm (default: HS256)
+- `ACCESS_TOKEN_EXPIRE_MINUTES` - Access token expiration time
+- `REFRESH_TOKEN_EXPIRE_DAYS` - Refresh token expiration time
 - `CORS_ORIGINS` - Allowed CORS origins
+- `OAUTH_GOOGLE_CLIENT_ID` - Google OAuth client ID (optional)
+- `OAUTH_GOOGLE_CLIENT_SECRET` - Google OAuth client secret (optional)
+- `OAUTH_GITHUB_CLIENT_ID` - GitHub OAuth client ID (optional)
+- `OAUTH_GITHUB_CLIENT_SECRET` - GitHub OAuth client secret (optional)
+- `OAUTH_REDIRECT_URI` - OAuth redirect URI
 - `DATABASE_URL` - PostgreSQL connection string (for future use)
 - `REDIS_URL` - Redis connection string (for future use)
 

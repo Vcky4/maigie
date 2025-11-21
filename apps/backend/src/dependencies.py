@@ -1,19 +1,16 @@
 """Dependency injection system."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
+from jose import JWTError
 
 from .config import Settings, get_settings
-
-
-def get_settings_dependency() -> Settings:
-    """Dependency to get application settings."""
-    return get_settings()
-
+from .core.security import decode_access_token
+from .exceptions import AuthenticationError
 
 # Common dependencies
-SettingsDep = Annotated[Settings, Depends(get_settings_dependency)]
+SettingsDep = Annotated[Settings, Depends(lambda: get_settings())]
 
 
 async def verify_api_key(
@@ -30,16 +27,98 @@ async def verify_api_key(
     return True
 
 
-def get_current_user_id() -> str:
+async def get_current_user_token(
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
     """
-    Get current user ID from request (placeholder for future implementation).
+    Extract and verify JWT token from Authorization header.
     
-    This will be implemented when authentication is added.
+    Args:
+        authorization: Authorization header value (Bearer <token>)
+        
+    Returns:
+        Decoded token payload
+        
+    Raises:
+        HTTPException: If token is missing or invalid
     """
-    # TODO: Extract user ID from JWT token
-    return "user-id-placeholder"
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header missing",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authentication scheme",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization header format",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = decode_access_token(token)
+        return payload
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
-# Dependency for authenticated endpoints
+async def get_current_user_id(
+    token: Annotated[dict[str, Any], Depends(get_current_user_token)],
+) -> str:
+    """
+    Get current user ID from verified JWT token.
+    
+    Args:
+        token: Decoded JWT token payload
+        
+    Returns:
+        User ID from token
+    """
+    user_id = token.get("sub") or token.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing user identifier",
+        )
+    return str(user_id)
+
+
+async def get_current_user_email(
+    token: Annotated[dict[str, Any], Depends(get_current_user_token)],
+) -> str:
+    """
+    Get current user email from verified JWT token.
+    
+    Args:
+        token: Decoded JWT token payload
+        
+    Returns:
+        User email from token
+    """
+    email = token.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token missing email",
+        )
+    return str(email)
+
+
+# Dependencies for authenticated endpoints
+CurrentUserTokenDep = Annotated[dict[str, Any], Depends(get_current_user_token)]
 CurrentUserIdDep = Annotated[str, Depends(get_current_user_id)]
+CurrentUserEmailDep = Annotated[str, Depends(get_current_user_email)]
 

@@ -16,6 +16,7 @@ from .exceptions import (
     general_exception_handler,
 )
 from .middleware import LoggingMiddleware, SecurityHeadersMiddleware
+from .routes.auth import router as auth_router
 
 
 @asynccontextmanager
@@ -100,6 +101,9 @@ def create_app() -> FastAPI:
             "database": db_status,
             "cache": cache_status,
         }
+
+    # Include routers
+    app.include_router(auth_router)
 
     return app
 
