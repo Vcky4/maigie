@@ -4,6 +4,18 @@
 vite.config.*.timestamp*
 node_modules
 
+# Python / Poetry
+.venv/
+venv/
+env/
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Expo
 node_modules/
 .expo/

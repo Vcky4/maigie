@@ -38,6 +38,32 @@ if (-not $pythonCmd) {
     exit 1
 }
 
+# Try pipx installation first (recommended method)
+Write-Host ""
+Write-Host "Attempting installation with pipx (recommended)..." -ForegroundColor Yellow
+try {
+    # Check if pipx is available
+    $pipxAvailable = Get-Command pipx -ErrorAction SilentlyContinue
+    if ($pipxAvailable) {
+        Write-Host "[OK] pipx found, installing Poetry..." -ForegroundColor Green
+        & pipx install poetry
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[SUCCESS] Poetry installed via pipx!" -ForegroundColor Green
+            # Refresh PATH
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+            $pipxBinPath = "$env:USERPROFILE\.local\bin"
+            if (Test-Path $pipxBinPath) {
+                $env:Path += ";$pipxBinPath"
+            }
+            goto VerifyInstallation
+        }
+    } else {
+        Write-Host "[INFO] pipx not found, trying official installer..." -ForegroundColor Yellow
+    }
+} catch {
+    Write-Host "[INFO] pipx installation failed, trying official installer..." -ForegroundColor Yellow
+}
+
 # Install Poetry using the official installer
 Write-Host ""
 Write-Host "Downloading Poetry installer..." -ForegroundColor Yellow
@@ -51,8 +77,8 @@ try {
     $tempFile = [System.IO.Path]::GetTempFileName() + ".py"
     $installerScript.Content | Out-File -FilePath $tempFile -Encoding UTF8 -NoNewline
     
-    # Run with Python
-    & $pythonCmd $tempFile --version latest
+    # Run with Python (without version flag - installer handles this)
+    & $pythonCmd $tempFile
     
     # Clean up
     Remove-Item $tempFile -ErrorAction SilentlyContinue
@@ -63,6 +89,20 @@ try {
 } catch {
     Write-Host "[ERROR] Failed to download or run Poetry installer" -ForegroundColor Red
     Write-Host "Error: $_" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Trying alternative: pip installation..." -ForegroundColor Yellow
+    
+    # Try pip as fallback
+    try {
+        & $pythonCmd -m pip install poetry
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[SUCCESS] Poetry installed via pip!" -ForegroundColor Green
+            goto VerifyInstallation
+        }
+    } catch {
+        Write-Host "[ERROR] pip installation also failed" -ForegroundColor Red
+    }
+    
     Write-Host ""
     Write-Host "Alternative installation methods:" -ForegroundColor Yellow
     Write-Host "1. Using pipx (recommended):" -ForegroundColor Cyan
@@ -83,29 +123,73 @@ $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
 $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
 $env:Path = "$userPath;$machinePath"
 
-# Common Poetry installation paths
+# Common Poetry installation paths (check in order)
 $poetryPaths = @(
+    "$env:USERPROFILE\.local\bin",
     "$env:APPDATA\Python\Scripts",
-    "$env:LOCALAPPDATA\Programs\Python\Python*\Scripts",
-    "$env:USERPROFILE\.local\bin"
+    "$env:LOCALAPPDATA\Programs\Python\Python*\Scripts"
 )
 
-foreach ($path in $poetryPaths) {
-    $resolvedPaths = Resolve-Path $path -ErrorAction SilentlyContinue
-    foreach ($resolvedPath in $resolvedPaths) {
-        if (Test-Path "$resolvedPath\poetry.exe") {
-            $env:Path += ";$resolvedPath"
-            Write-Host "[OK] Found Poetry at: $resolvedPath" -ForegroundColor Green
+# Also check for pipx installation
+$pipxBinPath = "$env:USERPROFILE\.local\bin"
+if (Test-Path $pipxBinPath) {
+    $env:Path += ";$pipxBinPath"
+}
+
+foreach ($pathPattern in $poetryPaths) {
+    # Handle wildcards
+    if ($pathPattern -match '\*') {
+        $parentPath = Split-Path $pathPattern -Parent
+        if (Test-Path $parentPath) {
+            $matchingDirs = Get-ChildItem -Path $parentPath -Directory -Filter "Python*" -ErrorAction SilentlyContinue
+            foreach ($dir in $matchingDirs) {
+                $scriptsPath = Join-Path $dir.FullName "Scripts"
+                if (Test-Path "$scriptsPath\poetry.exe") {
+                    $env:Path += ";$scriptsPath"
+                    Write-Host "[OK] Found Poetry at: $scriptsPath" -ForegroundColor Green
+                }
+            }
+        }
+    } else {
+        if (Test-Path "$pathPattern\poetry.exe") {
+            $env:Path += ";$pathPattern"
+            Write-Host "[OK] Found Poetry at: $pathPattern" -ForegroundColor Green
         }
     }
 }
 
+# Check Poetry's default installation location
+$poetryHome = [System.Environment]::GetEnvironmentVariable("POETRY_HOME")
+if (-not $poetryHome) {
+    $poetryHome = "$env:USERPROFILE\.poetry"
+}
+if (Test-Path "$poetryHome\bin\poetry.exe") {
+    $env:Path += ";$poetryHome\bin"
+    Write-Host "[OK] Found Poetry at: $poetryHome\bin" -ForegroundColor Green
+}
+
+:VerifyInstallation
 # Verify installation
 Write-Host ""
 Write-Host "Verifying installation..." -ForegroundColor Yellow
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 3
 
+# Try to find poetry in common locations
+$poetryFound = $false
 if (Get-Command poetry -ErrorAction SilentlyContinue) {
+    $poetryFound = $true
+} else {
+    # Check if poetry.exe exists in any of the paths we added
+    $allPaths = $env:Path -split ';'
+    foreach ($path in $allPaths) {
+        if (Test-Path "$path\poetry.exe") {
+            $poetryFound = $true
+            break
+        }
+    }
+}
+
+if ($poetryFound -or (Get-Command poetry -ErrorAction SilentlyContinue)) {
     Write-Host "[SUCCESS] Poetry installed successfully!" -ForegroundColor Green
     poetry --version
     Write-Host ""
@@ -115,14 +199,17 @@ if (Get-Command poetry -ErrorAction SilentlyContinue) {
     Write-Host "[WARNING] Poetry installation completed, but not found in PATH." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Poetry may be installed at one of these locations:" -ForegroundColor Cyan
-    foreach ($path in $poetryPaths) {
-        Write-Host "  - $path" -ForegroundColor Gray
-    }
+    Write-Host "  - $env:USERPROFILE\.local\bin" -ForegroundColor Gray
+    Write-Host "  - $env:APPDATA\Python\Scripts" -ForegroundColor Gray
+    Write-Host "  - $poetryHome\bin" -ForegroundColor Gray
     Write-Host ""
     Write-Host "To add Poetry to PATH manually:" -ForegroundColor Yellow
-    Write-Host "1. Find the Poetry installation directory" -ForegroundColor Gray
+    Write-Host "1. Find the Poetry installation directory (check the locations above)" -ForegroundColor Gray
     Write-Host "2. Add it to your PATH environment variable" -ForegroundColor Gray
     Write-Host "3. Restart your terminal" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "Or restart your terminal - Poetry may be available after restart." -ForegroundColor Cyan
+    Write-Host "Or try restarting your terminal - Poetry may be available after restart." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "You can also try:" -ForegroundColor Yellow
+    Write-Host "  pip install poetry" -ForegroundColor Cyan
 }

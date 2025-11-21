@@ -61,20 +61,50 @@ if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
     
     # Check again after installation
     if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
-        Write-Host "[ERROR] Poetry installation failed. Please install manually:" -ForegroundColor Red
-        Write-Host "  https://python-poetry.org/docs/#installation" -ForegroundColor Cyan
-        exit 1
+        Write-Host "[WARNING] Poetry installer completed but not found in PATH." -ForegroundColor Yellow
+        Write-Host "Trying pip installation as fallback..." -ForegroundColor Yellow
+        
+        # Try pip installation
+        try {
+            & $pythonCmd -m pip install poetry
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "[OK] Poetry installed via pip" -ForegroundColor Green
+                # Refresh PATH again
+                $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+                $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+                $env:Path = "$userPath;$machinePath"
+            }
+        } catch {
+            Write-Host "[ERROR] Poetry installation failed. Please install manually:" -ForegroundColor Red
+            Write-Host "  Option 1: pip install poetry" -ForegroundColor Cyan
+            Write-Host "  Option 2: https://python-poetry.org/docs/#installation" -ForegroundColor Cyan
+            exit 1
+        }
+        
+        # Final check
+        if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
+            Write-Host "[ERROR] Poetry still not found. Please restart your terminal and try again." -ForegroundColor Red
+            Write-Host "Or install manually: pip install poetry" -ForegroundColor Yellow
+            exit 1
+        }
     }
 }
 
 Write-Host "[OK] Poetry is installed" -ForegroundColor Green
 poetry --version
 
-# Install dependencies
+# Configure Poetry for in-project virtual environment
 Write-Host ""
-Write-Host "Installing dependencies..." -ForegroundColor Yellow
+Write-Host "Configuring Poetry for in-project virtual environment..." -ForegroundColor Yellow
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $scriptDir
+poetry config virtualenvs.in-project true
+Write-Host "[OK] Poetry configured to create virtual environment in project directory (.venv)" -ForegroundColor Green
+
+# Install dependencies (this will create the virtual environment)
+Write-Host ""
+Write-Host "Installing dependencies..." -ForegroundColor Yellow
+Write-Host "This will create a virtual environment in .venv and install all dependencies." -ForegroundColor Gray
 poetry install
 
 if ($LASTEXITCODE -eq 0) {

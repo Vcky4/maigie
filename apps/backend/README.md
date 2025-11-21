@@ -15,7 +15,8 @@ cd apps/backend
 This will:
 - Check Python installation
 - Install Poetry if needed
-- Install all dependencies
+- Configure Poetry to create virtual environment in project directory (`.venv`)
+- Install all dependencies (creates virtual environment automatically)
 - Create `.env` file from `.env.example`
 - Verify the setup
 
@@ -30,12 +31,19 @@ This will:
    (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
    ```
 
-2. **Install dependencies:**
+2. **Configure Poetry for in-project virtual environment** (recommended):
+   ```bash
+   poetry config virtualenvs.in-project true
+   ```
+
+3. **Install dependencies:**
    ```bash
    poetry install
    ```
+   
+   This will automatically create a `.venv` directory in your project with all dependencies.
 
-3. **Copy environment variables** (optional, defaults are used if not set):
+4. **Copy environment variables** (optional, defaults are used if not set):
    ```powershell
    # Windows PowerShell
    Copy-Item .env.example .env
@@ -44,7 +52,7 @@ This will:
    cp .env.example .env
    ```
 
-4. **Run the development server:**
+5. **Run the development server:**
    ```bash
    nx serve backend
    ```
@@ -119,6 +127,30 @@ poetry run pytest
 - `GET /docs` - Interactive API documentation (Swagger UI)
 - `GET /redoc` - Alternative API documentation (ReDoc)
 - `GET /openapi.json` - OpenAPI schema
+
+## Virtual Environment
+
+Poetry automatically creates and manages a virtual environment for this project. The setup script configures Poetry to create the virtual environment in the project directory (`.venv`).
+
+**Using the virtual environment:**
+- All commands should be run with `poetry run` prefix:
+  ```bash
+  poetry run python verify_setup.py
+  poetry run uvicorn src.main:app --reload
+  poetry run pytest
+  ```
+
+- Or activate the virtual environment manually:
+  ```powershell
+  # Windows PowerShell
+  .venv\Scripts\Activate.ps1
+  
+  # Then run commands directly
+  python verify_setup.py
+  uvicorn src.main:app --reload
+  ```
+
+**Note:** The `.venv` directory is gitignored and should not be committed.
 
 ## Environment Variables
 
