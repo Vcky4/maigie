@@ -39,7 +39,7 @@ Implement the complete backend infrastructure for Maigie including FastAPI setup
 - **ORM**: Prisma
 - **Database**: PostgreSQL
 - **Cache**: Redis
-- **Message Queue**: Redis/Celery
+- **Message Queue**: Redis/Celery (or RQ as alternative)
 - **WebSockets**: FastAPI WebSocket or Socket.io
 - **Search**: PostgreSQL full-text or Elasticsearch (optional)
 
@@ -228,6 +228,113 @@ model AIActionLog {
   actionData Json
   status     String
   createdAt  DateTime @default(now())
+}
+
+model Payment {
+  id                    String   @id @default(uuid())
+  userId                String
+  subscriptionId        String?
+  amount                Float
+  currency              String
+  status                String
+  stripePaymentIntentId String?
+  createdAt             DateTime @default(now())
+}
+
+model UsageQuota {
+  id               String @id @default(uuid())
+  userId           String @unique
+  month            String
+  aiMessagesUsed   Int    @default(0)
+  aiMessagesLimit  Int
+  coursesCreated   Int    @default(0)
+  coursesLimit     Int
+  goalsCreated     Int    @default(0)
+  goalsLimit       Int
+}
+
+model NoteTag {
+  id     String @id @default(uuid())
+  noteId String
+  tag    String
+}
+
+model NoteAttachment {
+  id       String @id @default(uuid())
+  noteId   String
+  filename String
+  url      String
+  size     Int
+}
+
+model ScheduleReminder {
+  id      String    @id @default(uuid())
+  blockId String
+  sentAt  DateTime?
+  status  String
+}
+
+model ResourceTopic {
+  id         String @id @default(uuid())
+  resourceId String
+  topic      String
+}
+
+model ResourceRecommendation {
+  id         String   @id @default(uuid())
+  userId     String
+  resourceId String
+  score      Float
+  reason     String?
+  createdAt  DateTime @default(now())
+  dismissed  Boolean  @default(false)
+}
+
+model GoalCourse {
+  id        String   @id @default(uuid())
+  goalId    String
+  courseId  String
+  createdAt DateTime @default(now())
+}
+
+model AnalyticsEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  eventType String
+  eventData Json?
+  timestamp DateTime @default(now())
+  sessionId String?
+  platform  String?
+}
+
+model StudySession {
+  id        String    @id @default(uuid())
+  userId    String
+  startTime DateTime
+  endTime   DateTime?
+  duration  Int?
+  courseId  String?
+  completed Boolean   @default(false)
+}
+
+model UserMetrics {
+  id              String   @id @default(uuid())
+  userId          String
+  date            DateTime
+  studyMinutes    Int      @default(0)
+  tasksCompleted  Int      @default(0)
+  aiMessagesUsed  Int      @default(0)
+  goalsAchieved   Int      @default(0)
+}
+
+model SubscriptionMetrics {
+  id               String   @id @default(uuid())
+  date             DateTime @unique
+  newSubscriptions Int      @default(0)
+  cancellations    Int      @default(0)
+  revenue          Float    @default(0)
+  mrrChange        Float    @default(0)
+  churnRate        Float    @default(0)
 }
 
 enum Tier {

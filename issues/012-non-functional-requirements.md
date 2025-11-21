@@ -26,7 +26,7 @@ Implement and enforce non-functional requirements ensuring the system is perform
 - **Target**: Subsequent page navigation < 300ms
 - **Target**: Time to Interactive (TTI) < 3 seconds
 - **Target**: First Contentful Paint (FCP) < 1 second
-- **Target**: Largest Contentful Paint (LCP) < 2.0 seconds (good rating)
+- **Target**: Largest Contentful Paint (LCP) < 2.0 seconds (excellent rating)
 - **Target**: Cumulative Layout Shift (CLS) < 0.1 (good rating)
 
 #### Mobile Application

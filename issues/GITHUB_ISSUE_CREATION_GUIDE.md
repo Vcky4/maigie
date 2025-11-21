@@ -207,7 +207,9 @@ headers = {
 }
 
 for issue in issues:
-    with open(f'issues/{issue["file"]}', 'r') as f:
+    # Ensure the script is run from the repository root
+    file_path = os.path.join('issues', issue["file"])
+    with open(file_path, 'r') as f:
         body = f.read()
     
     data = {
