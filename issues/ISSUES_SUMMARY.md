@@ -31,7 +31,7 @@ This document provides a quick reference summary of all issues created from the 
 ## Effort Distribution
 
 - **Small** (1 sprint): 0 issues
-- **Medium** (2-3 sprints): 7 issues
+- **Medium** (2-3 sprints): 6 issues
 - **Large** (4+ sprints): 4 issues
 - **Ongoing**: 1 issue (012)
 
