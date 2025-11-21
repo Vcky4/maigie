@@ -4,7 +4,7 @@
 Feature
 
 ## Priority
-High
+Critical
 
 ## Labels
 - authentication
