@@ -478,7 +478,7 @@ enum Role {
 
 - API response time < 200ms (90th percentile)
 - WebSocket latency < 100ms
-- Support 1000+ concurrent connections
+- Support 10,000+ concurrent connections
 - Database query time < 100ms
 - Background job processing < 5 seconds
 

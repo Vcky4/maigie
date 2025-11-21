@@ -42,13 +42,14 @@ Implement the complete subscription and billing system supporting free and premi
 ### Subscription Plans
 
 **Free Tier:**
-- 50 AI chat messages/month
+- 50 AI chat messages/month (resets on 1st of each calendar month)
 - No voice AI
-- Max 2 AI-generated courses
-- Max 2 active goals
+- Max 2 AI-generated courses (total, not monthly)
+- Max 2 active goals (can archive and create new ones)
 - Basic scheduling (manual only)
-- Limited resource recommendations
+- Limited resource recommendations (10/week)
 - Ads present (optional)
+- When limits exceeded: soft block with upgrade prompt, no data loss
 
 **Premium Monthly:**
 - $9.99/month
