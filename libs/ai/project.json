@@ -1,0 +1,19 @@
+{
+  "name": "ai",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/ai/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/ai",
+        "main": "libs/ai/src/index.ts",
+        "tsConfig": "libs/ai/tsconfig.lib.json",
+        "assets": ["libs/ai/*.md"]
+      }
+    }
+  }
+}

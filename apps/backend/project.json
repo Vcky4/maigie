@@ -1,0 +1,31 @@
+{
+  "name": "backend",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/backend/src",
+  "projectType": "application",
+  "tags": ["type:app", "scope:backend"],
+  "targets": {
+    "serve": {
+      "executor": "@nx/run-commands:run-commands",
+      "options": {
+        "command": "uvicorn src.main:app --reload --host 0.0.0.0 --port 8000",
+        "cwd": "apps/backend"
+      }
+    },
+    "lint": {
+      "executor": "@nx/run-commands:run-commands",
+      "options": {
+        "command": "ruff check src",
+        "cwd": "apps/backend"
+      }
+    },
+    "test": {
+      "executor": "@nx/run-commands:run-commands",
+      "options": {
+        "command": "pytest",
+        "cwd": "apps/backend"
+      }
+    }
+  }
+}
+

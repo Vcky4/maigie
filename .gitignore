@@ -1,0 +1,23 @@
+.nx/installation
+.nx/cache
+.nx/workspace-data
+vite.config.*.timestamp*
+node_modules
+
+# Expo
+node_modules/
+.expo/
+.yarn/
+dist/
+npm-debug.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+web-build/
+cache/
+
+
+vitest.config.*.timestamp*

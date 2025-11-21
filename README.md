@@ -1,278 +1,80 @@
-# **Maigie – AI-Powered Study Companion**
+# Maigie
 
-### *Your personal AI-driven learning assistant*
+AI-powered student companion that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with an intelligent assistant (text + voice).
 
-Maigie is an AI-first study companion that helps students organize learning, generate courses, plan schedules, set goals, track progress, and access personalized resources—all through natural conversations (text + voice).
+## Architecture
 
-This repository is a **monorepo** managed using **Nx**, containing:
+This is an Nx monorepo containing:
 
-* **FastAPI backend**
-* **Web App (Vite + React + shadcn-ui)**
-* **Mobile App (Expo)**
-* **AI Services (LLM, embeddings, voice)**
+- **Backend** (`apps/backend`) - FastAPI application
+- **Web** (`apps/web`) - Vite + React + shadcn-ui application
+- **Mobile** (`apps/mobile`) - Expo (React Native) application
 
----
+### Shared Libraries
 
-# 🚀 **Features**
+- `libs/types` - Shared TypeScript types & API client
+- `libs/ui` - Shared UI components (web & mobile where possible)
+- `libs/auth` - Shared auth helpers (token helpers)
+- `libs/ai` - Shared prompts, schema for AI interactions
+- `libs/db` - Prisma schema + migrations
 
-### **AI + Productivity**
+## Getting Started
 
-* Conversational AI (text + voice)
-* AI-generated:
+### Prerequisites
 
-  * Courses (modules, topics, syllabus)
-  * Goals (milestones, deadlines)
-  * Schedules (daily/weekly plans)
-  * Resource recommendations
-  * Notes & summaries
-* Realtime interactions via WebSockets
+- Node.js 18+ (or 20+ recommended)
+- Python 3.11+
+- Poetry (for Python dependencies)
 
-### **Dashboard Modules**
+### Installation
 
-* Courses
-* Goals
-* Schedule (calendar + time blocks)
-* Resource Library
-* Notes
-* Reminders
-* Forecast (progress prediction)
+```bash
+# Install Node.js dependencies
+npm install
 
-### **Mobile + Web**
-
-* Web: Vite + shadcn-ui
-* Mobile: Expo
-* Offline-first notes + tasks on mobile
-
-### **Subscriptions**
-
-* Free Tier (limited)
-* Premium Monthly / Yearly
-* Stripe-powered billing
-* Auto-renewal & downgrade handling
-
----
-
-# 📦 **Monorepo Structure**
-
-```text
-maigie/
-│
-├── apps/
-│   ├── web/                # Vite + React + shadcn-ui
-│   ├── mobile/             # Expo React Native app
-│   └── api/                # FastAPI backend
-│
-├── libs/
-│   ├── ui/                 # shared UI components
-│   ├── types/              # shared TypeScript interfaces
-│   ├── utils/              # shared utilities
-│   └── ai/                 # shared AI logic (client + contracts)
-│
-├── infra/
-│   ├── docker/             # Docker configs
-│   ├── scripts/            # infra scripts
-│   └── db/                 # migrations / schema docs
-│
-├── tools/                  # Nx custom generators/executors
-└── README.md
+# Install Python dependencies (for backend)
+cd apps/backend
+poetry install
 ```
 
----
+### Development
 
-# ⚙️ **Tech Stack**
-
-### **Frontend**
-
-* Vite
-* React
-* shadcn-ui
-* Zustand / Query
-* TailwindCSS
-
-### **Mobile**
-
-* Expo (React Native)
-* SQLite / WatermelonDB (offline sync)
-
-### **Backend**
-
-* FastAPI
-* Prisma ORM
-* PostgreSQL
-* Redis (cache + events)
-* WebSockets
-* Background workers (RQ / Celery / custom)
-
-### **AI**
-
-* OpenAI / Anthropic models
-* Embeddings search (Supabase, Pinecone, or pgvector)
-* Whisper (voice → text)
-* TTS (text → voice)
-
----
-
-# 🧠 **AI Intent Architecture**
-
-Maigie interprets user messages and maps them to structured actions:
-
-* `create_course`
-* `create_goal`
-* `create_schedule`
-* `recommend_resources`
-* `summarize_notes`
-* `progress_check`
-* `reminder_set`
-* and more…
-
-Each AI response includes a JSON `action` block that the client uses to update the UI or trigger backend workflows.
-
-Full spec is in [docs/llm/intent-spec.md](https://github.com/Vcky4/maigie/blob/main/docs/llm/intent-spec.md).
-
----
-
-# 📱 **User Flows**
-
-### Key flows include:
-
-* Onboarding & preferences
-* AI chat (text + voice)
-* Auto-generated course → dashboard update
-* Goal-setting via conversation
-* Daily/weekly schedule flow
-* Subscription upgrade & payment
-* Mobile offline sync
-
-Full detailed user flows are documented in:
-[docs/requirements/maigie_prd.md](https://github.com/Vcky4/maigie/blob/main/docs/requirements/maigie_prd.md)
-
----
-
-# 🛠️ **Development Setup**
-
-### **1. Install dependencies**
-
-```sh
-pnpm install
-```
-
-### **2. Generate environment files**
-
-Create `.env` files in:
-
-```text
-apps/api/.env
-apps/web/.env
-apps/mobile/.env
-```
-
-Use templates from `env.example`.
-
-### **3. Start backend**
-
-```sh
-nx serve api
-```
-
-### **4. Start web app**
-
-```sh
+```bash
+# Run web app
 nx serve web
+
+# Run mobile app
+nx serve mobile
+
+# Run backend
+nx serve backend
 ```
 
-### **5. Start mobile app**
+## Project Structure
 
-```sh
-nx run mobile:start
+```
+Maigie/
+  ├─ apps/
+  │   ├─ backend/                # FastAPI app (Python)
+  │   ├─ web/                    # Vite + React (shadcn-ui)
+  │   └─ mobile/                 # Expo (React Native)
+  ├─ libs/
+  │   ├─ types/                  # shared TypeScript types & API client
+  │   ├─ ui/                     # shared UI components
+  │   ├─ auth/                   # shared auth helpers
+  │   ├─ ai/                     # shared prompts, schema for AI interactions
+  │   └─ db/                     # Prisma schema + migrations
+  ├─ docs/
+  │   └─ architecture/           # Architecture documentation
+  ├─ nx.json
+  ├─ package.json
+  └─ README.md
 ```
 
----
+## Documentation
 
-# 🗄️ **Database (Prisma + PostgreSQL)**
+See [docs/architecture/](./docs/architecture/) for detailed architecture documentation.
 
-Key models:
+## License
 
-* User
-* Course
-* Module
-* Topic
-* Goal
-* ScheduleBlock
-* Resource
-* Note
-* Reminder
-* Subscription
-* AIActionLog
-
-Full schema in:
-[apps/api/prisma/schema.prisma](https://github.com/Vcky4/maigie/blob/main/apps/api/prisma/schema.prisma)
-
----
-
-# 🔔 **Events System**
-
-Backend uses Redis to emit events:
-
-* `course.created`
-* `goal.created`
-* `schedule.updated`
-* `subscription.changed`
-* `reminder.trigger`
-
-Clients listen via WebSockets for realtime UI updates.
-
----
-
-# 🧪 **Testing**
-
-```sh
-nx run api:test
-nx run web:test
-nx run mobile:test
-```
-
----
-
-# 📦 **Deployment**
-
-### Backend:
-
-* Docker + Fly.io / Railway / Render
-* Auto migrations
-* Background workers for reminders + embeddings
-
-### Web:
-
-* Vercel / Netlify
-
-### Mobile:
-
-* Expo EAS Build & Deploy
-
----
-
-# 📚 **Documentation**
-
-* PRD: [docs/requirements/maigie_prd.md](https://github.com/Vcky4/maigie/blob/main/docs/requirements/maigie_prd.md)
-* System architecture: [docs/architecture/](https://github.com/Vcky4/maigie/tree/main/docs/architecture)
-* AI intent routing: [docs/ai/](https://github.com/Vcky4/maigie/tree/main/docs/ai)
-* API spec: [docs/api/](https://github.com/Vcky4/maigie/tree/main/docs/api)
-
----
-
-# 🧩 **Roadmap**
-
-* Collaborative study sessions
-* Shared notebooks
-* AI flashcards
-* Chrome extension
-* Space repetition engine
-* Study streak gamification
-
----
-
-# ❤️ **Contributions**
-
-Maigie is designed to eventually support open-source contributions.
-
-Follow the contribution guide: [CONTRIBUTING.md](https://github.com/Vcky4/maigie/blob/main/CONTRIBUTING.md)
+MIT
