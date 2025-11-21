@@ -181,6 +181,8 @@ SubscriptionMetrics {
 }
 ```
 
+## Backend Infrastructure Schema
+
 ## Acceptance Criteria
 
 ### User Analytics
