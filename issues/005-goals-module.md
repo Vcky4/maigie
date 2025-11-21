@@ -123,7 +123,10 @@ Task {
 }
 
 GoalCourse {
-  goalId, courseId
+  id,           // unique identifier for the junction entry
+  goalId,       // references Goal.id
+  courseId,     // references Course.id
+  createdAt     // timestamp for when the link was created
 }
 ```
 
