@@ -3,6 +3,7 @@ name = "backend"
 version = "0.1.0"
 description = "Maigie FastAPI backend"
 authors = ["Maigie Team"]
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.11"

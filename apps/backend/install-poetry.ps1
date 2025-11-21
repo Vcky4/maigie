@@ -97,7 +97,12 @@ try {
         & $pythonCmd -m pip install poetry
         if ($LASTEXITCODE -eq 0) {
             Write-Host "[SUCCESS] Poetry installed via pip!" -ForegroundColor Green
-            goto VerifyInstallation
+            # Get Python Scripts directory for pip installations
+            $pythonScripts = & $pythonCmd -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>&1
+            if ($pythonScripts -and (Test-Path $pythonScripts)) {
+                $env:Path += ";$pythonScripts"
+                Write-Host "[OK] Added Python Scripts to PATH: $pythonScripts" -ForegroundColor Green
+            }
         }
     } catch {
         Write-Host "[ERROR] pip installation also failed" -ForegroundColor Red
@@ -127,7 +132,8 @@ $env:Path = "$userPath;$machinePath"
 $poetryPaths = @(
     "$env:USERPROFILE\.local\bin",
     "$env:APPDATA\Python\Scripts",
-    "$env:LOCALAPPDATA\Programs\Python\Python*\Scripts"
+    "$env:LOCALAPPDATA\Programs\Python\Python*\Scripts",
+    "$env:LOCALAPPDATA\Python\pythoncore-*\Scripts"
 )
 
 # Also check for pipx installation
@@ -136,12 +142,23 @@ if (Test-Path $pipxBinPath) {
     $env:Path += ";$pipxBinPath"
 }
 
+# Get Python Scripts directory (for pip installations)
+try {
+    $pythonScripts = & $pythonCmd -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>&1
+    if ($pythonScripts -and (Test-Path $pythonScripts)) {
+        $env:Path += ";$pythonScripts"
+        Write-Host "[OK] Added Python Scripts to PATH: $pythonScripts" -ForegroundColor Green
+    }
+} catch {
+    # Ignore if we can't get Python scripts path
+}
+
 foreach ($pathPattern in $poetryPaths) {
     # Handle wildcards
     if ($pathPattern -match '\*') {
         $parentPath = Split-Path $pathPattern -Parent
         if (Test-Path $parentPath) {
-            $matchingDirs = Get-ChildItem -Path $parentPath -Directory -Filter "Python*" -ErrorAction SilentlyContinue
+            $matchingDirs = Get-ChildItem -Path $parentPath -Directory -Filter "*" -ErrorAction SilentlyContinue
             foreach ($dir in $matchingDirs) {
                 $scriptsPath = Join-Path $dir.FullName "Scripts"
                 if (Test-Path "$scriptsPath\poetry.exe") {
@@ -167,8 +184,6 @@ if (Test-Path "$poetryHome\bin\poetry.exe") {
     $env:Path += ";$poetryHome\bin"
     Write-Host "[OK] Found Poetry at: $poetryHome\bin" -ForegroundColor Green
 }
-
-:VerifyInstallation
 # Verify installation
 Write-Host ""
 Write-Host "Verifying installation..." -ForegroundColor Yellow

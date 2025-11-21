@@ -1,9 +1,36 @@
 """Application configuration management."""
 
+import json
 from functools import lru_cache
-from typing import List
+from typing import Annotated, Any, List
 
+from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def parse_list_value(value: Any) -> List[str]:
+    """Parse list value from various formats."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return []
+        # Try JSON array format first
+        if value.startswith("[") and value.endswith("]"):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except (json.JSONDecodeError, TypeError):
+                pass
+        # Fall back to comma-separated format
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return []
+
+
+# Custom type that handles both JSON arrays and comma-separated strings
+ListStr = Annotated[List[str], BeforeValidator(parse_list_value)]
 
 
 class Settings(BaseSettings):
@@ -18,17 +45,17 @@ class Settings(BaseSettings):
 
     # API
     API_V1_PREFIX: str = "/api/v1"
-    ALLOWED_HOSTS: List[str] = ["localhost", "127.0.0.1"]
+    ALLOWED_HOSTS: ListStr = ["localhost", "127.0.0.1"]
 
     # CORS
-    CORS_ORIGINS: List[str] = [
+    CORS_ORIGINS: ListStr = [
         "http://localhost:4200",
         "http://localhost:5173",
         "http://localhost:3000",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
-    CORS_ALLOW_METHODS: List[str] = ["*"]
-    CORS_ALLOW_HEADERS: List[str] = ["*"]
+    CORS_ALLOW_METHODS: ListStr = ["*"]
+    CORS_ALLOW_HEADERS: ListStr = ["*"]
 
     # Security
     SECRET_KEY: str = "dev-secret-key-change-in-production"

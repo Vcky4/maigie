@@ -69,10 +69,20 @@ if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
             & $pythonCmd -m pip install poetry
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "[OK] Poetry installed via pip" -ForegroundColor Green
+                # Get Python Scripts directory and add to PATH
+                try {
+                    $pythonScripts = & $pythonCmd -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>&1
+                    if ($pythonScripts -and (Test-Path $pythonScripts)) {
+                        $env:Path += ";$pythonScripts"
+                        Write-Host "[OK] Added Python Scripts to PATH: $pythonScripts" -ForegroundColor Green
+                    }
+                } catch {
+                    Write-Host "[WARNING] Could not determine Python Scripts path" -ForegroundColor Yellow
+                }
                 # Refresh PATH again
                 $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
                 $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-                $env:Path = "$userPath;$machinePath"
+                $env:Path = "$userPath;$machinePath;$pythonScripts"
             }
         } catch {
             Write-Host "[ERROR] Poetry installation failed. Please install manually:" -ForegroundColor Red
@@ -81,11 +91,25 @@ if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
             exit 1
         }
         
-        # Final check
+        # Final check - try to find poetry.exe directly
+        Start-Sleep -Seconds 2
+        
+        # Try to find poetry in Python Scripts directory
+        try {
+            $pythonScripts = & $pythonCmd -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>&1
+            if ($pythonScripts -and (Test-Path "$pythonScripts\poetry.exe")) {
+                $env:Path += ";$pythonScripts"
+                Write-Host "[OK] Found Poetry at: $pythonScripts" -ForegroundColor Green
+            }
+        } catch {
+            # Ignore
+        }
+        
         if (-not (Get-Command poetry -ErrorAction SilentlyContinue)) {
-            Write-Host "[ERROR] Poetry still not found. Please restart your terminal and try again." -ForegroundColor Red
-            Write-Host "Or install manually: pip install poetry" -ForegroundColor Yellow
-            exit 1
+            Write-Host "[WARNING] Poetry installed but not found in PATH." -ForegroundColor Yellow
+            Write-Host "Poetry was installed via pip. Continuing with 'python -m poetry'..." -ForegroundColor Yellow
+            # Create function alias for this session
+            function poetry { & $pythonCmd -m poetry $args }
         }
     }
 }
@@ -105,7 +129,7 @@ Write-Host "[OK] Poetry configured to create virtual environment in project dire
 Write-Host ""
 Write-Host "Installing dependencies..." -ForegroundColor Yellow
 Write-Host "This will create a virtual environment in .venv and install all dependencies." -ForegroundColor Gray
-poetry install
+poetry install --no-root
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "[OK] Dependencies installed successfully" -ForegroundColor Green
@@ -119,7 +143,21 @@ if (-not (Test-Path ".env")) {
     Write-Host ""
     Write-Host "Creating .env file from .env.example..." -ForegroundColor Yellow
     if (Test-Path ".env.example") {
-        Copy-Item ".env.example" ".env"
+        # Read .env.example and convert comma-separated lists to JSON arrays if needed
+        $envContent = Get-Content ".env.example" -Raw
+        # Convert CORS_ORIGINS from comma-separated to JSON array if needed
+        $envContent = $envContent -replace 'CORS_ORIGINS=([^\r\n]+)', {
+            param($match)
+            $value = $match.Groups[1].Value.Trim()
+            if (-not $value.StartsWith('[')) {
+                # Convert comma-separated to JSON array
+                $items = $value -split ',' | ForEach-Object { "`"$($_.Trim())`"" }
+                "CORS_ORIGINS=[$($items -join ',')]"
+            } else {
+                $match.Value
+            }
+        }
+        $envContent | Out-File -FilePath ".env" -Encoding utf8 -NoNewline
         Write-Host "[OK] .env file created" -ForegroundColor Green
     } else {
         Write-Host "[WARNING] .env.example not found, skipping..." -ForegroundColor Yellow
