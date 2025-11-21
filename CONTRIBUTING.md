@@ -60,7 +60,7 @@ Maigie is a **monorepo** managed with **Nx**, containing:
 ### 1. Fork & Clone the Repository
 
 ```
-git clone https://github.com/<your-username>/maigie.git
+git clone https://github.com/vcky4/maigie.git
 cd maigie
 ```
 
