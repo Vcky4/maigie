@@ -4,62 +4,51 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from ..config import get_settings
 
-# Password hashing context
+# Password hashing context (used for verification of existing hashes)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # bcrypt has a 72-byte limit for passwords
 BCRYPT_MAX_PASSWORD_LENGTH = 72
 
-# Flag to track if backend is initialized
-_backend_initialized = False
-
-
-def _ensure_backend_initialized():
-    """Ensure bcrypt backend is initialized with a short password."""
-    global _backend_initialized
-    if not _backend_initialized:
-        try:
-            # Initialize with a short password to avoid detection issues
-            _ = pwd_context.hash("init")
-            _backend_initialized = True
-        except (ValueError, AttributeError):
-            # Backend initialization may fail during detection phase
-            # It will be retried on first actual use
-            pass
-
 
 def get_password_hash(password: str) -> str:
     """
-    Hash a password.
+    Hash a password using bcrypt directly.
     
     bcrypt has a 72-byte limit, so passwords longer than that are pre-hashed
     with SHA256 before being hashed with bcrypt.
+    
+    We use bcrypt directly instead of passlib to avoid initialization issues
+    with passlib's bug detection mechanism.
     
     Args:
         password: Plain text password to hash
         
     Returns:
-        Hashed password
+        Hashed password (bcrypt hash string)
         
     Raises:
         ValueError: If password hashing fails
     """
-    # Ensure backend is initialized
-    _ensure_backend_initialized()
-    
     password_bytes = password.encode('utf-8')
     
     # If password exceeds bcrypt's 72-byte limit, pre-hash with SHA256
     if len(password_bytes) > BCRYPT_MAX_PASSWORD_LENGTH:
         sha256_hash = hashlib.sha256(password_bytes).hexdigest()
-        return pwd_context.hash(sha256_hash)
+        password_to_hash = sha256_hash.encode('utf-8')
+    else:
+        password_to_hash = password_bytes
     
-    return pwd_context.hash(password)
+    # Use bcrypt directly to avoid passlib initialization issues
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(password_to_hash, salt)
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -77,13 +66,25 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         True if password matches, False otherwise
     """
     password_bytes = plain_password.encode('utf-8')
+    hashed_bytes = hashed_password.encode('utf-8')
     
     # If password exceeds bcrypt's 72-byte limit, pre-hash with SHA256
     if len(password_bytes) > BCRYPT_MAX_PASSWORD_LENGTH:
         sha256_hash = hashlib.sha256(password_bytes).hexdigest()
-        return pwd_context.verify(sha256_hash, hashed_password)
+        password_to_verify = sha256_hash.encode('utf-8')
+    else:
+        password_to_verify = password_bytes
     
-    return pwd_context.verify(plain_password, hashed_password)
+    # Use bcrypt directly to verify
+    try:
+        return bcrypt.checkpw(password_to_verify, hashed_bytes)
+    except (ValueError, TypeError):
+        # Fallback to passlib for compatibility with old hashes
+        # This handles edge cases and different hash formats
+        if len(password_bytes) > BCRYPT_MAX_PASSWORD_LENGTH:
+            sha256_hash = hashlib.sha256(password_bytes).hexdigest()
+            return pwd_context.verify(sha256_hash, hashed_password)
+        return pwd_context.verify(plain_password, hashed_password)
 
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:

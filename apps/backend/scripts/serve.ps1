@@ -30,10 +30,14 @@ Register-EngineEvent PowerShell.Exiting -Action {
 
 # Use virtual environment Python if available, otherwise try poetry
 try {
+    Write-Host "Starting FastAPI server with auto-reload..." -ForegroundColor Green
+    Write-Host "Server will automatically reload on file changes" -ForegroundColor Cyan
+    Write-Host "Press Ctrl+C to stop the server`n" -ForegroundColor Yellow
+    
     if (Test-Path ".venv\Scripts\python.exe") {
-        & ".venv\Scripts\python.exe" -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+        & ".venv\Scripts\python.exe" -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 --log-level info
     } elseif (Get-Command poetry -ErrorAction SilentlyContinue) {
-        poetry run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+        poetry run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 --log-level info
     } else {
         Write-Host "Error: Neither virtual environment nor Poetry found" -ForegroundColor Red
         exit 1
