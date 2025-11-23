@@ -17,22 +17,27 @@
  */
 
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import { LandingPage } from '../pages/LandingPage';
-import '../styles.css';
+import { Navbar } from '../components/landing/Navbar';
+import { Hero } from '../components/landing/Hero';
+import { Features } from '../components/landing/Features';
+import { Pricing } from '../components/landing/Pricing';
+import { Testimonials } from '../components/landing/Testimonials';
+import { DownloadApp } from '../components/landing/DownloadApp';
+import { Footer } from '../components/landing/Footer';
 
-export function App() {
+export function LandingPage() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        {/* Placeholder for future routes */}
-        {/* <Route path="/login" element={<Login />} /> */}
-        {/* <Route path="/signup" element={<Signup />} /> */}
-        {/* <Route path="/dashboard" element={<Dashboard />} /> */}
-      </Routes>
-    </Router>
+    <div className="min-h-screen bg-white font-sans text-slate-900 antialiased selection:bg-primary/20 selection:text-primary">
+       <Navbar />
+       <main>
+         <Hero />
+         <Features />
+         <DownloadApp />
+         <Testimonials />
+         <Pricing />
+       </main>
+       <Footer />
+    </div>
   );
 }
 
-export default App;
