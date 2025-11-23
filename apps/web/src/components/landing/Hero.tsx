@@ -30,16 +30,13 @@ export function Hero() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
-            <span className="inline-block py-1 px-3 rounded-full bg-indigo-50 text-primary text-sm font-semibold mb-6 border border-indigo-100">
-              Reimagining how you learn
-            </span>
             <h1 className="text-5xl md:text-6xl font-bold tracking-tight text-gray-900 mb-6 leading-tight">
               Your Intelligent <br />
               <span className="text-primary bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">
                 Study Companion
               </span>
             </h1>
-            <p className="text-xl text-gray-600 mb-10 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-xl text-gray-600 mb-10 max-w-3xl mx-auto leading-relaxed">
               Maigie helps you organize learning, generate personalized study plans, and master any subject with an AI assistant that adapts to your style.
             </p>
             
