@@ -2,7 +2,7 @@
 name = "backend"
 version = "0.1.0"
 description = "Maigie FastAPI backend"
-package-mode = false   # <--- ADD THIS LINE
+package-mode = false
 authors = ["Maigie Team"]
 
 [tool.poetry.dependencies]
@@ -23,26 +23,38 @@ pytest-asyncio = "^0.24.0"
 ruff = "^0.6.0"
 black = "^24.8.0"
 mypy = "^1.11.0"
+httpx = "^0.28.1"
+coverage = "^7.12.0"
+flake8 = "^7.3.0"
+isort = "^7.0.0"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
+# --- Tool Configurations (Merged) ---
+
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
 [tool.black]
-line-length = 100
-target-version = ["py311"]
+line-length = 88
+target-version = ['py312']
+
+[tool.isort]
+profile = "black"
 
 [tool.mypy]
-python_version = "3.11"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
