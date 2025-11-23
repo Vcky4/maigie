@@ -42,24 +42,33 @@ export function DownloadApp() {
             </p>
             
             <div className="flex flex-col sm:flex-row gap-4">
-              <button className="flex items-center bg-white text-black px-6 py-3 rounded-xl hover:bg-gray-100 transition-colors group">
-                <Apple className="w-8 h-8 mr-3" fill="currentColor" />
-                <div className="text-left">
-                  <div className="text-xs font-medium text-gray-500">Download on the</div>
-                  <div className="text-lg font-bold leading-none">App Store</div>
-                </div>
-              </button>
+              <a
+                href="#"
+                className="inline-block rounded-2xl bg-white"
+                aria-label="Download on the App Store"
+              >
+                <img
+                  src="/assets/ios.png"
+                  alt="Download on the App Store"
+                  className="h-14 w-auto sm:h-16"
+                  style={{ minWidth: 160 }}
+                  draggable={false}
+                />
+              </a>
               
-              <button className="flex items-center bg-transparent border border-gray-600 text-white px-6 py-3 rounded-xl hover:bg-white/5 transition-colors">
-                <div className="mr-3">
-                   {/* Google Play Icon Placeholder using Lucide */}
-                   <Smartphone className="w-8 h-8" /> 
-                </div>
-                <div className="text-left">
-                  <div className="text-xs font-medium text-gray-400">GET IT ON</div>
-                  <div className="text-lg font-bold leading-none">Google Play</div>
-                </div>
-              </button>
+              <a
+                href="#"
+                className="inline-block"
+                aria-label="Get it on Google Play"
+              >
+                <img
+                  src="/assets/google.png"
+                  alt="Get it on Google Play"
+                  className="h-14 w-auto sm:h-16"
+                  style={{ minWidth: 160 }}
+                  draggable={false}
+                />
+              </a>
             </div>
           </motion.div>
 
