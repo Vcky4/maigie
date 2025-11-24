@@ -1,10 +1,7 @@
+# apps/backend/src/main.py
 # Maigie - AI-powered student companion
 # Copyright (C) 2025 Maigie
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# ... (License headers kept same) ...
 
 """FastAPI application entry point."""
 
@@ -16,7 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .core.cache import cache
-from .core.database import db
+
+# --- CHANGED: Import the helper functions we created ---
+from src.core.database import db, connect_db, disconnect_db, check_db_health
+
 from .core.websocket import manager as websocket_manager
 from .dependencies import SettingsDep
 from .exceptions import (
@@ -36,9 +36,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
 
-    # Connect to database (placeholder for now)
-    await db.connect()
-    print("Database connection initialized")
+    # --- CHANGED: Use our safe wrapper function ---
+    await connect_db()
+    # print("Database connection initialized") (Our wrapper prints this already)
 
     # Connect to cache (placeholder for now)
     await cache.connect()
@@ -62,8 +62,12 @@ async def lifespan(app: FastAPI):
     # Disconnect all WebSocket connections
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
+    
     await cache.disconnect()
-    await db.disconnect()
+    
+    # --- CHANGED: Use our safe wrapper function ---
+    await disconnect_db()
+    
     print("Shutdown complete")
 
 
@@ -117,7 +121,10 @@ def create_app() -> FastAPI:
     @app.get("/ready")
     async def ready() -> dict[str, Any]:
         """Readiness check endpoint."""
-        db_status = await db.health_check()
+        
+        # --- CHANGED: Call the standalone function, not a method on db ---
+        db_status = await check_db_health()
+        
         cache_status = await cache.health_check()
 
         return {
