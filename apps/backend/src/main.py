@@ -1,35 +1,195 @@
 """FastAPI application entry point."""
 
+import logging
+import traceback
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-
-from typing import Annotated
-
-from fastapi import Depends
+from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .core.cache import cache
 from .core.database import db
 from .core.websocket import manager as websocket_manager
 from .dependencies import SettingsDep
-from .utils.dependencies import cleanup_db_client, close_redis_client, get_db_client, get_redis_client, initialize_redis_client
 from .exceptions import (
     AppException,
     app_exception_handler,
     general_exception_handler,
 )
 from .middleware import LoggingMiddleware, SecurityHeadersMiddleware
+from .models.error_response import ErrorResponse
+from .utils.dependencies import (
+    cleanup_db_client,
+    close_redis_client,
+    get_db_client,
+    get_redis_client,
+    initialize_redis_client,
+)
+from .utils.exceptions import InternalServerError, MaigieError
 from .routes.ai import router as ai_router
 from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
+from .routes.examples import router as examples_router
 from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
 
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Global Exception Handlers
+# ============================================================================
+
+async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONResponse:
+    """
+    Global exception handler for all MaigieError exceptions.
+    
+    Converts MaigieError instances into standardized ErrorResponse format.
+    This ensures consistent error responses across the entire application.
+    
+    Args:
+        request: The incoming request
+        exc: The MaigieError exception
+        
+    Returns:
+        JSONResponse with standardized error format
+    """
+    settings = get_settings()
+    
+    # Create error response
+    error_response = ErrorResponse(
+        status_code=exc.status_code,
+        code=exc.code,
+        message=exc.message,
+        detail=exc.detail if settings.DEBUG else None,  # Hide details in production
+    )
+    
+    # Log the error
+    logger.warning(
+        f"MaigieError: {exc.code} - {exc.message}",
+        extra={
+            "error_code": exc.code,
+            "status_code": exc.status_code,
+            "detail": exc.detail,
+            "path": request.url.path,
+        }
+    )
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response.model_dump(exclude_none=True),
+    )
+
+
+async def validation_error_handler(
+    request: Request,
+    exc: RequestValidationError
+) -> JSONResponse:
+    """
+    Global exception handler for FastAPI/Pydantic validation errors.
+    
+    Reformats RequestValidationError into standardized ErrorResponse format.
+    Provides clear, user-friendly messages for validation failures.
+    
+    Args:
+        request: The incoming request
+        exc: The validation error
+        
+    Returns:
+        JSONResponse with standardized error format
+    """
+    settings = get_settings()
+    
+    # Extract validation error details
+    errors = exc.errors()
+    
+    # Create user-friendly message
+    if len(errors) == 1:
+        error = errors[0]
+        field = " -> ".join(str(loc) for loc in error["loc"])
+        message = f"Validation error in field '{field}': {error['msg']}"
+    else:
+        message = f"Request validation failed with {len(errors)} error(s)"
+    
+    # Format details
+    detail = None
+    if settings.DEBUG:
+        detail = str(errors)
+    
+    error_response = ErrorResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code="VALIDATION_ERROR",
+        message=message,
+        detail=detail,
+    )
+    
+    logger.info(
+        f"Validation error: {message}",
+        extra={
+            "errors": errors,
+            "path": request.url.path,
+        }
+    )
+    
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content=error_response.model_dump(exclude_none=True),
+    )
+
+
+async def unhandled_exception_handler(
+    request: Request,
+    exc: Exception
+) -> JSONResponse:
+    """
+    Global exception handler for all unhandled exceptions.
+    
+    This is the safety net that catches any unexpected errors.
+    Logs the full traceback for debugging but returns a generic
+    error to the client to avoid leaking internal implementation details.
+    
+    Args:
+        request: The incoming request
+        exc: The unhandled exception
+        
+    Returns:
+        JSONResponse with generic error message
+    """
+    # Log the full traceback for debugging
+    logger.error(
+        f"Unhandled exception: {str(exc)}",
+        exc_info=True,
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "traceback": traceback.format_exc(),
+        }
+    )
+    
+    # Create generic error response (don't leak internal details)
+    error_response = ErrorResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        code="INTERNAL_SERVER_ERROR",
+        message="An internal server error occurred. Please try again later.",
+        detail=None,  # Never expose internal details to clients
+    )
+    
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_response.model_dump(exclude_none=True),
+    )
+
+
+# ============================================================================
+# Application Lifespan
+# ============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -95,9 +255,13 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Add exception handlers
+    # Add exception handlers (new standardized handlers)
+    app.add_exception_handler(MaigieError, maigie_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+    
+    # Legacy exception handlers (for backward compatibility)
     app.add_exception_handler(AppException, app_exception_handler)
-    app.add_exception_handler(Exception, general_exception_handler)
 
     # Add middleware (order matters - last added is first executed)
     app.add_middleware(SecurityHeadersMiddleware)
@@ -209,6 +373,9 @@ def create_app() -> FastAPI:
     
     # Real-time communication router
     app.include_router(realtime_router)
+    
+    # Example/demonstration endpoints
+    app.include_router(examples_router)
 
     return app
 

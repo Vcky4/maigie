@@ -135,16 +135,20 @@ poetry run pytest
 ### Feature Modules
 - `src/routes/` - API route handlers
   - `routes/auth.py` - Authentication routes (login, register, OAuth)
+  - `routes/ai.py` - AI assistant routes with exception handling demos
   - `routes/realtime.py` - WebSocket routes for real-time updates
+  - `routes/courses.py`, `routes/goals.py`, `routes/schedule.py`, etc.
 - `src/services/` - Business logic
 - `src/models/` - Pydantic schemas and ORM models
   - `models/auth.py` - Authentication models (UserRegister, UserLogin, TokenResponse, etc.)
+  - `models/error_response.py` - Standardized error response model
   - `models/websocket.py` - WebSocket message models
 - `src/db/` - Database connection and migrations
 - `src/tasks/` - Background tasks (Celery/Dramatiq)
 - `src/ai_client/` - LLM and embeddings clients
 - `src/workers/` - Async workers
 - `src/utils/` - Utility functions
+  - `utils/exceptions.py` - Custom business logic exceptions (SubscriptionLimitError, ResourceNotFoundError, etc.)
 
 ### Tests
 - `tests/` - Test files
@@ -158,7 +162,8 @@ poetry run pytest
 ✅ **Application structure follows defined patterns** - Organized according to Backend Infrastructure issue  
 ✅ **Environment configuration works correctly** - Pydantic Settings with .env support  
 ✅ **Dependency injection system works** - FastAPI Depends pattern implemented  
-✅ **Middleware stack is configured** - Logging, Security Headers, and CORS middleware
+✅ **Middleware stack is configured** - Logging, Security Headers, and CORS middleware  
+✅ **Comprehensive exception handling** - Standardized error responses with global handlers
 
 ## WebSocket Framework Status
 
@@ -217,6 +222,7 @@ All module endpoints are registered with `/api/v1` prefix:
 - `/api/v1/schedule` - Schedule management routes
 - `/api/v1/resources` - Resource management routes
 - `/api/v1/realtime` - WebSocket real-time communication
+- `/api/v1/examples` - Example/demonstration endpoints for testing exception handling
 
 ## Virtual Environment
 
@@ -310,4 +316,54 @@ Current schema includes:
 - **Goal** - User goals
 
 See `prisma/schema.prisma` for the complete schema definition.
+
+## Exception Handling
+
+The application implements comprehensive exception handling with standardized error responses.
+
+### Error Response Format
+
+All errors follow a consistent format:
+```json
+{
+    "status_code": 403,
+    "code": "SUBSCRIPTION_LIMIT_EXCEEDED",
+    "message": "This feature requires a Premium subscription",
+    "detail": "Optional debug information (only in development)"
+}
+```
+
+### Custom Exceptions
+
+- **`SubscriptionLimitError`** (403) - Basic users accessing Premium features
+- **`ResourceNotFoundError`** (404) - Requested resource doesn't exist
+- **`UnauthorizedError`** (401) - Authentication required
+- **`ForbiddenError`** (403) - Insufficient permissions
+- **`ValidationError`** (422) - Business logic validation failures
+- **`InternalServerError`** (500) - Unexpected errors
+
+### Testing Exception Handling
+
+Example endpoints are available at `/api/v1/examples/*` for testing:
+
+```bash
+# Test subscription limit (should return 403)
+curl -X POST http://localhost:8000/api/v1/examples/ai/voice-session \
+  -H "Content-Type: application/json" \
+  -d '{"session_type": "conversation"}'
+
+# Test resource not found (should return 404)
+curl http://localhost:8000/api/v1/examples/ai/process/nonexistent
+
+# Get info about all example endpoints
+curl http://localhost:8000/api/v1/examples/info
+
+# Run automated tests
+poetry run pytest tests/test_exception_handling.py -v
+
+# Run verification script
+poetry run python verify_exceptions.py
+```
+
+See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
 
