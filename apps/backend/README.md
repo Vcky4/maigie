@@ -229,5 +229,8 @@ See `.env.example` for available configuration options. Key settings:
 - `OAUTH_GITHUB_CLIENT_SECRET` - GitHub OAuth client secret (optional)
 - `OAUTH_REDIRECT_URI` - OAuth redirect URI
 - `DATABASE_URL` - PostgreSQL connection string (for future use)
-- `REDIS_URL` - Redis connection string (for future use)
+- `REDIS_URL` - Redis connection string (default: `redis://localhost:6379/0`)
+- `REDIS_KEY_PREFIX` - Prefix for all cache keys (default: `maigie:`)
+- `REDIS_SOCKET_TIMEOUT` - Redis socket timeout in seconds (default: 5)
+- `REDIS_SOCKET_CONNECT_TIMEOUT` - Redis connection timeout in seconds (default: 5)
 
