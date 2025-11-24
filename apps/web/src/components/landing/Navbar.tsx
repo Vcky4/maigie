@@ -20,15 +20,17 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Menu, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useNavigate } from 'react-router-dom';
 
 export function Navbar() {
   const [isOpen, setIsOpen] = React.useState(false);
+  const navigate = useNavigate();
 
   return (
     <nav className="fixed top-0 w-full z-50 bg-surface/80 backdrop-blur-md border-b border-gray-100">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          <div className="flex-shrink-0 flex items-center">
+          <div className="flex-shrink-0 flex items-center" onClick={() => navigate('/')}>
             {/* Logo Image */}
             <img src="/assets/logo.png" alt="Maigie Logo" className="h-8 w-auto" />
             <span className="ml-2 text-2xl font-bold text-primary hidden">maigie</span>

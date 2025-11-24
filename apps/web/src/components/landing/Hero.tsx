@@ -50,9 +50,14 @@ export function Hero() {
               </button>
               <button 
                 onClick={() => setDemoStarted(true)}
-                className="w-full sm:w-auto bg-white text-gray-700 border border-gray-200 px-8 py-4 rounded-xl font-semibold text-lg hover:bg-gray-50 hover:border-gray-300 transition-all flex items-center justify-center"
+                className="w-full sm:w-auto bg-white text-gray-700 border border-gray-200 px-8 py-4 rounded-xl font-semibold text-lg hover:bg-gray-50 hover:border-gray-300 transition-all flex items-center justify-center group"
               >
-                <Play className="mr-2 text-primary fill-current" size={16} />
+                <div className="relative flex items-center justify-center mr-3">
+                    <span className="absolute inline-flex h-full w-full rounded-full bg-primary/30 animate-ping"></span>
+                    <div className="relative bg-primary/10 p-1.5 rounded-full group-hover:bg-primary/20 transition-colors">
+                        <Play className="text-primary fill-current" size={14} />
+                    </div>
+                </div>
                 Watch Demo
               </button>
             </div>

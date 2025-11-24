@@ -114,7 +114,7 @@ export function Community() {
               </li>
             </ul>
 
-            <a href="#" className="inline-flex items-center text-primary font-semibold hover:text-primary/80 transition-colors">
+            <a href="/waitlist" className="inline-flex items-center text-primary font-semibold hover:text-primary/80 transition-colors">
               Join Waitlist <ArrowRight size={16} className="ml-2" />
             </a>
           </motion.div>

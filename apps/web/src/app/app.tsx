@@ -19,6 +19,12 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { LandingPage } from '../pages/LandingPage';
+import { WaitlistPage } from '../pages/WaitlistPage';
+import { AboutPage } from '../pages/AboutPage';
+import { ContactPage } from '../pages/ContactPage';
+import { PrivacyPage } from '../pages/PrivacyPage';
+import { TermsPage } from '../pages/TermsPage';
+import { CookieNotice } from '../components/layout/CookieNotice';
 import '../styles.css';
 
 export function App() {
@@ -26,11 +32,13 @@ export function App() {
     <Router>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        {/* Placeholder for future routes */}
-        {/* <Route path="/login" element={<Login />} /> */}
-        {/* <Route path="/signup" element={<Signup />} /> */}
-        {/* <Route path="/dashboard" element={<Dashboard />} /> */}
+        <Route path="/waitlist" element={<WaitlistPage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/contact" element={<ContactPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
       </Routes>
+      <CookieNotice />
     </Router>
   );
 }

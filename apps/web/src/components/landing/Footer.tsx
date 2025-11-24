@@ -37,16 +37,17 @@ export function Footer() {
             <ul className="mt-4 space-y-4">
               <li><a href="#features" className="text-gray-500 hover:text-primary">Features</a></li>
               <li><a href="#pricing" className="text-gray-500 hover:text-primary">Pricing</a></li>
-              <li><a href="#" className="text-gray-500 hover:text-primary">Download</a></li>
+              <li><a href="#download" className="text-gray-500 hover:text-primary">Download</a></li>
             </ul>
           </div>
 
           <div>
             <h3 className="text-sm font-semibold text-gray-900 tracking-wider uppercase">Company</h3>
             <ul className="mt-4 space-y-4">
-              <li><a href="#" className="text-gray-500 hover:text-primary">About</a></li>
-              <li><a href="#" className="text-gray-500 hover:text-primary">Blog</a></li>
-              <li><a href="#" className="text-gray-500 hover:text-primary">Contact</a></li>
+              <li><a href="/about" className="text-gray-500 hover:text-primary">About</a></li>
+              <li><a href="/contact" className="text-gray-500 hover:text-primary">Contact</a></li>
+              <li><a href="/privacy" className="text-gray-500 hover:text-primary">Privacy Policy</a></li>
+              <li><a href="/terms" className="text-gray-500 hover:text-primary">Terms & Conditions</a></li>
             </ul>
           </div>
         </div>

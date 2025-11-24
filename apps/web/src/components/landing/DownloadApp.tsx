@@ -177,7 +177,7 @@ export function DownloadApp() {
   }, []);
 
   return (
-    <section className="py-24 bg-gradient-to-b from-indigo-900 to-accent relative overflow-hidden text-white">
+    <section id="download" className="py-24 bg-gradient-to-b from-indigo-900 to-accent relative overflow-hidden text-white">
       <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=2929&auto=format&fit=crop')] opacity-10 bg-cover bg-center mix-blend-overlay"></div>
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
