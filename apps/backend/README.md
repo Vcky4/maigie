@@ -311,9 +311,7 @@ This project uses Prisma as the ORM for PostgreSQL.
 ### Database Models
 
 Current schema includes:
-- **User** - User accounts
-- **Course** - Courses
-- **Goal** - User goals
+- **User** - User accounts with authentication and subscription tiers
 
 See `prisma/schema.prisma` for the complete schema definition.
 

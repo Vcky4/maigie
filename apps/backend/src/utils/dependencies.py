@@ -31,14 +31,6 @@ except ImportError:
         async def query_raw(self, query: str):
             """Mock raw query method - raises error to indicate no real connection."""
             raise Exception("Prisma client not installed. Run: poetry add prisma && poetry run prisma generate")
-        
-        @property
-        def user(self):
-            """Mock user model access."""
-            class MockUser:
-                async def find_first(self):
-                    raise Exception("Prisma client not installed. Run: poetry add prisma && poetry run prisma generate")
-            return MockUser()
 
 try:
     import redis.asyncio as redis

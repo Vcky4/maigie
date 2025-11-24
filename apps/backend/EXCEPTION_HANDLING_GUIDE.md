@@ -79,18 +79,18 @@ async def start_voice_session(user_subscription: str):
 ```python
 from ..utils.exceptions import ResourceNotFoundError
 
-@router.get("/courses/{course_id}")
-async def get_course(course_id: str):
-    course = await db.course.find_unique(where={"id": course_id})
+@router.get("/users/{user_id}")
+async def get_user(user_id: str, db: PrismaClient = Depends(get_db_client)):
+    user = await db.user.find_unique(where={"id": user_id})
     
-    if not course:
+    if not user:
         raise ResourceNotFoundError(
-            resource_type="Course",
-            resource_id=course_id,
-            detail="Course lookup failed in database"
+            resource_type="User",
+            resource_id=user_id,
+            detail="User lookup failed in database"
         )
     
-    return course
+    return user
 ```
 
 **Client receives:**
@@ -98,7 +98,7 @@ async def get_course(course_id: str):
 {
     "status_code": 404,
     "code": "RESOURCE_NOT_FOUND",
-    "message": "Course with ID 'abc123' not found"
+    "message": "User with ID 'abc123' not found"
 }
 ```
 
