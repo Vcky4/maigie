@@ -532,6 +532,11 @@ function MobileFrame({ state, messages, inputValue }: { state: WalkthroughState,
                     )}
                     {state.activeTab !== 'dashboard' && (
                         <div className="flex-1 flex flex-col overflow-hidden relative">
+                            {state.activeTab === 'calendar' && (
+                                <div className="flex-1 overflow-y-auto relative bg-white">
+                                     <CalendarViewUI view={state.calendarView} isMobile={true} />
+                                </div>
+                            )}
                             <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                 {state.activeTab === 'goals' && state.goals.map((goal, i) => (
                                     <div key={i} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
@@ -631,7 +636,7 @@ function VoiceOverlay({ status, text, isMobile }: { status: VoiceStatus, text: s
             className={cn(
                 "absolute z-50 flex flex-col items-center justify-center shadow-2xl border border-white/10 backdrop-blur-md text-white",
                 isMobile
-                    ? "inset-0 bg-black/90"
+                    ? "inset-0 bg-black/90 rounded-[2rem]"
                     : "bottom-8 left-1/2 -translate-x-1/2 bg-black/80 rounded-3xl px-8 py-6 min-w-[350px]"
             )}
         >
@@ -811,40 +816,43 @@ function GoalsView({ goals }: { goals: Goal[] }) {
     );
 }
 
-function CalendarViewUI({ view }: { view: CalendarView }) {
+function CalendarViewUI({ view, isMobile = false }: { view: CalendarView, isMobile?: boolean }) {
     return (
         <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="flex-1 p-8 overflow-y-auto"
+            className={cn("flex-1 overflow-y-auto", isMobile ? "p-4" : "p-8")}
         >
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold text-gray-800">Calendar</h2>
-                <div className="flex bg-gray-100 p-1 rounded-lg">
-                    {(['month', 'week', 'day'] as const).map(v => (
-                        <div
-                            key={v}
-                            className={cn(
-                                "px-4 py-1.5 rounded-md text-sm font-medium capitalize transition-all",
-                                view === v ? "bg-white text-primary shadow-sm" : "text-gray-500"
-                            )}
-                        >
-                            {v}
-                        </div>
-                    ))}
-                </div>
+                {!isMobile && (
+                    <div className="flex bg-gray-100 p-1 rounded-lg">
+                        {(['month', 'week', 'day'] as const).map(v => (
+                            <div
+                                key={v}
+                                className={cn(
+                                    "px-4 py-1.5 rounded-md text-sm font-medium capitalize transition-all",
+                                    view === v ? "bg-white text-primary shadow-sm" : "text-gray-500"
+                                )}
+                            >
+                                {v}
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm h-[400px] p-6 relative overflow-hidden">
+            <div className={cn("bg-white border border-gray-200 rounded-xl shadow-sm relative overflow-hidden", isMobile ? "h-[300px] p-3" : "h-[400px] p-6")}>
                 {view === 'month' && (
-                    <div className="grid grid-cols-7 gap-4 h-full">
+                    <div className={cn("grid gap-1 h-full", isMobile ? "grid-cols-7 gap-0.5 text-[10px]" : "grid-cols-7 gap-4")}>
                         {/* Mock Month Grid */}
                         {Array.from({ length: 35 }).map((_, i) => (
                             <div key={i} className={cn(
-                                "border-t border-gray-100 pt-2 text-sm text-gray-500",
-                                i === 14 ? "bg-blue-50 text-blue-600 font-bold rounded p-1" : ""
+                                "border-t border-gray-100 pt-1 text-gray-500 flex flex-col items-center",
+                                i === 14 ? "bg-blue-50 text-blue-600 font-bold rounded p-0.5" : ""
                             )}>
-                                {i + 1 <= 31 ? i + 1 : ""}
-                                {i === 14 && <div className="mt-1 text-[10px] bg-blue-100 p-1 rounded truncate">Physics Exam</div>}
+                                <span>{i + 1 <= 31 ? i + 1 : ""}</span>
+                                {i === 14 && !isMobile && <div className="mt-1 text-[10px] bg-blue-100 p-1 rounded truncate w-full text-center">Physics Exam</div>}
+                                {i === 14 && isMobile && <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-0.5"></div>}
                             </div>
                         ))}
                     </div>
@@ -852,19 +860,19 @@ function CalendarViewUI({ view }: { view: CalendarView }) {
                 {view === 'week' && (
                     <motion.div
                         initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-                        className="grid grid-cols-5 gap-4 h-full"
+                        className="grid grid-cols-5 gap-2 h-full"
                     >
                         {['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((day, i) => (
                             <div key={i} className="border-r border-gray-100 last:border-0 h-full relative">
-                                <div className="text-center font-medium text-gray-600 mb-4">{day}</div>
+                                <div className="text-center font-medium text-gray-600 mb-2 text-xs">{day}</div>
                                 {i === 4 && (
                                     <motion.div
                                         initial={{ scale: 0.8, opacity: 0 }}
                                         animate={{ scale: 1, opacity: 1 }}
-                                        className="absolute top-1/3 left-1 right-1 bg-green-100 border border-green-200 text-green-800 p-2 rounded text-xs"
+                                        className={cn("absolute top-1/3 left-0.5 right-0.5 bg-green-100 border border-green-200 text-green-800 rounded text-[10px] overflow-hidden", isMobile ? "p-1" : "p-2")}
                                     >
-                                        <div className="font-bold">Finish Chapter 1</div>
-                                        <div>2:00 PM</div>
+                                        <div className="font-bold truncate">Finish Ch 1</div>
+                                        {!isMobile && <div>2:00 PM</div>}
                                     </motion.div>
                                 )}
                             </div>

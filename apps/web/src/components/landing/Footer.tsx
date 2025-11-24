@@ -59,7 +59,7 @@ export function Footer() {
             <a href="#" className="text-gray-400 hover:text-primary">
               <Twitter size={20} />
             </a>
-            <a href="#" className="text-gray-400 hover:text-primary">
+            <a href="https://github.com/Vcky4/maigie" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-primary">
               <Github size={20} />
             </a>
             <a href="#" className="text-gray-400 hover:text-primary">

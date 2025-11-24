@@ -23,6 +23,7 @@ import { Features } from '../components/landing/Features';
 import { Pricing } from '../components/landing/Pricing';
 import { Testimonials } from '../components/landing/Testimonials';
 import { DownloadApp } from '../components/landing/DownloadApp';
+import { Community } from '../components/landing/Community';
 import { Footer } from '../components/landing/Footer';
 
 export function LandingPage() {
@@ -35,6 +36,7 @@ export function LandingPage() {
          <DownloadApp />
          <Testimonials />
          <Pricing />
+         <Community />
        </main>
        <Footer />
     </div>
