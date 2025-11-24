@@ -8,8 +8,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .core.cache import cache
+from .core.celery_app import celery_app
 from .core.database import db
 from .core.websocket import manager as websocket_manager
+from .workers.manager import check_worker_health
 from .dependencies import SettingsDep
 from .exceptions import (
     AppException,
@@ -105,17 +107,19 @@ def create_app() -> FastAPI:
         """Health check endpoint."""
         return {"status": "healthy"}
 
-    # Ready check endpoint (includes database and cache status)
+    # Ready check endpoint (includes database, cache, and worker status)
     @app.get("/ready")
     async def ready() -> dict[str, Any]:
         """Readiness check endpoint."""
         db_status = await db.health_check()
         cache_status = await cache.health_check()
+        worker_status = await check_worker_health()
 
         return {
             "status": "ready",
             "database": db_status,
             "cache": cache_status,
+            "workers": worker_status,
         }
 
     # Include routers

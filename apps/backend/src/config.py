@@ -79,6 +79,23 @@ class Settings(BaseSettings):
     REDIS_SOCKET_TIMEOUT: int = 5  # seconds
     REDIS_SOCKET_CONNECT_TIMEOUT: int = 5  # seconds
 
+    # Celery (Background Workers)
+    CELERY_BROKER_URL: str = ""  # Auto-generated from REDIS_URL with DB 1
+    CELERY_RESULT_BACKEND: str = ""  # Auto-generated from REDIS_URL with DB 2
+    CELERY_TASK_SERIALIZER: str = "json"
+    CELERY_RESULT_SERIALIZER: str = "json"
+    CELERY_ACCEPT_CONTENT: ListStr = ["json"]
+    CELERY_TIMEZONE: str = "UTC"
+    CELERY_ENABLE_UTC: bool = True
+    CELERY_TASK_ALWAYS_EAGER: bool = False  # Set to True for testing (synchronous execution)
+    CELERY_TASK_ACKS_LATE: bool = True
+    CELERY_TASK_REJECT_ON_WORKER_LOST: bool = True
+    CELERY_WORKER_PREFETCH_MULTIPLIER: int = 1
+    CELERY_TASK_DEFAULT_QUEUE: str = "default"
+    CELERY_TASK_DEFAULT_EXCHANGE: str = "tasks"
+    CELERY_TASK_DEFAULT_ROUTING_KEY: str = "default"
+    CELERY_RESULT_EXPIRES: int = 3600  # seconds (1 hour)
+
     # Logging
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
@@ -96,8 +113,37 @@ class Settings(BaseSettings):
     )
 
 
+def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
+    """Extract base Redis URL and change database number.
+
+    Args:
+        redis_url: Full Redis URL (e.g., "redis://localhost:6379/0")
+        db_number: Target database number
+
+    Returns:
+        Redis URL with updated database number
+    """
+    # Parse redis://host:port/db or redis://host:port
+    if "/" in redis_url:
+        base_url = redis_url.rsplit("/", 1)[0]
+        return f"{base_url}/{db_number}"
+    return f"{redis_url}/{db_number}"
+
+
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""
-    return Settings()
+    settings = Settings()
+
+    # Auto-generate Celery broker and result backend URLs from REDIS_URL
+    # Use separate Redis databases to avoid conflicts:
+    # - DB 0: Cache (existing)
+    # - DB 1: Celery broker
+    # - DB 2: Celery results
+    if not settings.CELERY_BROKER_URL:
+        settings.CELERY_BROKER_URL = _get_redis_url_with_db(settings.REDIS_URL, 1)
+    if not settings.CELERY_RESULT_BACKEND:
+        settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
+
+    return settings
 
