@@ -73,8 +73,11 @@ class Settings(BaseSettings):
     # Database 
     DATABASE_URL: str = ""
 
-    # Redis (for future use)
+    # Redis Cache
     REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_KEY_PREFIX: str = "maigie:"
+    REDIS_SOCKET_TIMEOUT: int = 5  # seconds
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5  # seconds
 
     # Logging
     LOG_LEVEL: str = "INFO"
