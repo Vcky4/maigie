@@ -1,0 +1,8 @@
+[flake8]
+max-line-length = 88
+# E203: Whitespace before ':'
+# E501: Line length
+# F401: Unused imports
+# F841: Unused variables
+extend-ignore = E203, E501, F401, F841
+exclude = .git,__pycache__,.venv,dist

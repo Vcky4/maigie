@@ -2,13 +2,13 @@
 
 import json
 from functools import lru_cache
-from typing import Annotated, Any, List
+from typing import Annotated, Any
 
 from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def parse_list_value(value: Any) -> List[str]:
+def parse_list_value(value: Any) -> list[str]:
     """Parse list value from various formats."""
     if isinstance(value, list):
         return value
@@ -30,7 +30,7 @@ def parse_list_value(value: Any) -> List[str]:
 
 
 # Custom type that handles both JSON arrays and comma-separated strings
-ListStr = Annotated[List[str], BeforeValidator(parse_list_value)]
+ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
 
 
 class Settings(BaseSettings):
@@ -93,8 +93,7 @@ class Settings(BaseSettings):
     )
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     return Settings()
-

@@ -17,4 +17,3 @@ async def create_schedule_block():
     """Create a schedule block."""
     # TODO: Implement create schedule block
     pass
-

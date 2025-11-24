@@ -7,7 +7,6 @@ from jose import JWTError
 
 from .config import Settings, get_settings
 from .core.security import decode_access_token
-from .exceptions import AuthenticationError
 
 # Common dependencies
 SettingsDep = Annotated[Settings, Depends(lambda: get_settings())]
@@ -19,7 +18,7 @@ async def verify_api_key(
 ) -> bool:
     """
     Verify API key header (placeholder for future implementation).
-    
+
     For now, this is a placeholder that always returns True.
     In production, implement proper API key validation.
     """
@@ -32,13 +31,13 @@ async def get_current_user_token(
 ) -> dict[str, Any]:
     """
     Extract and verify JWT token from Authorization header.
-    
+
     Args:
         authorization: Authorization header value (Bearer <token>)
-        
+
     Returns:
         Decoded token payload
-        
+
     Raises:
         HTTPException: If token is missing or invalid
     """
@@ -80,10 +79,10 @@ async def get_current_user_id(
 ) -> str:
     """
     Get current user ID from verified JWT token.
-    
+
     Args:
         token: Decoded JWT token payload
-        
+
     Returns:
         User ID from token
     """
@@ -101,10 +100,10 @@ async def get_current_user_email(
 ) -> str:
     """
     Get current user email from verified JWT token.
-    
+
     Args:
         token: Decoded JWT token payload
-        
+
     Returns:
         User email from token
     """
@@ -121,4 +120,3 @@ async def get_current_user_email(
 CurrentUserTokenDep = Annotated[dict[str, Any], Depends(get_current_user_token)]
 CurrentUserIdDep = Annotated[str, Depends(get_current_user_id)]
 CurrentUserEmailDep = Annotated[str, Depends(get_current_user_email)]
-

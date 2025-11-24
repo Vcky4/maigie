@@ -47,3 +47,9 @@ async def summarize(request: SummarizeRequest):
         "content_length": len(request.content),
     }
 
+
+@router.post("/create-plan")
+async def create_plan():
+    """Create study plan."""
+    # TODO: Implement study plan creation
+    pass

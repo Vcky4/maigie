@@ -1,3 +1,7 @@
+# apps/backend/src/main.py
+# Maigie - AI-powered student companion
+# Copyright (C) 2025 Maigie
+
 """FastAPI application entry point."""
 
 import logging
@@ -12,7 +16,10 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .core.cache import cache
-from .core.database import db
+
+# --- Import the database helper functions ---
+from src.core.database import connect_db, disconnect_db, check_db_health
+
 from .core.websocket import manager as websocket_manager
 from .dependencies import SettingsDep
 from .exceptions import (
@@ -213,7 +220,7 @@ async def lifespan(app: FastAPI):
     await initialize_redis_client()
     print("Redis client initialized for dependency injection")
 
-    # Initialize WebSocket manager
+    # --- WebSocket Manager ---
     settings = get_settings()
     websocket_manager.heartbeat_interval = settings.WEBSOCKET_HEARTBEAT_INTERVAL
     websocket_manager.heartbeat_timeout = settings.WEBSOCKET_HEARTBEAT_TIMEOUT
@@ -222,12 +229,13 @@ async def lifespan(app: FastAPI):
     await websocket_manager.start_cleanup()
     print("WebSocket manager initialized")
 
-    yield
+    yield  # Application runs here
 
     # Shutdown
     print("Shutting down...")
     await websocket_manager.stop_heartbeat()
     await websocket_manager.stop_cleanup()
+
     # Disconnect all WebSocket connections
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
@@ -239,7 +247,7 @@ async def lifespan(app: FastAPI):
     
     # Cleanup legacy connections
     await cache.disconnect()
-    await db.disconnect()
+    await disconnect_db()
     print("Shutdown complete")
 
 
@@ -263,7 +271,7 @@ def create_app() -> FastAPI:
     # Legacy exception handlers (for backward compatibility)
     app.add_exception_handler(AppException, app_exception_handler)
 
-    # Add middleware (order matters - last added is first executed)
+    # Add middleware
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(LoggingMiddleware)
 
@@ -347,11 +355,11 @@ def create_app() -> FastAPI:
             "cache": cache_status,
         }
 
-    # Ready check endpoint (includes database and cache status)
+    # Ready check endpoint
     @app.get("/ready")
     async def ready() -> dict[str, Any]:
         """Readiness check endpoint."""
-        db_status = await db.health_check()
+        db_status = await check_db_health()
         cache_status = await cache.health_check()
 
         return {

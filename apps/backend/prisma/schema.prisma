@@ -1,4 +1,10 @@
 // Prisma schema for Maigie backend
+// apps/backend/prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
 
 generator client {
   provider             = "prisma-client-py"
@@ -6,43 +12,24 @@ generator client {
   recursive_type_depth = 5
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+// --- Base Schema ---
+
+enum Tier {
+  FREE
+  PREMIUM_MONTHLY
+  PREMIUM_YEARLY
 }
 
-// User model
 model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  name      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("users")
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String?
+  name          String?
+  provider      String?  // for oauth (google/github)
+  providerId    String?
+  tier          Tier     @default(FREE)
+  timezone      String?
+  preferences   Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
-
-// Course model
-model Course {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("courses")
-}
-
-// Goal model
-model Goal {
-  id          String   @id @default(uuid())
-  userId      String
-  title       String
-  description String?
-  status      String   @default("active")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@map("goals")
-}
-

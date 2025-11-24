@@ -1,6 +1,6 @@
 """WebSocket message models."""
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,8 +9,8 @@ class WebSocketMessage(BaseModel):
     """Base WebSocket message model."""
 
     type: str = Field(..., description="Message type")
-    data: Optional[Dict[str, Any]] = Field(None, description="Message data")
-    timestamp: Optional[str] = Field(None, description="Message timestamp")
+    data: dict[str, Any] | None = Field(None, description="Message data")
+    timestamp: str | None = Field(None, description="Message timestamp")
 
 
 class HeartbeatMessage(BaseModel):
@@ -38,8 +38,8 @@ class BroadcastMessage(BaseModel):
     """Broadcast message model."""
 
     type: Literal["broadcast"] = "broadcast"
-    channel: Optional[str] = Field(None, description="Channel to broadcast to")
-    message: Dict[str, Any] = Field(..., description="Message to broadcast")
+    channel: str | None = Field(None, description="Channel to broadcast to")
+    message: dict[str, Any] = Field(..., description="Message to broadcast")
 
 
 class ConnectionMessage(BaseModel):
@@ -49,8 +49,8 @@ class ConnectionMessage(BaseModel):
     status: Literal["connected", "disconnected", "reconnected"] = Field(
         ..., description="Connection status"
     )
-    connection_id: Optional[str] = Field(None, description="Connection ID")
-    heartbeat_interval: Optional[int] = Field(None, description="Heartbeat interval in seconds")
+    connection_id: str | None = Field(None, description="Connection ID")
+    heartbeat_interval: int | None = Field(None, description="Heartbeat interval in seconds")
 
 
 class ErrorMessage(BaseModel):
@@ -59,5 +59,4 @@ class ErrorMessage(BaseModel):
     type: Literal["error"] = "error"
     code: str = Field(..., description="Error code")
     message: str = Field(..., description="Error message")
-    details: Optional[Dict[str, Any]] = Field(None, description="Error details")
-
+    details: dict[str, Any] | None = Field(None, description="Error details")

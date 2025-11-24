@@ -138,7 +138,7 @@ class GitHubOAuthProvider:
             )
             resp.raise_for_status()
             user_data = resp.json()
-            
+
             # Get email if not in user data
             if "email" not in user_data or not user_data["email"]:
                 email_resp = await client.get(
@@ -149,7 +149,7 @@ class GitHubOAuthProvider:
                 emails = email_resp.json()
                 if emails:
                     user_data["email"] = emails[0].get("email", "")
-            
+
             return user_data
 
 
@@ -165,13 +165,13 @@ class OAuthProviderFactory:
     def get_provider(cls, provider_name: str) -> OAuthProvider:
         """
         Get OAuth provider by name.
-        
+
         Args:
             provider_name: Name of the provider (google, github)
-            
+
         Returns:
             OAuth provider instance
-            
+
         Raises:
             ValueError: If provider is not supported
         """
@@ -184,4 +184,3 @@ class OAuthProviderFactory:
     def get_available_providers(cls) -> list[str]:
         """Get list of available OAuth providers."""
         return list(cls._providers.keys())
-

@@ -1,7 +1,7 @@
 """Custom middleware."""
 
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -55,9 +55,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Add HSTS header in production
         settings = get_settings()
         if settings.ENVIRONMENT == "production":
-            response.headers["Strict-Transport-Security"] = (
-                "max-age=31536000; includeSubDomains"
-            )
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         return response
-

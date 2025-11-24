@@ -7,13 +7,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 try:
-    from src.main import app, create_app
     from src.config import get_settings
-    from src.dependencies import get_settings_dependency
-    from src.core.database import db
     from src.core.cache import cache
+    from src.core.database import db
     from src.core.security import get_password_hash, verify_password
+    from src.dependencies import get_settings_dependency
     from src.exceptions import AppException, NotFoundError, ValidationError
+    from src.main import app, create_app
     from src.middleware import LoggingMiddleware, SecurityHeadersMiddleware
 
     print("✓ All imports successful")
@@ -80,4 +80,3 @@ except Exception as e:
 
     traceback.print_exc()
     sys.exit(1)
-

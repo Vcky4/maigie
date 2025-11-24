@@ -24,4 +24,3 @@ async def recommend_resources():
     """Get AI-recommended resources."""
     # TODO: Implement AI recommendations
     pass
-
