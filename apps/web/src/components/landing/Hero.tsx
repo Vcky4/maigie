@@ -20,9 +20,11 @@ import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, Play } from 'lucide-react';
 import { DemoInteraction } from './DemoInteraction';
+import { useNavigate } from 'react-router-dom';
 
 export function Hero() {
   const [demoStarted, setDemoStarted] = useState(false);
+  const navigate = useNavigate();
 
   return (
     <section className="relative pt-32 pb-10 lg:pt-40 lg:pb-10 overflow-hidden bg-gradient-to-b from-indigo-50/40 to-white">
@@ -44,7 +46,7 @@ export function Hero() {
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <button className="w-full sm:w-auto bg-primary text-white px-8 py-4 rounded-xl font-semibold text-lg hover:bg-primary/90 transition-all shadow-lg hover:shadow-primary/25 flex items-center justify-center group">
+              <button onClick={() => navigate('/waitlist')} className="w-full sm:w-auto bg-primary text-white px-8 py-4 rounded-xl font-semibold text-lg hover:bg-primary/90 transition-all shadow-lg hover:shadow-primary/25 flex items-center justify-center group">
                 Start for Free
                 <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" size={20} />
               </button>

@@ -198,7 +198,7 @@ export function DownloadApp() {
             
             <div className="flex flex-col sm:flex-row gap-4">
               {/* App Store Button */}
-              <a href="#" className="group hover:opacity-90 transition-opacity">
+              <a href="/waitlist" className="group hover:opacity-90 transition-opacity">
                 <img 
                   src="/assets/ios.png" 
                   alt="Download on the App Store" 
@@ -207,7 +207,7 @@ export function DownloadApp() {
               </a>
 
               {/* Google Play Button */}
-              <a href="#" className="group hover:opacity-90 transition-opacity">
+              <a href="/waitlist" className="group hover:opacity-90 transition-opacity">
                 <img 
                   src="/assets/google.png" 
                   alt="Get it on Google Play" 
