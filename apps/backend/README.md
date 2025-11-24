@@ -51,8 +51,21 @@ This will:
    # Linux/Mac
    cp .env.example .env
    ```
+   
+   Edit `.env` and set your `DATABASE_URL` (e.g., `postgresql://postgres:postgres@localhost:5432/maigie`)
 
-5. **Run the development server:**
+5. **Generate Prisma Client:**
+   ```bash
+   poetry run prisma generate
+   ```
+
+6. **Run database migrations:**
+   ```bash
+   # Create initial migration
+   poetry run prisma migrate dev --name init
+   ```
+
+7. **Run the development server:**
    ```bash
    nx serve backend
    ```
@@ -107,8 +120,17 @@ poetry run pytest
 - `core/security.py` - JWT utilities, password hashing (bcrypt)
 - `core/oauth.py` - OAuth provider base structure (Google, GitHub)
 - `core/websocket.py` - WebSocket connection manager and event broadcasting
-- `core/database.py` - Database connection manager (placeholder for Prisma)
-- `core/cache.py` - Cache connection manager (placeholder for Redis)
+- `core/database.py` - Database connection manager (legacy placeholder)
+- `core/cache.py` - Cache connection manager (legacy placeholder)
+
+### Database & Dependencies (`src/utils/`)
+- `utils/dependencies.py` - Dependency injection for Prisma and Redis clients
+  - `get_db_client()` - FastAPI dependency for Prisma database client
+  - `get_redis_client()` - FastAPI dependency for Redis cache client
+  - Lifecycle management functions for startup/shutdown
+
+### Database Schema (`prisma/`)
+- `prisma/schema.prisma` - Prisma schema with database models (User, Course, Goal)
 
 ### Feature Modules
 - `src/routes/` - API route handlers
@@ -172,7 +194,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
 
 ### Core Endpoints
 - `GET /` - Root endpoint with app info
-- `GET /health` - Health check endpoint
+- `GET /health` - Multi-service health check (validates DB and cache connectivity)
 - `GET /ready` - Readiness check (includes DB and cache status)
 - `GET /docs` - Interactive API documentation (Swagger UI)
 - `GET /redoc` - Alternative API documentation (ReDoc)
@@ -186,6 +208,15 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
 - `GET /api/v1/auth/oauth/{provider}/authorize` - Initiate OAuth flow (google, github)
 - `GET /api/v1/auth/oauth/{provider}/callback` - OAuth callback endpoint
 - `GET /api/v1/auth/oauth/providers` - List available OAuth providers
+
+### API Module Endpoints
+All module endpoints are registered with `/api/v1` prefix:
+- `/api/v1/ai` - AI assistant routes
+- `/api/v1/courses` - Course management routes
+- `/api/v1/goals` - Goal tracking routes
+- `/api/v1/schedule` - Schedule management routes
+- `/api/v1/resources` - Resource management routes
+- `/api/v1/realtime` - WebSocket real-time communication
 
 ## Virtual Environment
 
@@ -228,6 +259,55 @@ See `.env.example` for available configuration options. Key settings:
 - `OAUTH_GITHUB_CLIENT_ID` - GitHub OAuth client ID (optional)
 - `OAUTH_GITHUB_CLIENT_SECRET` - GitHub OAuth client secret (optional)
 - `OAUTH_REDIRECT_URI` - OAuth redirect URI
-- `DATABASE_URL` - PostgreSQL connection string (for future use)
-- `REDIS_URL` - Redis connection string (for future use)
+- `DATABASE_URL` - PostgreSQL connection string (required for Prisma)
+- `REDIS_URL` - Redis connection string (not yet implemented)
+
+## Database Setup
+
+This project uses Prisma as the ORM for PostgreSQL.
+
+### Prerequisites
+- PostgreSQL installed and running
+- Database created (e.g., `maigie`)
+
+### Setup Steps
+
+1. **Configure database URL in `.env`:**
+   ```env
+   DATABASE_URL="postgresql://username:password@localhost:5432/maigie"
+   ```
+
+2. **Generate Prisma Client:**
+   ```bash
+   poetry run prisma generate
+   ```
+
+3. **Run migrations:**
+   ```bash
+   # Create and apply migration
+   poetry run prisma migrate dev --name init
+   ```
+
+4. **Optional: Open Prisma Studio (database GUI):**
+   ```bash
+   poetry run prisma studio
+   ```
+
+### Prisma Commands
+
+- `prisma generate` - Generate Prisma Client
+- `prisma migrate dev` - Create and apply migrations in development
+- `prisma migrate deploy` - Apply migrations in production
+- `prisma studio` - Open Prisma Studio (database GUI)
+- `prisma db push` - Push schema changes without migrations (dev only)
+- `prisma db seed` - Run database seeds
+
+### Database Models
+
+Current schema includes:
+- **User** - User accounts
+- **Course** - Courses
+- **Goal** - User goals
+
+See `prisma/schema.prisma` for the complete schema definition.
 

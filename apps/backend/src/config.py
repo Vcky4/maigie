@@ -70,8 +70,8 @@ class Settings(BaseSettings):
     OAUTH_GITHUB_CLIENT_SECRET: str = ""
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
 
-    # Database (for future use)
-    DATABASE_URL: str = "postgresql://user:password@localhost:5432/maigie"
+    # Database 
+    DATABASE_URL: str = ""
 
     # Redis (for future use)
     REDIS_URL: str = "redis://localhost:6379/0"
