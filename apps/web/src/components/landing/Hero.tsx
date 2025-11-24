@@ -37,7 +37,7 @@ export function Hero() {
               </span>
             </h1>
             <p className="text-xl text-gray-600 mb-10 max-w-3xl mx-auto leading-relaxed">
-              Maigie helps you organize learning, generate personalized study plans, and master any subject with an AI assistant that adapts to your style.
+              Maigie helps you organize learning, generate personalized study plans, and master any subject with an AI agent that adapts to your style.
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

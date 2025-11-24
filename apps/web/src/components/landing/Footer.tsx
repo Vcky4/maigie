@@ -28,7 +28,7 @@ export function Footer() {
             {/* Logo Image */}
             <img src="/assets/logo.png" alt="Maigie Logo" className="h-8 w-auto mb-4" />
             <p className="text-gray-500 max-w-xs">
-              Your AI-powered study companion. Organize, learn, and achieve your goals with an intelligent assistant that adapts to you.
+              Your AI-powered study companion. Organize, learn, and achieve your goals with an intelligent agent that adapts to you.
             </p>
           </div>
           
