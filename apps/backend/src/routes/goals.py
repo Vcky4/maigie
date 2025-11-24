@@ -31,4 +31,3 @@ async def record_progress(goal_id: str):
     """Record progress for a goal."""
     # TODO: Implement record progress
     pass
-

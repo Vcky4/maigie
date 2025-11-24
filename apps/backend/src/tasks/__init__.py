@@ -1,2 +1,1 @@
 """Background tasks package."""
-

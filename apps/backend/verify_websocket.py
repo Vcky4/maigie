@@ -24,13 +24,13 @@ except ImportError as e:
 async def test_websocket_connection():
     """Test basic WebSocket connection."""
     print("Testing WebSocket connection...")
-    
+
     try:
         async with connect("ws://localhost:8000/api/v1/realtime/ws") as websocket:
             # Wait for connection message
             message = await websocket.recv()
             data = json.loads(message)
-            
+
             if data.get("type") == "connection" and data.get("status") == "connected":
                 print("✅ WebSocket connection successful")
                 print(f"   Connection ID: {data.get('connection_id')}")
@@ -47,19 +47,19 @@ async def test_websocket_connection():
 async def test_heartbeat():
     """Test heartbeat mechanism."""
     print("\nTesting heartbeat mechanism...")
-    
+
     try:
         async with connect("ws://localhost:8000/api/v1/realtime/ws") as websocket:
             # Wait for connection message
             await websocket.recv()
-            
+
             # Send heartbeat
             await websocket.send(json.dumps({"type": "heartbeat", "status": "ping"}))
-            
+
             # Wait for response
             response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
             data = json.loads(response)
-            
+
             if data.get("type") == "heartbeat" and data.get("status") == "pong":
                 print("✅ Heartbeat mechanism works")
                 return True
@@ -77,32 +77,32 @@ async def test_heartbeat():
 async def test_channel_subscription():
     """Test channel subscription."""
     print("\nTesting channel subscription...")
-    
+
     try:
         async with connect("ws://localhost:8000/api/v1/realtime/ws") as websocket:
             # Wait for connection message
             await websocket.recv()
-            
+
             # Subscribe to channel
             channel = "test-channel"
             await websocket.send(json.dumps({"type": "subscribe", "channel": channel}))
-            
+
             # Wait for subscription confirmation
             response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
             data = json.loads(response)
-            
+
             if (
                 data.get("type") == "subscription"
                 and data.get("status") == "subscribed"
                 and data.get("channel") == channel
             ):
                 print(f"✅ Channel subscription works (channel: {channel})")
-                
+
                 # Test unsubscribe
                 await websocket.send(json.dumps({"type": "unsubscribe", "channel": channel}))
                 response = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                 data = json.loads(response)
-                
+
                 if (
                     data.get("type") == "subscription"
                     and data.get("status") == "unsubscribed"
@@ -127,7 +127,7 @@ async def test_channel_subscription():
 async def test_broadcast_api():
     """Test broadcast API endpoint."""
     print("\nTesting broadcast API...")
-    
+
     try:
         async with httpx.AsyncClient() as client:
             # Test broadcast to all
@@ -135,7 +135,7 @@ async def test_broadcast_api():
                 "http://localhost:8000/api/v1/realtime/broadcast",
                 json={"message": {"test": "broadcast"}},
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 if data.get("status") == "sent" and data.get("target") == "all":
@@ -155,11 +155,11 @@ async def test_broadcast_api():
 async def test_stats_api():
     """Test stats API endpoint."""
     print("\nTesting stats API...")
-    
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get("http://localhost:8000/api/v1/realtime/stats")
-            
+
             if response.status_code == 200:
                 data = response.json()
                 if "active_connections" in data and "channels" in data:
@@ -183,7 +183,7 @@ async def main():
     print("=" * 60)
     print("WebSocket Framework Verification")
     print("=" * 60)
-    
+
     # Check if server is running
     try:
         async with httpx.AsyncClient() as client:
@@ -195,26 +195,26 @@ async def main():
         print("❌ Cannot connect to server at http://localhost:8000")
         print("   Please start the server with: nx serve backend")
         sys.exit(1)
-    
+
     results = []
-    
+
     # Run tests
     results.append(await test_websocket_connection())
     results.append(await test_heartbeat())
     results.append(await test_channel_subscription())
     results.append(await test_broadcast_api())
     results.append(await test_stats_api())
-    
+
     # Summary
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
-    
+
     passed = sum(results)
     total = len(results)
-    
+
     print(f"Tests passed: {passed}/{total}")
-    
+
     if all(results):
         print("\n✅ All WebSocket framework tests passed!")
         print("\nAcceptance Criteria Status:")
@@ -232,4 +232,3 @@ async def main():
 if __name__ == "__main__":
     exit_code = asyncio.run(main())
     sys.exit(exit_code)
-

@@ -60,4 +60,3 @@ class ErrorMessage(BaseModel):
     code: str = Field(..., description="Error code")
     message: str = Field(..., description="Error message")
     details: Optional[Dict[str, Any]] = Field(None, description="Error details")
-

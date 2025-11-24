@@ -58,4 +58,3 @@ cache = Cache()
 async def get_cache() -> Cache:
     """Get cache instance."""
     return cache
-

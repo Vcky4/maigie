@@ -31,4 +31,3 @@ async def enroll_course(course_id: str):
     """Enroll in a course."""
     # TODO: Implement enroll
     pass
-

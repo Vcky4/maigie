@@ -90,4 +90,3 @@ def test_openapi_schema(client):
     assert "openapi" in schema
     assert "info" in schema
     assert schema["info"]["title"] == "Maigie API"
-

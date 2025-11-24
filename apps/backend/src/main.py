@@ -62,12 +62,12 @@ async def lifespan(app: FastAPI):
     # Disconnect all WebSocket connections
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
-    
+
     await cache.disconnect()
-    
+
     # --- CHANGED: Use our safe wrapper function ---
     await disconnect_db()
-    
+
     print("Shutdown complete")
 
 
@@ -121,10 +121,10 @@ def create_app() -> FastAPI:
     @app.get("/ready")
     async def ready() -> dict[str, Any]:
         """Readiness check endpoint."""
-        
+
         # --- CHANGED: Call the standalone function, not a method on db ---
         db_status = await check_db_health()
-        
+
         cache_status = await cache.health_check()
 
         return {

@@ -31,4 +31,3 @@ async def create_plan():
     """Create study plan."""
     # TODO: Implement study plan creation
     pass
-
