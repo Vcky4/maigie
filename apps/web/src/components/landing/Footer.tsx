@@ -57,7 +57,7 @@ export function Footer() {
             © {new Date().getFullYear()} Maigie. All rights reserved.
           </p>
           <div className="flex space-x-6 mt-4 md:mt-0">
-            <a href="#" className="text-gray-400 hover:text-primary">
+            <a href="https://x.com/Maigieteam?t=p0RDZuVs52aGyn2YCIOrhA&s=09" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-primary">
               <Twitter size={20} />
             </a>
             <a href="https://github.com/Vcky4/maigie" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-primary">
