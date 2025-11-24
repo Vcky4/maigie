@@ -63,7 +63,7 @@ export function Footer() {
             <a href="https://github.com/Vcky4/maigie" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-primary">
               <Github size={20} />
             </a>
-            <a href="#" className="text-gray-400 hover:text-primary">
+            <a href="https://www.linkedin.com/company/maigie-ai" target="_blank" rel="noopener noreferrer" className="text-gray-400 hover:text-primary">
               <Linkedin size={20} />
             </a>
           </div>

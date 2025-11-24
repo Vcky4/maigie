@@ -266,9 +266,10 @@ export function DemoInteraction({ isActive, onStart }: DemoInteractionProps) {
                     <motion.div
                         whileHover={{ scale: 1.1 }}
                         whileTap={{ scale: 0.95 }}
-                        className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-xl mb-6 group-hover:shadow-2xl transition-all"
+                        className="relative w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-xl mb-6 group-hover:shadow-2xl transition-all"
                     >
-                        <Play className="text-primary ml-1" size={40} fill="currentColor" />
+                        <span className="absolute inline-flex h-full w-full rounded-full bg-primary/30 animate-ping opacity-75"></span>
+                        <Play className="text-primary ml-1 relative z-10" size={40} fill="currentColor" />
                     </motion.div>
                     <p className="text-gray-600 font-medium text-lg group-hover:text-primary transition-colors">See Maigie in Action</p>
 

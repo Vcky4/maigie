@@ -39,7 +39,7 @@ export function Hero() {
                 Study Companion
               </span>
             </h1>
-            <p className="text-xl text-gray-600 mb-10 max-w-2xl mx-auto leading-relaxed">
+            <p className="text-xl text-gray-600 mb-10 max-w-3xl mx-auto leading-relaxed">
               Maigie helps you organize learning, generate personalized study plans, and master any subject with an AI agent that adapts to your style.
             </p>
             
