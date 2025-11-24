@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
     await websocket_manager.stop_heartbeat()
     await websocket_manager.stop_cleanup()
-    
+
     # Disconnect all WebSocket connections
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
