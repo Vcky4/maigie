@@ -1,46 +1,52 @@
-"""Database connection utilities (placeholder for future Prisma integration)."""
+"""
+Database connection utilities using Prisma.
+This manages the global database connection lifecycle.
+"""
 
-from typing import Any
+from prisma import Prisma
 
-# TODO: Implement Prisma client when database is set up
-# from prisma import Prisma
+# 1. Global Database Instance
+# We instantiate this ONCE. Prisma handles the connection pooling internally.
+db = Prisma()
 
+async def connect_db() -> None:
+    """
+    Connect to the database.
+    This should be called during the FastAPI startup event.
+    """
+    if not db.is_connected():
+        await db.connect()
+        print(" Database Connected")
 
-class Database:
-    """Database connection manager (placeholder)."""
+async def disconnect_db() -> None:
+    """
+    Disconnect from the database.
+    This should be called during the FastAPI shutdown event.
+    """
+    if db.is_connected():
+        await db.disconnect()
+        print(" Database Disconnected")
 
-    def __init__(self) -> None:
-        """Initialize database connection."""
-        # TODO: Initialize Prisma client
-        # self.prisma = Prisma()
-        self._connected = False
-
-    async def connect(self) -> None:
-        """Connect to database."""
-        # TODO: Implement Prisma connection
-        # await self.prisma.connect()
-        self._connected = True
-
-    async def disconnect(self) -> None:
-        """Disconnect from database."""
-        # TODO: Implement Prisma disconnection
-        # await self.prisma.disconnect()
-        self._connected = False
-
-    async def health_check(self) -> dict[str, Any]:
-        """Check database health."""
-        # TODO: Implement actual health check
+async def check_db_health() -> dict:
+    """
+    Perform a real query to ensure the database is responsive.
+    """
+    try:
+        if not db.is_connected():
+            return {"status": "disconnected", "type": "postgresql"}
+        
+        # Run a simple raw query to check connectivity
+        # This is better than just checking .is_connected()
+        await db.query_raw("SELECT 1")
+        
         return {
-            "status": "healthy" if self._connected else "disconnected",
-            "type": "postgresql",
+            "status": "healthy", 
+            "type": "postgresql", 
+            "engine": "prisma"
         }
-
-
-# Global database instance
-db = Database()
-
-
-async def get_database() -> Database:
-    """Get database instance."""
-    return db
-
+    except Exception as e:
+        return {
+            "status": "unhealthy", 
+            "error": str(e),
+            "type": "postgresql"
+        }
