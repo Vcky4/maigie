@@ -3,7 +3,6 @@
 import json
 import logging
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from fastapi.exceptions import HTTPException
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/realtime", tags=["realtime"])
 
 
-async def authenticate_websocket(websocket: WebSocket) -> Optional[str]:
+async def authenticate_websocket(websocket: WebSocket) -> str | None:
     """
     Authenticate WebSocket connection.
 
@@ -203,9 +202,9 @@ async def get_websocket_stats():
 
 @router.post("/broadcast")
 async def broadcast_message(
-    channel: Optional[str] = None,
+    channel: str | None = None,
     message: dict = None,
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
 ):
     """
     Broadcast a message to WebSocket connections.

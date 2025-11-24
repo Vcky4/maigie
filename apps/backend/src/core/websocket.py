@@ -1,13 +1,12 @@
 """WebSocket connection manager and event broadcasting framework."""
 
 import asyncio
-import json
 import logging
-from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, Set
+from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +37,16 @@ class ConnectionManager:
             max_reconnect_attempts: Maximum reconnection attempts before giving up
         """
         # Active connections: {connection_id: WebSocket}
-        self.active_connections: Dict[str, WebSocket] = {}
+        self.active_connections: dict[str, WebSocket] = {}
 
         # User connections: {user_id: Set[connection_id]}
-        self.user_connections: Dict[str, Set[str]] = {}
+        self.user_connections: dict[str, set[str]] = {}
 
         # Connection metadata: {connection_id: {user_id, last_ping, created_at}}
-        self.connection_metadata: Dict[str, Dict[str, Any]] = {}
+        self.connection_metadata: dict[str, dict[str, Any]] = {}
 
         # Channel subscriptions: {channel: Set[connection_id]}
-        self.channel_subscriptions: Dict[str, Set[str]] = {}
+        self.channel_subscriptions: dict[str, set[str]] = {}
 
         # Heartbeat configuration
         self.heartbeat_interval = heartbeat_interval
@@ -55,10 +54,10 @@ class ConnectionManager:
         self.max_reconnect_attempts = max_reconnect_attempts
 
         # Background tasks
-        self._heartbeat_task: Optional[asyncio.Task] = None
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: asyncio.Task | None = None
+        self._cleanup_task: asyncio.Task | None = None
 
-    async def connect(self, websocket: WebSocket, user_id: Optional[str] = None) -> str:
+    async def connect(self, websocket: WebSocket, user_id: str | None = None) -> str:
         """
         Accept a new WebSocket connection.
 
@@ -136,7 +135,7 @@ class ConnectionManager:
             f"WebSocket disconnected: {connection_id} (user: {user_id or 'anonymous'}, reason: {reason})"
         )
 
-    async def send_personal_message(self, connection_id: str, message: Dict[str, Any]):
+    async def send_personal_message(self, connection_id: str, message: dict[str, Any]):
         """
         Send a message to a specific connection.
 
@@ -155,7 +154,7 @@ class ConnectionManager:
             logger.error(f"Error sending message to {connection_id}: {e}")
             await self.disconnect(connection_id, reason="send_error")
 
-    async def send_to_user(self, user_id: str, message: Dict[str, Any]):
+    async def send_to_user(self, user_id: str, message: dict[str, Any]):
         """
         Send a message to all connections for a specific user.
 
@@ -170,7 +169,7 @@ class ConnectionManager:
         for connection_id in connection_ids:
             await self.send_personal_message(connection_id, message)
 
-    async def broadcast(self, message: Dict[str, Any], exclude: Optional[Set[str]] = None):
+    async def broadcast(self, message: dict[str, Any], exclude: set[str] | None = None):
         """
         Broadcast a message to all active connections.
 
@@ -184,7 +183,7 @@ class ConnectionManager:
         for connection_id in connection_ids:
             await self.send_personal_message(connection_id, message)
 
-    async def broadcast_to_channel(self, channel: str, message: Dict[str, Any]):
+    async def broadcast_to_channel(self, channel: str, message: dict[str, Any]):
         """
         Broadcast a message to all connections subscribed to a channel.
 

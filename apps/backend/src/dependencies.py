@@ -7,7 +7,6 @@ from jose import JWTError
 
 from .config import Settings, get_settings
 from .core.security import decode_access_token
-from .exceptions import AuthenticationError
 
 # Common dependencies
 SettingsDep = Annotated[Settings, Depends(lambda: get_settings())]

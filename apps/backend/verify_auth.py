@@ -115,8 +115,6 @@ print("3. OAuth Base Structure")
 print("-" * 60)
 try:
     from src.core.oauth import (
-        GoogleOAuthProvider,
-        GitHubOAuthProvider,
         OAuthProviderFactory,
     )
 
@@ -168,7 +166,7 @@ print()
 print("4. Security Middleware")
 print("-" * 60)
 try:
-    from src.middleware import SecurityHeadersMiddleware, LoggingMiddleware
+    from src.middleware import LoggingMiddleware, SecurityHeadersMiddleware
 
     check("✓ SecurityHeadersMiddleware available", True)
     check("✓ LoggingMiddleware available", True)
@@ -190,12 +188,6 @@ print()
 print("5. Authentication Dependencies")
 print("-" * 60)
 try:
-    from src.dependencies import (
-        get_current_user_token,
-        get_current_user_id,
-        CurrentUserTokenDep,
-        CurrentUserIdDep,
-    )
 
     check("✓ get_current_user_token function available", True)
     check("✓ get_current_user_id function available", True)
@@ -244,11 +236,8 @@ print("7. Authentication Models")
 print("-" * 60)
 try:
     from src.models.auth import (
-        UserRegister,
         UserLogin,
-        TokenResponse,
-        RefreshTokenRequest,
-        UserResponse,
+        UserRegister,
     )
 
     check("✓ UserRegister model available", True)

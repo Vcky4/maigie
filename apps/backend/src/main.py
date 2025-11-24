@@ -11,12 +11,11 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# --- CHANGED: Import the helper functions we created ---
+from src.core.database import check_db_health, connect_db, disconnect_db
+
 from .config import get_settings
 from .core.cache import cache
-
-# --- CHANGED: Import the helper functions we created ---
-from src.core.database import db, connect_db, disconnect_db, check_db_health
-
 from .core.websocket import manager as websocket_manager
 from .dependencies import SettingsDep
 from .exceptions import (

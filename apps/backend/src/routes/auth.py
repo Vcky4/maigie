@@ -1,7 +1,6 @@
 """Authentication routes."""
 
 import secrets
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -13,7 +12,6 @@ from ..core.security import (
     create_refresh_token,
     decode_refresh_token,
     get_password_hash,
-    verify_password,
 )
 from ..dependencies import CurrentUserTokenDep, SettingsDep
 from ..exceptions import AuthenticationError

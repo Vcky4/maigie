@@ -3,7 +3,6 @@
 import asyncio
 import json
 import sys
-from datetime import datetime
 from pathlib import Path
 
 # Add src to path for imports
@@ -66,7 +65,7 @@ async def test_heartbeat():
             else:
                 print(f"❌ Unexpected heartbeat response: {data}")
                 return False
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("❌ Heartbeat timeout - no response received")
         return False
     except Exception as e:
@@ -108,7 +107,7 @@ async def test_channel_subscription():
                     and data.get("status") == "unsubscribed"
                     and data.get("channel") == channel
                 ):
-                    print(f"✅ Channel unsubscription works")
+                    print("✅ Channel unsubscription works")
                     return True
                 else:
                     print(f"❌ Unsubscription failed: {data}")
@@ -116,7 +115,7 @@ async def test_channel_subscription():
             else:
                 print(f"❌ Subscription failed: {data}")
                 return False
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("❌ Subscription timeout - no response received")
         return False
     except Exception as e:
