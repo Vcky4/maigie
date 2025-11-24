@@ -188,7 +188,6 @@ print()
 print("5. Authentication Dependencies")
 print("-" * 60)
 try:
-
     check("✓ get_current_user_token function available", True)
     check("✓ get_current_user_id function available", True)
     check("✓ CurrentUserTokenDep dependency available", True)
