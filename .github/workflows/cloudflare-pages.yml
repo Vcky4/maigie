@@ -1,0 +1,66 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+      - development
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build with Nx
+        run: npx nx build web
+
+      - name: Determine project name
+        id: project
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            # For PRs, use the base branch to determine project
+            BASE_BRANCH="${{ github.base_ref }}"
+            if [ "$BASE_BRANCH" == "main" ]; then
+              echo "name=maigie-web-prod" >> $GITHUB_OUTPUT
+            else
+              echo "name=maigie-web-dev" >> $GITHUB_OUTPUT
+            fi
+          else
+            # For pushes, use the current branch
+            BRANCH="${{ github.ref_name }}"
+            if [ "$BRANCH" == "main" ]; then
+              echo "name=maigie-web-prod" >> $GITHUB_OUTPUT
+            else
+              echo "name=maigie-web-dev" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: ${{ steps.project.outputs.name }}
+          directory: dist/apps/web
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          # For PRs, this creates preview deployments
+          # For pushes, this deploys to the branch
+
