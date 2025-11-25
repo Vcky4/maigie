@@ -1,0 +1,56 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [ "development", "main", "feature/**" ]
+    paths:
+      - 'apps/backend/**'
+  pull_request:
+    branches: [ "development" ]
+    paths:
+      - 'apps/backend/**'
+
+defaults:
+  run:
+    working-directory: ./apps/backend
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install Poetry
+      run: |
+        curl -sSL https://install.python-poetry.org | python3 -
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+    - name: Install Dependencies
+      run: poetry install --no-root
+    - name: Run Linting
+      run: |
+        poetry run black . --check
+        poetry run flake8 .
+    - name: Generate Prisma Client
+      run: poetry run prisma generate
+      env:
+        DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
+    - name: Run Tests
+      run: poetry run pytest
+      env:
+        DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db

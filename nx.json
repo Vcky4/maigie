@@ -34,13 +34,6 @@
       }
     },
     {
-      "plugin": "@nx/vitest",
-      "options": {
-        "testTargetName": "test",
-        "ciTargetName": "test-ci"
-      }
-    },
-    {
       "plugin": "@nx/eslint/plugin",
       "options": {
         "targetName": "lint"
@@ -70,6 +63,11 @@
       "cache": true,
       "dependsOn": ["^build"],
       "inputs": ["default", "^default"]
+    },
+    "nx:run-commands": {
+      "options": {
+        "forwardAllArgs": false
+      }
     }
   }
 }
