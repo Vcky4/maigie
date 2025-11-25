@@ -29,23 +29,19 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
-
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+
+# --- Import the database helper functions ---
+from src.core.database import check_db_health, connect_db, disconnect_db
 
 from .config import get_settings
 from .core.cache import cache
-from .utils.logging_config import configure_logging
-
-# --- Import the database helper functions ---
-from src.core.database import connect_db, disconnect_db, check_db_health
-
 from .core.websocket import manager as websocket_manager
-from .workers.manager import check_worker_health
 from .dependencies import SettingsDep
 from .exceptions import (
     AppException,
@@ -54,14 +50,6 @@ from .exceptions import (
 )
 from .middleware import LoggingMiddleware, SecurityHeadersMiddleware
 from .models.error_response import ErrorResponse
-from .utils.dependencies import (
-    cleanup_db_client,
-    close_redis_client,
-    get_db_client,
-    get_redis_client,
-    initialize_redis_client,
-)
-from .utils.exceptions import InternalServerError, MaigieError
 from .routes.ai import router as ai_router
 from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
@@ -70,6 +58,16 @@ from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
+from .utils.dependencies import (
+    cleanup_db_client,
+    close_redis_client,
+    get_db_client,
+    get_redis_client,
+    initialize_redis_client,
+)
+from .utils.exceptions import InternalServerError, MaigieError
+from .utils.logging_config import configure_logging
+from .workers.manager import check_worker_health
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -82,22 +80,22 @@ logger = logging.getLogger(__name__)
 async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONResponse:
     """
     Global exception handler for all MaigieError exceptions.
-    
+
     Converts MaigieError instances into standardized ErrorResponse format.
     This ensures consistent error responses across the entire application.
-    
+
     Args:
         request: The incoming request
         exc: The MaigieError exception
-        
+
     Returns:
         JSONResponse with standardized error format
     """
     settings = get_settings()
-    
+
     # Determine if this is a 500-level error (critical)
     is_server_error = exc.status_code >= 500
-    
+
     # Log with appropriate level and full context
     log_context = {
         "error_code": exc.code,
@@ -107,7 +105,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
         "method": request.method,
         "user_agent": request.headers.get("user-agent"),
     }
-    
+
     if is_server_error:
         # For 500-level errors, log at ERROR level with full traceback
         logger.error(
@@ -118,7 +116,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
                 "traceback": traceback.format_exc(),
             }
         )
-        
+
         # Capture to Sentry for 500-level errors
         sentry_sdk.capture_exception(exc)
     else:
@@ -127,7 +125,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
             f"MaigieError: {exc.code} - {exc.message}",
             extra=log_context
         )
-    
+
     # Create error response
     error_response = ErrorResponse(
         status_code=exc.status_code,
@@ -135,7 +133,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
         message=exc.message,
         detail=exc.detail if settings.DEBUG else None,  # Hide details in production
     )
-    
+
     # Log the error
     logger.warning(
         f"MaigieError: {exc.code} - {exc.message}",
@@ -146,7 +144,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
             "path": request.url.path,
         }
     )
-    
+
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response.model_dump(exclude_none=True),
@@ -159,22 +157,22 @@ async def validation_error_handler(
 ) -> JSONResponse:
     """
     Global exception handler for FastAPI/Pydantic validation errors.
-    
+
     Reformats RequestValidationError into standardized ErrorResponse format.
     Provides clear, user-friendly messages for validation failures.
-    
+
     Args:
         request: The incoming request
         exc: The validation error
-        
+
     Returns:
         JSONResponse with standardized error format
     """
     settings = get_settings()
-    
+
     # Extract validation error details
     errors = exc.errors()
-    
+
     # Create user-friendly message
     if len(errors) == 1:
         error = errors[0]
@@ -182,19 +180,19 @@ async def validation_error_handler(
         message = f"Validation error in field '{field}': {error['msg']}"
     else:
         message = f"Request validation failed with {len(errors)} error(s)"
-    
+
     # Format details
     detail = None
     if settings.DEBUG:
         detail = str(errors)
-    
+
     error_response = ErrorResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         code="VALIDATION_ERROR",
         message=message,
         detail=detail,
     )
-    
+
     logger.info(
         f"Validation error: {message}",
         extra={
@@ -202,7 +200,7 @@ async def validation_error_handler(
             "path": request.url.path,
         }
     )
-    
+
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content=error_response.model_dump(exclude_none=True),
@@ -215,15 +213,15 @@ async def unhandled_exception_handler(
 ) -> JSONResponse:
     """
     Global exception handler for all unhandled exceptions.
-    
+
     This is the safety net that catches any unexpected errors.
     Logs the full traceback for debugging but returns a generic
     error to the client to avoid leaking internal implementation details.
-    
+
     Args:
         request: The incoming request
         exc: The unhandled exception
-        
+
     Returns:
         JSONResponse with generic error message
     """
@@ -236,17 +234,17 @@ async def unhandled_exception_handler(
         "user_agent": request.headers.get("user-agent"),
         "traceback": traceback.format_exc(),
     }
-    
+
     # Log the full traceback at ERROR level with structured data
     logger.error(
         f"Unhandled exception: {type(exc).__name__}: {str(exc)}",
         exc_info=True,
         extra=log_context
     )
-    
+
     # Capture to Sentry for all unhandled exceptions
     sentry_sdk.capture_exception(exc)
-    
+
     # Log the full traceback for debugging
     logger.error(
         f"Unhandled exception: {str(exc)}",
@@ -257,7 +255,7 @@ async def unhandled_exception_handler(
             "traceback": traceback.format_exc(),
         }
     )
-    
+
     # Create generic error response (don't leak internal details)
     error_response = ErrorResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -265,7 +263,7 @@ async def unhandled_exception_handler(
         message="An internal server error occurred. Please try again later.",
         detail=None,  # Never expose internal details to clients
     )
-    
+
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content=error_response.model_dump(exclude_none=True),
@@ -281,11 +279,11 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Initialize structured logging FIRST (before any logging occurs)
     configure_logging()
-    
+
     # Startup
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-    
+
     # Initialize Sentry error tracking
     sentry_dsn = settings.SENTRY_DSN
     if sentry_dsn and sentry_dsn.strip():  # Check if DSN is not empty
@@ -318,7 +316,7 @@ async def lifespan(app: FastAPI):
         # Check if .env file exists to give better error message
         env_file_path = Path(__file__).parent.parent / ".env"
         env_file_exists = env_file_path.exists()
-        
+
         logger.warning(
             "Sentry DSN not configured - error tracking disabled",
             extra={
@@ -335,16 +333,10 @@ async def lifespan(app: FastAPI):
     # Connect to cache (legacy placeholder - kept for compatibility)
     await cache.connect()
     logger.info("Legacy cache connection initialized")
-    await db.connect()
-    print("Legacy database connection initialized")
 
-    # Connect to cache (legacy placeholder - kept for compatibility)
-    await cache.connect()
-    print("Legacy cache connection initialized")
-    
     # Initialize new dependency injection system
     # Prisma client will be initialized on first use via get_db_client()
-    
+
     # Initialize Redis client for dependency injection
     await initialize_redis_client()
     logger.info("Redis client initialized for dependency injection")
@@ -371,13 +363,13 @@ async def lifespan(app: FastAPI):
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
     logger.info(f"Disconnected {connection_count} WebSocket connection(s)")
-    
+
     # Cleanup new dependency injection clients
     await cleanup_db_client()
     await close_redis_client()
     logger.info("Dependency injection clients cleaned up")
     print("Dependency injection clients cleaned up")
-    
+
     # Cleanup legacy connections
     await cache.disconnect()
     await disconnect_db()
@@ -400,7 +392,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(MaigieError, maigie_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
-    
+
     # Legacy exception handlers (for backward compatibility)
     app.add_exception_handler(AppException, app_exception_handler)
 
@@ -433,12 +425,12 @@ def create_app() -> FastAPI:
     async def metrics() -> Response:
         """
         Prometheus metrics endpoint.
-        
+
         Exposes Prometheus metrics in the standard exposition format.
         This endpoint is unsecured and should be accessible for monitoring systems.
         """
-        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-        
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
         return Response(
             content=generate_latest(),
             media_type=CONTENT_TYPE_LATEST,
@@ -452,25 +444,25 @@ def create_app() -> FastAPI:
     ) -> dict[str, str]:
         """
         Multi-service health check endpoint.
-        
+
         Validates connectivity to critical external services:
         - PostgreSQL database (via Prisma)
         - Redis cache
-        
+
         Returns 200 OK if all services are connected, otherwise raises HTTPException.
         """
         from fastapi import HTTPException, status
-        
+
         db_status = "disconnected"
         cache_status = "disconnected"
         errors = []
-        
+
         # Test PostgreSQL/Prisma connectivity with a simple query
         try:
             # Use a simple SELECT 1 query to test database connectivity
             # This is the standard way to verify database connection
             result = await db_client.query_raw("SELECT 1 as test")
-            
+
             # Verify we got a result back
             if result and len(result) > 0:
                 db_status = "connected"
@@ -478,14 +470,14 @@ def create_app() -> FastAPI:
                 errors.append("Database error: No response from database")
         except Exception as e:
             errors.append(f"Database error: {str(e)}")
-        
+
         # Test Redis connectivity
         try:
             await redis_client.ping()
             cache_status = "connected"
         except Exception as e:
             errors.append(f"Cache error: {str(e)}")
-        
+
         # Return error if any service is down
         if db_status != "connected" or cache_status != "connected":
             raise HTTPException(
@@ -497,7 +489,7 @@ def create_app() -> FastAPI:
                     "errors": errors,
                 },
             )
-        
+
         return {
             "status": "OK",
             "db": db_status,
@@ -522,17 +514,17 @@ def create_app() -> FastAPI:
     # Include routers
     # Authentication router
     app.include_router(auth_router)
-    
+
     # Core API routers
     app.include_router(ai_router)
     app.include_router(courses_router)
     app.include_router(goals_router)
     app.include_router(schedule_router)
     app.include_router(resources_router)
-    
+
     # Real-time communication router
     app.include_router(realtime_router)
-    
+
     # Example/demonstration endpoints
     app.include_router(examples_router)
 

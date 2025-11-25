@@ -23,16 +23,16 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 Usage:
     ```python
     from .core.cache import cache
-    
+
     # Basic operations
     await cache.set("user:123", {"name": "John"}, expire=3600)
     user = await cache.get("user:123")
     await cache.delete("user:123")
-    
+
     # Using key prefixing
     key = cache.make_key(["user", "123", "profile"])
     # Returns: "maigie:user:123:profile"
-    
+
     # Common utilities
     exists = await cache.exists("user:123")
     await cache.expire("user:123", 3600)
@@ -48,7 +48,11 @@ from typing import Any
 import redis.asyncio as redis
 from redis.exceptions import (
     ConnectionError as RedisConnectionError,
+)
+from redis.exceptions import (
     RedisError,
+)
+from redis.exceptions import (
     TimeoutError as RedisTimeoutError,
 )
 
@@ -159,13 +163,13 @@ class Cache:
         Returns:
             Bytes representation suitable for Redis storage
         """
-        if isinstance(value, (bytes, bytearray)):
+        if isinstance(value, bytes | bytearray):
             return bytes(value)
-        if isinstance(value, (dict, list, tuple)):
+        if isinstance(value, dict | list | tuple):
             return json.dumps(value).encode("utf-8")
         if isinstance(value, str):
             return value.encode("utf-8")
-        if isinstance(value, (int, float, bool)) or value is None:
+        if isinstance(value, int | float | bool) or value is None:
             return json.dumps(value).encode("utf-8")
         # For other types, try JSON serialization
         return json.dumps(value, default=str).encode("utf-8")

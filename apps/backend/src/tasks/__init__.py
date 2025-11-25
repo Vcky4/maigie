@@ -39,9 +39,9 @@ from .retry import (
 from .schedules import (
     DAILY_AT_8AM,
     DAILY_AT_MIDNIGHT,
+    EVERY_5_MINUTES,
     EVERY_15_MINUTES,
     EVERY_30_MINUTES,
-    EVERY_5_MINUTES,
     HOURLY,
     get_periodic_tasks,
     register_periodic_task,

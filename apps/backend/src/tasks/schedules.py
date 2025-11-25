@@ -19,7 +19,8 @@ Usage:
 """
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from celery.schedules import crontab, schedule
 from celery.utils.log import get_task_logger

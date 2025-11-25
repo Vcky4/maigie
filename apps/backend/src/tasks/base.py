@@ -16,8 +16,9 @@ Usage:
 """
 
 import logging
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 from celery import Task
 from celery.exceptions import Retry

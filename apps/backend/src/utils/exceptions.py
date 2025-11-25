@@ -25,27 +25,27 @@ from fastapi import status
 class MaigieError(Exception):
     """
     Base exception class for all Maigie application errors.
-    
+
     All custom business logic exceptions should inherit from this class.
     This allows for centralized exception handling and consistent error responses.
-    
+
     Attributes:
         message: User-friendly error message
         status_code: HTTP status code for the error
         code: Application-specific error code for programmatic handling
         detail: Optional internal details for debugging
     """
-    
+
     def __init__(
         self,
         message: str,
         status_code: int,
         code: str,
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ):
         """
         Initialize a Maigie error.
-        
+
         Args:
             message: User-friendly error message
             status_code: HTTP status code
@@ -62,25 +62,25 @@ class MaigieError(Exception):
 class SubscriptionLimitError(MaigieError):
     """
     Raised when a Basic User attempts to access a Premium feature.
-    
+
     Examples of Premium features:
     - Voice AI sessions
     - Unlimited courses (Basic users limited to 5 courses)
     - Advanced AI features
     - Priority support
-    
+
     HTTP Status: 403 Forbidden
     Error Code: SUBSCRIPTION_LIMIT_EXCEEDED
     """
-    
+
     def __init__(
         self,
         message: str = "This feature requires a Premium subscription",
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ):
         """
         Initialize a subscription limit error.
-        
+
         Args:
             message: User-friendly error message
             detail: Optional internal details (e.g., which feature was attempted)
@@ -96,27 +96,27 @@ class SubscriptionLimitError(MaigieError):
 class ResourceNotFoundError(MaigieError):
     """
     Raised when a requested resource is not found.
-    
+
     This applies to any database entity that cannot be located:
     - Course not found
     - Goal not found
     - Schedule block not found
     - User not found
     - etc.
-    
+
     HTTP Status: 404 Not Found
     Error Code: RESOURCE_NOT_FOUND
     """
-    
+
     def __init__(
         self,
         resource_type: str,
-        resource_id: Optional[str] = None,
-        detail: Optional[str] = None,
+        resource_id: str | None = None,
+        detail: str | None = None,
     ):
         """
         Initialize a resource not found error.
-        
+
         Args:
             resource_type: Type of resource (e.g., "Course", "Goal", "Schedule")
             resource_id: Optional ID of the resource that wasn't found
@@ -126,7 +126,7 @@ class ResourceNotFoundError(MaigieError):
             message = f"{resource_type} with ID '{resource_id}' not found"
         else:
             message = f"{resource_type} not found"
-        
+
         super().__init__(
             message=message,
             status_code=status.HTTP_404_NOT_FOUND,
@@ -138,24 +138,24 @@ class ResourceNotFoundError(MaigieError):
 class InternalServerError(MaigieError):
     """
     A catch-all exception for unexpected failures.
-    
+
     This should be used when an unexpected error occurs that doesn't
     fit into other specific error categories. The actual error details
     should be logged server-side, but only a generic message is sent
     to the client.
-    
+
     HTTP Status: 500 Internal Server Error
     Error Code: INTERNAL_SERVER_ERROR
     """
-    
+
     def __init__(
         self,
         message: str = "An internal server error occurred",
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ):
         """
         Initialize an internal server error.
-        
+
         Args:
             message: User-friendly error message (keep generic)
             detail: Internal details for logging (not sent to client in production)
@@ -171,15 +171,15 @@ class InternalServerError(MaigieError):
 class UnauthorizedError(MaigieError):
     """
     Raised when authentication is required but not provided or invalid.
-    
+
     HTTP Status: 401 Unauthorized
     Error Code: UNAUTHORIZED
     """
-    
+
     def __init__(
         self,
         message: str = "Authentication required",
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ):
         """Initialize an unauthorized error."""
         super().__init__(
@@ -193,15 +193,15 @@ class UnauthorizedError(MaigieError):
 class ForbiddenError(MaigieError):
     """
     Raised when user is authenticated but lacks permission for the action.
-    
+
     HTTP Status: 403 Forbidden
     Error Code: FORBIDDEN
     """
-    
+
     def __init__(
         self,
         message: str = "You don't have permission to perform this action",
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ):
         """Initialize a forbidden error."""
         super().__init__(
@@ -215,15 +215,15 @@ class ForbiddenError(MaigieError):
 class ValidationError(MaigieError):
     """
     Raised when request data validation fails.
-    
+
     HTTP Status: 422 Unprocessable Entity
     Error Code: VALIDATION_ERROR
     """
-    
+
     def __init__(
         self,
         message: str = "Request validation failed",
-        detail: Optional[str] = None,
+        detail: str | None = None,
     ):
         """Initialize a validation error."""
         super().__init__(

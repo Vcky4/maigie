@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     OAUTH_GITHUB_CLIENT_SECRET: str = ""
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
 
-    # Database 
+    # Database
     DATABASE_URL: str = ""
 
     # Redis Cache
@@ -156,7 +156,7 @@ def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
     return f"{redis_url}/{db_number}"
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
     settings = Settings()

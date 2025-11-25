@@ -65,20 +65,20 @@ class PlanRequest(BaseModel):
 @router.post("/ai/voice-session")
 async def example_voice_session(
     request: VoiceSessionRequest,
-    x_user_subscription: Optional[str] = Header(None, alias="X-User-Subscription")
+    x_user_subscription: str | None = Header(None, alias="X-User-Subscription")
 ):
     """
     🧪 **EXAMPLE ENDPOINT** - Demonstrates SubscriptionLimitError
-    
+
     This endpoint shows how to properly implement subscription tier checking
     and raise `SubscriptionLimitError` when a Basic user attempts to access
     a Premium feature.
-    
+
     **How to Test:**
     - Send with header `X-User-Subscription: basic` → Returns 403 Forbidden
     - Send with header `X-User-Subscription: premium` → Returns 200 OK
     - Send without header → Returns 403 Forbidden (defaults to basic)
-    
+
     **Example Usage:**
     ```bash
     # Should fail with 403
@@ -86,14 +86,14 @@ async def example_voice_session(
       -H "Content-Type: application/json" \\
       -H "X-User-Subscription: basic" \\
       -d '{"session_type": "conversation"}'
-    
+
     # Should succeed with 200
     curl -X POST http://localhost:8000/api/v1/examples/ai/voice-session \\
       -H "Content-Type: application/json" \\
       -H "X-User-Subscription: premium" \\
       -d '{"session_type": "conversation"}'
     ```
-    
+
     **Error Response Format:**
     ```json
     {
@@ -102,14 +102,14 @@ async def example_voice_session(
         "message": "Voice AI sessions require a Premium subscription"
     }
     ```
-    
+
     Args:
         request: Voice session configuration
         x_user_subscription: User subscription tier (demo purposes)
-        
+
     Raises:
         SubscriptionLimitError: If user doesn't have Premium subscription
-        
+
     Returns:
         Success message if user has Premium subscription
     """
@@ -120,7 +120,7 @@ async def example_voice_session(
             message="Voice AI sessions require a Premium subscription",
             detail=f"User attempted Voice AI with subscription: {x_user_subscription or 'basic'}"
         )
-    
+
     return {
         "message": "Voice session started (example response)",
         "session_type": request.session_type,
@@ -132,19 +132,19 @@ async def example_voice_session(
 @router.post("/ai/create-plan")
 async def example_create_plan(
     request: PlanRequest,
-    x_user_id: Optional[str] = Header(None, alias="X-User-ID")
+    x_user_id: str | None = Header(None, alias="X-User-ID")
 ):
     """
     🧪 **EXAMPLE ENDPOINT** - Demonstrates ResourceNotFoundError (User)
-    
+
     This endpoint shows how to properly check if a resource exists and
     raise `ResourceNotFoundError` when it doesn't.
-    
+
     **How to Test:**
     - Send with header `X-User-ID: unknown` → Returns 404 Not Found
     - Send with any other ID → Returns 200 OK
     - Send without header → Returns 200 OK
-    
+
     **Example Usage:**
     ```bash
     # Should fail with 404
@@ -152,14 +152,14 @@ async def example_create_plan(
       -H "Content-Type: application/json" \\
       -H "X-User-ID: unknown" \\
       -d '{"goal": "Learn Python", "duration_weeks": 8}'
-    
+
     # Should succeed with 200
     curl -X POST http://localhost:8000/api/v1/examples/ai/create-plan \\
       -H "Content-Type: application/json" \\
       -H "X-User-ID: user123" \\
       -d '{"goal": "Learn Python", "duration_weeks": 8}'
     ```
-    
+
     **Error Response Format:**
     ```json
     {
@@ -168,14 +168,14 @@ async def example_create_plan(
         "message": "User with ID 'unknown' not found"
     }
     ```
-    
+
     Args:
         request: Plan creation parameters
         x_user_id: User ID from header (demo purposes)
-        
+
     Raises:
         ResourceNotFoundError: If user profile not found
-        
+
     Returns:
         Success message with plan details
     """
@@ -187,7 +187,7 @@ async def example_create_plan(
             resource_id=x_user_id,
             detail="User profile must exist to create personalized plan"
         )
-    
+
     return {
         "message": "Study plan created (example response)",
         "goal": request.goal,
@@ -200,23 +200,23 @@ async def example_create_plan(
 async def example_process_course(course_id: str):
     """
     🧪 **EXAMPLE ENDPOINT** - Demonstrates ResourceNotFoundError (Course)
-    
+
     This endpoint shows how to properly validate path parameters and
     raise `ResourceNotFoundError` when a resource doesn't exist.
-    
+
     **How to Test:**
     - Use `course_id=nonexistent` → Returns 404 Not Found
     - Use any other course ID → Returns 200 OK
-    
+
     **Example Usage:**
     ```bash
     # Should fail with 404
     curl http://localhost:8000/api/v1/examples/ai/process/nonexistent
-    
+
     # Should succeed with 200
     curl http://localhost:8000/api/v1/examples/ai/process/course123
     ```
-    
+
     **Error Response Format:**
     ```json
     {
@@ -225,13 +225,13 @@ async def example_process_course(course_id: str):
         "message": "Course with ID 'nonexistent' not found"
     }
     ```
-    
+
     Args:
         course_id: ID of the course to process
-        
+
     Raises:
         ResourceNotFoundError: If course doesn't exist
-        
+
     Returns:
         Success message with processing status
     """
@@ -243,7 +243,7 @@ async def example_process_course(course_id: str):
             resource_id=course_id,
             detail="Course must exist before AI processing"
         )
-    
+
     return {
         "message": "Course processing started (example response)",
         "course_id": course_id,
@@ -256,23 +256,23 @@ async def example_process_course(course_id: str):
 async def test_internal_server_error():
     """
     🧪 **LOGGING TEST ENDPOINT** - Triggers InternalServerError (500)
-    
+
     This endpoint deliberately raises an InternalServerError to demonstrate:
     - Structured JSON logging at ERROR level
     - Full traceback in log output
     - Sentry error tracking (if configured)
     - Generic error response to client
-    
+
     **Expected Behavior:**
     1. Console shows JSON-formatted log with full traceback
     2. Sentry receives error event (if SENTRY_DSN is set)
     3. Client receives generic 500 error response
-    
+
     **Example Usage:**
     ```bash
     curl -X POST http://localhost:8000/api/v1/examples/test/error-500
     ```
-    
+
     **Expected Response:**
     ```json
     {
@@ -281,13 +281,13 @@ async def test_internal_server_error():
         "message": "An internal server error occurred. Please try again later."
     }
     ```
-    
+
     **Check Logs For:**
     - JSON-formatted error log
     - Full traceback information
     - Request context (path, method, user-agent)
     - Error code and status code
-    
+
     Raises:
         InternalServerError: Always raised for testing
     """
@@ -299,7 +299,7 @@ async def test_internal_server_error():
             "endpoint": "/api/v1/examples/test/error-500"
         }
     )
-    
+
     # Raise InternalServerError to test logging
     raise InternalServerError(
         message="This is a test error for logging demonstration",
@@ -311,23 +311,23 @@ async def test_internal_server_error():
 async def test_unhandled_exception():
     """
     🧪 **LOGGING TEST ENDPOINT** - Triggers unhandled exception
-    
+
     This endpoint deliberately raises an unhandled Python exception to demonstrate:
     - Structured JSON logging for unexpected errors
     - Full traceback in log output
     - Sentry error tracking (if configured)
     - Generic 500 error response to client
-    
+
     **Expected Behavior:**
     1. Console shows JSON-formatted log with exception details
     2. Sentry receives error event (if SENTRY_DSN is set)
     3. Client receives generic 500 error response
-    
+
     **Example Usage:**
     ```bash
     curl -X POST http://localhost:8000/api/v1/examples/test/unhandled-exception
     ```
-    
+
     **Expected Response:**
     ```json
     {
@@ -336,13 +336,13 @@ async def test_unhandled_exception():
         "message": "An internal server error occurred. Please try again later."
     }
     ```
-    
+
     **Check Logs For:**
     - JSON-formatted error log
     - Exception type (ZeroDivisionError)
     - Full traceback
     - Request context
-    
+
     Raises:
         ZeroDivisionError: Simulated unhandled exception
     """
@@ -354,7 +354,7 @@ async def test_unhandled_exception():
             "endpoint": "/api/v1/examples/test/unhandled-exception"
         }
     )
-    
+
     # Trigger unhandled exception
     result = 1 / 0  # This will raise ZeroDivisionError
     return {"result": result}  # This line is never reached
@@ -364,22 +364,22 @@ async def test_unhandled_exception():
 async def test_structured_logging():
     """
     🧪 **LOGGING TEST ENDPOINT** - Demonstrates structured logging
-    
+
     This endpoint demonstrates structured logging with rich context:
     - Multiple log levels
     - Custom fields via 'extra' parameter
     - JSON-formatted output
-    
+
     **Expected Behavior:**
     1. Multiple JSON log entries with different levels
     2. Custom fields included in JSON output
     3. Successful response returned to client
-    
+
     **Example Usage:**
     ```bash
     curl -X POST http://localhost:8000/api/v1/examples/test/structured-logging
     ```
-    
+
     **Expected Response:**
     ```json
     {
@@ -388,18 +388,18 @@ async def test_structured_logging():
         "note": "Check console for JSON-formatted log entries"
     }
     ```
-    
+
     **Check Logs For:**
     - DEBUG level log with query timing
     - INFO level log with user action
     - WARNING level log with performance issue
     - All logs in JSON format with custom fields
-    
+
     Returns:
         Success response with test results
     """
     # Simulate various logging scenarios
-    
+
     # 1. Debug log with database query context
     logger.debug(
         "Database query executed",
@@ -410,7 +410,7 @@ async def test_structured_logging():
             "test": True,
         }
     )
-    
+
     # 2. Info log with user action
     logger.info(
         "User action completed successfully",
@@ -422,7 +422,7 @@ async def test_structured_logging():
             "test": True,
         }
     )
-    
+
     # 3. Warning log with performance issue
     logger.warning(
         "Slow operation detected",
@@ -433,7 +433,7 @@ async def test_structured_logging():
             "test": True,
         }
     )
-    
+
     # 4. Info log with API call context
     logger.info(
         "External API call completed",
@@ -445,7 +445,7 @@ async def test_structured_logging():
             "test": True,
         }
     )
-    
+
     return {
         "message": "Structured logging test completed",
         "logs_generated": 4,
@@ -458,7 +458,7 @@ async def test_structured_logging():
 async def examples_info():
     """
     Get information about available example endpoints.
-    
+
     Returns a list of all example endpoints and their purposes.
     """
     return {
