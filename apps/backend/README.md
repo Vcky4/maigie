@@ -76,6 +76,105 @@ This will:
    poetry run uvicorn src.main:app --reload
    ```
 
+6. **Start background workers** (optional, for async task processing):
+   ```bash
+   # Start Celery worker (processes background tasks)
+   bash scripts/start-worker.sh
+   # or on Windows:
+   powershell -ExecutionPolicy Bypass -File scripts/start-worker.ps1
+
+   # Start Celery Beat (scheduler for periodic tasks)
+   bash scripts/start-beat.sh
+   # or on Windows:
+   powershell -ExecutionPolicy Bypass -File scripts/start-beat.ps1
+   ```
+
+## Background Workers
+
+The backend uses Celery for background task processing. Workers run independently from the main API server.
+
+### Starting Workers
+
+**Worker** (processes background tasks):
+```bash
+# Linux/Mac
+bash scripts/start-worker.sh
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/start-worker.ps1
+
+# With custom options
+bash scripts/start-worker.sh --queue default --concurrency 4 --loglevel info
+```
+
+**Beat Scheduler** (runs periodic/scheduled tasks):
+```bash
+# Linux/Mac
+bash scripts/start-beat.sh
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/start-beat.ps1
+```
+
+### Creating Tasks
+
+Use the task framework to create background tasks:
+
+```python
+from src.tasks import task, register_task
+
+@register_task(
+    name="my_feature.process_data",
+    description="Processes user data",
+    category="my_feature",
+)
+@task(name="my_feature.process_data", max_retries=3)
+def process_data(data: dict) -> dict:
+    # Task implementation
+    return {"status": "completed"}
+```
+
+### Task Patterns
+
+**With retry on specific exceptions:**
+```python
+from src.tasks import task, retry_on_exception
+
+@task(bind=True, max_retries=5)
+@retry_on_exception((ConnectionError, TimeoutError), max_retries=5)
+def fetch_external_data(self, url: str):
+    # Will automatically retry on connection errors
+    pass
+```
+
+**Scheduled periodic tasks:**
+```python
+from src.tasks.schedules import register_periodic_task, DAILY_AT_MIDNIGHT
+from celery.schedules import crontab
+
+@register_periodic_task(
+    name="daily_cleanup",
+    schedule=DAILY_AT_MIDNIGHT,  # or crontab(hour=2, minute=0)
+)
+@task(name="daily_cleanup")
+def cleanup_old_data():
+    # Runs daily at midnight
+    pass
+```
+
+**Checking task status:**
+```python
+from src.tasks.utils import get_task_status, get_task_result
+
+# Get task status
+status = get_task_status(task_id)
+
+# Get task result (waits if not ready)
+result = get_task_result(task_id, timeout=30)
+```
+
+See `src/tasks/examples.py` for more usage patterns.
+
 ## Verify Application Setup
 
 To verify that the Application Setup requirements are met:
@@ -144,9 +243,17 @@ poetry run pytest
   - `models/error_response.py` - Standardized error response model
   - `models/websocket.py` - WebSocket message models
 - `src/db/` - Database connection and migrations
-- `src/tasks/` - Background tasks (Celery/Dramatiq)
+- `src/tasks/` - Background tasks framework (Celery)
+  - `tasks/base.py` - Base task classes and decorators
+  - `tasks/retry.py` - Retry mechanism framework
+  - `tasks/failure.py` - Failed job handling
+  - `tasks/schedules.py` - Scheduled task infrastructure
+  - `tasks/registry.py` - Task registry and discovery
+  - `tasks/utils.py` - Task utilities (status, results, queue management)
+  - `tasks/examples.py` - Example task implementations (reference only)
 - `src/ai_client/` - LLM and embeddings clients
-- `src/workers/` - Async workers
+- `src/workers/` - Worker management utilities
+  - `workers/manager.py` - Worker health checks and monitoring
 - `src/utils/` - Utility functions
   - `utils/exceptions.py` - Custom business logic exceptions (SubscriptionLimitError, ResourceNotFoundError, etc.)
 
@@ -369,4 +476,16 @@ See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
 - `REDIS_KEY_PREFIX` - Prefix for all cache keys (default: `maigie:`)
 - `REDIS_SOCKET_TIMEOUT` - Redis socket timeout in seconds (default: 5)
 - `REDIS_SOCKET_CONNECT_TIMEOUT` - Redis connection timeout in seconds (default: 5)
+- `CELERY_BROKER_URL` - Celery broker URL (auto-generated from REDIS_URL, uses DB 1)
+- `CELERY_RESULT_BACKEND` - Celery result backend URL (auto-generated from REDIS_URL, uses DB 2)
+- `CELERY_TASK_SERIALIZER` - Task serialization format (default: `json`)
+- `CELERY_RESULT_SERIALIZER` - Result serialization format (default: `json`)
+- `CELERY_TIMEZONE` - Timezone for scheduled tasks (default: `UTC`)
+- `CELERY_TASK_ALWAYS_EAGER` - Run tasks synchronously (default: `false`, set to `true` for testing)
+- `CELERY_BROKER_URL` - Celery broker URL (auto-generated from REDIS_URL, uses DB 1)
+- `CELERY_RESULT_BACKEND` - Celery result backend URL (auto-generated from REDIS_URL, uses DB 2)
+- `CELERY_TASK_SERIALIZER` - Task serialization format (default: `json`)
+- `CELERY_RESULT_SERIALIZER` - Result serialization format (default: `json`)
+- `CELERY_TIMEZONE` - Timezone for scheduled tasks (default: `UTC`)
+- `CELERY_TASK_ALWAYS_EAGER` - Run tasks synchronously (default: `false`, set to `true` for testing)
 

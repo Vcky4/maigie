@@ -79,6 +79,45 @@ class AuthorizationError(AppException):
         )
 
 
+class TaskError(Exception):
+    """Base exception for task-related errors."""
+
+    def __init__(self, message: str, task_id: str | None = None, details: dict[str, Any] | None = None):
+        self.message = message
+        self.task_id = task_id
+        self.details = details or {}
+        super().__init__(self.message)
+
+
+class TaskRetryError(TaskError):
+    """Exception indicating a task should be retried."""
+
+    def __init__(
+        self,
+        message: str = "Task failed and should be retried",
+        task_id: str | None = None,
+        retry_after: int | None = None,
+        details: dict[str, Any] | None = None,
+    ):
+        self.retry_after = retry_after
+        super().__init__(message, task_id, details)
+
+
+class TaskFailedError(TaskError):
+    """Exception indicating a task has permanently failed."""
+
+    def __init__(self, message: str = "Task failed permanently", task_id: str | None = None, details: dict[str, Any] | None = None):
+        super().__init__(message, task_id, details)
+
+
+class TaskTimeoutError(TaskError):
+    """Exception indicating a task has timed out."""
+
+    def __init__(self, message: str = "Task execution timed out", task_id: str | None = None, timeout: int | None = None, details: dict[str, Any] | None = None):
+        self.timeout = timeout
+        super().__init__(message, task_id, details)
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     """Global exception handler for AppException."""
     return JSONResponse(

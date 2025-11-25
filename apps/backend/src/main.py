@@ -45,6 +45,7 @@ from .utils.logging_config import configure_logging
 from src.core.database import connect_db, disconnect_db, check_db_health
 
 from .core.websocket import manager as websocket_manager
+from .workers.manager import check_worker_health
 from .dependencies import SettingsDep
 from .exceptions import (
     AppException,
@@ -133,6 +134,17 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
         code=exc.code,
         message=exc.message,
         detail=exc.detail if settings.DEBUG else None,  # Hide details in production
+    )
+    
+    # Log the error
+    logger.warning(
+        f"MaigieError: {exc.code} - {exc.message}",
+        extra={
+            "error_code": exc.code,
+            "status_code": exc.status_code,
+            "detail": exc.detail,
+            "path": request.url.path,
+        }
     )
     
     return JSONResponse(
@@ -235,6 +247,17 @@ async def unhandled_exception_handler(
     # Capture to Sentry for all unhandled exceptions
     sentry_sdk.capture_exception(exc)
     
+    # Log the full traceback for debugging
+    logger.error(
+        f"Unhandled exception: {str(exc)}",
+        exc_info=True,
+        extra={
+            "path": request.url.path,
+            "method": request.method,
+            "traceback": traceback.format_exc(),
+        }
+    )
+    
     # Create generic error response (don't leak internal details)
     error_response = ErrorResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -312,6 +335,12 @@ async def lifespan(app: FastAPI):
     # Connect to cache (legacy placeholder - kept for compatibility)
     await cache.connect()
     logger.info("Legacy cache connection initialized")
+    await db.connect()
+    print("Legacy database connection initialized")
+
+    # Connect to cache (legacy placeholder - kept for compatibility)
+    await cache.connect()
+    print("Legacy cache connection initialized")
     
     # Initialize new dependency injection system
     # Prisma client will be initialized on first use via get_db_client()
@@ -319,6 +348,7 @@ async def lifespan(app: FastAPI):
     # Initialize Redis client for dependency injection
     await initialize_redis_client()
     logger.info("Redis client initialized for dependency injection")
+    print("Redis client initialized for dependency injection")
 
     # --- WebSocket Manager ---
     settings = get_settings()
@@ -346,6 +376,7 @@ async def lifespan(app: FastAPI):
     await cleanup_db_client()
     await close_redis_client()
     logger.info("Dependency injection clients cleaned up")
+    print("Dependency injection clients cleaned up")
     
     # Cleanup legacy connections
     await cache.disconnect()
@@ -473,17 +504,19 @@ def create_app() -> FastAPI:
             "cache": cache_status,
         }
 
-    # Ready check endpoint
+    # Ready check endpoint (includes database, cache, and worker status)
     @app.get("/ready")
     async def ready() -> dict[str, Any]:
         """Readiness check endpoint."""
         db_status = await check_db_health()
         cache_status = await cache.health_check()
+        worker_status = await check_worker_health()
 
         return {
             "status": "ready",
             "database": db_status,
             "cache": cache_status,
+            "workers": worker_status,
         }
 
     # Include routers
