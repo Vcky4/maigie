@@ -17,6 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import logging
 import time
 from collections.abc import Callable
 
@@ -25,14 +26,22 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import get_settings
 
+# Import metrics for Prometheus tracking
+try:
+    from .utils.metrics import REQUEST_COUNTER, REQUEST_LATENCY
+except ImportError:
+    # Metrics not available yet (during initial setup)
+    REQUEST_COUNTER = None
+    REQUEST_LATENCY = None
+
+logger = logging.getLogger(__name__)
+
 
 class LoggingMiddleware(BaseHTTPMiddleware):
-    """Middleware for request/response logging."""
+    """Middleware for request/response logging with structured JSON logging."""
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Log request and response details."""
-        settings = get_settings()
-
+        """Log request and response details with structured JSON logging."""
         # Start timer
         start_time = time.time()
 
@@ -41,14 +50,28 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
         # Calculate duration
         duration = time.time() - start_time
+        response_time_ms = duration * 1000  # Convert to milliseconds
 
-        # Log request (in production, use proper logging library)
-        if settings.DEBUG:
-            print(
-                f"{request.method} {request.url.path} - "
-                f"Status: {response.status_code} - "
-                f"Duration: {duration:.3f}s"
-            )
+        # Extract request details
+        method = request.method
+        path = request.url.path
+        status_code = response.status_code
+
+        # Log structured JSON entry at INFO level
+        logger.info(
+            "HTTP request processed",
+            extra={
+                "method": method,
+                "path": path,
+                "status_code": status_code,
+                "response_time_ms": round(response_time_ms, 2),
+            }
+        )
+
+        # Update Prometheus metrics if available
+        if REQUEST_COUNTER is not None and REQUEST_LATENCY is not None:
+            REQUEST_COUNTER.labels(method=method, path=path).inc()
+            REQUEST_LATENCY.labels(method=method, path=path).observe(duration)
 
         # Add custom headers
         response.headers["X-Process-Time"] = str(duration)

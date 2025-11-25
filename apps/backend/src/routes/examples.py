@@ -22,12 +22,20 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Header
 from pydantic import BaseModel
 
-from ..utils.exceptions import ResourceNotFoundError, SubscriptionLimitError
+from ..utils.exceptions import (
+    InternalServerError,
+    ResourceNotFoundError,
+    SubscriptionLimitError,
+)
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/v1/examples",
@@ -244,6 +252,208 @@ async def example_process_course(course_id: str):
     }
 
 
+@router.post("/test/error-500")
+async def test_internal_server_error():
+    """
+    🧪 **LOGGING TEST ENDPOINT** - Triggers InternalServerError (500)
+    
+    This endpoint deliberately raises an InternalServerError to demonstrate:
+    - Structured JSON logging at ERROR level
+    - Full traceback in log output
+    - Sentry error tracking (if configured)
+    - Generic error response to client
+    
+    **Expected Behavior:**
+    1. Console shows JSON-formatted log with full traceback
+    2. Sentry receives error event (if SENTRY_DSN is set)
+    3. Client receives generic 500 error response
+    
+    **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/examples/test/error-500
+    ```
+    
+    **Expected Response:**
+    ```json
+    {
+        "status_code": 500,
+        "code": "INTERNAL_SERVER_ERROR",
+        "message": "An internal server error occurred. Please try again later."
+    }
+    ```
+    
+    **Check Logs For:**
+    - JSON-formatted error log
+    - Full traceback information
+    - Request context (path, method, user-agent)
+    - Error code and status code
+    
+    Raises:
+        InternalServerError: Always raised for testing
+    """
+    # Log some context before the error
+    logger.info(
+        "Testing InternalServerError logging",
+        extra={
+            "test_type": "error_500",
+            "endpoint": "/api/v1/examples/test/error-500"
+        }
+    )
+    
+    # Raise InternalServerError to test logging
+    raise InternalServerError(
+        message="This is a test error for logging demonstration",
+        detail="Simulated database connection failure"
+    )
+
+
+@router.post("/test/unhandled-exception")
+async def test_unhandled_exception():
+    """
+    🧪 **LOGGING TEST ENDPOINT** - Triggers unhandled exception
+    
+    This endpoint deliberately raises an unhandled Python exception to demonstrate:
+    - Structured JSON logging for unexpected errors
+    - Full traceback in log output
+    - Sentry error tracking (if configured)
+    - Generic 500 error response to client
+    
+    **Expected Behavior:**
+    1. Console shows JSON-formatted log with exception details
+    2. Sentry receives error event (if SENTRY_DSN is set)
+    3. Client receives generic 500 error response
+    
+    **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/examples/test/unhandled-exception
+    ```
+    
+    **Expected Response:**
+    ```json
+    {
+        "status_code": 500,
+        "code": "INTERNAL_SERVER_ERROR",
+        "message": "An internal server error occurred. Please try again later."
+    }
+    ```
+    
+    **Check Logs For:**
+    - JSON-formatted error log
+    - Exception type (ZeroDivisionError)
+    - Full traceback
+    - Request context
+    
+    Raises:
+        ZeroDivisionError: Simulated unhandled exception
+    """
+    # Log some context before the error
+    logger.info(
+        "Testing unhandled exception logging",
+        extra={
+            "test_type": "unhandled_exception",
+            "endpoint": "/api/v1/examples/test/unhandled-exception"
+        }
+    )
+    
+    # Trigger unhandled exception
+    result = 1 / 0  # This will raise ZeroDivisionError
+    return {"result": result}  # This line is never reached
+
+
+@router.post("/test/structured-logging")
+async def test_structured_logging():
+    """
+    🧪 **LOGGING TEST ENDPOINT** - Demonstrates structured logging
+    
+    This endpoint demonstrates structured logging with rich context:
+    - Multiple log levels
+    - Custom fields via 'extra' parameter
+    - JSON-formatted output
+    
+    **Expected Behavior:**
+    1. Multiple JSON log entries with different levels
+    2. Custom fields included in JSON output
+    3. Successful response returned to client
+    
+    **Example Usage:**
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/examples/test/structured-logging
+    ```
+    
+    **Expected Response:**
+    ```json
+    {
+        "message": "Structured logging test completed",
+        "logs_generated": 4,
+        "note": "Check console for JSON-formatted log entries"
+    }
+    ```
+    
+    **Check Logs For:**
+    - DEBUG level log with query timing
+    - INFO level log with user action
+    - WARNING level log with performance issue
+    - All logs in JSON format with custom fields
+    
+    Returns:
+        Success response with test results
+    """
+    # Simulate various logging scenarios
+    
+    # 1. Debug log with database query context
+    logger.debug(
+        "Database query executed",
+        extra={
+            "query": "SELECT * FROM courses WHERE user_id = ?",
+            "duration_ms": 45,
+            "rows_returned": 12,
+            "test": True,
+        }
+    )
+    
+    # 2. Info log with user action
+    logger.info(
+        "User action completed successfully",
+        extra={
+            "user_id": "test-user-123",
+            "action": "view_examples",
+            "resource_id": "examples-test",
+            "duration_ms": 125,
+            "test": True,
+        }
+    )
+    
+    # 3. Warning log with performance issue
+    logger.warning(
+        "Slow operation detected",
+        extra={
+            "operation": "data_processing",
+            "duration_ms": 2500,
+            "threshold_ms": 1000,
+            "test": True,
+        }
+    )
+    
+    # 4. Info log with API call context
+    logger.info(
+        "External API call completed",
+        extra={
+            "api": "openai",
+            "endpoint": "/v1/completions",
+            "status_code": 200,
+            "duration_ms": 850,
+            "test": True,
+        }
+    )
+    
+    return {
+        "message": "Structured logging test completed",
+        "logs_generated": 4,
+        "log_levels": ["DEBUG", "INFO", "WARNING", "INFO"],
+        "note": "Check console for JSON-formatted log entries"
+    }
+
+
 @router.get("/info")
 async def examples_info():
     """
@@ -272,10 +482,29 @@ async def examples_info():
                 "method": "GET",
                 "demonstrates": "ResourceNotFoundError (404 Not Found)",
                 "test_with": "Path param: course_id=nonexistent"
+            },
+            {
+                "path": "/api/v1/examples/test/error-500",
+                "method": "POST",
+                "demonstrates": "InternalServerError (500) with structured logging",
+                "test_with": "No parameters needed"
+            },
+            {
+                "path": "/api/v1/examples/test/unhandled-exception",
+                "method": "POST",
+                "demonstrates": "Unhandled exception with structured logging",
+                "test_with": "No parameters needed"
+            },
+            {
+                "path": "/api/v1/examples/test/structured-logging",
+                "method": "POST",
+                "demonstrates": "Structured logging with custom fields",
+                "test_with": "No parameters needed"
             }
         ],
         "documentation": {
             "guide": "/docs",
+            "logging_guide": "See LOGGING_AND_ERROR_TRACKING.md",
             "error_codes": {
                 "SUBSCRIPTION_LIMIT_EXCEEDED": "User's subscription doesn't allow this feature",
                 "RESOURCE_NOT_FOUND": "Requested resource doesn't exist",

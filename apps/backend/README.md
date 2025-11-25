@@ -219,8 +219,17 @@ poetry run pytest
 - `core/security.py` - JWT utilities, password hashing (bcrypt)
 - `core/oauth.py` - OAuth provider base structure (Google, GitHub)
 - `core/websocket.py` - WebSocket connection manager and event broadcasting
-- `core/database.py` - Database connection manager (placeholder for Prisma)
-- `core/cache.py` - Cache connection manager (placeholder for Redis)
+- `core/database.py` - Database connection manager (legacy placeholder)
+- `core/cache.py` - Cache connection manager (legacy placeholder)
+
+### Database & Dependencies (`src/utils/`)
+- `utils/dependencies.py` - Dependency injection for Prisma and Redis clients
+  - `get_db_client()` - FastAPI dependency for Prisma database client
+  - `get_redis_client()` - FastAPI dependency for Redis cache client
+  - Lifecycle management functions for startup/shutdown
+
+### Database Schema (`prisma/`)
+- `prisma/schema.prisma` - Prisma schema with database models (User, Course, Goal)
 
 ### Feature Modules
 - `src/routes/` - API route handlers
@@ -260,7 +269,8 @@ poetry run pytest
 ✅ **Application structure follows defined patterns** - Organized according to Backend Infrastructure issue  
 ✅ **Environment configuration works correctly** - Pydantic Settings with .env support  
 ✅ **Dependency injection system works** - FastAPI Depends pattern implemented  
-✅ **Middleware stack is configured** - Logging, Security Headers, and CORS middleware
+✅ **Middleware stack is configured** - Logging, Security Headers, and CORS middleware  
+✅ **Comprehensive exception handling** - Standardized error responses with global handlers
 
 ## WebSocket Framework Status
 
