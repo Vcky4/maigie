@@ -91,6 +91,18 @@ const INITIAL_RESOURCES: Resource[] = [
 export function DemoInteraction({ isActive, onStart }: DemoInteractionProps) {
     const [viewMode, setViewMode] = useState<ViewMode>('desktop');
 
+    useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const handleResize = () => {
+                if (window.innerWidth < 768) {
+                    setViewMode('mobile');
+                }
+            };
+            
+            handleResize();
+        }
+    }, []);
+
     // Common State
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState("");
@@ -455,7 +467,7 @@ function MobileFrame({ state, messages, inputValue }: { state: WalkthroughState,
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
             transition={{ duration: 0.3 }}
-            className="relative w-[300px] h-[600px] bg-gray-900 rounded-[2.5rem] border-[8px] border-gray-900 shadow-2xl overflow-hidden ring-1 ring-white/20"
+            className="relative w-[90vw] max-w-[320px] h-[80vh] max-h-[650px] bg-gray-900 rounded-[2.5rem] border-[8px] border-gray-900 shadow-2xl overflow-hidden ring-1 ring-white/20"
         >
             {/* Voice Overlay (Mobile) */}
             <AnimatePresence>
@@ -637,7 +649,7 @@ function VoiceOverlay({ status, text, isMobile }: { status: VoiceStatus, text: s
             className={cn(
                 "absolute z-50 flex flex-col items-center justify-center shadow-2xl border border-white/10 backdrop-blur-md text-white",
                 isMobile
-                    ? "inset-0 bg-black/90 rounded-[2rem]"
+                    ? "inset-0 bg-black/90 rounded-[2rem] z-[60]"
                     : "bottom-8 left-1/2 -translate-x-1/2 bg-black/80 rounded-3xl px-8 py-6 min-w-[350px]"
             )}
         >
