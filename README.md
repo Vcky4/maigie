@@ -71,9 +71,22 @@ Maigie/
   └─ README.md
 ```
 
+## Deployment
+
+### Web App (Cloudflare Pages)
+
+The web application is configured for deployment to Cloudflare Pages. See [docs/deployment/cloudflare-pages.md](./docs/deployment/cloudflare-pages.md) for detailed deployment instructions.
+
+**Quick Setup:**
+- Build command: `npm install && nx build web`
+- Output directory: `dist/apps/web`
+- Node version: 20 (see `.nvmrc`)
+
 ## Documentation
 
 See [docs/architecture/](./docs/architecture/) for detailed architecture documentation.
+
+See [docs/deployment/](./docs/deployment/) for deployment guides.
 
 ## License
 
