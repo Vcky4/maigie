@@ -65,7 +65,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 "path": path,
                 "status_code": status_code,
                 "response_time_ms": round(response_time_ms, 2),
-            }
+            },
         )
 
         # Update Prometheus metrics if available

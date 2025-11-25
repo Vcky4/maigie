@@ -170,6 +170,7 @@ def handle_task_failure(
     traceback_str = None
     if einfo:
         import traceback
+
         traceback_str = "".join(traceback.format_exception(type(exc), exc, einfo.traceback))
 
     # Store failure information (async operation)
@@ -240,4 +241,3 @@ def should_retry(exception: Exception, max_retries: int, current_retries: int) -
 
     # Default: don't retry (let task decorator handle it)
     return False
-

@@ -235,4 +235,3 @@ async def purge_queue(queue_name: str = "default") -> int:
     purged = celery_app.control.purge()
     logger.warning(f"Purged {purged} tasks from queue {queue_name}")
     return purged
-

@@ -10,7 +10,7 @@ def print_section(title: str) -> None:
     """Print a section header."""
     print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print('=' * 60)
+    print("=" * 60)
 
 
 def print_result(passed: bool, message: str) -> None:
@@ -22,41 +22,41 @@ def print_result(passed: bool, message: str) -> None:
 def test_response_format(response_data: dict[str, Any], expected_code: str) -> bool:
     """Verify response follows ErrorResponse format."""
     required_fields = ["status_code", "code", "message"]
-    
+
     # Check all required fields exist
     for field in required_fields:
         if field not in response_data:
             print(f"  Missing required field: {field}")
             return False
-    
+
     # Check code matches expected
     if response_data["code"] != expected_code:
         print(f"  Expected code '{expected_code}', got '{response_data['code']}'")
         return False
-    
+
     # Check field types
     if not isinstance(response_data["status_code"], int):
         print(f"  status_code must be int, got {type(response_data['status_code'])}")
         return False
-    
+
     if not isinstance(response_data["code"], str):
         print(f"  code must be str, got {type(response_data['code'])}")
         return False
-    
+
     if not isinstance(response_data["message"], str):
         print(f"  message must be str, got {type(response_data['message'])}")
         return False
-    
+
     return True
 
 
 def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     """Verify the exception handling system."""
     all_tests_passed = True
-    
+
     print_section("Exception Handling Verification")
     print(f"Testing against: {base_url}")
-    
+
     # Test 1: Subscription Limit Error
     print_section("Test 1: Subscription Limit Error (403)")
     try:
@@ -64,9 +64,9 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
             f"{base_url}/api/v1/examples/ai/voice-session",
             json={"session_type": "conversation"},
             headers={"X-User-Subscription": "basic"},
-            timeout=10.0
+            timeout=10.0,
         )
-        
+
         if response.status_code == 403:
             data = response.json()
             passed = test_response_format(data, "SUBSCRIPTION_LIMIT_EXCEEDED")
@@ -80,15 +80,12 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     except Exception as e:
         print_result(False, f"Request failed: {e}")
         all_tests_passed = False
-    
+
     # Test 2: Resource Not Found Error
     print_section("Test 2: Resource Not Found Error (404)")
     try:
-        response = httpx.get(
-            f"{base_url}/api/v1/examples/ai/process/nonexistent",
-            timeout=10.0
-        )
-        
+        response = httpx.get(f"{base_url}/api/v1/examples/ai/process/nonexistent", timeout=10.0)
+
         if response.status_code == 404:
             data = response.json()
             passed = test_response_format(data, "RESOURCE_NOT_FOUND")
@@ -102,16 +99,14 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     except Exception as e:
         print_result(False, f"Request failed: {e}")
         all_tests_passed = False
-    
+
     # Test 3: Validation Error
     print_section("Test 3: Validation Error (400)")
     try:
         response = httpx.post(
-            f"{base_url}/api/v1/ai/chat",
-            json={},  # Missing required 'message' field
-            timeout=10.0
+            f"{base_url}/api/v1/ai/chat", json={}, timeout=10.0  # Missing required 'message' field
         )
-        
+
         if response.status_code == 400:
             data = response.json()
             passed = test_response_format(data, "VALIDATION_ERROR")
@@ -125,16 +120,14 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     except Exception as e:
         print_result(False, f"Request failed: {e}")
         all_tests_passed = False
-    
+
     # Test 4: Successful Request (Should NOT return error)
     print_section("Test 4: Valid Request (Should Succeed)")
     try:
         response = httpx.post(
-            f"{base_url}/api/v1/ai/chat",
-            json={"message": "Hello AI"},
-            timeout=10.0
+            f"{base_url}/api/v1/ai/chat", json={"message": "Hello AI"}, timeout=10.0
         )
-        
+
         if response.status_code == 200:
             print_result(True, "Valid request does not trigger error handling")
             print(f"  Response: {response.json()}")
@@ -144,7 +137,7 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     except Exception as e:
         print_result(False, f"Request failed: {e}")
         all_tests_passed = False
-    
+
     # Test 5: Premium User Can Access Voice Session
     print_section("Test 5: Premium User Access (Should Succeed)")
     try:
@@ -152,9 +145,9 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
             f"{base_url}/api/v1/examples/ai/voice-session",
             json={"session_type": "conversation"},
             headers={"X-User-Subscription": "premium"},
-            timeout=10.0
+            timeout=10.0,
         )
-        
+
         if response.status_code != 403:
             print_result(True, "Premium user can access voice session")
             print(f"  Response: {response.json()}")
@@ -164,7 +157,7 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     except Exception as e:
         print_result(False, f"Request failed: {e}")
         all_tests_passed = False
-    
+
     # Final summary
     print_section("Summary")
     if all_tests_passed:
@@ -197,4 +190,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ ERROR: {e}")
         sys.exit(1)
-

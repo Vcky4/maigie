@@ -27,6 +27,7 @@ from ..config import get_settings
 # These will be properly configured once Prisma and Redis are fully set up
 try:
     from prisma import Client as PrismaClient
+
     PRISMA_AVAILABLE = True
 except ImportError:
     # Fallback placeholder if Prisma is not yet installed
@@ -47,10 +48,14 @@ except ImportError:
 
         async def query_raw(self, query: str):
             """Mock raw query method - raises error to indicate no real connection."""
-            raise Exception("Prisma client not installed. Run: poetry add prisma && poetry run prisma generate")
+            raise Exception(
+                "Prisma client not installed. Run: poetry add prisma && poetry run prisma generate"
+            )
+
 
 try:
     import redis.asyncio as redis
+
     RedisClient = redis.Redis
     REDIS_AVAILABLE = True
 except ImportError:
@@ -204,4 +209,3 @@ async def cleanup_db_client() -> None:
     if _prisma_client is not None:
         await _prisma_client.disconnect()
         _prisma_client = None
-

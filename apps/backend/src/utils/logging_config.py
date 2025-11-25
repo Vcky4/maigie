@@ -34,10 +34,7 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
     """
 
     def add_fields(
-        self,
-        log_record: dict[str, Any],
-        record: logging.LogRecord,
-        message_dict: dict[str, Any]
+        self, log_record: dict[str, Any], record: logging.LogRecord, message_dict: dict[str, Any]
     ) -> None:
         """
         Add custom fields to the log record.
@@ -50,20 +47,20 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
         super().add_fields(log_record, record, message_dict)
 
         # Add essential fields for structured logging
-        log_record['timestamp'] = self.formatTime(record, self.datefmt)
-        log_record['level'] = record.levelname
-        log_record['logger'] = record.name
-        log_record['module'] = record.module
-        log_record['function'] = record.funcName
-        log_record['line'] = record.lineno
+        log_record["timestamp"] = self.formatTime(record, self.datefmt)
+        log_record["level"] = record.levelname
+        log_record["logger"] = record.name
+        log_record["module"] = record.module
+        log_record["function"] = record.funcName
+        log_record["line"] = record.lineno
 
         # Add exception information if present
         if record.exc_info:
-            log_record['exception'] = self.formatException(record.exc_info)
+            log_record["exception"] = self.formatException(record.exc_info)
 
         # Move the actual message to 'message' field
-        if 'message' not in log_record and hasattr(record, 'getMessage'):
-            log_record['message'] = record.getMessage()
+        if "message" not in log_record and hasattr(record, "getMessage"):
+            log_record["message"] = record.getMessage()
 
 
 def configure_logging() -> None:
@@ -104,12 +101,12 @@ def configure_logging() -> None:
 
     # Create JSON formatter with custom fields
     json_formatter = CustomJsonFormatter(
-        fmt='%(timestamp)s %(level)s %(name)s %(message)s',
-        datefmt='%Y-%m-%dT%H:%M:%S',
+        fmt="%(timestamp)s %(level)s %(name)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
         static_fields={
-            'environment': environment,
-            'application': 'maigie-backend',
-        }
+            "environment": environment,
+            "application": "maigie-backend",
+        },
     )
 
     console_handler.setFormatter(json_formatter)
@@ -121,7 +118,7 @@ def configure_logging() -> None:
         extra={
             "log_level": log_level_str,
             "environment": environment,
-        }
+        },
     )
 
     # Adjust third-party library log levels to reduce noise
@@ -144,4 +141,3 @@ def get_logger(name: str) -> logging.Logger:
         Logger instance
     """
     return logging.getLogger(name)
-

@@ -60,6 +60,7 @@ def register_task(
             pass
         ```
     """
+
     def decorator(func: Any) -> Any:
         _task_registry[name] = {
             "name": name,
@@ -133,4 +134,3 @@ def discover_tasks() -> dict[str, Any]:
                 "metadata": _task_registry.get(task_name),
             }
     return discovered
-

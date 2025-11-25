@@ -29,7 +29,9 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
-def exponential_backoff(retry_count: int, base_delay: int = 60, max_delay: int = 3600, multiplier: float = 2.0) -> int:
+def exponential_backoff(
+    retry_count: int, base_delay: int = 60, max_delay: int = 3600, multiplier: float = 2.0
+) -> int:
     """Calculate exponential backoff delay for retries.
 
     Args:
@@ -46,11 +48,13 @@ def exponential_backoff(retry_count: int, base_delay: int = 60, max_delay: int =
         delay = exponential_backoff(retry_count=2)  # Returns 240 (60 * 2^2)
         ```
     """
-    delay = int(base_delay * (multiplier ** retry_count))
+    delay = int(base_delay * (multiplier**retry_count))
     return min(delay, max_delay)
 
 
-def linear_backoff(retry_count: int, base_delay: int = 60, max_delay: int = 3600, increment: int = 60) -> int:
+def linear_backoff(
+    retry_count: int, base_delay: int = 60, max_delay: int = 3600, increment: int = 60
+) -> int:
     """Calculate linear backoff delay for retries.
 
     Args:
@@ -98,6 +102,7 @@ def retry_on_exception(
             return response.json()
         ```
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(self: Task, *args: Any, **kwargs: Any) -> T:
@@ -154,6 +159,7 @@ def retry_with_custom_delay(
             pass
         ```
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         def wrapper(self: Task, *args: Any, **kwargs: Any) -> T:
@@ -178,4 +184,3 @@ def retry_with_custom_delay(
         return wrapper
 
     return decorator
-

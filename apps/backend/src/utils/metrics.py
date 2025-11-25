@@ -40,4 +40,3 @@ AI_USAGE_COUNTER = Counter(
     "Total number of AI processing requests (for subscription quota enforcement)",
     registry=REGISTRY,
 )
-

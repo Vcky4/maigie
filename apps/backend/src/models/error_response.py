@@ -62,12 +62,12 @@ class ErrorResponse(BaseModel):
 
     class Config:
         """Pydantic model configuration."""
+
         json_schema_extra = {
             "example": {
                 "status_code": 403,
                 "code": "SUBSCRIPTION_LIMIT_EXCEEDED",
                 "message": "This feature requires a Premium subscription",
-                "detail": "User attempted to access Voice AI feature with Basic subscription"
+                "detail": "User attempted to access Voice AI feature with Basic subscription",
             }
         }
-

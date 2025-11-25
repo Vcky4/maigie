@@ -29,18 +29,21 @@ router = APIRouter(prefix="/api/v1/ai", tags=["ai"])
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
+
     message: str
     conversation_id: str | None = None
 
 
 class SummarizeRequest(BaseModel):
     """Request model for summarize endpoint."""
+
     content: str
     content_type: str = "text"
 
 
 class ProcessRequest(BaseModel):
     """Request model for AI process endpoint."""
+
     message: str
     conversation_id: str | None = None
     context: dict | None = None

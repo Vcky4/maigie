@@ -94,4 +94,3 @@ def get_celery_app() -> Celery:
         Global Celery application instance
     """
     return celery_app
-

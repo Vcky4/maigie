@@ -183,4 +183,3 @@ def example_error_handling_task(self: Any, data: dict[str, Any]) -> dict[str, An
         logger.error(f"Task failed with unexpected error: {e}")
         # Retry on unexpected errors
         raise self.retry(exc=e, countdown=60)
-

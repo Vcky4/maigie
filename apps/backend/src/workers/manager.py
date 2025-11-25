@@ -186,4 +186,3 @@ def shutdown_worker(worker_name: str, wait: bool = False) -> bool:
     except Exception as e:
         logger.error(f"Failed to shutdown worker {worker_name}: {e}")
         return False
-

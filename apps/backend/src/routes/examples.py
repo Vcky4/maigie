@@ -47,13 +47,16 @@ router = APIRouter(
 # Request Models
 # ============================================================================
 
+
 class VoiceSessionRequest(BaseModel):
     """Request model for voice session example."""
+
     session_type: str = "conversation"
 
 
 class PlanRequest(BaseModel):
     """Request model for create plan example."""
+
     goal: str
     duration_weeks: int = 4
 
@@ -62,10 +65,11 @@ class PlanRequest(BaseModel):
 # Example Endpoints - Exception Handling Demonstrations
 # ============================================================================
 
+
 @router.post("/ai/voice-session")
 async def example_voice_session(
     request: VoiceSessionRequest,
-    x_user_subscription: str | None = Header(None, alias="X-User-Subscription")
+    x_user_subscription: str | None = Header(None, alias="X-User-Subscription"),
 ):
     """
     🧪 **EXAMPLE ENDPOINT** - Demonstrates SubscriptionLimitError
@@ -118,21 +122,20 @@ async def example_voice_session(
     if x_user_subscription != "premium":
         raise SubscriptionLimitError(
             message="Voice AI sessions require a Premium subscription",
-            detail=f"User attempted Voice AI with subscription: {x_user_subscription or 'basic'}"
+            detail=f"User attempted Voice AI with subscription: {x_user_subscription or 'basic'}",
         )
 
     return {
         "message": "Voice session started (example response)",
         "session_type": request.session_type,
         "status": "active",
-        "note": "This is an example endpoint for testing exception handling"
+        "note": "This is an example endpoint for testing exception handling",
     }
 
 
 @router.post("/ai/create-plan")
 async def example_create_plan(
-    request: PlanRequest,
-    x_user_id: str | None = Header(None, alias="X-User-ID")
+    request: PlanRequest, x_user_id: str | None = Header(None, alias="X-User-ID")
 ):
     """
     🧪 **EXAMPLE ENDPOINT** - Demonstrates ResourceNotFoundError (User)
@@ -185,14 +188,14 @@ async def example_create_plan(
         raise ResourceNotFoundError(
             resource_type="User",
             resource_id=x_user_id,
-            detail="User profile must exist to create personalized plan"
+            detail="User profile must exist to create personalized plan",
         )
 
     return {
         "message": "Study plan created (example response)",
         "goal": request.goal,
         "duration_weeks": request.duration_weeks,
-        "note": "This is an example endpoint for testing exception handling"
+        "note": "This is an example endpoint for testing exception handling",
     }
 
 
@@ -241,14 +244,14 @@ async def example_process_course(course_id: str):
         raise ResourceNotFoundError(
             resource_type="Course",
             resource_id=course_id,
-            detail="Course must exist before AI processing"
+            detail="Course must exist before AI processing",
         )
 
     return {
         "message": "Course processing started (example response)",
         "course_id": course_id,
         "status": "processing",
-        "note": "This is an example endpoint for testing exception handling"
+        "note": "This is an example endpoint for testing exception handling",
     }
 
 
@@ -294,16 +297,13 @@ async def test_internal_server_error():
     # Log some context before the error
     logger.info(
         "Testing InternalServerError logging",
-        extra={
-            "test_type": "error_500",
-            "endpoint": "/api/v1/examples/test/error-500"
-        }
+        extra={"test_type": "error_500", "endpoint": "/api/v1/examples/test/error-500"},
     )
 
     # Raise InternalServerError to test logging
     raise InternalServerError(
         message="This is a test error for logging demonstration",
-        detail="Simulated database connection failure"
+        detail="Simulated database connection failure",
     )
 
 
@@ -351,8 +351,8 @@ async def test_unhandled_exception():
         "Testing unhandled exception logging",
         extra={
             "test_type": "unhandled_exception",
-            "endpoint": "/api/v1/examples/test/unhandled-exception"
-        }
+            "endpoint": "/api/v1/examples/test/unhandled-exception",
+        },
     )
 
     # Trigger unhandled exception
@@ -408,7 +408,7 @@ async def test_structured_logging():
             "duration_ms": 45,
             "rows_returned": 12,
             "test": True,
-        }
+        },
     )
 
     # 2. Info log with user action
@@ -420,7 +420,7 @@ async def test_structured_logging():
             "resource_id": "examples-test",
             "duration_ms": 125,
             "test": True,
-        }
+        },
     )
 
     # 3. Warning log with performance issue
@@ -431,7 +431,7 @@ async def test_structured_logging():
             "duration_ms": 2500,
             "threshold_ms": 1000,
             "test": True,
-        }
+        },
     )
 
     # 4. Info log with API call context
@@ -443,14 +443,14 @@ async def test_structured_logging():
             "status_code": 200,
             "duration_ms": 850,
             "test": True,
-        }
+        },
     )
 
     return {
         "message": "Structured logging test completed",
         "logs_generated": 4,
         "log_levels": ["DEBUG", "INFO", "WARNING", "INFO"],
-        "note": "Check console for JSON-formatted log entries"
+        "note": "Check console for JSON-formatted log entries",
     }
 
 
@@ -469,38 +469,38 @@ async def examples_info():
                 "path": "/api/v1/examples/ai/voice-session",
                 "method": "POST",
                 "demonstrates": "SubscriptionLimitError (403 Forbidden)",
-                "test_with": "Header: X-User-Subscription: basic"
+                "test_with": "Header: X-User-Subscription: basic",
             },
             {
                 "path": "/api/v1/examples/ai/create-plan",
                 "method": "POST",
                 "demonstrates": "ResourceNotFoundError (404 Not Found)",
-                "test_with": "Header: X-User-ID: unknown"
+                "test_with": "Header: X-User-ID: unknown",
             },
             {
                 "path": "/api/v1/examples/ai/process/{course_id}",
                 "method": "GET",
                 "demonstrates": "ResourceNotFoundError (404 Not Found)",
-                "test_with": "Path param: course_id=nonexistent"
+                "test_with": "Path param: course_id=nonexistent",
             },
             {
                 "path": "/api/v1/examples/test/error-500",
                 "method": "POST",
                 "demonstrates": "InternalServerError (500) with structured logging",
-                "test_with": "No parameters needed"
+                "test_with": "No parameters needed",
             },
             {
                 "path": "/api/v1/examples/test/unhandled-exception",
                 "method": "POST",
                 "demonstrates": "Unhandled exception with structured logging",
-                "test_with": "No parameters needed"
+                "test_with": "No parameters needed",
             },
             {
                 "path": "/api/v1/examples/test/structured-logging",
                 "method": "POST",
                 "demonstrates": "Structured logging with custom fields",
-                "test_with": "No parameters needed"
-            }
+                "test_with": "No parameters needed",
+            },
         ],
         "documentation": {
             "guide": "/docs",
@@ -509,8 +509,7 @@ async def examples_info():
                 "SUBSCRIPTION_LIMIT_EXCEEDED": "User's subscription doesn't allow this feature",
                 "RESOURCE_NOT_FOUND": "Requested resource doesn't exist",
                 "VALIDATION_ERROR": "Request data validation failed",
-                "INTERNAL_SERVER_ERROR": "Unexpected server error"
-            }
-        }
+                "INTERNAL_SERVER_ERROR": "Unexpected server error",
+            },
+        },
     }
-

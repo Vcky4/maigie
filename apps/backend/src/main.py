@@ -77,6 +77,7 @@ logger = logging.getLogger(__name__)
 # Global Exception Handlers
 # ============================================================================
 
+
 async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONResponse:
     """
     Global exception handler for all MaigieError exceptions.
@@ -114,17 +115,14 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
             extra={
                 **log_context,
                 "traceback": traceback.format_exc(),
-            }
+            },
         )
 
         # Capture to Sentry for 500-level errors
         sentry_sdk.capture_exception(exc)
     else:
         # For 4xx errors, log at WARNING level
-        logger.warning(
-            f"MaigieError: {exc.code} - {exc.message}",
-            extra=log_context
-        )
+        logger.warning(f"MaigieError: {exc.code} - {exc.message}", extra=log_context)
 
     # Create error response
     error_response = ErrorResponse(
@@ -142,7 +140,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
             "status_code": exc.status_code,
             "detail": exc.detail,
             "path": request.url.path,
-        }
+        },
     )
 
     return JSONResponse(
@@ -151,10 +149,7 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
     )
 
 
-async def validation_error_handler(
-    request: Request,
-    exc: RequestValidationError
-) -> JSONResponse:
+async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """
     Global exception handler for FastAPI/Pydantic validation errors.
 
@@ -198,7 +193,7 @@ async def validation_error_handler(
         extra={
             "errors": errors,
             "path": request.url.path,
-        }
+        },
     )
 
     return JSONResponse(
@@ -207,10 +202,7 @@ async def validation_error_handler(
     )
 
 
-async def unhandled_exception_handler(
-    request: Request,
-    exc: Exception
-) -> JSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
     Global exception handler for all unhandled exceptions.
 
@@ -237,9 +229,7 @@ async def unhandled_exception_handler(
 
     # Log the full traceback at ERROR level with structured data
     logger.error(
-        f"Unhandled exception: {type(exc).__name__}: {str(exc)}",
-        exc_info=True,
-        extra=log_context
+        f"Unhandled exception: {type(exc).__name__}: {str(exc)}", exc_info=True, extra=log_context
     )
 
     # Capture to Sentry for all unhandled exceptions
@@ -253,7 +243,7 @@ async def unhandled_exception_handler(
             "path": request.url.path,
             "method": request.method,
             "traceback": traceback.format_exc(),
-        }
+        },
     )
 
     # Create generic error response (don't leak internal details)
@@ -273,6 +263,7 @@ async def unhandled_exception_handler(
 # ============================================================================
 # Application Lifespan
 # ============================================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -299,7 +290,7 @@ async def lifespan(app: FastAPI):
                 FastApiIntegration(transaction_style="endpoint"),
                 LoggingIntegration(
                     level=logging.INFO,  # Capture info and above as breadcrumbs
-                    event_level=logging.ERROR  # Send errors and above as events
+                    event_level=logging.ERROR,  # Send errors and above as events
                 ),
             ],
             # Additional metadata
@@ -310,7 +301,7 @@ async def lifespan(app: FastAPI):
             extra={
                 "environment": settings.ENVIRONMENT,
                 "release": settings.APP_VERSION,
-            }
+            },
         )
     else:
         # Check if .env file exists to give better error message
@@ -323,7 +314,7 @@ async def lifespan(app: FastAPI):
                 "hint": "Set SENTRY_DSN in .env file or environment variable to enable",
                 "env_file_path": str(env_file_path),
                 "env_file_exists": env_file_exists,
-            }
+            },
         )
 
     # Connect to database (legacy placeholder - kept for compatibility)

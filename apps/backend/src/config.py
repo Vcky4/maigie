@@ -172,4 +172,3 @@ def get_settings() -> Settings:
         settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
 
     return settings
-

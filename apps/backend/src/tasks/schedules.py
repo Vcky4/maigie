@@ -112,4 +112,3 @@ HOURLY = schedule(run_every=3600)  # Every hour
 EVERY_5_MINUTES = schedule(run_every=300)  # Every 5 minutes
 EVERY_15_MINUTES = schedule(run_every=900)  # Every 15 minutes
 EVERY_30_MINUTES = schedule(run_every=1800)  # Every 30 minutes
-

@@ -232,4 +232,3 @@ class ValidationError(MaigieError):
             code="VALIDATION_ERROR",
             detail=detail,
         )
-

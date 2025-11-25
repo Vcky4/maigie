@@ -43,7 +43,9 @@ class BaseTask(Task):
     - Task metadata tracking
     """
 
-    def on_failure(self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: Any) -> None:
+    def on_failure(
+        self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: Any
+    ) -> None:
         """Called when task fails.
 
         Args:
@@ -85,7 +87,9 @@ class BaseTask(Task):
         )
         super().on_success(retval, task_id, args, kwargs)
 
-    def on_retry(self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: Any) -> None:
+    def on_retry(
+        self, exc: Exception, task_id: str, args: tuple, kwargs: dict[str, Any], einfo: Any
+    ) -> None:
         """Called when task is retried.
 
         Args:
@@ -140,6 +144,7 @@ def task(
             pass
         ```
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         # Generate task name if not provided
         task_name = name or f"tasks.{func.__module__}.{func.__name__}"
@@ -201,4 +206,3 @@ def retry_task(
         countdown = task_instance.default_retry_delay
 
     raise Retry(exc=exc, countdown=countdown)
-
