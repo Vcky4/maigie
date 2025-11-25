@@ -462,15 +462,17 @@ def create_app() -> FastAPI:
         except Exception as e:
             errors.append(f"Database error: {str(e)}")
 
-        # Test Redis connectivity
+        # Test Redis connectivity (optional - cache failures don't fail health check)
         try:
             await redis_client.ping()
             cache_status = "connected"
         except Exception as e:
-            errors.append(f"Cache error: {str(e)}")
+            # Redis is optional for health check - log but don't fail
+            cache_status = "disconnected"
+            errors.append(f"Cache warning: {str(e)}")
 
-        # Return error if any service is down
-        if db_status != "connected" or cache_status != "connected":
+        # Return error only if database is down (Redis is optional)
+        if db_status != "connected":
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -482,7 +484,7 @@ def create_app() -> FastAPI:
             )
 
         return {
-            "status": "OK",
+            "status": "healthy",
             "db": db_status,
             "cache": cache_status,
         }

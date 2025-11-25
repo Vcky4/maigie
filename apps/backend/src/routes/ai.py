@@ -49,6 +49,13 @@ class ProcessRequest(BaseModel):
     context: dict | None = None
 
 
+class PlanRequest(BaseModel):
+    """Request model for create plan endpoint."""
+
+    goal: str
+    duration_weeks: int = 4
+
+
 @router.post("/chat")
 async def chat(request: ChatRequest):
     """
@@ -111,7 +118,11 @@ async def process(request: ProcessRequest):
 
 
 @router.post("/create-plan")
-async def create_plan():
+async def create_plan(request: PlanRequest):
     """Create study plan."""
     # TODO: Implement study plan creation
-    pass
+    return {
+        "message": "Study plan creation endpoint - implementation pending",
+        "goal": request.goal,
+        "duration_weeks": request.duration_weeks,
+    }
