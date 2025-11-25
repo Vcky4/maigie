@@ -1,0 +1,8 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+tests/
+pytest_cache/
+prisma/migrations/
