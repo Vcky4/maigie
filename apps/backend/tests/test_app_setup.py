@@ -1,15 +1,56 @@
 """Tests for application setup."""
 
+from collections.abc import AsyncGenerator
+
 import pytest
 from fastapi.testclient import TestClient
 
 from src.main import app
+from src.utils.dependencies import get_db_client, get_redis_client
+
+
+# Mock database client for testing
+class MockPrismaClient:
+    """Mock Prisma client for testing."""
+
+    async def query_raw(self, query: str):
+        """Mock query that returns a valid result."""
+        return [{"test": 1}]
+
+
+# Mock Redis client for testing
+class MockRedisClient:
+    """Mock Redis client for testing."""
+
+    async def ping(self):
+        """Mock ping that succeeds."""
+        return True
+
+
+async def override_get_db_client() -> AsyncGenerator:
+    """Override database dependency for testing."""
+    mock_client = MockPrismaClient()
+    yield mock_client
+
+
+async def override_get_redis_client() -> AsyncGenerator:
+    """Override Redis dependency for testing."""
+    mock_client = MockRedisClient()
+    yield mock_client
 
 
 @pytest.fixture
 def client():
-    """Create test client."""
-    return TestClient(app)
+    """Create test client with overridden dependencies."""
+    # Override dependencies for health check endpoints
+    app.dependency_overrides[get_db_client] = override_get_db_client
+    app.dependency_overrides[get_redis_client] = override_get_redis_client
+
+    test_client = TestClient(app)
+    yield test_client
+
+    # Clean up overrides after test
+    app.dependency_overrides.clear()
 
 
 def test_app_creation():
