@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 
 import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 from src.main import app
 from src.utils.dependencies import get_db_client, get_redis_client
@@ -41,13 +42,20 @@ async def override_get_redis_client() -> AsyncGenerator:
 
 @pytest.fixture
 def client():
-    """Create test client with overridden dependencies."""
+    """Create synchronous test client for non-async endpoints."""
+    return TestClient(app)
+
+
+@pytest.fixture
+async def async_client():
+    """Create async test client with overridden dependencies."""
     # Override dependencies for health check endpoints
     app.dependency_overrides[get_db_client] = override_get_db_client
     app.dependency_overrides[get_redis_client] = override_get_redis_client
 
-    test_client = TestClient(app)
-    yield test_client
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        yield ac
 
     # Clean up overrides after test
     app.dependency_overrides.clear()
@@ -69,9 +77,10 @@ def test_root_endpoint(client):
     assert data["message"] == "Maigie API"
 
 
-def test_health_endpoint(client):
+@pytest.mark.asyncio
+async def test_health_endpoint(async_client):
     """Test health check endpoint."""
-    response = client.get("/health")
+    response = await async_client.get("/health")
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
