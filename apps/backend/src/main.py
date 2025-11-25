@@ -22,9 +22,15 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import logging
+import os
 import traceback
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
+
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -33,6 +39,7 @@ from fastapi.responses import JSONResponse
 
 from .config import get_settings
 from .core.cache import cache
+from .utils.logging_config import configure_logging
 
 # --- Import the database helper functions ---
 from src.core.database import connect_db, disconnect_db, check_db_health
@@ -87,23 +94,45 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
     """
     settings = get_settings()
     
+    # Determine if this is a 500-level error (critical)
+    is_server_error = exc.status_code >= 500
+    
+    # Log with appropriate level and full context
+    log_context = {
+        "error_code": exc.code,
+        "status_code": exc.status_code,
+        "detail": exc.detail,
+        "path": request.url.path,
+        "method": request.method,
+        "user_agent": request.headers.get("user-agent"),
+    }
+    
+    if is_server_error:
+        # For 500-level errors, log at ERROR level with full traceback
+        logger.error(
+            f"MaigieError [500-level]: {exc.code} - {exc.message}",
+            exc_info=True,
+            extra={
+                **log_context,
+                "traceback": traceback.format_exc(),
+            }
+        )
+        
+        # Capture to Sentry for 500-level errors
+        sentry_sdk.capture_exception(exc)
+    else:
+        # For 4xx errors, log at WARNING level
+        logger.warning(
+            f"MaigieError: {exc.code} - {exc.message}",
+            extra=log_context
+        )
+    
     # Create error response
     error_response = ErrorResponse(
         status_code=exc.status_code,
         code=exc.code,
         message=exc.message,
         detail=exc.detail if settings.DEBUG else None,  # Hide details in production
-    )
-    
-    # Log the error
-    logger.warning(
-        f"MaigieError: {exc.code} - {exc.message}",
-        extra={
-            "error_code": exc.code,
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-            "path": request.url.path,
-        }
     )
     
     return JSONResponse(
@@ -186,16 +215,25 @@ async def unhandled_exception_handler(
     Returns:
         JSONResponse with generic error message
     """
-    # Log the full traceback for debugging
+    # Build comprehensive log context
+    log_context = {
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "path": request.url.path,
+        "method": request.method,
+        "user_agent": request.headers.get("user-agent"),
+        "traceback": traceback.format_exc(),
+    }
+    
+    # Log the full traceback at ERROR level with structured data
     logger.error(
-        f"Unhandled exception: {str(exc)}",
+        f"Unhandled exception: {type(exc).__name__}: {str(exc)}",
         exc_info=True,
-        extra={
-            "path": request.url.path,
-            "method": request.method,
-            "traceback": traceback.format_exc(),
-        }
+        extra=log_context
     )
+    
+    # Capture to Sentry for all unhandled exceptions
+    sentry_sdk.capture_exception(exc)
     
     # Create generic error response (don't leak internal details)
     error_response = ErrorResponse(
@@ -218,24 +256,69 @@ async def unhandled_exception_handler(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
+    # Initialize structured logging FIRST (before any logging occurs)
+    configure_logging()
+    
     # Startup
     settings = get_settings()
-    print(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    
+    # Initialize Sentry error tracking
+    sentry_dsn = settings.SENTRY_DSN
+    if sentry_dsn and sentry_dsn.strip():  # Check if DSN is not empty
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            environment=settings.ENVIRONMENT,
+            # Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring
+            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
+            # Send 100% of errors by default
+            sample_rate=1.0,
+            # Integrations
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                LoggingIntegration(
+                    level=logging.INFO,  # Capture info and above as breadcrumbs
+                    event_level=logging.ERROR  # Send errors and above as events
+                ),
+            ],
+            # Additional metadata
+            release=settings.APP_VERSION,
+        )
+        logger.info(
+            "Sentry error tracking initialized",
+            extra={
+                "environment": settings.ENVIRONMENT,
+                "release": settings.APP_VERSION,
+            }
+        )
+    else:
+        # Check if .env file exists to give better error message
+        env_file_path = Path(__file__).parent.parent / ".env"
+        env_file_exists = env_file_path.exists()
+        
+        logger.warning(
+            "Sentry DSN not configured - error tracking disabled",
+            extra={
+                "hint": "Set SENTRY_DSN in .env file or environment variable to enable",
+                "env_file_path": str(env_file_path),
+                "env_file_exists": env_file_exists,
+            }
+        )
 
     # Connect to database (legacy placeholder - kept for compatibility)
-    await db.connect()
-    print("Legacy database connection initialized")
+    await connect_db()
+    logger.info("Legacy database connection initialized")
 
     # Connect to cache (legacy placeholder - kept for compatibility)
     await cache.connect()
-    print("Legacy cache connection initialized")
+    logger.info("Legacy cache connection initialized")
     
     # Initialize new dependency injection system
     # Prisma client will be initialized on first use via get_db_client()
     
     # Initialize Redis client for dependency injection
     await initialize_redis_client()
-    print("Redis client initialized for dependency injection")
+    logger.info("Redis client initialized for dependency injection")
 
     # --- WebSocket Manager ---
     settings = get_settings()
@@ -244,28 +327,30 @@ async def lifespan(app: FastAPI):
     websocket_manager.max_reconnect_attempts = settings.WEBSOCKET_MAX_RECONNECT_ATTEMPTS
     await websocket_manager.start_heartbeat()
     await websocket_manager.start_cleanup()
-    print("WebSocket manager initialized")
+    logger.info("WebSocket manager initialized")
 
     yield  # Application runs here
 
     # Shutdown
-    print("Shutting down...")
+    logger.info("Shutting down application...")
     await websocket_manager.stop_heartbeat()
     await websocket_manager.stop_cleanup()
 
     # Disconnect all WebSocket connections
+    connection_count = len(websocket_manager.active_connections)
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
+    logger.info(f"Disconnected {connection_count} WebSocket connection(s)")
     
     # Cleanup new dependency injection clients
     await cleanup_db_client()
     await close_redis_client()
-    print("Dependency injection clients cleaned up")
+    logger.info("Dependency injection clients cleaned up")
     
     # Cleanup legacy connections
     await cache.disconnect()
     await disconnect_db()
-    print("Shutdown complete")
+    logger.info("Shutdown complete")
 
 
 def create_app() -> FastAPI:

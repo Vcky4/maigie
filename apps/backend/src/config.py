@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import BeforeValidator
@@ -100,13 +101,21 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
 
+    # Error Tracking (Sentry)
+    SENTRY_DSN: str = ""
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+
     # WebSocket
     WEBSOCKET_HEARTBEAT_INTERVAL: int = 30  # seconds
     WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60  # seconds
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Look for .env file in the backend directory
+        # __file__ is apps/backend/src/config.py
+        # parent = apps/backend/src/
+        # parent.parent = apps/backend/
+        env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
