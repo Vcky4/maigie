@@ -19,6 +19,7 @@ Database seed script for preview environments.
 This script seeds the database with default data for preview/test environments.
 It should be safe to run multiple times (idempotent).
 """
+
 import asyncio
 import os
 from prisma import Prisma

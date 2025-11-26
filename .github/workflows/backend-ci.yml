@@ -49,7 +49,7 @@ jobs:
         run: poetry install --no-root
       - name: Run Linting
         run: |
-          poetry run black . --check
+          poetry run black . --check --diff || (poetry run black . --diff && exit 1)
           poetry run flake8 .
       - name: Generate Prisma Client
         run: poetry run prisma generate
