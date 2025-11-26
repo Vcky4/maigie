@@ -16,6 +16,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
 """
 Authentication routes (JWT Signup/Login + OAuth Placeholders).
 
@@ -30,38 +31,52 @@ from typing import Optional
 
 # --- Token Schemas ---
 
+
 class Token(BaseModel):
     """Token response schema."""
+
     access_token: str
     token_type: str = "bearer"
 
+
 class TokenData(BaseModel):
     """Schema for data embedded in the token."""
+
     email: str | None = None  # <--- THIS WAS MISSING
+
 
 # --- Request Models (Input) ---
 
+
 class UserSignup(BaseModel):
     """User registration schema."""
+
     email: EmailStr
     password: str = Field(min_length=8, description="Password must be at least 8 characters")
     name: str = Field(..., description="Full Name")
 
+
 class UserLogin(BaseModel):
     """User login schema."""
+
     email: EmailStr
     password: str
 
+
 # --- Response Models (Output) ---
+
 
 class UserPreferencesResponse(BaseModel):
     """Schema for user preferences."""
+
     theme: str
     language: str
     notifications: bool
 
+
 class UserResponse(BaseModel):
     """User response schema."""
+
     id: str
     email: EmailStr
     name: str | None = None

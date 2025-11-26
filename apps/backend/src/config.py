@@ -1,6 +1,7 @@
 """
 Application configuration management.
 """
+
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Annotated, Any, List, Optional
 
 from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 def parse_list_value(value: Any) -> list[str]:
     """Parse list value from various formats."""
@@ -27,7 +29,9 @@ def parse_list_value(value: Any) -> list[str]:
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
 
+
 ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
+
 
 class Settings(BaseSettings):
     # --- Application Info ---
@@ -43,7 +47,11 @@ class Settings(BaseSettings):
     FRONTEND_BASE_URL: str = "http://localhost:3000"  # For OAuth redirects
 
     # --- CORS ---
-    CORS_ORIGINS: ListStr = ["http://localhost:4200", "http://localhost:5173", "http://localhost:3000"]
+    CORS_ORIGINS: ListStr = [
+        "http://localhost:4200",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: ListStr = ["*"]
     CORS_ALLOW_HEADERS: ListStr = ["*"]
@@ -77,7 +85,7 @@ class Settings(BaseSettings):
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
 
     # --- Celery (Background Workers) ---
-    CELERY_BROKER_URL: str = "" 
+    CELERY_BROKER_URL: str = ""
     CELERY_RESULT_BACKEND: str = ""
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
@@ -106,23 +114,26 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+
 def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
     if "/" in redis_url:
         base_url = redis_url.rsplit("/", 1)[0]
         return f"{base_url}/{db_number}"
     return f"{redis_url}/{db_number}"
 
+
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
-    
+
     # Auto-generate Celery URLs
     if not settings.CELERY_BROKER_URL:
         settings.CELERY_BROKER_URL = _get_redis_url_with_db(settings.REDIS_URL, 1)
     if not settings.CELERY_RESULT_BACKEND:
         settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
-        
+
     return settings
+
 
 # Create the instance
 settings = get_settings()

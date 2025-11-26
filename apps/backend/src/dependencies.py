@@ -40,6 +40,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 # This tells FastAPI: "The token is in the header, and if missing, go to /auth/login"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
+
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:
     """
     Validate JWT and retrieve the current user from the database.
@@ -50,36 +51,36 @@ async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> Use
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     try:
         # 1. Decode the token using your security util
         payload = decode_access_token(token)
-        
+
         # 2. Extract the subject (email)
         email: str = payload.get("sub")
         if email is None:
             raise credentials_exception
-            
+
         token_data = TokenData(email=email)
-        
+
     except JWTError:
         raise credentials_exception
 
     # 3. Fetch User from Database
     # We include preferences so we don't need a second query later
     user = await db.user.find_unique(
-        where={"email": token_data.email},
-        include={"preferences": True}
+        where={"email": token_data.email}, include={"preferences": True}
     )
-    
+
     if user is None:
         raise credentials_exception
-        
+
     # Optional: Check if user is active
     if not user.isActive:
         raise HTTPException(status_code=400, detail="Inactive user")
-        
+
     return user
+
 
 # Create a reusable type shortcut
 CurrentUser = Annotated[User, Depends(get_current_user)]

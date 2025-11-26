@@ -16,6 +16,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
 """
 Authentication routes (JWT Signup/Login + OAuth Placeholders).
 
@@ -108,9 +109,7 @@ async def login_for_access_token(
         )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -122,7 +121,11 @@ async def login_json(user_data: UserLogin):
     """
     user = await db.user.find_unique(where={"email": user_data.email})
 
-    if not user or not user.passwordHash or not verify_password(user_data.password, user.passwordHash):
+    if (
+        not user
+        or not user.passwordHash
+        or not verify_password(user_data.password, user.passwordHash)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -130,9 +133,7 @@ async def login_json(user_data: UserLogin):
         )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -143,7 +144,6 @@ async def read_users_me(current_user: CurrentUser):
     Get current user information.
     """
     return current_user
-
 
 
 #  OAUTH AUTHENTICATION (Atim Task)
