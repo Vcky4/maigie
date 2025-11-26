@@ -15,6 +15,11 @@ on:
       - 'apps/backend/**'
     types: [opened, synchronize, reopened, closed]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 defaults:
   run:
     working-directory: ./apps/backend
