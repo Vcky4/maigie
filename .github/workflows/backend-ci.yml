@@ -90,9 +90,9 @@ jobs:
 
       - name: Save Docker Image
         run: |
-          docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > /tmp/preview-image.tar.gz
-          ls -lh /tmp/preview-image.tar.gz
-          if [ ! -f /tmp/preview-image.tar.gz ] || [ ! -s /tmp/preview-image.tar.gz ]; then
+          docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > preview-image.tar.gz
+          ls -lh preview-image.tar.gz
+          if [ ! -f preview-image.tar.gz ] || [ ! -s preview-image.tar.gz ]; then
             echo "Error: Docker image file was not created or is empty"
             exit 1
           fi
@@ -103,7 +103,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "/tmp/preview-image.tar.gz"
+          source: "preview-image.tar.gz"
           target: "/tmp/"
 
       - name: Load Image and Deploy Preview
