@@ -97,14 +97,18 @@ jobs:
             exit 1
           fi
 
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
       - name: Deploy to Contabo VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: "preview-image.tar.gz"
-          target: "/tmp/"
+        run: |
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            preview-image.tar.gz \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
 
       - name: Load Image and Deploy Preview
         uses: appleboy/ssh-action@v1.0.0
