@@ -81,11 +81,21 @@ jobs:
       - name: Build Docker Image
         working-directory: ./apps/backend
         run: |
-          docker build -t maigie-backend-preview:${{ steps.preview.outputs.id }} .
+          docker buildx build \
+            --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
+            --load \
+            --platform linux/amd64 \
+            .
+          docker images | grep maigie-backend-preview
 
       - name: Save Docker Image
         run: |
           docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > /tmp/preview-image.tar.gz
+          ls -lh /tmp/preview-image.tar.gz
+          if [ ! -f /tmp/preview-image.tar.gz ] || [ ! -s /tmp/preview-image.tar.gz ]; then
+            echo "Error: Docker image file was not created or is empty"
+            exit 1
+          fi
 
       - name: Deploy to Contabo VPS
         uses: appleboy/scp-action@v0.1.7
