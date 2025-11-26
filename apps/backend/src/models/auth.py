@@ -1,33 +1,12 @@
 """
-Authentication routes.
-
-Copyright (C) 2024 Maigie Team
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""
-
-"""
-Authentication routes (JWT Signup/Login + OAuth Placeholders).
-
-Copyright (C) 2024 Maigie Team
-"""
-
-"""
 Authentication models (Pydantic schemas).
+
+Copyright (C) 2024 Maigie Team
 """
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+
 from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 # --- Token Schemas ---
 
@@ -42,7 +21,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     """Schema for data embedded in the token."""
 
-    email: str | None = None  # <--- THIS WAS MISSING
+    email: str | None = None
 
 
 # --- Request Models (Input) ---

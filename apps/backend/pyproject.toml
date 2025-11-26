@@ -58,7 +58,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # F841 = Unused local variables
 # N818 = Exception naming
 # E501 = Line length
-ignore = ["E501", "N818", "F401", "F841"] 
+ignore = ["E501", "N818", "F401", "F841", "N815"] 
 
 [tool.black]
 line-length = 100

@@ -15,18 +15,18 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""
 
-"""
 Dependency injection system.
 
 Copyright (C) 2024 Maigie Team
 """
 
 from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
+
 from prisma.models import User
 
 from .config import Settings, get_settings
