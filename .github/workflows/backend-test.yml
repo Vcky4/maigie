@@ -8,9 +8,6 @@ on:
     paths:
       - 'apps/backend/**'
   pull_request:
-    branches:
-      - main
-      - development
     paths:
       - 'apps/backend/**'
 
