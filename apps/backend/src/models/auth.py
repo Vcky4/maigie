@@ -26,7 +26,7 @@ Copyright (C) 2024 Maigie Team
 """
 Authentication models (Pydantic schemas).
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 
 # --- Token Schemas ---
@@ -84,5 +84,4 @@ class UserResponse(BaseModel):
     isActive: bool
     preferences: UserPreferencesResponse | None = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
