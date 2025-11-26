@@ -17,123 +17,70 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from typing import Annotated, Any
+"""
+Dependency injection system.
 
-from fastapi import Depends, Header, HTTPException, status
+Copyright (C) 2024 Maigie Team
+"""
+
+from typing import Annotated
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
+from prisma.models import User
 
 from .config import Settings, get_settings
+from .core.database import db
 from .core.security import decode_access_token
+from .models.auth import TokenData
 
 # Common dependencies
-SettingsDep = Annotated[Settings, Depends(lambda: get_settings())]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+# This tells FastAPI: "The token is in the header, and if missing, go to /auth/login"
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
-async def verify_api_key(
-    x_api_key: Annotated[str | None, Header()] = None,
-    settings: SettingsDep = None,
-) -> bool:
+async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:
     """
-    Verify API key header (placeholder for future implementation).
-
-    For now, this is a placeholder that always returns True.
-    In production, implement proper API key validation.
+    Validate JWT and retrieve the current user from the database.
+    This is the main dependency for protecting routes.
     """
-    # TODO: Implement API key validation
-    return True
-
-
-async def get_current_user_token(
-    authorization: Annotated[str | None, Header()] = None,
-) -> dict[str, Any]:
-    """
-    Extract and verify JWT token from Authorization header.
-
-    Args:
-        authorization: Authorization header value (Bearer <token>)
-
-    Returns:
-        Decoded token payload
-
-    Raises:
-        HTTPException: If token is missing or invalid
-    """
-    if not authorization:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
     try:
-        scheme, token = authorization.split()
-        if scheme.lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication scheme",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    try:
+        # 1. Decode the token using your security util
         payload = decode_access_token(token)
-        return payload
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+
+        # 2. Extract the subject (email)
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+
+        token_data = TokenData(email=email)
+
+    except JWTError:
+        raise credentials_exception
+
+    # 3. Fetch User from Database
+    # We include preferences so we don't need a second query later
+    user = await db.user.find_unique(
+        where={"email": token_data.email}, include={"preferences": True}
+    )
+
+    if user is None:
+        raise credentials_exception
+
+    # Optional: Check if user is active
+    if not user.isActive:
+        raise HTTPException(status_code=400, detail="Inactive user")
+
+    return user
 
 
-async def get_current_user_id(
-    token: Annotated[dict[str, Any], Depends(get_current_user_token)],
-) -> str:
-    """
-    Get current user ID from verified JWT token.
-
-    Args:
-        token: Decoded JWT token payload
-
-    Returns:
-        User ID from token
-    """
-    user_id = token.get("sub") or token.get("user_id")
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing user identifier",
-        )
-    return str(user_id)
-
-
-async def get_current_user_email(
-    token: Annotated[dict[str, Any], Depends(get_current_user_token)],
-) -> str:
-    """
-    Get current user email from verified JWT token.
-
-    Args:
-        token: Decoded JWT token payload
-
-    Returns:
-        User email from token
-    """
-    email = token.get("email")
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing email",
-        )
-    return str(email)
-
-
-# Dependencies for authenticated endpoints
-CurrentUserTokenDep = Annotated[dict[str, Any], Depends(get_current_user_token)]
-CurrentUserIdDep = Annotated[str, Depends(get_current_user_id)]
-CurrentUserEmailDep = Annotated[str, Depends(get_current_user_email)]
+# Create a reusable type shortcut
+CurrentUser = Annotated[User, Depends(get_current_user)]

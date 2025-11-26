@@ -1,5 +1,5 @@
 """
-Authentication models (Pydantic schemas).
+Authentication routes.
 
 Copyright (C) 2024 Maigie Team
 
@@ -17,15 +17,43 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from pydantic import BaseModel, EmailStr
+"""
+Authentication routes (JWT Signup/Login + OAuth Placeholders).
+
+Copyright (C) 2024 Maigie Team
+"""
+
+"""
+Authentication models (Pydantic schemas).
+"""
+from pydantic import BaseModel, EmailStr, Field
+from typing import Optional
+
+# --- Token Schemas ---
 
 
-class UserRegister(BaseModel):
+class Token(BaseModel):
+    """Token response schema."""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenData(BaseModel):
+    """Schema for data embedded in the token."""
+
+    email: str | None = None  # <--- THIS WAS MISSING
+
+
+# --- Request Models (Input) ---
+
+
+class UserSignup(BaseModel):
     """User registration schema."""
 
     email: EmailStr
-    password: str
-    full_name: str | None = None
+    password: str = Field(min_length=8, description="Password must be at least 8 characters")
+    name: str = Field(..., description="Full Name")
 
 
 class UserLogin(BaseModel):
@@ -35,24 +63,26 @@ class UserLogin(BaseModel):
     password: str
 
 
-class TokenResponse(BaseModel):
-    """Token response schema."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int
+# --- Response Models (Output) ---
 
 
-class RefreshTokenRequest(BaseModel):
-    """Refresh token request schema."""
+class UserPreferencesResponse(BaseModel):
+    """Schema for user preferences."""
 
-    refresh_token: str
+    theme: str
+    language: str
+    notifications: bool
 
 
 class UserResponse(BaseModel):
     """User response schema."""
 
     id: str
-    email: str
-    full_name: str | None = None
+    email: EmailStr
+    name: str | None = None
+    tier: str
+    isActive: bool
+    preferences: UserPreferencesResponse | None = None
+
+    class Config:
+        from_attributes = True
