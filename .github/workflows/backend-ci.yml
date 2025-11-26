@@ -132,7 +132,6 @@ jobs:
             
             # Create docker-compose.yml
             cat > docker-compose.yml << EOF
-            version: '3.8'
             services:
               postgres:
                 image: postgres:15-alpine
@@ -182,7 +181,7 @@ jobs:
                 command: >
                   sh -c "
                     prisma migrate deploy &&
-                    prisma db seed &&
+                    python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
             
@@ -197,15 +196,29 @@ jobs:
             # Start preview environment
             docker-compose up -d
             
-            # Wait for backend to be ready
-            sleep 10
-            
-            # Get exposed port and save to file for retrieval
-            PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
+            # Wait for backend container to be running and get port
+            echo "Waiting for backend container to start..."
+            for i in {1..30}; do
+              if docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
+                PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
+                if [ -n "$PORT" ]; then
+                  echo "Backend is running on port $PORT"
+                  break
+                fi
+              fi
+              if [ $i -eq 30 ]; then
+                echo "Failed to get port after 30 attempts"
+                docker-compose logs
+                docker ps -a
+                exit 1
+              fi
+              sleep 2
+            done
             
             if [ -z "$PORT" ]; then
               echo "Failed to get port"
               docker-compose logs
+              docker ps -a
               exit 1
             fi
             
