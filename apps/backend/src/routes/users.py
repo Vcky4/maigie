@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from src.dependencies import CurrentUser
+
 from src.core.database import db
+from src.dependencies import CurrentUser
 from src.models.auth import UserResponse
 
 router = APIRouter()
@@ -40,5 +41,5 @@ async def update_preferences(
         },
         include={"preferences": True}
     )
-    
+
     return updated_user

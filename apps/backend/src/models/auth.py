@@ -1,5 +1,5 @@
 """
-Authentication routes.
+Authentication models (Pydantic schemas).
 
 Copyright (C) 2024 Maigie Team
 
@@ -16,18 +16,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-
-"""
-Authentication routes (JWT Signup/Login + OAuth Placeholders).
-
-Copyright (C) 2024 Maigie Team
-"""
-
-"""
-Authentication models (Pydantic schemas).
-"""
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 # --- Token Schemas ---
 
@@ -81,7 +70,18 @@ class UserResponse(BaseModel):
     email: EmailStr
     name: str | None = None
     tier: str
-    isActive: bool
+    isActive: bool  # noqa: N815
     preferences: UserPreferencesResponse | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class OAuthAuthorizeResponse(BaseModel):
+    """OAuth authorization URL response schema."""
+
+    authorization_url: str
+    state: str
+    provider: str
 
     model_config = ConfigDict(from_attributes=True)

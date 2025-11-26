@@ -16,17 +16,13 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-
-"""
-Dependency injection system.
-
-Copyright (C) 2024 Maigie Team
-"""
-
 from typing import Annotated
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
+
+from prisma import Prisma
 from prisma.models import User
 
 from .config import Settings, get_settings
@@ -36,6 +32,14 @@ from .models.auth import TokenData
 
 # Common dependencies
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+# Database dependency
+async def get_db() -> Prisma:
+    """Get database client dependency."""
+    return db
+
+
+DBDep = Annotated[Prisma, Depends(get_db)]
 
 # This tells FastAPI: "The token is in the header, and if missing, go to /auth/login"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")

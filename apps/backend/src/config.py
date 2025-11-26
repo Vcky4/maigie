@@ -5,7 +5,7 @@ Application configuration management.
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any
 
 from pydantic import BeforeValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -77,10 +77,10 @@ class Settings(BaseSettings):
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
     # --- OAuth Providers (Placeholders) ---
-    OAUTH_GOOGLE_CLIENT_ID: Optional[str] = None
-    OAUTH_GOOGLE_CLIENT_SECRET: Optional[str] = None
-    OAUTH_GITHUB_CLIENT_ID: Optional[str] = None
-    OAUTH_GITHUB_CLIENT_SECRET: Optional[str] = None
+    OAUTH_GOOGLE_CLIENT_ID: str | None = None
+    OAUTH_GOOGLE_CLIENT_SECRET: str | None = None
+    OAUTH_GITHUB_CLIENT_ID: str | None = None
+    OAUTH_GITHUB_CLIENT_SECRET: str | None = None
     # Redirect URI used by your teammate's OAuth logic
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
 
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     # --- Logging & Sentry ---
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
-    SENTRY_DSN: Optional[str] = None
+    SENTRY_DSN: str | None = None
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
     model_config = SettingsConfigDict(

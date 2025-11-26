@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from typing import Any, Protocol
 
+import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from ..config import get_settings
@@ -67,7 +68,8 @@ class GoogleOAuthProvider:
             client_secret=self.client_secret,
             redirect_uri=redirect_uri,
         )
-        authorization_url, _ = await client.create_authorization_url(
+        # create_authorization_url is synchronous and returns a tuple (url, state)
+        authorization_url, _ = client.create_authorization_url(
             self.authorize_url,
             state=state,
             scope="openid email profile",
@@ -76,24 +78,33 @@ class GoogleOAuthProvider:
 
     async def get_access_token(self, code: str, redirect_uri: str) -> dict[str, Any]:
         """Exchange authorization code for access token."""
-        client = AsyncOAuth2Client(
-            client_id=self.client_id,
-            client_secret=self.client_secret,
-            redirect_uri=redirect_uri,
-        )
-        token = await client.fetch_token(
-            self.access_token_url,
-            code=code,
-        )
-        return token
+        # For Google OAuth, use manual token request to avoid authlib parsing issues
+        # Google's token endpoint works fine, but authlib sometimes fails to parse the response
+        async with httpx.AsyncClient() as http_client:
+            token_data = {
+                "code": code,
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            }
+            response = await http_client.post(
+                self.access_token_url,
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            response.raise_for_status()
+            token_response = response.json()
+
+            if "access_token" not in token_response:
+                raise ValueError(
+                    f"Token response missing access_token. Response keys: {list(token_response.keys())}"
+                )
+            return token_response
 
     async def get_user_info(self, access_token: str) -> dict[str, Any]:
         """Get user information from Google."""
-        client = AsyncOAuth2Client(
-            client_id=self.client_id,
-            client_secret=self.client_secret,
-        )
-        async with client:
+        async with httpx.AsyncClient() as client:
             resp = await client.get(
                 self.user_info_url,
                 headers={"Authorization": f"Bearer {access_token}"},
@@ -122,7 +133,8 @@ class GitHubOAuthProvider:
             client_secret=self.client_secret,
             redirect_uri=redirect_uri,
         )
-        authorization_url, _ = await client.create_authorization_url(
+        # create_authorization_url is synchronous and returns a tuple (url, state)
+        authorization_url, _ = client.create_authorization_url(
             self.authorize_url,
             state=state,
             scope="user:email",
@@ -134,12 +146,15 @@ class GitHubOAuthProvider:
         client = AsyncOAuth2Client(
             client_id=self.client_id,
             client_secret=self.client_secret,
-            redirect_uri=redirect_uri,
         )
-        token = await client.fetch_token(
-            self.access_token_url,
-            code=code,
-        )
+        # Use context manager to ensure proper cleanup
+        async with client:
+            # redirect_uri must be passed to fetch_token to match the authorization request
+            token = await client.fetch_token(
+                self.access_token_url,
+                code=code,
+                redirect_uri=redirect_uri,
+            )
         return token
 
     async def get_user_info(self, access_token: str) -> dict[str, Any]:

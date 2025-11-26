@@ -26,6 +26,7 @@ model User {
   providerId    String?
   tier          Tier      @default(FREE)
   isActive      Boolean   @default(true)
+  isOnboarded   Boolean   @default(false)
   
   // Relation: One User has One set of Preferences
   // (We changed this from 'Json?' to a relation)
