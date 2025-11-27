@@ -29,10 +29,11 @@ GITHUB_TOKEN="${1:-}"
 REPO_OWNER="${2:-}"
 REPO_NAME="${3:-}"
 
-# Cloudflare API credentials (optional, for tunnel route cleanup)
+# Cloudflare API credentials (optional, for tunnel route and DNS cleanup)
 CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
 CLOUDFLARE_TUNNEL_ID="${CLOUDFLARE_TUNNEL_ID:-}"
 CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
+CLOUDFLARE_ZONE_ID="${CLOUDFLARE_ZONE_ID:-}"
 PREVIEW_DOMAIN="${PREVIEW_DOMAIN:-maigie.com}"
 
 # Create log file if it doesn't exist
@@ -101,14 +102,35 @@ cleanup_preview() {
         echo "[$(date)] Removed Nginx config: $NGINX_CONFIG" >> "$LOG_FILE"
     fi
     
-    # Remove Cloudflare Tunnel route if API credentials are available
-    if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+    # Remove Cloudflare Tunnel route and DNS record if API credentials are available
+    if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ZONE_ID" ]; then
         PREVIEW_DOMAIN_VALUE="${PREVIEW_DOMAIN:-maigie.com}"
         PREVIEW_DOMAIN="${preview_id}-api-preview.${PREVIEW_DOMAIN_VALUE}"
         
-        echo "[$(date)] Removing Cloudflare Tunnel route: $PREVIEW_DOMAIN" >> "$LOG_FILE"
+        echo "[$(date)] Removing Cloudflare Tunnel route and DNS record: $PREVIEW_DOMAIN" >> "$LOG_FILE"
         
-        # Get current config
+        # Remove DNS record
+        DNS_NAME=$(echo "${PREVIEW_DOMAIN}" | cut -d. -f1)
+        EXISTING_RECORD=$(curl -s -X GET \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${PREVIEW_DOMAIN}&type=CNAME" 2>&1 | \
+            jq -r '.result[0].id // empty' 2>/dev/null)
+        
+        if [ -n "$EXISTING_RECORD" ] && [ "$EXISTING_RECORD" != "null" ]; then
+            DNS_DELETE_RESPONSE=$(curl -s -X DELETE \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${EXISTING_RECORD}" 2>&1)
+            
+            if echo "$DNS_DELETE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
+                echo "[$(date)] Successfully removed DNS record: $PREVIEW_DOMAIN" >> "$LOG_FILE"
+            else
+                echo "[$(date)] Warning: Failed to remove DNS record: $PREVIEW_DOMAIN" >> "$LOG_FILE"
+            fi
+        fi
+        
+        # Remove tunnel route
         CURRENT_CONFIG=$(curl -s -X GET \
             -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
             -H "Content-Type: application/json" \

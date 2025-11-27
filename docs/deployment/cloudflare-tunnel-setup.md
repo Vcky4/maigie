@@ -75,15 +75,22 @@ ingress:
     service: http://localhost:80
   - hostname: staging-api.maigie.com
     service: http://localhost:80
-  - hostname: pr-*-api-preview.maigie.com
-    service: http://localhost:80
   - service: http_status:404
 EOF
+
+**Note:** Preview routes (e.g., `pr-44-api-preview.maigie.com`) are added automatically via Cloudflare API when previews are deployed. No wildcard route is needed in the tunnel configuration.
 
 # Start tunnel service
 sudo systemctl start cloudflared
 sudo systemctl enable cloudflared
 ```
+
+**Important:** If you're using token-based setup, configure ingress rules in the Cloudflare Dashboard:
+1. Go to Zero Trust → Networks → Tunnels → your tunnel → Public Hostname
+2. Add routes for production and staging only:
+   - `api.maigie.com` → `http://localhost:80`
+   - `staging-api.maigie.com` → `http://localhost:80`
+3. Preview routes will be added automatically via API
 
 ### 4. Set Up Nginx Routing
 
@@ -98,7 +105,7 @@ bash /opt/maigie/scripts/setup-nginx-routing.sh api.maigie.com staging-api.maigi
 
 ### 5. Configure DNS in Cloudflare
 
-Add these DNS records (all pointing to your tunnel):
+Add these DNS records for production and staging (preview DNS records are created automatically via API):
 
 ```
 Type: CNAME
@@ -110,14 +117,9 @@ Type: CNAME
 Name: staging-api
 Target: {TUNNEL_ID}.cfargotunnel.com
 Proxy: Proxied (orange cloud)
-
-Type: CNAME
-Name: *-api-preview
-Target: {TUNNEL_ID}.cfargotunnel.com
-Proxy: Proxied (orange cloud)
 ```
 
-**Note:** The wildcard DNS record (`*-api-preview`) allows any preview subdomain to resolve. Individual tunnel routes are created dynamically via API for each PR.
+**Note:** Preview DNS records (e.g., `pr-44-api-preview.maigie.com`) are created automatically via Cloudflare API when previews are deployed. No wildcard DNS record is needed.
 
 ### 6. GitHub Secrets
 
@@ -128,17 +130,21 @@ Add these secrets to your GitHub repository:
 **Required for Dynamic Route Management** (recommended):
 - `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID (found in Cloudflare Dashboard → Right sidebar)
 - `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID (found in Zero Trust → Networks → Tunnels → your tunnel)
-- `CLOUDFLARE_API_TOKEN` - API token with `Account.Cloudflare Tunnel:Edit` permission
+- `CLOUDFLARE_ZONE_ID` - Your Zone ID for maigie.com (found in Cloudflare Dashboard → Domain → Overview → API → Zone ID)
+- `CLOUDFLARE_API_TOKEN` - API token with `Account.Cloudflare Tunnel:Edit` and `Zone.DNS:Edit` permissions
 
 **To create API token:**
 1. Go to Cloudflare Dashboard → My Profile → API Tokens
 2. Click "Create Token"
-3. Use "Edit Cloudflare Tunnel" template
-4. Add permissions: `Account.Cloudflare Tunnel:Edit`
+3. Use "Edit Cloudflare Tunnel" template as a starting point
+4. Add permissions:
+   - `Account` → `Cloudflare Tunnel` → `Edit`
+   - `Zone` → `DNS` → `Edit`
 5. Add account resources: Select your account
-6. Copy the token and add to GitHub Secrets
+6. Add zone resources: Include → All zones (or select maigie.com specifically)
+7. Copy the token and add to GitHub Secrets
 
-**Note:** Without these secrets, preview routes will need to be managed manually in the Cloudflare Dashboard. With these secrets, routes are automatically created and removed by GitHub Actions.
+**Note:** Without these secrets, preview routes and DNS records will need to be managed manually in the Cloudflare Dashboard. With these secrets, routes and DNS records are automatically created and removed by GitHub Actions.
 
 ## How It Works
 
@@ -150,6 +156,7 @@ Add these secrets to your GitHub repository:
 2. **Preview Deployment**:
    - Docker container starts on random port
    - Workflow creates Nginx config: `pr-44-api-preview.maigie.com` → `localhost:PORT`
+   - Workflow creates DNS record via API: `pr-44-api-preview` CNAME → `{tunnel-name}.cfargotunnel.com` (Proxied)
    - Workflow creates Cloudflare Tunnel route via API: `pr-44-api-preview.maigie.com` → `http://localhost:80`
    - Nginx reloads
    - Preview URL commented on PR
@@ -187,8 +194,8 @@ cat ~/.cloudflared/config.yml
 
 ### Preview domains not resolving
 
-- Ensure wildcard DNS record (`*.preview`) is configured
-- Check tunnel ingress includes `pr-*-api-preview.maigie.com`
+- Verify DNS record was created via API (check Cloudflare Dashboard → DNS)
+- Verify tunnel route was created via API (check Zero Trust → Networks → Tunnels → Public Hostname)
 - Verify Nginx config was created for the preview
 - Check Nginx is reloaded: `sudo systemctl reload nginx`
 
