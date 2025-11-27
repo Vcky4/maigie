@@ -1006,6 +1006,7 @@ colors = ["colorama"]
 plugins = ["setuptools"]
 
 [[package]]
+<<<<<<< HEAD
 name = "itsdangerous"
 version = "2.2.0"
 description = "Safely pass data to untrusted environments and back."
@@ -1018,6 +1019,8 @@ files = [
 ]
 
 [[package]]
+=======
+>>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 name = "jinja2"
 version = "3.1.6"
 description = "A very fast and expressive template engine."
@@ -2424,4 +2427,8 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
+<<<<<<< HEAD
 content-hash = "e912560ea9f1867f7731e9fde98cdd88e10b939acba76539bc76357db7c15690"
+=======
+content-hash = "dbeb230941cc1ea35bc02c269c1346a909158da2cfbbe3143ed546ac76c7418f"
+>>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8

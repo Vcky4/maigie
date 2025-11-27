@@ -1,3 +1,4 @@
+// Prisma schema for Maigie backend
 // apps/backend/prisma/schema.prisma
 
 datasource db {
@@ -10,6 +11,8 @@ generator client {
   interface            = "asyncio"
   recursive_type_depth = 5
 }
+
+// --- Base Schema ---
 
 enum Tier {
   FREE

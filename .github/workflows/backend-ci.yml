@@ -1,56 +1,853 @@
-name: Backend CI
+name: Backend Deployment
 
 on:
   push:
-    branches: [ "development", "main", "feature/**" ]
+    branches:
+      - main
+      - development
     paths:
       - 'apps/backend/**'
   pull_request:
-    branches: [ "development" ]
+    branches:
+      - main
+      - development
     paths:
       - 'apps/backend/**'
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 defaults:
   run:
     working-directory: ./apps/backend
 
 jobs:
-  test-and-lint:
+  check-tests:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: password
-          POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
-    - name: Install Poetry
-      run: |
-        curl -sSL https://install.python-poetry.org | python3 -
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
-    - name: Install Dependencies
-      run: poetry install --no-root
-    - name: Run Linting
-      run: |
-        poetry run black . --check
-        poetry run flake8 .
-    - name: Generate Prisma Client
-      run: poetry run prisma generate
-      env:
-        DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
-    - name: Run Tests
-      run: poetry run pytest
-      env:
-        DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
+      - name: Check Test Workflow Status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.pull_request?.head?.ref || context.ref.replace('refs/heads/', '');
+            const sha = context.payload.pull_request?.head?.sha || context.sha;
+            
+            // Wait a bit for test workflow to complete if it just started
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            
+            // Check the latest test workflow run for this branch/SHA
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'backend-test.yml',
+              branch: branch,
+              per_page: 5
+            });
+            
+            if (runs.workflow_runs.length === 0) {
+              core.setFailed('No test workflow run found. Please ensure tests pass first.');
+              return;
+            }
+            
+            // Find the run matching this SHA or the most recent one
+            const matchingRun = runs.workflow_runs.find(run => run.head_sha === sha) || runs.workflow_runs[0];
+            
+            // Wait for workflow to complete if still in progress
+            let attempts = 0;
+            while (matchingRun.status !== 'completed' && attempts < 30) {
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              const { data: run } = await github.rest.actions.getWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: matchingRun.id
+              });
+              matchingRun.status = run.status;
+              matchingRun.conclusion = run.conclusion;
+              attempts++;
+            }
+            
+            if (matchingRun.conclusion !== 'success') {
+              core.setFailed(`Test workflow ${matchingRun.conclusion}. Check the test workflow for details.`);
+            } else {
+              core.info(`Test workflow passed! Proceeding with deployment.`);
+            }
+
+  deploy-preview:
+    needs: check-tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate Preview ID
+        id: preview
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PREVIEW_ID="pr-${PR_NUMBER}"
+          echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
+          echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
+
+      - name: Build Docker Image
+        working-directory: ./apps/backend
+        run: |
+          docker buildx build \
+            --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
+            --load \
+            --platform linux/amd64 \
+            .
+          docker images | grep maigie-backend-preview
+
+      - name: Save Docker Image
+        run: |
+          docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > preview-image.tar.gz
+          ls -lh preview-image.tar.gz
+          if [ ! -f preview-image.tar.gz ] || [ ! -s preview-image.tar.gz ]; then
+            echo "Error: Docker image file was not created or is empty"
+            exit 1
+          fi
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to Contabo VPS
+        run: |
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            preview-image.tar.gz \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
+
+      - name: Load Image and Deploy Preview
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/maigie/previews
+            
+            # Clean up existing preview for this PR if it exists
+            if [ -d "${{ steps.preview.outputs.id }}" ]; then
+              echo "Cleaning up existing preview environment for ${{ steps.preview.outputs.id }}..."
+              cd ${{ steps.preview.outputs.id }}
+              
+              # Stop and remove containers with volumes
+              if [ -f "docker-compose.yml" ]; then
+                docker-compose down -v 2>/dev/null || true
+              fi
+              
+              # Remove any remaining containers
+              docker rm -f maigie-preview-backend-${{ steps.preview.outputs.id}} maigie-preview-postgres-${{ steps.preview.outputs.id }} maigie-preview-redis-${{ steps.preview.outputs.id }} 2>/dev/null || true
+              
+              # Remove volumes
+              docker volume rm ${{ steps.preview.outputs.id }}_postgres_data 2>/dev/null || true
+              
+              # Remove Nginx config if it exists
+              sudo rm -f /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf
+              sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true
+              
+              # Go back and remove directory
+              cd ..
+              rm -rf ${{ steps.preview.outputs.id }}
+              echo "✓ Cleaned up existing preview environment"
+            fi
+            
+            # Create preview directory
+            mkdir -p ${{ steps.preview.outputs.id }}
+            cd ${{ steps.preview.outputs.id }}
+            
+            # Remove old preview image if it exists (force remove to handle any dangling references)
+            docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
+            
+            # Load Docker image
+            docker load < /tmp/preview-image.tar.gz
+            rm /tmp/preview-image.tar.gz
+            
+            # Generate random password for preview database
+            POSTGRES_PASSWORD=$(openssl rand -hex 16)
+            
+            # Create docker-compose.yml
+            cat > docker-compose.yml << EOF
+            services:
+              postgres:
+                image: postgres:15-alpine
+                container_name: maigie-preview-postgres-${{ steps.preview.outputs.id }}
+                environment:
+                  POSTGRES_USER: maigie
+                  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+                  POSTGRES_DB: maigie_preview_${{ steps.preview.outputs.id }}
+                volumes:
+                  - postgres_data_${{ steps.preview.outputs.id }}:/var/lib/postgresql/data
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U maigie"]
+                  interval: 5s
+                  timeout: 5s
+                  retries: 5
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+            
+              redis:
+                image: redis:7-alpine
+                container_name: maigie-preview-redis-${{ steps.preview.outputs.id }}
+                healthcheck:
+                  test: ["CMD", "redis-cli", "ping"]
+                  interval: 5s
+                  timeout: 3s
+                  retries: 5
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+            
+              backend:
+                image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
+                environment:
+                  DATABASE_URL: postgresql://maigie:${POSTGRES_PASSWORD}@postgres:5432/maigie_preview_${{ steps.preview.outputs.id }}
+                  REDIS_URL: redis://redis:6379/0
+                  ENVIRONMENT: preview
+                  PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                ports:
+                  - "0:8000"
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                  redis:
+                    condition: service_healthy
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+                command: >
+                  sh -c "
+                    prisma migrate deploy &&
+                    python prisma/seed.py &&
+                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                  "
+            
+            volumes:
+              postgres_data_${{ steps.preview.outputs.id }}:
+            
+            networks:
+              preview_net_${{ steps.preview.outputs.id }}:
+                driver: bridge
+            EOF
+            
+            # Start preview environment (this will create fresh database)
+            docker-compose up -d
+            
+            # Wait for backend container to be running and get port
+            echo "Waiting for backend container to start..."
+            for i in {1..30}; do
+              if docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
+                PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
+                if [ -n "$PORT" ]; then
+                  echo "Backend is running on port $PORT"
+                  break
+                fi
+              fi
+              if [ $i -eq 30 ]; then
+                echo "Failed to get port after 30 attempts"
+                docker-compose logs
+                docker ps -a
+                exit 1
+              fi
+              sleep 2
+            done
+            
+            if [ -z "$PORT" ]; then
+              echo "Failed to get port"
+              docker-compose logs
+              docker ps -a
+              exit 1
+            fi
+            
+            echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
+            echo "Preview deployed on port: $PORT"
+
+      - name: Setup Preview Domain
+        id: setup-domain
+        if: github.event_name == 'pull_request'
+        run: |
+          PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cat /tmp/preview_port_${{ steps.preview.outputs.id }}.txt 2>/dev/null | cut -d= -f2")
+          
+          if [ -z "$PORT" ]; then
+            PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+              "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
+          fi
+          
+          PREVIEW_DOMAIN_VALUE="${{ secrets.PREVIEW_DOMAIN }}"
+          if [ -z "$PREVIEW_DOMAIN_VALUE" ]; then
+            PREVIEW_DOMAIN_VALUE="maigie.com"
+          fi
+          
+          PREVIEW_DOMAIN="${{ steps.preview.outputs.id }}-api-preview.${PREVIEW_DOMAIN_VALUE}"
+          
+          # Create Nginx config on VPS
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cat > /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf << 'NGINX_EOF'
+          server {
+              listen 80;
+              server_name ${PREVIEW_DOMAIN};
+              
+              location / {
+                  proxy_pass http://127.0.0.1:${PORT};
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_cache_bypass \$http_upgrade;
+                  
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 60s;
+                  proxy_read_timeout 60s;
+              }
+              
+              location /health {
+                  proxy_pass http://127.0.0.1:${PORT}/health;
+                  access_log off;
+              }
+          }
+          NGINX_EOF
+          sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo systemctl reload nginx"
+          
+          # Add Cloudflare Tunnel route and DNS record via API
+          if [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_TUNNEL_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
+            echo "Adding Cloudflare Tunnel route and DNS record for ${PREVIEW_DOMAIN}..."
+            
+            # Get tunnel config
+            CURRENT_CONFIG=$(curl -s -X GET \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations")
+            
+            # Extract current ingress rules
+            INGRESS_RULES=$(echo "$CURRENT_CONFIG" | jq -r '.result.config.ingress // []')
+            
+            # Check if hostname already exists and remove it
+            if echo "$INGRESS_RULES" | jq -e ".[] | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
+              INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
+            fi
+            
+            # Separate specific rules from catch-all rules
+            SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname != null and .hostname != \"\")]")
+            CATCH_ALL_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname == null or .hostname == \"\")]")
+            
+            # Add new route to specific rules, then append catch-all rules at the end
+            NEW_RULE="{\"hostname\":\"${PREVIEW_DOMAIN}\",\"service\":\"http://localhost:80\"}"
+            INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] | . + $CATCH_ALL_RULES")
+            
+            # Update tunnel config
+            UPDATE_RESPONSE=$(curl -s -X PUT \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"config\":{\"ingress\":$INGRESS_RULES}}" \
+              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations")
+            
+            if echo "$UPDATE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
+              echo "✓ Successfully added Cloudflare Tunnel route: ${PREVIEW_DOMAIN}"
+            else
+              echo "⚠️  Failed to add Cloudflare Tunnel route (non-critical)"
+              echo "$UPDATE_RESPONSE" | jq '.' || true
+            fi
+            
+            # Get tunnel hostname for DNS record target
+            TUNNEL_HOSTNAME=$(curl -s -X GET \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}" | \
+              jq -r '.result.name + ".cfargotunnel.com"')
+            
+            # Extract subdomain from preview domain (e.g., pr-44-api-preview from pr-44-api-preview.maigie.com)
+            DNS_NAME=$(echo "${PREVIEW_DOMAIN}" | cut -d. -f1)
+            
+            # Check if DNS record already exists
+            EXISTING_RECORD=$(curl -s -X GET \
+              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records?name=${PREVIEW_DOMAIN}&type=CNAME" | \
+              jq -r '.result[0].id // empty')
+            
+            if [ -n "$EXISTING_RECORD" ]; then
+              echo "DNS record already exists, updating..."
+              # Update existing DNS record
+              DNS_RESPONSE=$(curl -s -X PUT \
+                -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"CNAME\",\"name\":\"${DNS_NAME}\",\"content\":\"${TUNNEL_HOSTNAME}\",\"proxied\":true}" \
+                "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records/${EXISTING_RECORD}")
+            else
+              # Create new DNS record
+              DNS_RESPONSE=$(curl -s -X POST \
+                -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"CNAME\",\"name\":\"${DNS_NAME}\",\"content\":\"${TUNNEL_HOSTNAME}\",\"proxied\":true}" \
+                "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/dns_records")
+            fi
+            
+            if echo "$DNS_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
+              echo "✓ Successfully created/updated DNS record: ${PREVIEW_DOMAIN} → ${TUNNEL_HOSTNAME}"
+            else
+              echo "⚠️  Failed to create DNS record (non-critical)"
+              echo "$DNS_RESPONSE" | jq '.' || true
+            fi
+          else
+            echo "⚠️  Cloudflare API credentials not configured, skipping tunnel route and DNS creation"
+          fi
+          
+          echo "domain=${PREVIEW_DOMAIN}" >> $GITHUB_OUTPUT
+
+      - name: Get Preview URL
+        id: get-preview-url
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -n "${{ steps.setup-domain.outputs.domain }}" ]; then
+            PREVIEW_URL="https://${{ steps.setup-domain.outputs.domain }}"
+          else
+            PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+              "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
+            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:$PORT"
+          fi
+          echo "PREVIEW_URL=$PREVIEW_URL" >> $GITHUB_ENV
+          echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
+
+      - name: Comment Preview URL on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PREVIEW_URL: ${{ steps.get-preview-url.outputs.url }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const previewUrl = process.env.PREVIEW_URL || 'http://${{ secrets.VPS_HOST }}:8000';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Preview deployment ready!**\n\n🔗 **Preview URL:** ${previewUrl}\n\n📝 **Preview ID:** ${{ steps.preview.outputs.id }}\n\n⚠️ This preview will be automatically cleaned up when the PR is closed, or after 3 days if the PR remains open.`
+            });
+
+  deploy-production:
+    needs: check-tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        working-directory: ./apps/backend
+        run: docker build -t maigie-backend:latest .
+
+      - name: Save Docker Image
+        run: |
+          docker save maigie-backend:latest | gzip > production-image.tar.gz
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to Contabo VPS
+        run: |
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            production-image.tar.gz \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/production-image.tar.gz
+
+      - name: Load Image and Deploy Production
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/maigie/production
+            
+            # Load Docker image
+            docker load < /tmp/production-image.tar.gz
+            rm /tmp/production-image.tar.gz
+            
+            # Tag the loaded image for docker-compose (if needed)
+            docker tag maigie-backend:latest maigie-backend:latest || true
+            
+            # Update docker-compose.yml to use image instead of build
+            # Backup original if it exists
+            if [ -f docker-compose.yml ]; then
+              cp docker-compose.yml docker-compose.yml.backup
+            fi
+            
+            # Create docker-compose.yml with image references
+            cat > docker-compose.yml << 'EOF'
+            services:
+              redis:
+                image: redis:7-alpine
+                container_name: maigie-redis-prod
+                restart: unless-stopped
+                volumes:
+                  - redis_data:/data
+                healthcheck:
+                  test: ["CMD", "redis-cli", "ping"]
+                  interval: 10s
+                  timeout: 3s
+                  retries: 5
+                networks:
+                  - maigie_network
+            
+              celery-worker:
+                image: maigie-backend:latest
+                container_name: maigie-celery-worker-prod
+                restart: unless-stopped
+                env_file:
+                  - .env
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                command: celery -A src.core.celery_app worker --loglevel=info
+            
+              celery-beat:
+                image: maigie-backend:latest
+                container_name: maigie-celery-beat-prod
+                restart: unless-stopped
+                env_file:
+                  - .env
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                command: celery -A src.core.celery_app beat --loglevel=info
+            
+              backend:
+                image: maigie-backend:latest
+                container_name: maigie-backend-prod
+                restart: unless-stopped
+                env_file:
+                  - .env
+                ports:
+                  - "8000:8000"
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                command: >
+                  sh -c "
+                    prisma migrate deploy &&
+                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                  "
+            
+            volumes:
+              redis_data:
+            
+            networks:
+              maigie_network:
+                driver: bridge
+            EOF
+            
+            # Update .env file
+            cat > .env << EOF
+            DATABASE_URL=${{ secrets.PRODUCTION_DATABASE_URL }}
+            REDIS_URL=redis://redis:6379/0
+            ENVIRONMENT=production
+            EOF
+            
+            # Stop existing containers
+            docker-compose down || true
+            
+            # Deploy (no build needed, using pre-loaded image)
+            docker-compose up -d
+            
+            # Wait for services to be ready
+            sleep 15
+            
+            # Run migrations
+            docker-compose exec -T backend prisma migrate deploy || echo "Migrations already applied"
+            
+            echo "Production deployment complete!"
+
+  deploy-staging:
+    needs: check-tests
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/development' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        working-directory: ./apps/backend
+        run: docker build -t maigie-backend:staging .
+
+      - name: Save Docker Image
+        run: |
+          docker save maigie-backend:staging | gzip > staging-image.tar.gz
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to Contabo VPS
+        run: |
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            staging-image.tar.gz \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/staging-image.tar.gz
+
+      - name: Load Image and Deploy Staging
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/maigie/staging
+            
+            # Load Docker image
+            docker load < /tmp/staging-image.tar.gz
+            rm /tmp/staging-image.tar.gz
+            
+            # Tag the loaded image for docker-compose (if needed)
+            docker tag maigie-backend:staging maigie-backend:staging || true
+            
+            # Update environment variables
+            export DATABASE_URL="${{ secrets.STAGING_DATABASE_URL }}"
+            export REDIS_URL="redis://redis:6379/0"
+            export ENVIRONMENT="staging"
+            
+            # Update docker-compose.yml to use image instead of build
+            # Backup original if it exists
+            if [ -f docker-compose.yml ]; then
+              cp docker-compose.yml docker-compose.yml.backup
+            fi
+            
+            # Create docker-compose.yml with image references
+            cat > docker-compose.yml << 'EOF'
+            services:
+              redis:
+                image: redis:7-alpine
+                container_name: maigie-redis-staging
+                restart: unless-stopped
+                volumes:
+                  - redis_data:/data
+                healthcheck:
+                  test: ["CMD", "redis-cli", "ping"]
+                  interval: 10s
+                  timeout: 3s
+                  retries: 5
+                networks:
+                  - maigie_network
+            
+              celery-worker:
+                image: maigie-backend:staging
+                container_name: maigie-celery-worker-staging
+                restart: unless-stopped
+                env_file:
+                  - .env
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                command: celery -A src.core.celery_app worker --loglevel=info
+            
+              celery-beat:
+                image: maigie-backend:staging
+                container_name: maigie-celery-beat-staging
+                restart: unless-stopped
+                env_file:
+                  - .env
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                command: celery -A src.core.celery_app beat --loglevel=info
+            
+              backend:
+                image: maigie-backend:staging
+                container_name: maigie-backend-staging
+                restart: unless-stopped
+                env_file:
+                  - .env
+                ports:
+                  - "8001:8000"
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                command: >
+                  sh -c "
+                    prisma migrate deploy &&
+                    python prisma/seed.py &&
+                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                  "
+            
+            volumes:
+              redis_data:
+            
+            networks:
+              maigie_network:
+                driver: bridge
+            EOF
+            
+            # Update .env file
+            cat > .env << EOF
+            DATABASE_URL=${{ secrets.STAGING_DATABASE_URL }}
+            REDIS_URL=redis://redis:6379/0
+            ENVIRONMENT=staging
+            EOF
+            
+            # Stop existing containers
+            docker-compose down || true
+            
+            # Deploy (no build needed, using pre-loaded image)
+            docker-compose up -d
+            
+            # Wait for services to be ready
+            sleep 15
+            
+            # Run migrations and seed
+            docker-compose exec -T backend prisma migrate deploy || echo "Migrations already applied"
+            docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
+            
+            echo "Staging deployment complete!"
+
+  cleanup-preview:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate Preview ID
+        id: preview
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PREVIEW_ID="pr-${PR_NUMBER}"
+          echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
+          echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Cleanup Preview Environment
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_TUNNEL_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          PREVIEW_DOMAIN: ${{ secrets.PREVIEW_DOMAIN }}
+        run: |
+          PREVIEW_ID="${{ steps.preview.outputs.id }}"
+          PREVIEW_DOMAIN_VALUE="${PREVIEW_DOMAIN:-maigie.com}"
+          PREVIEW_DOMAIN="${PREVIEW_ID}-api-preview.${PREVIEW_DOMAIN_VALUE}"
+          
+          # Remove Cloudflare Tunnel route and DNS record
+          if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ZONE_ID" ]; then
+            echo "Removing Cloudflare Tunnel route and DNS record for ${PREVIEW_DOMAIN}..."
+            
+            # Remove DNS record
+            DNS_NAME=$(echo "${PREVIEW_DOMAIN}" | cut -d. -f1)
+            EXISTING_RECORD=$(curl -s -X GET \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records?name=${PREVIEW_DOMAIN}&type=CNAME" | \
+              jq -r '.result[0].id // empty')
+            
+            if [ -n "$EXISTING_RECORD" ] && [ "$EXISTING_RECORD" != "null" ]; then
+              DNS_DELETE_RESPONSE=$(curl -s -X DELETE \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/dns_records/${EXISTING_RECORD}")
+              
+              if echo "$DNS_DELETE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
+                echo "✓ Successfully removed DNS record: ${PREVIEW_DOMAIN}"
+              else
+                echo "⚠️  Failed to remove DNS record (non-critical)"
+                echo "$DNS_DELETE_RESPONSE" | jq '.' || true
+              fi
+            else
+              echo "DNS record ${PREVIEW_DOMAIN} does not exist, skipping..."
+            fi
+            
+            # Remove tunnel route
+            CURRENT_CONFIG=$(curl -s -X GET \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel/${CLOUDFLARE_TUNNEL_ID}/configurations")
+            
+            # Extract current ingress rules
+            INGRESS_RULES=$(echo "$CURRENT_CONFIG" | jq -r '.result.config.ingress // []')
+            
+            # Check if hostname exists
+            if echo "$INGRESS_RULES" | jq -e ".[] | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
+              # Remove route (preserve order: specific rules first, catch-all last)
+              INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
+              
+              # Update config
+              UPDATE_RESPONSE=$(curl -s -X PUT \
+                -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"config\":{\"ingress\":$INGRESS_RULES}}" \
+                "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel/${CLOUDFLARE_TUNNEL_ID}/configurations")
+              
+              if echo "$UPDATE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
+                echo "✓ Successfully removed Cloudflare Tunnel route: ${PREVIEW_DOMAIN}"
+              else
+                echo "⚠️  Failed to remove Cloudflare Tunnel route (non-critical)"
+                echo "$UPDATE_RESPONSE" | jq '.' || true
+              fi
+            else
+              echo "Tunnel route ${PREVIEW_DOMAIN} does not exist, skipping..."
+            fi
+          fi
+          
+          # Cleanup VPS resources
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            bash -c "cd /opt/maigie/previews && \
+            if [ -d \"${PREVIEW_ID}\" ]; then \
+              cd ${PREVIEW_ID} && \
+              docker-compose down -v 2>/dev/null || true && \
+              docker rm -f maigie-preview-backend-${PREVIEW_ID} maigie-preview-postgres-${PREVIEW_ID} maigie-preview-redis-${PREVIEW_ID} 2>/dev/null || true && \
+              docker volume rm ${PREVIEW_ID}_postgres_data 2>/dev/null || true && \
+              cd .. && \
+              rm -rf ${PREVIEW_ID} && \
+              sudo rm -f /www/server/panel/vhost/nginx/${PREVIEW_ID}.preview.conf && \
+              sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true && \
+              docker rmi maigie-backend-preview:${PREVIEW_ID} 2>/dev/null || true && \
+              echo '✓ Cleaned up preview environment'; \
+            fi"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prNumber = ${{ github.event.pull_request.number }};
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🧹 **Preview environment cleaned up**\n\nPreview deployment for PR #${prNumber} has been removed.`
+            });

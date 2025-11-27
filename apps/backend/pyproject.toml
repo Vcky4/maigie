@@ -29,7 +29,10 @@ prisma = "^0.15.0"
 python-json-logger = "^2.0.7"
 sentry-sdk = {extras = ["fastapi"], version = "^2.0.0"}
 prometheus-client = "^0.21.0"
+<<<<<<< HEAD
 itsdangerous = "^2.2.0"
+=======
+>>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
@@ -72,11 +75,23 @@ disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+<<<<<<< HEAD
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"  
 testpaths = ["tests"]
 
+=======
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+>>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 
 
 [tool.isort]
 profile = "black"
+<<<<<<< HEAD
+=======
+
+[tool.prisma]
+seed = "python prisma/seed.py"
+>>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8

@@ -16,6 +16,44 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
+import secrets
+
+from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
+
+from ..config import get_settings
+from ..core.oauth import OAuthProviderFactory
+from ..core.security import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    get_password_hash,
+)
+from ..dependencies import CurrentUserTokenDep, SettingsDep
+from ..exceptions import AuthenticationError
+from ..models.auth import (
+    RefreshTokenRequest,
+    TokenResponse,
+    UserLogin,
+    UserRegister,
+    UserResponse,
+)
+>>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
 import logging
 import secrets
 from datetime import timedelta
@@ -91,6 +129,7 @@ async def signup(user_data: UserSignup):
     return new_user
 
 
+<<<<<<< HEAD
 @router.post("/login", response_model=Token)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
@@ -378,4 +417,3 @@ async def confirm_email(data: EmailConfirmation):
     """
     # TODO: Validate token and update user.isActive = True
     return {"message": "Email successfully confirmed"}
-
