@@ -16,22 +16,6 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-
-import secrets
-
-from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
-
-from ..config import get_settings
-from ..core.oauth import OAuthProviderFactory
-from ..core.security import (
-    create_access_token,
-    create_refresh_token,
-    decode_refresh_token,
-    get_password_hash,
-)
-from ..dependencies import CurrentUserTokenDep, SettingsDep
-from ..exceptions import AuthenticationError
 import logging
 import secrets
 from datetime import timedelta
