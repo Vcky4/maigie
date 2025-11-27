@@ -129,7 +129,6 @@ async def signup(user_data: UserSignup):
     return new_user
 
 
-<<<<<<< HEAD
 @router.post("/login", response_model=Token)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
