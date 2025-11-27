@@ -78,3 +78,6 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.isort]
 profile = "black"
+
+[tool.prisma]
+seed = "python prisma/seed.py"

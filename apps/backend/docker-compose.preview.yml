@@ -1,0 +1,82 @@
+# Copyright (C) 2025 Maigie
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: maigie-preview-postgres-${PREVIEW_ID}
+    environment:
+      POSTGRES_USER: maigie
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-preview_password}
+      POSTGRES_DB: maigie_preview_${PREVIEW_ID}
+    ports:
+      - "5432"
+    volumes:
+      - postgres_data_${PREVIEW_ID}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maigie"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - preview_${PREVIEW_ID}
+
+  redis:
+    image: redis:7-alpine
+    container_name: maigie-preview-redis-${PREVIEW_ID}
+    ports:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - preview_${PREVIEW_ID}
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-preview-backend-${PREVIEW_ID}
+    environment:
+      DATABASE_URL: postgresql://maigie:${POSTGRES_PASSWORD:-preview_password}@postgres:5432/maigie_preview_${PREVIEW_ID}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: preview
+      PREVIEW_ID: ${PREVIEW_ID}
+      PORT: 8000
+    ports:
+      - "${PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - preview_${PREVIEW_ID}
+    command: >
+      sh -c "
+        prisma migrate deploy &&
+        python prisma/seed.py &&
+        uvicorn src.main:app --host 0.0.0.0 --port 8000
+      "
+
+volumes:
+  postgres_data_${PREVIEW_ID}:
+
+networks:
+  preview_${PREVIEW_ID}:
+    driver: bridge
+

@@ -1,0 +1,94 @@
+# Copyright (C) 2025 Maigie
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: maigie-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - maigie_network
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-celery-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      - redis
+    networks:
+      - maigie_network
+    command: celery -A src.core.celery_app worker --loglevel=info
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-celery-beat
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      - redis
+    networks:
+      - maigie_network
+    command: celery -A src.core.celery_app beat --loglevel=info
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    networks:
+      - maigie_network
+    command: >
+      sh -c "
+        prisma migrate deploy &&
+        uvicorn src.main:app --host 0.0.0.0 --port 8000
+      "
+
+volumes:
+  redis_data:
+
+networks:
+  maigie_network:
+    driver: bridge
+
