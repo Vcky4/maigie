@@ -134,6 +134,32 @@ jobs:
           script: |
             cd /opt/maigie/previews
             
+            # Clean up existing preview for this PR if it exists
+            if [ -d "${{ steps.preview.outputs.id }}" ]; then
+              echo "Cleaning up existing preview environment for ${{ steps.preview.outputs.id }}..."
+              cd ${{ steps.preview.outputs.id }}
+              
+              # Stop and remove containers with volumes
+              if [ -f "docker-compose.yml" ]; then
+                docker-compose down -v 2>/dev/null || true
+              fi
+              
+              # Remove any remaining containers
+              docker rm -f maigie-preview-backend-${{ steps.preview.outputs.id}} maigie-preview-postgres-${{ steps.preview.outputs.id }} maigie-preview-redis-${{ steps.preview.outputs.id }} 2>/dev/null || true
+              
+              # Remove volumes
+              docker volume rm ${{ steps.preview.outputs.id }}_postgres_data 2>/dev/null || true
+              
+              # Remove Nginx config if it exists
+              sudo rm -f /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf
+              sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true
+              
+              # Go back and remove directory
+              cd ..
+              rm -rf ${{ steps.preview.outputs.id }}
+              echo "✓ Cleaned up existing preview environment"
+            fi
+            
             # Create preview directory
             mkdir -p ${{ steps.preview.outputs.id }}
             cd ${{ steps.preview.outputs.id }}
@@ -156,14 +182,14 @@ jobs:
                   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
                   POSTGRES_DB: maigie_preview_${{ steps.preview.outputs.id }}
                 volumes:
-                  - postgres_data:/var/lib/postgresql/data
+                  - postgres_data_${{ steps.preview.outputs.id }}:/var/lib/postgresql/data
                 healthcheck:
                   test: ["CMD-SHELL", "pg_isready -U maigie"]
                   interval: 5s
                   timeout: 5s
                   retries: 5
                 networks:
-                  - preview_net
+                  - preview_net_${{ steps.preview.outputs.id }}
             
               redis:
                 image: redis:7-alpine
@@ -174,7 +200,7 @@ jobs:
                   timeout: 3s
                   retries: 5
                 networks:
-                  - preview_net
+                  - preview_net_${{ steps.preview.outputs.id }}
             
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
@@ -192,7 +218,7 @@ jobs:
                   redis:
                     condition: service_healthy
                 networks:
-                  - preview_net
+                  - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
                     prisma migrate deploy &&
@@ -201,14 +227,14 @@ jobs:
                   "
             
             volumes:
-              postgres_data:
+              postgres_data_${{ steps.preview.outputs.id }}:
             
             networks:
-              preview_net:
+              preview_net_${{ steps.preview.outputs.id }}:
                 driver: bridge
             EOF
             
-            # Start preview environment
+            # Start preview environment (this will create fresh database)
             docker-compose up -d
             
             # Wait for backend container to be running and get port

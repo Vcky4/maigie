@@ -81,6 +81,12 @@ cleanup_preview() {
         docker-compose down -v 2>&1 >> "$LOG_FILE" || echo "[$(date)] Warning: Failed to stop containers for $preview_id" >> "$LOG_FILE"
     fi
     
+    # Remove any remaining containers
+    docker rm -f "maigie-preview-backend-${preview_id}" "maigie-preview-postgres-${preview_id}" "maigie-preview-redis-${preview_id}" 2>&1 >> "$LOG_FILE" || true
+    
+    # Remove volumes with preview-specific naming
+    docker volume rm "${preview_id}_postgres_data" 2>&1 >> "$LOG_FILE" || true
+    
     # Remove Nginx config if it exists
     NGINX_CONFIG="/www/server/panel/vhost/nginx/${preview_id}.preview.conf"
     if [ -f "$NGINX_CONFIG" ]; then
