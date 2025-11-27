@@ -148,20 +148,44 @@ CRON_JOB="0 2 * * * /opt/maigie/scripts/cleanup-previews.sh \"\" \"REPO_OWNER\" 
 (crontab -l 2>/dev/null | grep -v "cleanup-previews.sh"; echo "$CRON_JOB") | crontab -
 echo "  ⚠️  Remember to update REPO_OWNER and REPO_NAME in the cron job!"
 
+# Copy scripts to VPS
+echo "📋 Copying scripts to /opt/maigie/scripts/..."
+mkdir -p /opt/maigie/scripts
+if [ -f "scripts/cleanup-previews.sh" ]; then
+    cp scripts/cleanup-previews.sh /opt/maigie/scripts/
+    chmod +x /opt/maigie/scripts/cleanup-previews.sh
+fi
+if [ -f "scripts/setup-cloudflare-tunnel.sh" ]; then
+    cp scripts/setup-cloudflare-tunnel.sh /opt/maigie/scripts/
+    chmod +x /opt/maigie/scripts/setup-cloudflare-tunnel.sh
+fi
+if [ -f "scripts/setup-nginx-routing.sh" ]; then
+    cp scripts/setup-nginx-routing.sh /opt/maigie/scripts/
+    chmod +x /opt/maigie/scripts/setup-nginx-routing.sh
+fi
+
 echo ""
 echo "✅ VPS setup complete!"
 echo ""
 echo "📝 Next steps:"
-echo "1. Add GitHub secrets:"
+echo "1. Set up Cloudflare Tunnel (optional but recommended):"
+echo "   bash /opt/maigie/scripts/setup-cloudflare-tunnel.sh"
+echo "   OR follow manual setup in DEPLOYMENT.md"
+echo ""
+echo "2. Set up Nginx routing:"
+echo "   bash /opt/maigie/scripts/setup-nginx-routing.sh api.maigie.com staging-api.maigie.com"
+echo ""
+echo "3. Add GitHub secrets:"
 echo "   - VPS_HOST: Your Contabo VPS IP or domain"
 echo "   - VPS_USER: SSH username (usually 'root' or 'ubuntu')"
 echo "   - VPS_SSH_KEY: Private SSH key for VPS access"
 echo "   - PRODUCTION_DATABASE_URL: Your Neon/Supabase production DB URL"
 echo "   - STAGING_DATABASE_URL: Your Neon/Supabase staging DB URL"
+echo "   - PREVIEW_DOMAIN: Your domain for previews (e.g., 'maigie.com')"
 echo ""
-echo "2. Copy your Dockerfile to /opt/maigie/production/ and /opt/maigie/staging/"
+echo "4. Copy your Dockerfile to /opt/maigie/production/ and /opt/maigie/staging/"
 echo ""
-echo "3. Create .env files in production and staging directories with DATABASE_URL"
+echo "5. Create .env files in production and staging directories with DATABASE_URL"
 echo ""
-echo "4. Push to main or development branch to trigger deployment"
+echo "6. Push to main or development branch to trigger deployment"
 

@@ -81,6 +81,14 @@ cleanup_preview() {
         docker-compose down -v 2>&1 >> "$LOG_FILE" || echo "[$(date)] Warning: Failed to stop containers for $preview_id" >> "$LOG_FILE"
     fi
     
+    # Remove Nginx config if it exists
+    NGINX_CONFIG="/www/server/panel/vhost/nginx/${preview_id}.preview.conf"
+    if [ -f "$NGINX_CONFIG" ]; then
+        sudo rm -f "$NGINX_CONFIG"
+        sudo nginx -t && sudo systemctl reload nginx 2>&1 >> "$LOG_FILE" || echo "[$(date)] Warning: Failed to reload Nginx after removing config" >> "$LOG_FILE"
+        echo "[$(date)] Removed Nginx config: $NGINX_CONFIG" >> "$LOG_FILE"
+    fi
+    
     # Remove directory
     cd "$PREVIEW_DIR"
     rm -rf "$preview_id"

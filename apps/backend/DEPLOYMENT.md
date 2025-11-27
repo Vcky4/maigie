@@ -212,9 +212,180 @@ crontab -e
 
 ### Health Checks
 
-- Production: `http://your-vps-ip:8000/health`
-- Staging: `http://your-vps-ip:8001/health`
-- Preview: `http://your-vps-ip:{DYNAMIC_PORT}/health`
+- Production: `https://api.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:8000/health`
+- Staging: `https://staging-api.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:8001/health`
+- Preview: `https://pr-{PR_NUMBER}.preview.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:{DYNAMIC_PORT}/health`
+
+## Cloudflare Tunnel Setup (Recommended)
+
+Cloudflare Tunnel provides automatic SSL, DDoS protection, and eliminates the need to expose ports to the internet.
+
+### Architecture
+
+```
+Internet → Cloudflare Tunnel → Nginx (port 80) → Docker Containers
+                                    ↓
+                    ┌───────────────┼───────────────┐
+                    ↓               ↓               ↓
+            Production:8000  Staging:8001  Preview:{PORT}
+```
+
+### Setup Steps
+
+#### 1. Install Cloudflared on VPS
+
+```bash
+# Run the setup script
+bash /opt/maigie/scripts/setup-cloudflare-tunnel.sh
+
+# OR manually install
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+chmod +x /usr/local/bin/cloudflared
+```
+
+#### 2. Create Tunnel in Cloudflare
+
+1. Go to [Cloudflare Zero Trust Dashboard](https://one.dash.cloudflare.com/)
+2. Navigate to **Networks** → **Tunnels**
+3. Click **Create a tunnel**
+4. Choose **Cloudflared** connector
+5. Name it: `maigie-backend-tunnel`
+6. Copy the **Tunnel Token**
+
+#### 3. Configure Tunnel on VPS
+
+**Option A: Using Token (Simpler)**
+
+```bash
+# Save token to file
+echo "YOUR_TUNNEL_TOKEN" > /root/.cloudflared/tunnel_token
+
+# Start tunnel service
+sudo systemctl start cloudflared
+sudo systemctl enable cloudflared
+```
+
+**Option B: Using Config File**
+
+```bash
+# Authenticate
+cloudflared tunnel login
+
+# Create tunnel
+cloudflared tunnel create maigie-backend-tunnel
+
+# Create config file
+mkdir -p ~/.cloudflared
+cat > ~/.cloudflared/config.yml << EOF
+tunnel: {TUNNEL_UUID}
+credentials-file: /root/.cloudflared/{TUNNEL_UUID}.json
+
+ingress:
+  - hostname: api.maigie.com
+    service: http://localhost:80
+  - hostname: staging-api.maigie.com
+    service: http://localhost:80
+  - hostname: pr-*.preview.maigie.com
+    service: http://localhost:80
+  - service: http_status:404
+EOF
+
+# Start tunnel service
+sudo systemctl start cloudflared
+sudo systemctl enable cloudflared
+```
+
+#### 4. Set Up Nginx Routing
+
+```bash
+# Run the Nginx setup script
+bash /opt/maigie/scripts/setup-nginx-routing.sh api.maigie.com staging-api.maigie.com
+
+# This creates:
+# - /www/server/panel/vhost/nginx/maigie-production.conf (api.maigie.com → localhost:8000)
+# - /www/server/panel/vhost/nginx/maigie-staging.conf (staging-api.maigie.com → localhost:8001)
+```
+
+#### 5. Configure DNS in Cloudflare
+
+Add these DNS records (all pointing to your tunnel):
+
+```
+Type: CNAME
+Name: api
+Target: {TUNNEL_ID}.cfargotunnel.com
+Proxy: Proxied (orange cloud)
+
+Type: CNAME
+Name: staging-api
+Target: {TUNNEL_ID}.cfargotunnel.com
+Proxy: Proxied (orange cloud)
+
+Type: CNAME
+Name: *.preview
+Target: {TUNNEL_ID}.cfargotunnel.com
+Proxy: Proxied (orange cloud)
+```
+
+#### 6. GitHub Secrets
+
+Add these secrets to your GitHub repository:
+
+- `PREVIEW_DOMAIN` - Your domain (e.g., `maigie.com`)
+
+**Optional** (if using Cloudflare API for dynamic routing):
+- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID
+- `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID
+- `CLOUDFLARE_API_TOKEN` - API token with Tunnel:Edit permission
+
+### How It Works
+
+1. **All Traffic Routes Through Tunnel**:
+   - `https://api.maigie.com` → Tunnel → Nginx → `localhost:8000` (Production)
+   - `https://staging-api.maigie.com` → Tunnel → Nginx → `localhost:8001` (Staging)
+   - `https://pr-44.preview.maigie.com` → Tunnel → Nginx → `localhost:{PORT}` (Preview)
+
+2. **Preview Deployment**:
+   - Docker container starts on random port
+   - Workflow creates Nginx config: `pr-44.preview.maigie.com` → `localhost:PORT`
+   - Nginx reloads
+   - Preview URL commented on PR
+
+3. **Cleanup**:
+   - Nginx config removed
+   - Docker containers stopped
+   - Preview directory removed
+
+### Benefits
+
+- ✅ **No Port Exposure**: All containers only listen on localhost
+- ✅ **Automatic SSL**: HTTPS via Cloudflare (no certificate management)
+- ✅ **DDoS Protection**: Built-in Cloudflare protection
+- ✅ **Clean URLs**: Domain-based instead of IP:port
+- ✅ **Firewall Friendly**: No need to open ports
+
+### Troubleshooting
+
+**Tunnel not connecting:**
+```bash
+# Check tunnel status
+sudo systemctl status cloudflared
+
+# Check logs
+sudo journalctl -u cloudflared -f
+
+# Verify token/config
+cat /root/.cloudflared/tunnel_token
+# OR
+cat ~/.cloudflared/config.yml
+```
+
+**Routes not working:**
+- Verify DNS records are configured correctly
+- Check tunnel config has correct ingress rules
+- Ensure Nginx configs exist and are valid
+- Test Nginx: `sudo nginx -t`
+- Check Nginx logs: `sudo tail -f /www/wwwlogs/nginx_error.log`
 
 ## Troubleshooting
 

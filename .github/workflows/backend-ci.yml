@@ -237,18 +237,76 @@ jobs:
               exit 1
             fi
             
-            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:$PORT"
-            echo "$PREVIEW_URL" > /tmp/preview_url_${{ steps.preview.outputs.id }}.txt
-            echo "Preview deployed at: $PREVIEW_URL"
+            echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
+            echo "Preview deployed on port: $PORT"
+
+      - name: Setup Preview Domain
+        id: setup-domain
+        if: github.event_name == 'pull_request'
+        run: |
+          PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cat /tmp/preview_port_${{ steps.preview.outputs.id }}.txt 2>/dev/null | cut -d= -f2")
+          
+          if [ -z "$PORT" ]; then
+            PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+              "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
+          fi
+          
+          PREVIEW_DOMAIN_VALUE="${{ secrets.PREVIEW_DOMAIN }}"
+          if [ -z "$PREVIEW_DOMAIN_VALUE" ]; then
+            PREVIEW_DOMAIN_VALUE="maigie.com"
+          fi
+          
+          PREVIEW_DOMAIN="${{ steps.preview.outputs.id }}.preview.${PREVIEW_DOMAIN_VALUE}"
+          
+          # Create Nginx config on VPS
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "cat > /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf << 'NGINX_EOF'
+          server {
+              listen 80;
+              server_name ${PREVIEW_DOMAIN};
+              
+              location / {
+                  proxy_pass http://127.0.0.1:${PORT};
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+                  proxy_cache_bypass \$http_upgrade;
+                  
+                  proxy_connect_timeout 60s;
+                  proxy_send_timeout 60s;
+                  proxy_read_timeout 60s;
+              }
+              
+              location /health {
+                  proxy_pass http://127.0.0.1:${PORT}/health;
+                  access_log off;
+              }
+          }
+          NGINX_EOF
+          sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo systemctl reload nginx"
+          
+          echo "domain=${PREVIEW_DOMAIN}" >> $GITHUB_OUTPUT
 
       - name: Get Preview URL
         id: get-preview-url
         if: github.event_name == 'pull_request'
         run: |
-          PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
-          PREVIEW_URL="http://${{ secrets.VPS_HOST }}:$PORT"
+          if [ -n "${{ steps.setup-domain.outputs.domain }}" ]; then
+            PREVIEW_URL="https://${{ steps.setup-domain.outputs.domain }}"
+          else
+            PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+              "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
+            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:$PORT"
+          fi
           echo "PREVIEW_URL=$PREVIEW_URL" >> $GITHUB_ENV
           echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
 
