@@ -4,7 +4,7 @@
 
 """
 FastAPI application entry point.
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 """
 
 import logging

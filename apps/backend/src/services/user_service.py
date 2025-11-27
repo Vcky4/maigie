@@ -4,7 +4,7 @@ User database services for OAuth authentication.
 This module provides services for handling OAuth user data, including
 user lookup and creation for OAuth providers like Google and GitHub.
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published

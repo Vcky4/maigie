@@ -1,7 +1,7 @@
 """
 Structured (JSON) logging configuration for Maigie application.
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -23,6 +23,68 @@ import sys
 from typing import Any
 
 from pythonjsonlogger import jsonlogger
+
+
+class ColoredFormatter(logging.Formatter):
+    """
+    Colored formatter for development logs.
+    Makes logs more readable with color-coded log levels.
+    """
+    
+    # ANSI color codes
+    COLORS = {
+        'DEBUG': '\033[36m',      # Cyan
+        'INFO': '\033[32m',       # Green
+        'WARNING': '\033[33m',    # Yellow
+        'ERROR': '\033[31m',      # Red
+        'CRITICAL': '\033[35m',   # Magenta
+    }
+    RESET = '\033[0m'
+    
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record with colors."""
+        # Get color for log level
+        color = self.COLORS.get(record.levelname, '')
+        reset = self.RESET
+        
+        # Format timestamp
+        timestamp = self.formatTime(record, self.datefmt or '%Y-%m-%d %H:%M:%S')
+        
+        # Format logger name (shorten if too long)
+        logger_name = record.name
+        if len(logger_name) > 25:
+            logger_name = '...' + logger_name[-22:]
+        
+        # Build formatted message
+        level_name = f"{color}{record.levelname:8s}{reset}"
+        logger_str = f"{logger_name:28s}"
+        
+        # Format message
+        message = record.getMessage()
+        
+        # Add extra fields if present (exclude noisy fields)
+        extra_info = []
+        if hasattr(record, '__dict__'):
+            for key, value in record.__dict__.items():
+                if key not in ['name', 'msg', 'args', 'created', 'filename', 'funcName', 
+                              'levelname', 'levelno', 'lineno', 'module', 'msecs', 'message',
+                              'pathname', 'process', 'processName', 'relativeCreated', 'thread',
+                              'threadName', 'exc_info', 'exc_text', 'stack_info', 'taskName',
+                              'environment', 'application', 'logger', 'module', 'function', 'line']:
+                    if value and str(value).strip():
+                        extra_info.append(f"{key}={value}")
+        
+        if extra_info:
+            # Limit extra info to avoid clutter
+            if len(extra_info) > 3:
+                extra_info = extra_info[:3] + ['...']
+            message += f" | {' | '.join(extra_info)}"
+        
+        # Format exception if present
+        if record.exc_info:
+            message += f"\n{self.formatException(record.exc_info)}"
+        
+        return f"{timestamp} | {level_name} | {logger_str} | {message}"
 
 
 class CustomJsonFormatter(jsonlogger.JsonFormatter):
@@ -65,10 +127,13 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
 
 def configure_logging() -> None:
     """
-    Configure structured JSON logging for the application.
+    Configure logging for the application.
+    
+    In development: Uses colored, human-readable format
+    In production: Uses structured JSON format
 
     This function should be called once during application startup.
-    It configures the root logger to output JSON-formatted logs with
+    It configures the root logger to output logs with
     appropriate log levels based on the environment.
 
     Environment Variables:
@@ -95,29 +160,55 @@ def configure_logging() -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create console handler with JSON formatter
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Create console handler with encoding error handling
+    class SafeStreamHandler(logging.StreamHandler):
+        """StreamHandler that handles encoding errors gracefully."""
+        def emit(self, record):
+            try:
+                super().emit(record)
+            except UnicodeEncodeError:
+                # If encoding fails, try to write with error replacement
+                try:
+                    msg = self.format(record)
+                    # Replace any problematic characters
+                    msg = msg.encode(self.stream.encoding or 'utf-8', errors='replace').decode(self.stream.encoding or 'utf-8', errors='replace')
+                    stream = self.stream
+                    stream.write(msg + self.terminator)
+                    self.flush()
+                except Exception:
+                    # Last resort: write a safe ASCII message
+                    self.handleError(record)
+    
+    console_handler = SafeStreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
 
-    # Create JSON formatter with custom fields
-    json_formatter = CustomJsonFormatter(
-        fmt="%(timestamp)s %(level)s %(name)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        static_fields={
-            "environment": environment,
-            "application": "maigie-backend",
-        },
-    )
+    # Choose formatter based on environment
+    if environment == "development":
+        # Use colored formatter for development
+        formatter = ColoredFormatter(
+            datefmt="%Y-%m-%d %H:%M:%S"
+        )
+    else:
+        # Use JSON formatter for production/staging
+        formatter = CustomJsonFormatter(
+            fmt="%(timestamp)s %(level)s %(name)s %(message)s",
+            datefmt="%Y-%m-%dT%H:%M:%S",
+            static_fields={
+                "environment": environment,
+                "application": "maigie-backend",
+            },
+        )
 
-    console_handler.setFormatter(json_formatter)
+    console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
 
     # Log configuration success
     root_logger.info(
-        "Structured logging configured",
+        "Logging configured",
         extra={
             "log_level": log_level_str,
             "environment": environment,
+            "format": "colored" if environment == "development" else "json",
         },
     )
 
@@ -125,6 +216,7 @@ def configure_logging() -> None:
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("fastapi").setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # Reduce httpx noise
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -132,7 +224,7 @@ def get_logger(name: str) -> logging.Logger:
     Get a logger instance with the specified name.
 
     This is a convenience function that returns a logger configured
-    with the structured JSON formatter.
+    with the appropriate formatter based on environment.
 
     Args:
         name: Name of the logger (typically __name__)
