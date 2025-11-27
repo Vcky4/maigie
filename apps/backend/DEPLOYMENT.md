@@ -333,10 +333,18 @@ Add these secrets to your GitHub repository:
 
 - `PREVIEW_DOMAIN` - Your domain (e.g., `maigie.com`)
 
-**Optional** (if using Cloudflare API for dynamic routing):
-- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID
-- `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID
-- `CLOUDFLARE_API_TOKEN` - API token with Tunnel:Edit permission
+**Required for Dynamic Route Management** (recommended):
+- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID (found in Cloudflare Dashboard → Right sidebar)
+- `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID (found in Zero Trust → Networks → Tunnels → your tunnel)
+- `CLOUDFLARE_API_TOKEN` - API token with `Account.Cloudflare Tunnel:Edit` permission
+
+**To create API token:**
+1. Go to Cloudflare Dashboard → My Profile → API Tokens
+2. Click "Create Token"
+3. Use "Edit Cloudflare Tunnel" template
+4. Add permissions: `Account.Cloudflare Tunnel:Edit`
+5. Add account resources: Select your account
+6. Copy the token and add to GitHub Secrets
 
 ### How It Works
 

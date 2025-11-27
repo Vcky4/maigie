@@ -29,6 +29,12 @@ GITHUB_TOKEN="${1:-}"
 REPO_OWNER="${2:-}"
 REPO_NAME="${3:-}"
 
+# Cloudflare API credentials (optional, for tunnel route cleanup)
+CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-}"
+CLOUDFLARE_TUNNEL_ID="${CLOUDFLARE_TUNNEL_ID:-}"
+CLOUDFLARE_API_TOKEN="${CLOUDFLARE_API_TOKEN:-}"
+PREVIEW_DOMAIN="${PREVIEW_DOMAIN:-maigie.com}"
+
 # Create log file if it doesn't exist
 touch "$LOG_FILE"
 
@@ -93,6 +99,44 @@ cleanup_preview() {
         sudo rm -f "$NGINX_CONFIG"
         sudo nginx -t && sudo systemctl reload nginx 2>&1 >> "$LOG_FILE" || echo "[$(date)] Warning: Failed to reload Nginx after removing config" >> "$LOG_FILE"
         echo "[$(date)] Removed Nginx config: $NGINX_CONFIG" >> "$LOG_FILE"
+    fi
+    
+    # Remove Cloudflare Tunnel route if API credentials are available
+    if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ]; then
+        PREVIEW_DOMAIN_VALUE="${PREVIEW_DOMAIN:-maigie.com}"
+        PREVIEW_DOMAIN="${preview_id}.preview.${PREVIEW_DOMAIN_VALUE}"
+        
+        echo "[$(date)] Removing Cloudflare Tunnel route: $PREVIEW_DOMAIN" >> "$LOG_FILE"
+        
+        # Get current config
+        CURRENT_CONFIG=$(curl -s -X GET \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel/${CLOUDFLARE_TUNNEL_ID}/configurations" 2>&1)
+        
+        # Extract current ingress rules
+        INGRESS_RULES=$(echo "$CURRENT_CONFIG" | jq -r '.result.config.ingress // []' 2>/dev/null)
+        
+        if [ -n "$INGRESS_RULES" ] && [ "$INGRESS_RULES" != "null" ]; then
+            # Check if hostname exists
+            if echo "$INGRESS_RULES" | jq -e ".[] | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
+                # Remove route
+                INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
+                
+                # Update config
+                UPDATE_RESPONSE=$(curl -s -X PUT \
+                    -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"config\":{\"ingress\":$INGRESS_RULES}}" \
+                    "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel/${CLOUDFLARE_TUNNEL_ID}/configurations" 2>&1)
+                
+                if echo "$UPDATE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
+                    echo "[$(date)] Successfully removed Cloudflare Tunnel route: $PREVIEW_DOMAIN" >> "$LOG_FILE"
+                else
+                    echo "[$(date)] Warning: Failed to remove Cloudflare Tunnel route: $PREVIEW_DOMAIN" >> "$LOG_FILE"
+                fi
+            fi
+        fi
     fi
     
     # Remove directory

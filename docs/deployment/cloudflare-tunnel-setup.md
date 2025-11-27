@@ -117,16 +117,28 @@ Target: {TUNNEL_ID}.cfargotunnel.com
 Proxy: Proxied (orange cloud)
 ```
 
+**Note:** The wildcard DNS record (`*.preview`) allows any preview subdomain to resolve. Individual tunnel routes are created dynamically via API for each PR.
+
 ### 6. GitHub Secrets
 
 Add these secrets to your GitHub repository:
 
 - `PREVIEW_DOMAIN` - Your domain (e.g., `maigie.com`)
 
-**Optional** (if using Cloudflare API for dynamic routing):
-- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID
-- `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID
-- `CLOUDFLARE_API_TOKEN` - API token with Tunnel:Edit permission
+**Required for Dynamic Route Management** (recommended):
+- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID (found in Cloudflare Dashboard → Right sidebar)
+- `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID (found in Zero Trust → Networks → Tunnels → your tunnel)
+- `CLOUDFLARE_API_TOKEN` - API token with `Account.Cloudflare Tunnel:Edit` permission
+
+**To create API token:**
+1. Go to Cloudflare Dashboard → My Profile → API Tokens
+2. Click "Create Token"
+3. Use "Edit Cloudflare Tunnel" template
+4. Add permissions: `Account.Cloudflare Tunnel:Edit`
+5. Add account resources: Select your account
+6. Copy the token and add to GitHub Secrets
+
+**Note:** Without these secrets, preview routes will need to be managed manually in the Cloudflare Dashboard. With these secrets, routes are automatically created and removed by GitHub Actions.
 
 ## How It Works
 
@@ -138,10 +150,12 @@ Add these secrets to your GitHub repository:
 2. **Preview Deployment**:
    - Docker container starts on random port
    - Workflow creates Nginx config: `pr-44.preview.maigie.com` → `localhost:PORT`
+   - Workflow creates Cloudflare Tunnel route via API: `pr-44.preview.maigie.com` → `http://localhost:80`
    - Nginx reloads
    - Preview URL commented on PR
 
 3. **Cleanup**:
+   - Cloudflare Tunnel route removed via API
    - Nginx config removed
    - Docker containers stopped
    - Preview directory removed

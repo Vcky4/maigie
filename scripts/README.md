@@ -35,6 +35,10 @@ bash scripts/cleanup-previews.sh "GITHUB_TOKEN" "repo-owner" "repo-name"
 **Cron Configuration:**
 ```bash
 # Runs daily at 2 AM
+# With Cloudflare API credentials (optional, for tunnel route cleanup)
+0 2 * * * CLOUDFLARE_ACCOUNT_ID="your-account-id" CLOUDFLARE_TUNNEL_ID="your-tunnel-id" CLOUDFLARE_API_TOKEN="your-token" PREVIEW_DOMAIN="maigie.com" /opt/maigie/scripts/cleanup-previews.sh "GITHUB_TOKEN" "repo-owner" "repo-name" >> /var/log/maigie-cleanup.log 2>&1
+
+# Without Cloudflare API credentials (tunnel routes must be cleaned manually)
 0 2 * * * /opt/maigie/scripts/cleanup-previews.sh "GITHUB_TOKEN" "repo-owner" "repo-name" >> /var/log/maigie-cleanup.log 2>&1
 ```
 
@@ -74,6 +78,28 @@ bash scripts/setup-nginx-routing.sh api.maigie.com staging-api.maigie.com
 - Reloads Nginx
 
 **Note:** Preview Nginx configs are created automatically by GitHub Actions workflow.
+
+### `cloudflare-tunnel-routes.sh`
+Manages Cloudflare Tunnel routes dynamically via Cloudflare API. Used by GitHub Actions workflow to create/remove preview routes.
+
+**Usage:**
+```bash
+# Add a route
+bash scripts/cloudflare-tunnel-routes.sh add pr-44.preview.maigie.com http://localhost:80
+
+# Remove a route
+bash scripts/cloudflare-tunnel-routes.sh remove pr-44.preview.maigie.com
+
+# List all routes
+bash scripts/cloudflare-tunnel-routes.sh list
+```
+
+**Required Environment Variables:**
+- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare Account ID
+- `CLOUDFLARE_TUNNEL_ID` - Your Tunnel ID
+- `CLOUDFLARE_API_TOKEN` - API token with Tunnel:Edit permission
+
+**Note:** This script is primarily used by GitHub Actions workflow. Manual usage is optional.
 
 ## Cleanup Logic
 
