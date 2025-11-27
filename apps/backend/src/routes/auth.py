@@ -48,7 +48,10 @@ from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# Get logger for this module
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 # ==========================================
 #  JWT AUTHENTICATION (Your Task)
