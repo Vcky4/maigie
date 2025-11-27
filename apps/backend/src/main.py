@@ -224,6 +224,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # Application Lifespan
 # ============================================================================
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""

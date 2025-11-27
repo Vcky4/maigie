@@ -30,60 +30,85 @@ class ColoredFormatter(logging.Formatter):
     Colored formatter for development logs.
     Makes logs more readable with color-coded log levels.
     """
-    
+
     # ANSI color codes
     COLORS = {
-        'DEBUG': '\033[36m',      # Cyan
-        'INFO': '\033[32m',       # Green
-        'WARNING': '\033[33m',    # Yellow
-        'ERROR': '\033[31m',      # Red
-        'CRITICAL': '\033[35m',   # Magenta
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
+        "CRITICAL": "\033[35m",  # Magenta
     }
-    RESET = '\033[0m'
-    
+    RESET = "\033[0m"
+
     def format(self, record: logging.LogRecord) -> str:
         """Format log record with colors."""
         # Get color for log level
-        color = self.COLORS.get(record.levelname, '')
+        color = self.COLORS.get(record.levelname, "")
         reset = self.RESET
-        
+
         # Format timestamp
-        timestamp = self.formatTime(record, self.datefmt or '%Y-%m-%d %H:%M:%S')
-        
+        timestamp = self.formatTime(record, self.datefmt or "%Y-%m-%d %H:%M:%S")
+
         # Format logger name (shorten if too long)
         logger_name = record.name
         if len(logger_name) > 25:
-            logger_name = '...' + logger_name[-22:]
-        
+            logger_name = "..." + logger_name[-22:]
+
         # Build formatted message
         level_name = f"{color}{record.levelname:8s}{reset}"
         logger_str = f"{logger_name:28s}"
-        
+
         # Format message
         message = record.getMessage()
-        
+
         # Add extra fields if present (exclude noisy fields)
         extra_info = []
-        if hasattr(record, '__dict__'):
+        if hasattr(record, "__dict__"):
             for key, value in record.__dict__.items():
-                if key not in ['name', 'msg', 'args', 'created', 'filename', 'funcName', 
-                              'levelname', 'levelno', 'lineno', 'module', 'msecs', 'message',
-                              'pathname', 'process', 'processName', 'relativeCreated', 'thread',
-                              'threadName', 'exc_info', 'exc_text', 'stack_info', 'taskName',
-                              'environment', 'application', 'logger', 'module', 'function', 'line']:
+                if key not in [
+                    "name",
+                    "msg",
+                    "args",
+                    "created",
+                    "filename",
+                    "funcName",
+                    "levelname",
+                    "levelno",
+                    "lineno",
+                    "module",
+                    "msecs",
+                    "message",
+                    "pathname",
+                    "process",
+                    "processName",
+                    "relativeCreated",
+                    "thread",
+                    "threadName",
+                    "exc_info",
+                    "exc_text",
+                    "stack_info",
+                    "taskName",
+                    "environment",
+                    "application",
+                    "logger",
+                    "module",
+                    "function",
+                    "line",
+                ]:
                     if value and str(value).strip():
                         extra_info.append(f"{key}={value}")
-        
+
         if extra_info:
             # Limit extra info to avoid clutter
             if len(extra_info) > 3:
-                extra_info = extra_info[:3] + ['...']
+                extra_info = extra_info[:3] + ["..."]
             message += f" | {' | '.join(extra_info)}"
-        
+
         # Format exception if present
         if record.exc_info:
             message += f"\n{self.formatException(record.exc_info)}"
-        
+
         return f"{timestamp} | {level_name} | {logger_str} | {message}"
 
 
@@ -128,7 +153,7 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
 def configure_logging() -> None:
     """
     Configure logging for the application.
-    
+
     In development: Uses colored, human-readable format
     In production: Uses structured JSON format
 
@@ -163,6 +188,7 @@ def configure_logging() -> None:
     # Create console handler with encoding error handling
     class SafeStreamHandler(logging.StreamHandler):
         """StreamHandler that handles encoding errors gracefully."""
+
         def emit(self, record):
             try:
                 super().emit(record)
@@ -171,23 +197,23 @@ def configure_logging() -> None:
                 try:
                     msg = self.format(record)
                     # Replace any problematic characters
-                    msg = msg.encode(self.stream.encoding or 'utf-8', errors='replace').decode(self.stream.encoding or 'utf-8', errors='replace')
+                    msg = msg.encode(self.stream.encoding or "utf-8", errors="replace").decode(
+                        self.stream.encoding or "utf-8", errors="replace"
+                    )
                     stream = self.stream
                     stream.write(msg + self.terminator)
                     self.flush()
                 except Exception:
                     # Last resort: write a safe ASCII message
                     self.handleError(record)
-    
+
     console_handler = SafeStreamHandler(sys.stdout)
     console_handler.setLevel(log_level)
 
     # Choose formatter based on environment
     if environment == "development":
         # Use colored formatter for development
-        formatter = ColoredFormatter(
-            datefmt="%Y-%m-%d %H:%M:%S"
-        )
+        formatter = ColoredFormatter(datefmt="%Y-%m-%d %H:%M:%S")
     else:
         # Use JSON formatter for production/staging
         formatter = CustomJsonFormatter(

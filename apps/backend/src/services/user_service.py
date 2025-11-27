@@ -96,4 +96,3 @@ async def get_or_create_oauth_user(oauth_info: OAuthUserInfo, db: DBDep) -> User
     return new_user
 
 
-
