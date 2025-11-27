@@ -288,7 +288,7 @@ jobs:
             PREVIEW_DOMAIN_VALUE="maigie.com"
           fi
           
-          PREVIEW_DOMAIN="${{ steps.preview.outputs.id }}.preview.${PREVIEW_DOMAIN_VALUE}"
+          PREVIEW_DOMAIN="${{ steps.preview.outputs.id }}-api-preview.${PREVIEW_DOMAIN_VALUE}"
           
           # Create Nginx config on VPS
           ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
@@ -558,7 +558,7 @@ jobs:
         run: |
           PREVIEW_ID="${{ steps.preview.outputs.id }}"
           PREVIEW_DOMAIN_VALUE="${PREVIEW_DOMAIN:-maigie.com}"
-          PREVIEW_DOMAIN="${PREVIEW_ID}.preview.${PREVIEW_DOMAIN_VALUE}"
+          PREVIEW_DOMAIN="${PREVIEW_ID}-api-preview.${PREVIEW_DOMAIN_VALUE}"
           
           # Remove Cloudflare Tunnel route
           if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ]; then

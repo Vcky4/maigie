@@ -75,7 +75,7 @@ ingress:
     service: http://localhost:80
   - hostname: staging-api.maigie.com
     service: http://localhost:80
-  - hostname: pr-*.preview.maigie.com
+  - hostname: pr-*-api-preview.maigie.com
     service: http://localhost:80
   - service: http_status:404
 EOF
@@ -112,12 +112,12 @@ Target: {TUNNEL_ID}.cfargotunnel.com
 Proxy: Proxied (orange cloud)
 
 Type: CNAME
-Name: *.preview
+Name: *-api-preview
 Target: {TUNNEL_ID}.cfargotunnel.com
 Proxy: Proxied (orange cloud)
 ```
 
-**Note:** The wildcard DNS record (`*.preview`) allows any preview subdomain to resolve. Individual tunnel routes are created dynamically via API for each PR.
+**Note:** The wildcard DNS record (`*-api-preview`) allows any preview subdomain to resolve. Individual tunnel routes are created dynamically via API for each PR.
 
 ### 6. GitHub Secrets
 
@@ -145,12 +145,12 @@ Add these secrets to your GitHub repository:
 1. **All Traffic Routes Through Tunnel**:
    - `https://api.maigie.com` → Tunnel → Nginx → `localhost:8000` (Production)
    - `https://staging-api.maigie.com` → Tunnel → Nginx → `localhost:8001` (Staging)
-   - `https://pr-44.preview.maigie.com` → Tunnel → Nginx → `localhost:{PORT}` (Preview)
+   - `https://pr-44-api-preview.maigie.com` → Tunnel → Nginx → `localhost:{PORT}` (Preview)
 
 2. **Preview Deployment**:
    - Docker container starts on random port
-   - Workflow creates Nginx config: `pr-44.preview.maigie.com` → `localhost:PORT`
-   - Workflow creates Cloudflare Tunnel route via API: `pr-44.preview.maigie.com` → `http://localhost:80`
+   - Workflow creates Nginx config: `pr-44-api-preview.maigie.com` → `localhost:PORT`
+   - Workflow creates Cloudflare Tunnel route via API: `pr-44-api-preview.maigie.com` → `http://localhost:80`
    - Nginx reloads
    - Preview URL commented on PR
 
@@ -188,7 +188,7 @@ cat ~/.cloudflared/config.yml
 ### Preview domains not resolving
 
 - Ensure wildcard DNS record (`*.preview`) is configured
-- Check tunnel ingress includes `pr-*.preview.maigie.com`
+- Check tunnel ingress includes `pr-*-api-preview.maigie.com`
 - Verify Nginx config was created for the preview
 - Check Nginx is reloaded: `sudo systemctl reload nginx`
 

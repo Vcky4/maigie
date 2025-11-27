@@ -104,7 +104,7 @@ cleanup_preview() {
     # Remove Cloudflare Tunnel route if API credentials are available
     if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ]; then
         PREVIEW_DOMAIN_VALUE="${PREVIEW_DOMAIN:-maigie.com}"
-        PREVIEW_DOMAIN="${preview_id}.preview.${PREVIEW_DOMAIN_VALUE}"
+        PREVIEW_DOMAIN="${preview_id}-api-preview.${PREVIEW_DOMAIN_VALUE}"
         
         echo "[$(date)] Removing Cloudflare Tunnel route: $PREVIEW_DOMAIN" >> "$LOG_FILE"
         

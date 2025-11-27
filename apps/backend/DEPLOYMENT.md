@@ -214,7 +214,7 @@ crontab -e
 
 - Production: `https://api.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:8000/health`
 - Staging: `https://staging-api.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:8001/health`
-- Preview: `https://pr-{PR_NUMBER}.preview.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:{DYNAMIC_PORT}/health`
+- Preview: `https://pr-{PR_NUMBER}-api-preview.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:{DYNAMIC_PORT}/health`
 
 ## Cloudflare Tunnel Setup (Recommended)
 
@@ -285,7 +285,7 @@ ingress:
     service: http://localhost:80
   - hostname: staging-api.maigie.com
     service: http://localhost:80
-  - hostname: pr-*.preview.maigie.com
+  - hostname: pr-*-api-preview.maigie.com
     service: http://localhost:80
   - service: http_status:404
 EOF
@@ -351,11 +351,11 @@ Add these secrets to your GitHub repository:
 1. **All Traffic Routes Through Tunnel**:
    - `https://api.maigie.com` → Tunnel → Nginx → `localhost:8000` (Production)
    - `https://staging-api.maigie.com` → Tunnel → Nginx → `localhost:8001` (Staging)
-   - `https://pr-44.preview.maigie.com` → Tunnel → Nginx → `localhost:{PORT}` (Preview)
+   - `https://pr-44-api-preview.maigie.com` → Tunnel → Nginx → `localhost:{PORT}` (Preview)
 
 2. **Preview Deployment**:
    - Docker container starts on random port
-   - Workflow creates Nginx config: `pr-44.preview.maigie.com` → `localhost:PORT`
+   - Workflow creates Nginx config: `pr-44-api-preview.maigie.com` → `localhost:PORT`
    - Nginx reloads
    - Preview URL commented on PR
 
