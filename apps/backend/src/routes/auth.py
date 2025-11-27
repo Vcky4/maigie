@@ -16,6 +16,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
 import logging
 import secrets
 from datetime import timedelta
@@ -267,7 +268,10 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Failed to obtain access token from OAuth provider. Response keys: {list(token_response.keys())}",
+                detail=(
+                    f"Failed to obtain access token from OAuth provider. "
+                    f"Response keys: {list(token_response.keys())}"
+                ),
             )
 
         # Get user information from provider

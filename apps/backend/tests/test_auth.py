@@ -12,7 +12,11 @@ async def test_signup_flow(client: AsyncClient):
     Test the full signup flow.
     """
     unique_email = f"test_{uuid4()}@example.com"
-    payload = {"email": unique_email, "password": "strongpassword123", "name": "Test User"}
+    payload = {
+        "email": unique_email,
+        "password": "strongpassword123",
+        "name": "Test User",
+    }
 
     # 1. Signup
     response = await client.post("/api/v1/auth/signup", json=payload)
