@@ -4,16 +4,8 @@
 
 """
 FastAPI application entry point.
-<<<<<<< HEAD
+
 Copyright (C) 2025 Maigie
-"""
-
-import logging
-import traceback
-from contextlib import asynccontextmanager
-=======
-
-Copyright (C) 2024 Maigie Team
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -30,11 +22,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import logging
-import os
 import traceback
 from contextlib import asynccontextmanager
-from pathlib import Path
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 from typing import Annotated, Any
 
 import sentry_sdk
@@ -44,10 +33,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
-<<<<<<< HEAD
-from starlette.middleware.sessions import SessionMiddleware
-=======
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 
 # --- Import the database helper functions ---
 from src.core.database import check_db_health, connect_db, disconnect_db
@@ -63,26 +48,17 @@ from .exceptions import (
 )
 from .middleware import LoggingMiddleware, SecurityHeadersMiddleware
 from .models.error_response import ErrorResponse
-<<<<<<< HEAD
 
 # --- Route Imports ---
 from .routes.ai import router as ai_router
 from .routes.auth import router as auth_router
 from .routes.users import router as users_router
-=======
-from .routes.ai import router as ai_router
-from .routes.auth import router as auth_router
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 from .routes.courses import router as courses_router
 from .routes.examples import router as examples_router
 from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
-<<<<<<< HEAD
-
-=======
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 from .utils.dependencies import (
     cleanup_db_client,
     close_redis_client,
@@ -101,10 +77,22 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # Global Exception Handlers
 # ============================================================================
-<<<<<<< HEAD
+
 
 async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONResponse:
-    """Global exception handler for all MaigieError exceptions."""
+    """
+    Global exception handler for all MaigieError exceptions.
+
+    Converts MaigieError instances into standardized ErrorResponse format.
+    This ensures consistent error responses across the entire application.
+
+    Args:
+        request: The incoming request
+        exc: The MaigieError exception
+
+    Returns:
+        JSONResponse with standardized error format
+    """
     settings = get_settings()
     is_server_error = exc.status_code >= 500
 
@@ -141,85 +129,6 @@ async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONRespon
 
 
 async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
-    """Global exception handler for FastAPI/Pydantic validation errors."""
-    settings = get_settings()
-    errors = exc.errors()
-
-=======
-
-
-async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONResponse:
-    """
-    Global exception handler for all MaigieError exceptions.
-
-    Converts MaigieError instances into standardized ErrorResponse format.
-    This ensures consistent error responses across the entire application.
-
-    Args:
-        request: The incoming request
-        exc: The MaigieError exception
-
-    Returns:
-        JSONResponse with standardized error format
-    """
-    settings = get_settings()
-
-    # Determine if this is a 500-level error (critical)
-    is_server_error = exc.status_code >= 500
-
-    # Log with appropriate level and full context
-    log_context = {
-        "error_code": exc.code,
-        "status_code": exc.status_code,
-        "detail": exc.detail,
-        "path": request.url.path,
-        "method": request.method,
-        "user_agent": request.headers.get("user-agent"),
-    }
-
-    if is_server_error:
-        # For 500-level errors, log at ERROR level with full traceback
-        logger.error(
-            f"MaigieError [500-level]: {exc.code} - {exc.message}",
-            exc_info=True,
-            extra={
-                **log_context,
-                "traceback": traceback.format_exc(),
-            },
-        )
-
-        # Capture to Sentry for 500-level errors
-        sentry_sdk.capture_exception(exc)
-    else:
-        # For 4xx errors, log at WARNING level
-        logger.warning(f"MaigieError: {exc.code} - {exc.message}", extra=log_context)
-
-    # Create error response
-    error_response = ErrorResponse(
-        status_code=exc.status_code,
-        code=exc.code,
-        message=exc.message,
-        detail=exc.detail if settings.DEBUG else None,  # Hide details in production
-    )
-
-    # Log the error
-    logger.warning(
-        f"MaigieError: {exc.code} - {exc.message}",
-        extra={
-            "error_code": exc.code,
-            "status_code": exc.status_code,
-            "detail": exc.detail,
-            "path": request.url.path,
-        },
-    )
-
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=error_response.model_dump(exclude_none=True),
-    )
-
-
-async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """
     Global exception handler for FastAPI/Pydantic validation errors.
 
@@ -234,12 +143,8 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         JSONResponse with standardized error format
     """
     settings = get_settings()
-
-    # Extract validation error details
     errors = exc.errors()
 
-    # Create user-friendly message
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     if len(errors) == 1:
         error = errors[0]
         field = " -> ".join(str(loc) for loc in error["loc"])
@@ -247,14 +152,10 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     else:
         message = f"Request validation failed with {len(errors)} error(s)"
 
-<<<<<<< HEAD
-    detail = str(errors) if settings.DEBUG else None
-=======
     # Format details
     detail = None
     if settings.DEBUG:
         detail = str(errors)
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 
     error_response = ErrorResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -263,9 +164,6 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         detail=detail,
     )
 
-<<<<<<< HEAD
-    logger.info(f"Validation error: {message}", extra={"errors": errors, "path": request.url.path})
-=======
     logger.info(
         f"Validation error: {message}",
         extra={
@@ -273,7 +171,6 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
             "path": request.url.path,
         },
     )
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
@@ -282,9 +179,6 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-<<<<<<< HEAD
-    """Global exception handler for all unhandled exceptions."""
-=======
     """
     Global exception handler for all unhandled exceptions.
 
@@ -299,8 +193,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     Returns:
         JSONResponse with generic error message
     """
-    # Build comprehensive log context
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     log_context = {
         "exception_type": type(exc).__name__,
         "exception_message": str(exc),
@@ -310,41 +202,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         "traceback": traceback.format_exc(),
     }
 
-<<<<<<< HEAD
-    logger.error(f"Unhandled exception: {type(exc).__name__}: {str(exc)}", exc_info=True, extra=log_context)
-    sentry_sdk.capture_exception(exc)
-
-=======
-    # Log the full traceback at ERROR level with structured data
     logger.error(
         f"Unhandled exception: {type(exc).__name__}: {str(exc)}", exc_info=True, extra=log_context
     )
-
-    # Capture to Sentry for all unhandled exceptions
     sentry_sdk.capture_exception(exc)
 
-    # Log the full traceback for debugging
-    logger.error(
-        f"Unhandled exception: {str(exc)}",
-        exc_info=True,
-        extra={
-            "path": request.url.path,
-            "method": request.method,
-            "traceback": traceback.format_exc(),
-        },
-    )
-
-    # Create generic error response (don't leak internal details)
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     error_response = ErrorResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         code="INTERNAL_SERVER_ERROR",
         message="An internal server error occurred. Please try again later.",
-<<<<<<< HEAD
-        detail=None,
-=======
         detail=None,  # Never expose internal details to clients
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     )
 
     return JSONResponse(
@@ -357,10 +224,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # Application Lifespan
 # ============================================================================
 
-<<<<<<< HEAD
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
+    # Initialize structured logging FIRST (before any logging occurs)
     configure_logging()
     settings = get_settings()
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
@@ -396,79 +263,6 @@ async def lifespan(app: FastAPI):
     logger.info("Redis client initialized for dependency injection")
 
     # Initialize WebSocket
-=======
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
-    # Initialize structured logging FIRST (before any logging occurs)
-    configure_logging()
-
-    # Startup
-    settings = get_settings()
-    logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
-
-    # Initialize Sentry error tracking
-    sentry_dsn = settings.SENTRY_DSN
-    if sentry_dsn and sentry_dsn.strip():  # Check if DSN is not empty
-        sentry_sdk.init(
-            dsn=sentry_dsn,
-            environment=settings.ENVIRONMENT,
-            # Set traces_sample_rate to 1.0 to capture 100% of transactions for performance monitoring
-            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
-            # Send 100% of errors by default
-            sample_rate=1.0,
-            # Integrations
-            integrations=[
-                FastApiIntegration(transaction_style="endpoint"),
-                LoggingIntegration(
-                    level=logging.INFO,  # Capture info and above as breadcrumbs
-                    event_level=logging.ERROR,  # Send errors and above as events
-                ),
-            ],
-            # Additional metadata
-            release=settings.APP_VERSION,
-        )
-        logger.info(
-            "Sentry error tracking initialized",
-            extra={
-                "environment": settings.ENVIRONMENT,
-                "release": settings.APP_VERSION,
-            },
-        )
-    else:
-        # Check if .env file exists to give better error message
-        env_file_path = Path(__file__).parent.parent / ".env"
-        env_file_exists = env_file_path.exists()
-
-        logger.warning(
-            "Sentry DSN not configured - error tracking disabled",
-            extra={
-                "hint": "Set SENTRY_DSN in .env file or environment variable to enable",
-                "env_file_path": str(env_file_path),
-                "env_file_exists": env_file_exists,
-            },
-        )
-
-    # Connect to database (legacy placeholder - kept for compatibility)
-    await connect_db()
-    logger.info("Legacy database connection initialized")
-
-    # Connect to cache (legacy placeholder - kept for compatibility)
-    await cache.connect()
-    logger.info("Legacy cache connection initialized")
-
-    # Initialize new dependency injection system
-    # Prisma client will be initialized on first use via get_db_client()
-
-    # Initialize Redis client for dependency injection
-    await initialize_redis_client()
-    logger.info("Redis client initialized for dependency injection")
-    print("Redis client initialized for dependency injection")
-
-    # --- WebSocket Manager ---
-    settings = get_settings()
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     websocket_manager.heartbeat_interval = settings.WEBSOCKET_HEARTBEAT_INTERVAL
     websocket_manager.heartbeat_timeout = settings.WEBSOCKET_HEARTBEAT_TIMEOUT
     websocket_manager.max_reconnect_attempts = settings.WEBSOCKET_MAX_RECONNECT_ATTEMPTS
@@ -483,27 +277,16 @@ async def lifespan(app: FastAPI):
     await websocket_manager.stop_heartbeat()
     await websocket_manager.stop_cleanup()
 
-<<<<<<< HEAD
-    for connection_id in list(websocket_manager.active_connections.keys()):
-        await websocket_manager.disconnect(connection_id, reason="server_shutdown")
-
-    await cleanup_db_client()
-    await close_redis_client()
-=======
     # Disconnect all WebSocket connections
     connection_count = len(websocket_manager.active_connections)
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")
     logger.info(f"Disconnected {connection_count} WebSocket connection(s)")
 
-    # Cleanup new dependency injection clients
     await cleanup_db_client()
     await close_redis_client()
     logger.info("Dependency injection clients cleaned up")
-    print("Dependency injection clients cleaned up")
 
-    # Cleanup legacy connections
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     await cache.disconnect()
     await disconnect_db()
     logger.info("Shutdown complete")
@@ -521,7 +304,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-<<<<<<< HEAD
     # Exception Handlers
     app.add_exception_handler(MaigieError, maigie_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)
@@ -532,25 +314,7 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(LoggingMiddleware)
 
-    # --- PLACEHOLDER FOR TEAMMATE (OAuth Session) ---
-    # OAuth requires session middleware to store the 'state' parameter securely.
-    # app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
-
-=======
-    # Add exception handlers (new standardized handlers)
-    app.add_exception_handler(MaigieError, maigie_error_handler)
-    app.add_exception_handler(RequestValidationError, validation_error_handler)
-    app.add_exception_handler(Exception, unhandled_exception_handler)
-
-    # Legacy exception handlers (for backward compatibility)
-    app.add_exception_handler(AppException, app_exception_handler)
-
-    # Add middleware
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(LoggingMiddleware)
-
     # CORS middleware
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
@@ -562,19 +326,6 @@ def create_app() -> FastAPI:
     # Root endpoint
     @app.get("/")
     async def root(settings: SettingsDep = None) -> dict[str, str]:
-<<<<<<< HEAD
-        if settings is None:
-            settings = get_settings()
-        return {"message": settings.APP_NAME, "version": settings.APP_VERSION}
-
-    # Metrics
-    @app.get("/metrics")
-    async def metrics() -> Response:
-        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-    # Health Check
-=======
         """Root endpoint."""
         if settings is None:
             settings = get_settings()
@@ -600,43 +351,11 @@ def create_app() -> FastAPI:
         )
 
     # Multi-service health check endpoint
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     @app.get("/health")
     async def health(
         db_client: Annotated[Any, Depends(get_db_client)],
         redis_client: Annotated[Any, Depends(get_redis_client)],
     ) -> dict[str, str]:
-<<<<<<< HEAD
-        from fastapi import HTTPException, status
-        
-        # Check DB
-        try:
-            await db_client.query_raw("SELECT 1")
-            db_status = "connected"
-        except Exception:
-            db_status = "disconnected"
-
-        # Check Redis
-        try:
-            await redis_client.ping()
-            cache_status = "connected"
-        except Exception:
-            cache_status = "disconnected"
-
-        if db_status != "connected":
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"status": "unhealthy", "db": db_status, "cache": cache_status}
-            )
-        return {"status": "healthy", "db": db_status, "cache": cache_status}
-
-    # Ready Check
-    @app.get("/ready")
-    async def ready() -> dict[str, Any]:
-        db_status = await check_db_health()
-        cache_status = await cache.health_check()
-        worker_status = await check_worker_health()
-=======
         """
         Multi-service health check endpoint.
 
@@ -701,7 +420,6 @@ def create_app() -> FastAPI:
         cache_status = await cache.health_check()
         worker_status = await check_worker_health()
 
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
         return {
             "status": "ready",
             "database": db_status,
@@ -709,41 +427,25 @@ def create_app() -> FastAPI:
             "workers": worker_status,
         }
 
-<<<<<<< HEAD
     # --- REGISTER ROUTERS ---
     app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
-    
-=======
-    # Include routers
-    # Authentication router
-    app.include_router(auth_router)
 
-    # Core API routers
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
+    # Core API routers (these already have prefixes defined in their router definitions)
     app.include_router(ai_router)
     app.include_router(courses_router)
     app.include_router(goals_router)
     app.include_router(schedule_router)
     app.include_router(resources_router)
-<<<<<<< HEAD
-    app.include_router(realtime_router)
-=======
 
     # Real-time communication router
     app.include_router(realtime_router)
 
     # Example/demonstration endpoints
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     app.include_router(examples_router)
 
     return app
 
-<<<<<<< HEAD
-# Create app instance
-app = create_app()
-=======
 
 # Create app instance
 app = create_app()
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8

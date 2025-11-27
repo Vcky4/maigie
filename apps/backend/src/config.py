@@ -1,9 +1,7 @@
 """
 Application configuration management.
-<<<<<<< HEAD
-=======
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -17,7 +15,6 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 """
 
 import json
@@ -37,10 +34,7 @@ def parse_list_value(value: Any) -> list[str]:
         value = value.strip()
         if not value:
             return []
-<<<<<<< HEAD
-=======
         # Try JSON array format first
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
         if value.startswith("[") and value.endswith("]"):
             try:
                 parsed = json.loads(value)
@@ -48,27 +42,22 @@ def parse_list_value(value: Any) -> list[str]:
                     return parsed
             except (json.JSONDecodeError, TypeError):
                 pass
-<<<<<<< HEAD
-=======
         # Fall back to comma-separated format
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
 
 
-<<<<<<< HEAD
-=======
 # Custom type that handles both JSON arrays and comma-separated strings
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
 ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
 
 
 class Settings(BaseSettings):
-<<<<<<< HEAD
+    """Application settings loaded from environment variables."""
+
     # --- Application Info ---
     APP_NAME: str = "Maigie API"
     APP_VERSION: str = "0.1.0"
-    APP_DESCRIPTION: str = "AI-powered student companion API"  # <--- THIS WAS MISSING
+    APP_DESCRIPTION: str = "AI-powered student companion API"
     DEBUG: bool = True
     ENVIRONMENT: str = "development"
 
@@ -78,22 +67,6 @@ class Settings(BaseSettings):
     FRONTEND_BASE_URL: str = "http://localhost:3000"  # For OAuth redirects
 
     # --- CORS ---
-=======
-    """Application settings loaded from environment variables."""
-
-    # Application
-    APP_NAME: str = "Maigie API"
-    APP_VERSION: str = "0.1.0"
-    APP_DESCRIPTION: str = "AI-powered student companion API"
-    DEBUG: bool = False
-    ENVIRONMENT: str = "development"
-
-    # API
-    API_V1_PREFIX: str = "/api/v1"
-    ALLOWED_HOSTS: ListStr = ["localhost", "127.0.0.1"]
-
-    # CORS
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     CORS_ORIGINS: ListStr = [
         "http://localhost:4200",
         "http://localhost:5173",
@@ -103,81 +76,50 @@ class Settings(BaseSettings):
     CORS_ALLOW_METHODS: ListStr = ["*"]
     CORS_ALLOW_HEADERS: ListStr = ["*"]
 
-<<<<<<< HEAD
     # --- Security & Auth ---
-=======
-    # Security
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-<<<<<<< HEAD
     # --- Database ---
     DATABASE_URL: str = ""  # Loaded from .env
 
     # --- Redis Cache ---
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_KEY_PREFIX: str = "maigie:"
-    REDIS_SOCKET_TIMEOUT: int = 5
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5
+    REDIS_SOCKET_TIMEOUT: int = 5  # seconds
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5  # seconds
 
     # --- WebSocket ---
-    WEBSOCKET_HEARTBEAT_INTERVAL: int = 30
-    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60
+    WEBSOCKET_HEARTBEAT_INTERVAL: int = 30  # seconds
+    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60  # seconds
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
-    # --- OAuth Providers (Placeholders) ---
+    # --- OAuth Providers ---
     OAUTH_GOOGLE_CLIENT_ID: str | None = None
     OAUTH_GOOGLE_CLIENT_SECRET: str | None = None
     OAUTH_GITHUB_CLIENT_ID: str | None = None
     OAUTH_GITHUB_CLIENT_SECRET: str | None = None
-    # Redirect URI used by your teammate's OAuth logic
+    # Redirect URI used by OAuth logic
     OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
 
     # --- Celery (Background Workers) ---
-    CELERY_BROKER_URL: str = ""
-    CELERY_RESULT_BACKEND: str = ""
-=======
-    # OAuth Providers
-    OAUTH_GOOGLE_CLIENT_ID: str = ""
-    OAUTH_GOOGLE_CLIENT_SECRET: str = ""
-    OAUTH_GITHUB_CLIENT_ID: str = ""
-    OAUTH_GITHUB_CLIENT_SECRET: str = ""
-    OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
-
-    # Database
-    DATABASE_URL: str = ""
-
-    # Redis Cache
-    REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_KEY_PREFIX: str = "maigie:"
-    REDIS_SOCKET_TIMEOUT: int = 5  # seconds
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5  # seconds
-
-    # Celery (Background Workers)
     CELERY_BROKER_URL: str = ""  # Auto-generated from REDIS_URL with DB 1
     CELERY_RESULT_BACKEND: str = ""  # Auto-generated from REDIS_URL with DB 2
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
     CELERY_ACCEPT_CONTENT: ListStr = ["json"]
     CELERY_TIMEZONE: str = "UTC"
     CELERY_ENABLE_UTC: bool = True
-<<<<<<< HEAD
-    CELERY_TASK_ALWAYS_EAGER: bool = False
-=======
     CELERY_TASK_ALWAYS_EAGER: bool = False  # Set to True for testing (synchronous execution)
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     CELERY_TASK_ACKS_LATE: bool = True
     CELERY_TASK_REJECT_ON_WORKER_LOST: bool = True
     CELERY_WORKER_PREFETCH_MULTIPLIER: int = 1
     CELERY_TASK_DEFAULT_QUEUE: str = "default"
     CELERY_TASK_DEFAULT_EXCHANGE: str = "tasks"
     CELERY_TASK_DEFAULT_ROUTING_KEY: str = "default"
-<<<<<<< HEAD
-    CELERY_RESULT_EXPIRES: int = 3600
+    CELERY_RESULT_EXPIRES: int = 3600  # seconds (1 hour)
 
     # --- Logging & Sentry ---
     LOG_LEVEL: str = "INFO"
@@ -186,28 +128,10 @@ class Settings(BaseSettings):
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
     model_config = SettingsConfigDict(
-=======
-    CELERY_RESULT_EXPIRES: int = 3600  # seconds (1 hour)
-
-    # Logging
-    LOG_LEVEL: str = "INFO"
-    LOG_FORMAT: str = "json"
-
-    # Error Tracking (Sentry)
-    SENTRY_DSN: str = ""
-    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
-
-    # WebSocket
-    WEBSOCKET_HEARTBEAT_INTERVAL: int = 30  # seconds
-    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60  # seconds
-    WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
-
-    model_config = SettingsConfigDict(
         # Look for .env file in the backend directory
         # __file__ is apps/backend/src/config.py
         # parent = apps/backend/src/
         # parent.parent = apps/backend/
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
         env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
@@ -216,8 +140,6 @@ class Settings(BaseSettings):
 
 
 def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
-<<<<<<< HEAD
-=======
     """Extract base Redis URL and change database number.
 
     Args:
@@ -228,7 +150,6 @@ def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
         Redis URL with updated database number
     """
     # Parse redis://host:port/db or redis://host:port
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     if "/" in redis_url:
         base_url = redis_url.rsplit("/", 1)[0]
         return f"{base_url}/{db_number}"
@@ -237,11 +158,6 @@ def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
 
 @lru_cache
 def get_settings() -> Settings:
-<<<<<<< HEAD
-    settings = Settings()
-
-    # Auto-generate Celery URLs
-=======
     """Get cached settings instance."""
     settings = Settings()
 
@@ -250,17 +166,9 @@ def get_settings() -> Settings:
     # - DB 0: Cache (existing)
     # - DB 1: Celery broker
     # - DB 2: Celery results
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
     if not settings.CELERY_BROKER_URL:
         settings.CELERY_BROKER_URL = _get_redis_url_with_db(settings.REDIS_URL, 1)
     if not settings.CELERY_RESULT_BACKEND:
         settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
 
     return settings
-<<<<<<< HEAD
-
-
-# Create the instance
-settings = get_settings()
-=======
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8

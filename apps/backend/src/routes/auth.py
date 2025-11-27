@@ -32,28 +32,6 @@ from ..core.security import (
 )
 from ..dependencies import CurrentUserTokenDep, SettingsDep
 from ..exceptions import AuthenticationError
-from ..models.auth import (
-    RefreshTokenRequest,
-    TokenResponse,
-    UserLogin,
-    UserRegister,
-    UserResponse,
-)
->>>>>>> aac7cb9656703254703e23d9dea9f60941bc20d8
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-"""
 import logging
 import secrets
 from datetime import timedelta
@@ -62,26 +40,26 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr  # <--- ADDED THIS IMPORT
+from pydantic import BaseModel, EmailStr
 
-from src.config import settings
-from src.core.database import db
-from src.core.oauth import OAuthProviderFactory
-from src.core.security import (
+from ..config import get_settings
+from ..core.database import db
+from ..core.oauth import OAuthProviderFactory
+from ..core.security import (
     create_access_token,
     get_password_hash,
     verify_password,
 )
-from src.dependencies import CurrentUser, DBDep
-from src.exceptions import AuthenticationError
-from src.models.auth import (
+from ..dependencies import CurrentUser, DBDep
+from ..exceptions import AuthenticationError
+from ..models.auth import (
     OAuthAuthorizeResponse,
     Token,
     UserLogin,
     UserResponse,
     UserSignup,
 )
-from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
+from ..services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -152,7 +130,7 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=get_settings().ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
@@ -174,7 +152,7 @@ async def login_json(user_data: UserLogin):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=get_settings().ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email}, expires_delta=access_token_expires
     )
@@ -351,7 +329,7 @@ async def oauth_callback(
         }
 
         # Generate JWT token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token_expires = timedelta(minutes=get_settings().ACCESS_TOKEN_EXPIRE_MINUTES)
         jwt_token = create_access_token(
             data=token_data, expires_delta=access_token_expires
         )
