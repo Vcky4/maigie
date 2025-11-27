@@ -66,9 +66,13 @@ case "$ACTION" in
             INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"$HOSTNAME\"))")
         fi
         
-        # Add new route (before catch-all)
+        # Separate specific rules from catch-all rules
+        SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname != null and .hostname != \"\")]")
+        CATCH_ALL_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname == null or .hostname == \"\")]")
+        
+        # Add new route to specific rules, then append catch-all rules at the end
         NEW_RULE="{\"hostname\":\"$HOSTNAME\",\"service\":\"$SERVICE\"}"
-        INGRESS_RULES=$(echo "$INGRESS_RULES" | jq ". + [$NEW_RULE] | sort_by(.hostname == null) | reverse")
+        INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] | . + $CATCH_ALL_RULES")
         
         # Update config
         UPDATE_RESPONSE=$(curl -s -X PUT \

@@ -164,6 +164,9 @@ jobs:
             mkdir -p ${{ steps.preview.outputs.id }}
             cd ${{ steps.preview.outputs.id }}
             
+            # Remove old preview image if it exists (force remove to handle any dangling references)
+            docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
+            
             # Load Docker image
             docker load < /tmp/preview-image.tar.gz
             rm /tmp/preview-image.tar.gz
@@ -337,9 +340,13 @@ jobs:
               INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
             fi
             
-            # Add new route (before catch-all)
+            # Separate specific rules from catch-all rules
+            SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname != null and .hostname != \"\")]")
+            CATCH_ALL_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname == null or .hostname == \"\")]")
+            
+            # Add new route to specific rules, then append catch-all rules at the end
             NEW_RULE="{\"hostname\":\"${PREVIEW_DOMAIN}\",\"service\":\"http://localhost:80\"}"
-            INGRESS_RULES=$(echo "$INGRESS_RULES" | jq ". + [$NEW_RULE] | sort_by(.hostname == null) | reverse")
+            INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] | . + $CATCH_ALL_RULES")
             
             # Update config
             UPDATE_RESPONSE=$(curl -s -X PUT \
@@ -568,7 +575,7 @@ jobs:
             
             # Check if hostname exists
             if echo "$INGRESS_RULES" | jq -e ".[] | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
-              # Remove route
+              # Remove route (preserve order: specific rules first, catch-all last)
               INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
               
               # Update config
