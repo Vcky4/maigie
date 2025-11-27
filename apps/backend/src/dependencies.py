@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials # <--- CHANGED
 from jose import JWTError
 
 from prisma import Prisma
@@ -38,18 +38,21 @@ async def get_db() -> Prisma:
     """Get database client dependency."""
     return db
 
-
 DBDep = Annotated[Prisma, Depends(get_db)]
 
-# This tells FastAPI: "The token is in the header, and if missing, go to /auth/login"
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+# --- CHANGED: Use HTTPBearer ---
+# This tells Swagger UI: "Just ask for a Bearer Token string"
+security = HTTPBearer()
 
 
-async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> User:
+async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]) -> User:
     """
     Validate JWT and retrieve the current user from the database.
     This is the main dependency for protecting routes.
     """
+    # Extract the token string from the Bearer object
+    token = credentials.credentials
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
