@@ -16,6 +16,9 @@ async def test_signup_flow(client: AsyncClient):
 
     # 1. Signup
     response = await client.post("/api/v1/auth/signup", json=payload)
+    if response.status_code != 201:
+        print(f"Signup failed: {response.status_code}")
+        print(f"Response: {response.text}")
     assert response.status_code == 201
     data = response.json()
     assert data["email"] == unique_email

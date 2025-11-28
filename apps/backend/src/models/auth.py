@@ -82,8 +82,17 @@ class UserResponse(BaseModel):
     @classmethod
     def convert_tier_to_string(cls, v):
         """Convert Tier enum to string if needed."""
+        # Prisma Python enums can be accessed directly or via .value
+        if v is None:
+            return "FREE"  # Default tier
+        if isinstance(v, str):
+            return v
+        # Handle Prisma enum objects
         if hasattr(v, "value"):
             return v.value
+        if hasattr(v, "name"):
+            return v.name
+        # Fallback: convert to string
         return str(v)
 
 
