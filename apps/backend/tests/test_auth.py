@@ -1,5 +1,3 @@
-import os
-
 import pytest
 from httpx import AsyncClient
 from uuid import uuid4
@@ -9,13 +7,8 @@ from uuid import uuid4
 
 
 @pytest.mark.asyncio
-async def test_signup_flow(client: AsyncClient):
+async def test_signup_flow(client: AsyncClient, db_lifecycle):
     """Test the full signup flow - requires DATABASE_URL to be set."""
-    if not os.getenv("DATABASE_URL"):
-        pytest.skip("DATABASE_URL not set - skipping database-dependent test")
-    """
-    Test the full signup flow.
-    """
     unique_email = f"test_{uuid4()}@example.com"
     payload = {
         "email": unique_email,
@@ -53,10 +46,8 @@ async def test_signup_flow(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_login_invalid_credentials(client: AsyncClient):
+async def test_login_invalid_credentials(client: AsyncClient, db_lifecycle):
     """Test that bad passwords are rejected - requires DATABASE_URL to be set."""
-    if not os.getenv("DATABASE_URL"):
-        pytest.skip("DATABASE_URL not set - skipping database-dependent test")
     payload = {"username": "fake@example.com", "password": "wrongpassword"}
     response = await client.post(
         "/api/v1/auth/login",
@@ -67,10 +58,8 @@ async def test_login_invalid_credentials(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_signup_duplicate_email(client: AsyncClient):
+async def test_signup_duplicate_email(client: AsyncClient, db_lifecycle):
     """Test that you can't register the same email twice - requires DATABASE_URL to be set."""
-    if not os.getenv("DATABASE_URL"):
-        pytest.skip("DATABASE_URL not set - skipping database-dependent test")
     email = f"dup_{uuid4()}@example.com"
     payload = {"email": email, "password": "password123", "name": "Original User"}
 
