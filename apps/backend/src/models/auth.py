@@ -17,7 +17,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
 
 # --- Token Schemas ---
 
@@ -78,20 +78,18 @@ class UserResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    @field_validator("tier", mode="before")
-    @classmethod
-    def convert_tier_to_string(cls, v):
-        """Convert Tier enum to string if needed."""
-        # Prisma Python enums can be accessed directly or via .value
+    @field_serializer("tier")
+    def serialize_tier(self, v, _info):
+        """Serialize Tier enum to string."""
         if v is None:
-            return "FREE"  # Default tier
+            return "FREE"
         if isinstance(v, str):
             return v
-        # Handle Prisma enum objects
+        # Handle Prisma enum objects - they might have .value or be directly string-like
         if hasattr(v, "value"):
-            return v.value
+            return str(v.value)
         if hasattr(v, "name"):
-            return v.name
+            return str(v.name)
         # Fallback: convert to string
         return str(v)
 
