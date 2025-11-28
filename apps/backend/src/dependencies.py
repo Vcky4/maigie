@@ -16,10 +16,11 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials # <--- CHANGED
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials  # <--- CHANGED
 from jose import JWTError
 
 from prisma import Prisma
@@ -33,6 +34,7 @@ from .models.auth import TokenData
 # Common dependencies
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
+
 # Database dependency
 async def get_db() -> Prisma:
     """Get database client dependency."""
@@ -45,7 +47,9 @@ DBDep = Annotated[Prisma, Depends(get_db)]
 security = HTTPBearer()
 
 
-async def get_current_user(credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]) -> User:
+async def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]
+) -> User:
     """
     Validate JWT and retrieve the current user from the database.
     This is the main dependency for protecting routes.

@@ -16,6 +16,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
+
 import logging
 import secrets
 from datetime import timedelta
@@ -24,26 +25,26 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr  # <--- ADDED THIS IMPORT
+from pydantic import BaseModel, EmailStr
 
-from src.config import settings
-from src.core.database import db
-from src.core.oauth import OAuthProviderFactory
-from src.core.security import (
+from ..config import get_settings
+from ..core.database import db
+from ..core.oauth import OAuthProviderFactory
+from ..core.security import (
     create_access_token,
     get_password_hash,
     verify_password,
 )
-from src.dependencies import CurrentUser, DBDep
-from src.exceptions import AuthenticationError
-from src.models.auth import (
+from ..dependencies import CurrentUser, DBDep
+from ..exceptions import AuthenticationError
+from ..models.auth import (
     OAuthAuthorizeResponse,
     Token,
     UserLogin,
     UserResponse,
     UserSignup,
 )
-from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
+from ..services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ router = APIRouter()
 # ==========================================
 #  JWT AUTHENTICATION (Your Task)
 # ==========================================
+
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(user_data: UserSignup):
@@ -114,10 +116,8 @@ async def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    access_token_expires = timedelta(minutes=get_settings().ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -129,17 +129,19 @@ async def login_json(user_data: UserLogin):
     """
     user = await db.user.find_unique(where={"email": user_data.email})
 
-    if not user or not user.passwordHash or not verify_password(user_data.password, user.passwordHash):
+    if (
+        not user
+        or not user.passwordHash
+        or not verify_password(user_data.password, user.passwordHash)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    access_token_expires = timedelta(minutes=get_settings().ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -155,6 +157,7 @@ async def read_users_me(current_user: CurrentUser):
 # ==========================================
 #  OAUTH AUTHENTICATION (Teammate Task)
 # ==========================================
+
 
 @router.get("/oauth/providers")
 async def get_oauth_providers():
@@ -227,9 +230,7 @@ async def oauth_authorize(
 
 
 @router.get("/oauth/{provider}/callback", response_model=Token)
-async def oauth_callback(
-    provider: str, code: str, state: str, request: Request, db: DBDep
-):
+async def oauth_callback(provider: str, code: str, state: str, request: Request, db: DBDep):
     """
     Handle OAuth callback.
     - Exchange code for token
@@ -267,7 +268,10 @@ async def oauth_callback(
         if not access_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Failed to obtain access token from OAuth provider. Response keys: {list(token_response.keys())}",
+                detail=(
+                    f"Failed to obtain access token from OAuth provider. "
+                    f"Response keys: {list(token_response.keys())}"
+                ),
             )
 
         # Get user information from provider
@@ -309,14 +313,14 @@ async def oauth_callback(
             "user_id": str(user.id),
             "full_name": user.name,  # User model uses 'name' field, mapped to 'full_name' in token
             # This flag is important for the frontend to know where to redirect
-            "is_onboarded": getattr(user, "isOnboarded", False),  # Prisma uses camelCase 'isOnboarded'
+            "is_onboarded": getattr(
+                user, "isOnboarded", False
+            ),  # Prisma uses camelCase 'isOnboarded'
         }
 
         # Generate JWT token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        jwt_token = create_access_token(
-            data=token_data, expires_delta=access_token_expires
-        )
+        access_token_expires = timedelta(minutes=get_settings().ACCESS_TOKEN_EXPIRE_MINUTES)
+        jwt_token = create_access_token(data=token_data, expires_delta=access_token_expires)
 
         return {"access_token": jwt_token, "token_type": "bearer"}
 
@@ -331,16 +335,18 @@ async def oauth_callback(
     except Exception as e:
         # Include exception type and message for better debugging
         import traceback
+
         error_detail = f"{type(e).__name__}: {str(e)}"
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {error_detail}",
-    )
+        )
 
 
 # ==========================================
 #  SESSION & PASSWORD MANAGEMENT
 # ==========================================
+
 
 @router.post("/logout")
 async def logout():
@@ -349,13 +355,17 @@ async def logout():
     """
     return {"message": "Successfully logged out"}
 
+
 # --- Password & Email Management (Stubs) ---
+
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
+
 class EmailConfirmation(BaseModel):
     token: str
+
 
 @router.post("/reset-password")
 async def reset_password(request: PasswordResetRequest):
@@ -371,6 +381,7 @@ async def reset_password(request: PasswordResetRequest):
     # Always return 200 to prevent email enumeration attacks
     return {"message": "If an account exists, a reset email has been sent."}
 
+
 @router.post("/confirm-email")
 async def confirm_email(data: EmailConfirmation):
     """
@@ -378,4 +389,3 @@ async def confirm_email(data: EmailConfirmation):
     """
     # TODO: Validate token and update user.isActive = True
     return {"message": "Email successfully confirmed"}
-
