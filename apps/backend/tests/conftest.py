@@ -7,6 +7,7 @@ from src.core.database import db, connect_db, disconnect_db
 
 # 1. Force session-scoped event loop po
 
+
 # 2. Manage Database Lifecycle
 @pytest.fixture(scope="function", autouse=True)
 async def db_lifecycle():
@@ -17,6 +18,7 @@ async def db_lifecycle():
     yield
     await disconnect_db()
 
+
 # 3. Create Client
 @pytest.fixture(scope="function")
 async def client() -> AsyncGenerator[AsyncClient, None]:
@@ -26,6 +28,6 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     """
     # Create client without triggering lifespan
     transport = ASGITransport(app=app, raise_app_exceptions=False)
-    
+
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac

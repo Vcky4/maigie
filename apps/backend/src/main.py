@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 # Global Exception Handlers
 # ============================================================================
 
+
 async def maigie_error_handler(request: Request, exc: MaigieError) -> JSONResponse:
     """Global exception handler for all MaigieError exceptions."""
     settings = get_settings()
@@ -144,7 +145,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         "traceback": traceback.format_exc(),
     }
 
-    logger.error(f"Unhandled exception: {type(exc).__name__}: {str(exc)}", exc_info=True, extra=log_context)
+    logger.error(
+        f"Unhandled exception: {type(exc).__name__}: {str(exc)}", exc_info=True, extra=log_context
+    )
     sentry_sdk.capture_exception(exc)
 
     error_response = ErrorResponse(
@@ -163,6 +166,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # ============================================================================
 # Application Lifespan
 # ============================================================================
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -271,6 +275,7 @@ def create_app() -> FastAPI:
     @app.get("/metrics")
     async def metrics() -> Response:
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
         return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     # Health Check
@@ -280,7 +285,7 @@ def create_app() -> FastAPI:
         redis_client: Annotated[Any, Depends(get_redis_client)],
     ) -> dict[str, str]:
         from fastapi import HTTPException, status
-        
+
         # Check DB
         try:
             await db_client.query_raw("SELECT 1")
@@ -298,7 +303,7 @@ def create_app() -> FastAPI:
         if db_status != "connected":
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"status": "unhealthy", "db": db_status, "cache": cache_status}
+                detail={"status": "unhealthy", "db": db_status, "cache": cache_status},
             )
         return {"status": "healthy", "db": db_status, "cache": cache_status}
 
@@ -318,7 +323,7 @@ def create_app() -> FastAPI:
     # --- REGISTER ROUTERS ---
     app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
-    
+
     app.include_router(ai_router)
     app.include_router(courses_router)
     app.include_router(goals_router)
@@ -328,6 +333,7 @@ def create_app() -> FastAPI:
     app.include_router(examples_router)
 
     return app
+
 
 # Create app instance
 app = create_app()

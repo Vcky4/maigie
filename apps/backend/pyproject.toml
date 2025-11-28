@@ -1,16 +1,7 @@
 [project]
-[project]
 name = "backend"
 version = "0.1.0"
 description = "Maigie FastAPI backend"
-authors = [
-    {name = "Maigie Team"}
-]
-requires-python = ">=3.11,<4.0"
-dynamic = ["dependencies"]
-
-[tool.poetry]
-package-mode = false
 authors = [
     {name = "Maigie Team"}
 ]
@@ -50,10 +41,6 @@ httpx = "^0.28.1"
 coverage = "^7.12.0"
 flake8 = "^7.3.0"
 isort = "^7.0.0"
-httpx = "^0.28.1"
-coverage = "^7.12.0"
-flake8 = "^7.3.0"
-isort = "^7.0.0"
 
 [build-system]
 requires = ["poetry-core"]
@@ -66,15 +53,9 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-# F401 = Unused imports
-# F841 = Unused local variables
-# N818 = Exception naming
-# E501 = Line length
-ignore = ["E501", "N818", "F401", "F841"] 
 # F401 = Unused imports
 # F841 = Unused local variables
 # N818 = Exception naming
@@ -84,10 +65,8 @@ ignore = ["E501", "N818", "F401", "F841"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
-target-version = ["py312"]
 
 [tool.mypy]
-python_version = "3.12"
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true

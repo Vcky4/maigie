@@ -6,6 +6,7 @@ from httpx import AsyncClient
 # Note: We use the global 'client' fixture from conftest.py
 # We do not define 'client = TestClient(app)' here.
 
+
 class TestSubscriptionLimitError:
     """Test subscription limit error handling."""
 
@@ -193,7 +194,7 @@ class TestInternalErrorsNotLeaked:
         Test that unhandled exceptions return generic 500 errors.
         """
         pass  # Placeholder as we can't easily trigger 500 in integration tests without mocking
-      
+
     @pytest.mark.asyncio
     async def test_error_detail_field_handling(self, client: AsyncClient):
         """Test that detail field is handled appropriately."""
