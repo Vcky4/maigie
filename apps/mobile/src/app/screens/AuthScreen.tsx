@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -7,20 +7,18 @@ import {
   StyleSheet,
   Image,
   ActivityIndicator,
-  Alert,
   Platform,
   KeyboardAvoidingView,
   ScrollView,
   SafeAreaView,
 } from 'react-native';
-import Svg, { Path, G, ClipPath, Defs, Rect } from 'react-native-svg';
+import Svg, { Path, G } from 'react-native-svg';
+import { useAuth } from '../hooks/useAuth';
 
-// Backend URL - adjust as needed (10.0.2.2 for Android Emulator, localhost for iOS Simulator)
-const API_URL = Platform.select({
-  android: 'http://10.0.2.2:8000',
-  ios: 'http://localhost:8000',
-  default: 'http://localhost:8000',
-});
+interface Props {
+  onForgotPassword: () => void;
+  onSignupSuccess: (email: string) => void;
+}
 
 const GoogleIcon = () => (
   <Svg width={24} height={24} viewBox="0 0 24 24">
@@ -45,56 +43,19 @@ const GoogleIcon = () => (
   </Svg>
 );
 
-export const AuthScreen = () => {
-  const [isSignUp, setIsSignUp] = useState(true);
-  const [loading, setLoading] = useState(false);
-  
-  // Form State
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-
-  const handleAuth = async () => {
-    if (!email || !password || (isSignUp && !name)) {
-      Alert.alert('Error', 'Please fill in all fields');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const endpoint = isSignUp ? '/signup' : '/login/json';
-      const body = isSignUp 
-        ? { email, password, name }
-        : { email, password };
-
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || 'Authentication failed');
-      }
-
-      if (isSignUp) {
-        Alert.alert('Success', 'Account created successfully! Please log in.');
-        setIsSignUp(false);
-      } else {
-        // Login successful - ideally store token here
-        Alert.alert('Success', 'Logged in successfully!');
-        console.log('Access Token:', data.access_token);
-      }
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+export const AuthScreen = ({ onForgotPassword, onSignupSuccess }: Props) => {
+  const {
+    isSignUp,
+    setIsSignUp,
+    loading,
+    name,
+    setName,
+    email,
+    setEmail,
+    password,
+    setPassword,
+    handleAuth,
+  } = useAuth();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -148,9 +109,18 @@ export const AuthScreen = () => {
               secureTextEntry
             />
 
+            {!isSignUp && (
+              <TouchableOpacity 
+                onPress={onForgotPassword}
+                style={styles.forgotPasswordContainer}
+              >
+                <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+              </TouchableOpacity>
+            )}
+
             <TouchableOpacity 
               style={styles.primaryButton}
-              onPress={handleAuth}
+              onPress={() => handleAuth(onSignupSuccess)}
               disabled={loading}
             >
               {loading ? (
@@ -304,5 +274,13 @@ const styles = StyleSheet.create({
     color: '#4F46E5',
     fontWeight: '600',
   },
+  forgotPasswordContainer: {
+    alignItems: 'flex-end',
+    marginBottom: 8,
+  },
+  forgotPasswordText: {
+    color: '#4F46E5',
+    fontWeight: '500',
+    fontSize: 14,
+  },
 });
-
