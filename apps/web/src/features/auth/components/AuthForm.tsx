@@ -15,7 +15,7 @@ export function AuthForm({ children, className }: AuthFormProps) {
     <div className="min-h-screen md:flex md:items-center md:justify-center md:px-4 md:py-12 md:sm:px-6 md:lg:px-8" style={{ backgroundColor: '#F3F5F7' }}>
       <div
         className={cn(
-          'w-full bg-white md:max-w-md md:rounded-2xl p-8 sm:p-10',
+          'w-full h-full min-h-screen bg-white md:h-auto md:min-h-0 md:max-w-md md:rounded-2xl p-8 sm:p-10',
           className
         )}
         style={{
