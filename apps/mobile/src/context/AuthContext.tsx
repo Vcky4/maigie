@@ -189,7 +189,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const isLoggedIn = async () => {
     try {
       setIsLoading(true);
-      let token = await AsyncStorage.getItem('userToken');
+      const token = await AsyncStorage.getItem('userToken');
       setUserToken(token);
     } catch (error) {
       console.error(`isLoggedIn error: ${error}`);

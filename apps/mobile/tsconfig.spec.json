@@ -5,7 +5,8 @@
     "module": "commonjs",
     "moduleResolution": "node10",
     "jsx": "react-jsx",
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "composite": true
   },
   "files": ["src/test-setup.ts"],
   "include": [

@@ -18,9 +18,9 @@ export const AuthNavigator = () => {
   switch (currentScreen) {
     case 'login':
       return (
-        <AuthScreen 
+        <AuthScreen
           onForgotPassword={() => handleNavigate('forgot-password')}
-          onSignupSuccess={(email) => handleNavigate('otp', { email, reason: 'signup-verification' })} 
+          onSignupSuccess={(email) => handleNavigate('otp', { email, reason: 'signup-verification' })}
         />
       );
     case 'forgot-password':
@@ -48,6 +48,10 @@ export const AuthNavigator = () => {
         />
       );
     default:
-      return <AuthScreen onForgotPassword={() => handleNavigate('forgot-password')} />;
+      return <AuthScreen
+        onForgotPassword={() => handleNavigate('forgot-password')}
+        onSignupSuccess={(email) => handleNavigate('otp', { email, reason: 'signup-verification' })}
+      />;
+
   }
 };

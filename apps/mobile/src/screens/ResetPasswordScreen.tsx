@@ -16,29 +16,45 @@ import { useAuthContext } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
 
 interface Props {
-  onNavigate: (screen: string, params?: any) => void;
-  onBack: () => void;
+  email: string;
+  otp: string;
+  onNavigate: (screen: string) => void;
 }
 
-export const ForgotPasswordScreen = ({ onNavigate, onBack }: Props) => {
-  const [email, setEmail] = useState('');
+export const ResetPasswordScreen = ({ email, otp, onNavigate }: Props) => {
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const { forgotPassword } = useAuthContext();
+  const { resetPassword } = useAuthContext();
 
-  const handleSend = async () => {
-    if (!email) {
+  const handleReset = async () => {
+    if (!password || !confirmPassword) {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Please enter your email',
+        text2: 'Please fill in all fields',
+      });
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Passwords do not match',
       });
       return;
     }
 
     setLoading(true);
     try {
-      await forgotPassword(email);
-      onNavigate('otp', { email, reason: 'forgot-password' });
+      await resetPassword(email, otp, password);
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Password reset successfully. Please log in.',
+      });
+      onNavigate('login');
     } catch (error) {
       // Error handled in context
     } finally {
@@ -56,43 +72,45 @@ export const ForgotPasswordScreen = ({ onNavigate, onBack }: Props) => {
           <View style={styles.header}>
             <View style={styles.logoContainer}>
                <Image 
-                source={require('../../../assets/images/icon.png')} 
+                source={require('../../assets/images/icon.png')} 
                 style={styles.logo}
                 resizeMode="contain"
               />
               <Text style={styles.appName}>Maigie</Text>
             </View>
-            <Text style={styles.title}>Forgot Password?</Text>
-            <Text style={styles.subtitle}>
-              Enter your email address and we'll send you a code to reset your password.
-            </Text>
+            <Text style={styles.title}>Reset Password</Text>
+            <Text style={styles.subtitle}>Create a new password for your account.</Text>
           </View>
 
           <View style={styles.form}>
             <TextInput
               style={styles.input}
-              placeholder="Email address"
+              placeholder="New Password"
               placeholderTextColor="#9CA3AF"
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+            />
+
+            <TextInput
+              style={styles.input}
+              placeholder="Confirm New Password"
+              placeholderTextColor="#9CA3AF"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
             />
 
             <TouchableOpacity
               style={styles.primaryButton}
-              onPress={handleSend}
+              onPress={handleReset}
               disabled={loading}
             >
               {loading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.primaryButtonText}>Send Code</Text>
+                <Text style={styles.primaryButtonText}>Reset Password</Text>
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.footer} onPress={onBack}>
-              <Text style={styles.footerLink}>Back to Log In</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -174,14 +192,5 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
-  },
-  footer: {
-    alignItems: 'center',
-    marginTop: 24,
-  },
-  footerLink: {
-    color: '#4F46E5',
-    fontWeight: '600',
-    fontSize: 16,
   },
 });
