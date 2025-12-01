@@ -21,7 +21,6 @@ export function SignupPage() {
     name: '',
     email: '',
     password: '',
-    confirmPassword: '',
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -43,12 +42,6 @@ export function SignupPage() {
       newErrors.password = 'Password is required';
     } else if (formData.password.length < 8) {
       newErrors.password = 'Password must be at least 8 characters';
-    }
-
-    if (!formData.confirmPassword) {
-      newErrors.confirmPassword = 'Please confirm your password';
-    } else if (formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Passwords do not match';
     }
 
     setErrors(newErrors);
@@ -84,15 +77,16 @@ export function SignupPage() {
 
   return (
     <AuthForm>
-      <AuthLogo />
-      <h1 className="text-3xl font-bold text-gray-900 mb-2 text-center">
-        Create your account
-      </h1>
+      <div className="flex flex-col items-center mb-8">
+        <AuthLogo />
+        <h1 className="text-3xl font-bold text-gray-900 mt-6">
+          Create your account
+        </h1>
+      </div>
 
-      <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+      <form onSubmit={handleSubmit} className="space-y-5">
         <AuthInput
           id="name"
-          label="Full Name"
           type="text"
           placeholder="Full Name"
           value={formData.name}
@@ -103,7 +97,6 @@ export function SignupPage() {
 
         <AuthInput
           id="email"
-          label="Email address"
           type="email"
           placeholder="Email address"
           value={formData.email}
@@ -114,7 +107,6 @@ export function SignupPage() {
 
         <PasswordInput
           id="password"
-          label="Password"
           placeholder="Password"
           value={formData.password}
           onChange={(e) => setFormData({ ...formData, password: e.target.value })}
@@ -137,9 +129,13 @@ export function SignupPage() {
         </AuthButton>
       </form>
 
-      <AuthDivider />
+      <div className="mt-6">
+        <AuthDivider />
+      </div>
 
-      <GoogleOAuthButton onClick={handleGoogleSignup} />
+      <div className="mt-6">
+        <GoogleOAuthButton onClick={handleGoogleSignup} />
+      </div>
 
       <p className="mt-6 text-center text-sm text-gray-600">
         Already have an account?{' '}

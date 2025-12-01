@@ -25,7 +25,7 @@ export const AuthInput = forwardRef<HTMLInputElement, AuthInputProps>(
         <input
           ref={ref}
           className={cn(
-            'w-full h-12 px-4 rounded-lg border',
+            'w-full h-12 px-5 py-3 border',
             'focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent',
             'transition-colors duration-200',
             error
@@ -33,6 +33,9 @@ export const AuthInput = forwardRef<HTMLInputElement, AuthInputProps>(
               : 'border-gray-300 focus:ring-primary',
             className
           )}
+          style={{
+            borderRadius: '10px',
+          }}
           {...props}
         />
         {error && (

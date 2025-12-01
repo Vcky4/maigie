@@ -31,7 +31,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
             ref={ref}
             type={showPassword ? 'text' : 'password'}
             className={cn(
-              'w-full h-12 px-4 pr-12 rounded-lg border',
+              'w-full h-12 px-5 py-3 pr-12 border',
               'focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent',
               'transition-colors duration-200',
               error
@@ -39,6 +39,9 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(
                 : 'border-gray-300 focus:ring-primary',
               className
             )}
+            style={{
+              borderRadius: '10px',
+            }}
             {...props}
           />
           <button

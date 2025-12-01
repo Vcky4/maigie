@@ -12,12 +12,15 @@ interface AuthFormProps {
 
 export function AuthForm({ children, className }: AuthFormProps) {
   return (
-    <div className="min-h-screen bg-gray-50 md:flex md:items-center md:justify-center md:px-4 md:py-12 md:sm:px-6 md:lg:px-8">
+    <div className="min-h-screen md:flex md:items-center md:justify-center md:px-4 md:py-12 md:sm:px-6 md:lg:px-8" style={{ backgroundColor: '#F3F5F7' }}>
       <div
         className={cn(
-          'w-full bg-white md:max-w-md md:rounded-xl md:shadow-sm p-8 sm:p-10',
+          'w-full bg-white md:max-w-md md:rounded-2xl p-8 sm:p-10',
           className
         )}
+        style={{
+          boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
+        }}
       >
         {children}
       </div>

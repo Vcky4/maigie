@@ -19,7 +19,7 @@ export function GoogleOAuthButton({
     <button
       type="button"
       className={cn(
-        'w-full h-12 rounded-lg border-2 border-gray-300',
+        'w-full h-12 border-2 border-gray-300',
         'bg-white text-gray-700 font-medium',
         'flex items-center justify-center gap-3',
         'hover:border-primary hover:text-primary',
@@ -28,6 +28,9 @@ export function GoogleOAuthButton({
         (disabled || loading) && 'opacity-50 cursor-not-allowed',
         className
       )}
+      style={{
+        borderRadius: '50px',
+      }}
       disabled={disabled || loading}
       {...props}
     >

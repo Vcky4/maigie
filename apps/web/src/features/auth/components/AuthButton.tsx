@@ -24,14 +24,17 @@ export function AuthButton({
   return (
     <button
       className={cn(
-        'w-full h-12 rounded-lg font-medium transition-all duration-200',
+        'w-full h-12 font-medium transition-all duration-200',
         'focus:outline-none focus:ring-2 focus:ring-offset-2',
         variant === 'primary'
-          ? 'bg-primary text-white hover:bg-primary/90 focus:ring-primary shadow-md hover:shadow-lg'
+          ? 'bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500 shadow-md hover:shadow-lg'
           : 'bg-white text-primary border-2 border-gray-300 hover:border-primary focus:ring-primary',
         isDisabled && 'opacity-50 cursor-not-allowed',
         className
       )}
+      style={{
+        borderRadius: '50px',
+      }}
       disabled={isDisabled}
       {...props}
     >
