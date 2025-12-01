@@ -76,15 +76,20 @@ export function OTPVerificationPage() {
 
   return (
     <AuthForm>
-      <AuthLogo />
-      <h1 className="text-3xl font-semibold text-gray-900 mb-2 text-center">
-        Enter Verification Code
-      </h1>
-      <p className="text-gray-600 text-center mb-8">
-        We've sent a code to your email. Enter it below to verify.
-      </p>
+      <div className="flex flex-col flex-1">
+        <div className="flex flex-col mb-6 md:items-center">
+          <div className="pb-3 -mx-4 -mt-4 px-4 pt-4 border-b border-gray-200 md:mx-0 md:px-0 md:mt-0 md:pt-0 md:border-b-0 md:pb-0">
+            <AuthLogo />
+          </div>
+          <h1 className="text-3xl font-semibold text-charcoal mt-8 md:text-center">
+            Enter Verification Code
+          </h1>
+        </div>
+        <p className="text-gray-600 text-center mb-8 md:-mt-6">
+          We've sent a code to your email. Enter it below to verify.
+        </p>
 
-      <div className="space-y-6">
+        <div className="space-y-6">
         <OTPCodeInput value={otp} onChange={setOtp} error={errors.otp} />
 
         {errors.resend && (
@@ -114,13 +119,14 @@ export function OTPVerificationPage() {
             ? `Resend Code (${resendCooldown}s)`
             : 'Resend Code'}
         </AuthButton>
-      </div>
+        </div>
 
-      <p className="mt-6 text-center text-sm text-gray-600">
-        <Link to="/login" className="font-medium text-primary hover:text-primary/90">
-          Back to Login
-        </Link>
-      </p>
+        <p className="mt-auto md:mt-6 text-center text-sm text-gray-600">
+          <Link to="/login" className="font-medium text-primary hover:text-primary/90">
+            Back to Login
+          </Link>
+        </p>
+      </div>
     </AuthForm>
   );
 }

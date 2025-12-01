@@ -61,13 +61,18 @@ export function LoginPage() {
 
   return (
     <AuthForm>
-      <AuthLogo />
-      <h1 className="text-3xl font-semibold text-gray-900 mb-2 text-center">
-        Welcome back
-      </h1>
-      <p className="text-gray-600 text-center mb-8">Log in to your account</p>
+      <div className="flex flex-col flex-1">
+        <div className="flex flex-col mb-6 md:items-center">
+          <div className="pb-3 -mx-4 -mt-4 px-4 pt-4 border-b border-gray-200 md:mx-0 md:px-0 md:mt-0 md:pt-0 md:border-b-0 md:pb-0">
+            <AuthLogo />
+          </div>
+          <h1 className="text-3xl font-semibold text-charcoal mt-8 md:text-center">
+            Welcome back
+          </h1>
+        </div>
+        <p className="text-gray-600 text-center mb-8 md:-mt-6">Log in to your account</p>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
+        <form onSubmit={handleSubmit} className="space-y-5">
         <AuthInput
           id="email"
           label="Email address"
@@ -111,14 +116,15 @@ export function LoginPage() {
         >
           Log in
         </AuthButton>
-      </form>
+        </form>
 
-      <p className="mt-6 text-center text-sm text-gray-600">
-        Don't have an account?{' '}
-        <Link to="/signup" className="font-medium text-primary hover:text-primary/90">
-          Sign up
-        </Link>
-      </p>
+        <p className="mt-auto md:mt-6 text-center text-sm text-gray-600">
+          Don't have an account?{' '}
+          <Link to="/signup" className="font-medium text-primary hover:text-primary/90">
+            Sign up
+          </Link>
+        </p>
+      </div>
     </AuthForm>
   );
 }

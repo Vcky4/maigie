@@ -78,9 +78,11 @@ export function SignupPage() {
   return (
     <AuthForm>
       <div className="flex flex-col flex-1">
-        <div className="flex flex-col items-center mb-6">
-          <AuthLogo />
-          <h1 className="text-3xl font-semibold text-charcoal mt-8">
+        <div className="flex flex-col mb-6 md:items-center">
+          <div className="pb-3 -mx-4 -mt-4 px-4 pt-4 border-b border-gray-200 md:mx-0 md:px-0 md:mt-0 md:pt-0 md:border-b-0 md:pb-0">
+            <AuthLogo />
+          </div>
+          <h1 className="text-3xl font-semibold text-charcoal mt-8 md:text-center">
             Create your account
           </h1>
         </div>
