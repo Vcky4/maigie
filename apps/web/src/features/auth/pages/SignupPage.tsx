@@ -141,7 +141,7 @@ export function SignupPage() {
         </div>
       </div>
 
-      <p className="mt-auto text-center text-sm text-gray-600">
+      <p className="mt-auto md:mt-5 text-center text-sm text-gray-600">
         Already have an account?{' '}
         <Link to="/login" className="font-medium text-primary hover:text-primary/90">
           Log in
