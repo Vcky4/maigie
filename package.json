@@ -10,7 +10,7 @@
     "@babel/core": "^7.14.5",
     "@babel/preset-react": "^7.14.5",
     "@eslint/js": "^9.8.0",
-    "@expo/cli": "~0.24.14",
+    "@expo/cli": "^0.25.0",
     "@nx/eslint": "22.1.0",
     "@nx/eslint-plugin": "22.1.0",
     "@nx/expo": "^22.1.0",
@@ -83,11 +83,5 @@
     "react-native-web": "^0.21.0",
     "react-router-dom": "^7.9.6",
     "tailwind-merge": "^3.4.0"
-  },
-  "overrides": {
-    "metro": "0.80.11",
-    "metro-config": "0.80.11",
-    "metro-core": "0.80.11",
-    "metro-resolver": "0.80.11"
   }
 }
