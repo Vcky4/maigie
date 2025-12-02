@@ -1,3 +1,21 @@
+/*
+ * Maigie - Your Intelligent Study Companion
+ * Copyright (C) 2025 Maigie
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 import React, { useState } from 'react';
 import {
   View,
@@ -8,12 +26,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  SafeAreaView,
   ActivityIndicator,
   Image,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuthContext } from '../context/AuthContext';
 import Toast from 'react-native-toast-message';
+import { colors } from '../lib/colors';
 
 interface Props {
   email: string;
@@ -25,6 +45,9 @@ export const ResetPasswordScreen = ({ email, otp, onNavigate }: Props) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [focusedInput, setFocusedInput] = useState<string | null>(null);
   const { resetPassword } = useAuthContext();
 
   const handleReset = async () => {
@@ -55,7 +78,7 @@ export const ResetPasswordScreen = ({ email, otp, onNavigate }: Props) => {
         text2: 'Password reset successfully. Please log in.',
       });
       onNavigate('login');
-    } catch (error) {
+    } catch {
       // Error handled in context
     } finally {
       setLoading(false);
@@ -83,23 +106,57 @@ export const ResetPasswordScreen = ({ email, otp, onNavigate }: Props) => {
           </View>
 
           <View style={styles.form}>
-            <TextInput
-              style={styles.input}
-              placeholder="New Password"
-              placeholderTextColor="#9CA3AF"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={[
+                  styles.passwordInput,
+                  focusedInput === 'password' && styles.inputFocused,
+                ]}
+                placeholder="New Password"
+                placeholderTextColor={colors.text.placeholder}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                onFocus={() => setFocusedInput('password')}
+                onBlur={() => setFocusedInput(null)}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIcon}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off' : 'eye'}
+                  size={20}
+                  color={colors.text.placeholder}
+                />
+              </TouchableOpacity>
+            </View>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Confirm New Password"
-              placeholderTextColor="#9CA3AF"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-            />
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={[
+                  styles.passwordInput,
+                  focusedInput === 'confirmPassword' && styles.inputFocused,
+                ]}
+                placeholder="Confirm New Password"
+                placeholderTextColor={colors.text.placeholder}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry={!showConfirmPassword}
+                onFocus={() => setFocusedInput('confirmPassword')}
+                onBlur={() => setFocusedInput(null)}
+              />
+              <TouchableOpacity
+                onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                style={styles.eyeIcon}
+              >
+                <Ionicons
+                  name={showConfirmPassword ? 'eye-off' : 'eye'}
+                  size={20}
+                  color={colors.text.placeholder}
+                />
+              </TouchableOpacity>
+            </View>
 
             <TouchableOpacity
               style={styles.primaryButton}
@@ -107,7 +164,7 @@ export const ResetPasswordScreen = ({ email, otp, onNavigate }: Props) => {
               disabled={loading}
             >
               {loading ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.text.white} />
               ) : (
                 <Text style={styles.primaryButtonText}>Reset Password</Text>
               )}
@@ -122,7 +179,7 @@ export const ResetPasswordScreen = ({ email, otp, onNavigate }: Props) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.background.primary,
   },
   scrollContent: {
     flexGrow: 1,
@@ -147,18 +204,18 @@ const styles = StyleSheet.create({
   appName: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text.secondary,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#111827',
+    color: colors.text.primary,
     textAlign: 'center',
     marginBottom: 12,
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
+    color: colors.text.tertiary,
     lineHeight: 24,
     textAlign: 'center',
   },
@@ -166,30 +223,55 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   input: {
-    backgroundColor: '#fff',
+    backgroundColor: colors.background.input,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border.default,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: '#1F2937',
+    color: colors.text.secondary,
     marginBottom: 16,
   },
+  inputFocused: {
+    borderColor: colors.border.active,
+    borderWidth: 2,
+  },
+  passwordContainer: {
+    position: 'relative',
+    marginBottom: 16,
+  },
+  passwordInput: {
+    backgroundColor: colors.background.input,
+    borderWidth: 1,
+    borderColor: colors.border.default,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingRight: 50,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: colors.text.secondary,
+  },
+  eyeIcon: {
+    position: 'absolute',
+    right: 16,
+    top: 14,
+    padding: 4,
+  },
   primaryButton: {
-    backgroundColor: '#4F46E5',
+    backgroundColor: colors.primary.main,
     borderRadius: 24,
     paddingVertical: 14,
     alignItems: 'center',
     marginTop: 8,
-    shadowColor: '#4F46E5',
+    shadowColor: colors.primary.shadow,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 4,
   },
   primaryButtonText: {
-    color: '#FFFFFF',
+    color: colors.text.white,
     fontSize: 16,
     fontWeight: '600',
   },

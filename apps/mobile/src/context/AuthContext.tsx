@@ -1,14 +1,25 @@
-import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
-import Toast from 'react-native-toast-message';
+/*
+ * Maigie - Your Intelligent Study Companion
+ * Copyright (C) 2025 Maigie
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
 
-// Backend URL - adjust as needed
-const API_URL = Platform.select({
-  android: 'http://10.0.2.2:8000',
-  ios: 'http://localhost:8000',
-  default: 'http://localhost:8000',
-});
+import React, { createContext, useState, ReactNode, useContext } from 'react';
+import Toast from 'react-native-toast-message';
+import { useApi } from './ApiContext';
+import { endpoints } from '../lib/endpoints';
 
 interface AuthContextType {
   userToken: string | null;
@@ -24,40 +35,33 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [isLoading, setIsLoading] = useState(true);
-  const [userToken, setUserToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const api = useApi();
+  
+  // Get token from ApiContext
+  const userToken = api.userToken;
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/login/json`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
+      const data = await api.post<{ access_token: string }>(endpoints.auth.login, { email, password }, {
+        requiresAuth: false, // Login doesn't require auth token
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || 'Login failed');
-      }
-
       const token = data.access_token;
-      setUserToken(token);
-      await AsyncStorage.setItem('userToken', token);
+      await api.setToken(token);
       
       Toast.show({
         type: 'success',
         text1: 'Welcome back!',
         text2: 'Logged in successfully',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Login failed';
       Toast.show({
         type: 'error',
         text1: 'Login Failed',
-        text2: error.message,
+        text2: errorMessage,
       });
       throw error; // Re-throw to let UI handle if needed
     } finally {
@@ -68,19 +72,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signup = async (email: string, password: string, name: string) => {
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_URL}/signup`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password, name }),
+      await api.post(endpoints.auth.signup, { email, password, name }, {
+        requiresAuth: false, // Signup doesn't require auth token
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.detail || 'Signup failed');
-      }
 
       Toast.show({
         type: 'success',
@@ -89,11 +83,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
       
       // Optional: Auto-login after signup could go here if backend returned a token
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Signup failed';
       Toast.show({
         type: 'error',
         text1: 'Signup Failed',
-        text2: error.message,
+        text2: errorMessage,
       });
       throw error;
     } finally {
@@ -104,8 +99,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = async () => {
     setIsLoading(true);
     try {
-      await AsyncStorage.removeItem('userToken');
-      setUserToken(null);
+      await api.setToken(null);
       Toast.show({
         type: 'info',
         text1: 'Logged out',
@@ -120,18 +114,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const forgotPassword = async (email: string) => {
     setIsLoading(true);
     try {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await api.post(endpoints.auth.forgotPassword, { email }, {
+        requiresAuth: false, // Forgot password doesn't require auth token
+      });
+      
       Toast.show({
         type: 'success',
         text1: 'Code Sent',
         text2: `Reset code sent to ${email}`,
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send reset code';
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: error.message,
+        text2: errorMessage,
       });
       throw error;
     } finally {
@@ -142,21 +139,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const verifyOtp = async (email: string, otp: string) => {
     setIsLoading(true);
     try {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      if (otp !== '123456') { // Mock verification
-         throw new Error('Invalid Code');
-      }
+      await api.post(endpoints.auth.verifyOtp, { email, otp }, {
+        requiresAuth: false, // OTP verification doesn't require auth token
+      });
+      
       Toast.show({
         type: 'success',
         text1: 'Verified',
         text2: 'Code verified successfully',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Verification failed';
       Toast.show({
         type: 'error',
         text1: 'Verification Failed',
-        text2: error.message,
+        text2: errorMessage,
       });
       throw error;
     } finally {
@@ -167,40 +164,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const resetPassword = async (email: string, otp: string, password: string) => {
     setIsLoading(true);
     try {
-      // Mock API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await api.post(endpoints.auth.resetPassword, { email, otp, password }, {
+        requiresAuth: false, // Reset password doesn't require auth token
+      });
+      
       Toast.show({
         type: 'success',
         text1: 'Password Reset',
         text2: 'Your password has been updated',
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to reset password';
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: error.message,
+        text2: errorMessage,
       });
       throw error;
     } finally {
       setIsLoading(false);
     }
   };
-
-  const isLoggedIn = async () => {
-    try {
-      setIsLoading(true);
-      const token = await AsyncStorage.getItem('userToken');
-      setUserToken(token);
-    } catch (error) {
-      console.error(`isLoggedIn error: ${error}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    isLoggedIn();
-  }, []);
 
   return (
     <AuthContext.Provider value={{ 
