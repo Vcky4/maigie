@@ -1,39 +1,28 @@
 """
-Authentication routes (JWT Signup/Login + OAuth Placeholders).
+Authentication routes (JWT Signup/Login + OAuth + OTP Verification).
 
 Copyright (C) 2025 Maigie
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import logging
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr  # <--- ADDED THIS IMPORT
+from pydantic import BaseModel, EmailStr
 
 from src.config import settings
 from src.core.database import db
+from src.services.email import send_verification_email, send_welcome_email
 from src.core.oauth import OAuthProviderFactory
 from src.core.security import (
     create_access_token,
     get_password_hash,
     verify_password,
+    generate_otp,
 )
 from src.dependencies import CurrentUser, DBDep
 from src.exceptions import AuthenticationError
@@ -45,6 +34,7 @@ from src.models.auth import (
     UserSignup,
 )
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
+from src.services.email import send_verification_email
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
@@ -52,14 +42,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # ==========================================
-#  JWT AUTHENTICATION (Your Task)
+#  REQUEST MODELS
 # ==========================================
 
+class VerifyRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+class ResendOTPRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+# ==========================================
+#  JWT & OTP AUTHENTICATION
+# ==========================================
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(user_data: UserSignup):
     """
-    Register a new user account.
+    Register a new user account and attempt to send verification OTP.
     """
     # 1. Check if email already exists
     existing_user = await db.user.find_unique(where={"email": user_data.email})
@@ -72,13 +75,21 @@ async def signup(user_data: UserSignup):
     # 2. Hash the password
     hashed_password = get_password_hash(user_data.password)
 
-    # 3. Create user and default preferences
+    # 3. Generate OTP and Expiry (15 minutes)
+    otp_code = generate_otp()
+    otp_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+    # 4. Create user (Inactive + OTP stored in DB)
     new_user = await db.user.create(
         data={
             "email": user_data.email,
             "passwordHash": hashed_password,
             "name": user_data.name,
             "provider": "email",
+            "isActive": False,
+            # Store the OTP and expiry directly in the user record
+            "verificationCode": otp_code,
+            "verificationCodeExpiresAt": otp_expires,
             "preferences": {
                 "create": {
                     "theme": "light",
@@ -90,7 +101,109 @@ async def signup(user_data: UserSignup):
         include={"preferences": True},
     )
 
+    # 5. Send Verification Email (Safe Mode)
+    try:
+        # Pass the 6-digit 'otp_code' directly
+        await send_verification_email(new_user.email, otp_code)
+    except Exception as e:
+        # If email fails, print the error but DO NOT crash the request.
+        logger.error(f"Email delivery failed during signup: {e}")
+    
     return new_user
+
+
+@router.post("/verify-email")
+async def verify_email(data: VerifyRequest):
+    """
+    Verify the 6-digit OTP code to activate the account.
+    """
+    # 1. Find user
+    user = await db.user.find_unique(where={"email": data.email})
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    if user.isActive:
+        return {"message": "Email already verified"}
+
+    # 2. Validation Logic
+    now = datetime.now(timezone.utc)
+    
+    if not user.verificationCode or user.verificationCode != data.code:
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+        
+    if user.verificationCodeExpiresAt and user.verificationCodeExpiresAt < now:
+        raise HTTPException(status_code=400, detail="Verification code expired")
+
+    # 3. Activate user
+    updated_user = await db.user.update(
+        where={"id": user.id},
+        data={
+            "isActive": True,
+            "verificationCode": None,
+            "verificationCodeExpiresAt": None
+        }
+    )
+
+    # 4. Send Welcome Email (Fire and Forget)
+    # We do this inside a try/except so it doesn't fail the verification if email fails
+    try:
+        await send_welcome_email(updated_user.email, updated_user.name)
+    except Exception as e:
+        logger.error(f"Failed to send welcome email: {e}")
+
+    return {"message": "Email verified successfully"}
+
+@router.post("/resend-otp")
+async def resend_otp_code(data: ResendOTPRequest):
+    """
+    Generates a new OTP and sends it to the user.
+    Includes a 1-minute cooldown to prevent spam.
+    """
+    # 1. Find User
+    user = await db.user.find_unique(where={"email": data.email})
+    
+    if not user:
+        # Security: Don't reveal if email exists or not.
+        return {"message": "If this account exists, a new code has been sent."}
+
+    if user.isActive:
+        raise HTTPException(status_code=400, detail="Account is already verified.")
+
+    # 2. Rate Limiting (Database Strategy)
+    # If the current code expires in > 14 minutes, it means it was sent less than 1 minute ago.
+    now = datetime.now(timezone.utc)
+    if user.verificationCodeExpiresAt:
+        time_remaining = user.verificationCodeExpiresAt - now
+        # If more than 14 minutes remain on the 15-minute timer
+        if time_remaining > timedelta(minutes=14):
+            wait_seconds = int(time_remaining.total_seconds() - (14 * 60))
+            raise HTTPException(
+                status_code=429, 
+                detail=f"Please wait {wait_seconds} seconds before resending."
+            )
+
+    # 3. Generate New OTP
+    new_otp = generate_otp()
+    new_expiry = now + timedelta(minutes=15)
+
+    # 4. Update Database
+    await db.user.update(
+        where={"id": user.id},
+        data={
+            "verificationCode": new_otp,
+            "verificationCodeExpiresAt": new_expiry
+        }
+    )
+
+    # 5. Send Email
+    try:
+        await send_verification_email(user.email, new_otp)
+    except Exception as e:
+        logger.error(f"Failed to send email: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error sending email")
+
+    return {"message": "New verification code sent."}
 
 
 @router.post("/login", response_model=Token)
@@ -100,24 +213,29 @@ async def login_for_access_token(
     """
     OAuth2 compatible token login (Swagger UI).
     """
+    # 1. Find User
     user = await db.user.find_unique(where={"email": form_data.username})
 
-    if not user or not user.passwordHash:
+    # 2. Validate Credentials
+    if not user or not user.passwordHash or not verify_password(form_data.password, user.passwordHash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    if not verify_password(form_data.password, user.passwordHash):
+    
+    # 3. Check Activation Status
+    if not user.isActive:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account inactive. Please verify your email."
         )
 
+    # 4. Generate Token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -127,8 +245,10 @@ async def login_json(user_data: UserLogin):
     """
     Standard JSON login endpoint for frontend apps.
     """
+    # 1. Find User
     user = await db.user.find_unique(where={"email": user_data.email})
 
+    # 2. Validate Credentials
     if (
         not user
         or not user.passwordHash
@@ -140,8 +260,18 @@ async def login_json(user_data: UserLogin):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # 3. Check Activation Status
+    if not user.isActive:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account inactive. Please verify your email."
+        )
+
+    # 4. Generate Token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
+    access_token = create_access_token(
+        data={"sub": user.email}, expires_delta=access_token_expires
+    )
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -154,15 +284,37 @@ async def read_users_me(current_user: CurrentUser):
     return current_user
 
 
-# ==========================================
-#  OAUTH AUTHENTICATION (Teammate Task)
-# ==========================================
+@router.post("/logout")
+async def logout():
+    """
+    End user session.
+    """
+    return {"message": "Successfully logged out"}
 
+
+@router.post("/reset-password")
+async def reset_password(request: PasswordResetRequest):
+    """
+    Request a password reset email.
+    """
+    # 1. Check if user exists
+    user = await db.user.find_unique(where={"email": request.email})
+    if user:
+        # TODO: Generate reset token and send email via SendGrid/AWS
+        logger.info(f"MOCK EMAIL: Sending password reset link to {request.email}")
+
+    # Always return 200 to prevent email enumeration attacks
+    return {"message": "If an account exists, a reset email has been sent."}
+
+
+# ==========================================
+#  OAUTH AUTHENTICATION
+# ==========================================
 
 @router.get("/oauth/providers")
 async def get_oauth_providers():
     """
-    TODO: [Teammate Name] Implement listing available providers.
+    List available providers.
     """
     return {"providers": ["google", "github"]}
 
@@ -175,17 +327,6 @@ async def oauth_authorize(
 ):
     """
     Initiate OAuth flow.
-    - Validate provider
-    - Generate state token for CSRF protection
-    - Build callback redirect URI
-    - Returns authorization URL in JSON (or redirects if redirect=true)
-
-    Args:
-        provider: OAuth provider name (google, github)
-        redirect: If True, redirects directly to provider. If False (default), returns JSON.
-
-    Returns:
-        OAuthAuthorizeResponse with authorization_url, state, and provider
     """
     try:
         # Get OAuth provider instance (validates provider and credentials)
@@ -200,7 +341,6 @@ async def oauth_authorize(
     state = secrets.token_urlsafe(32)
 
     # Build the callback redirect URI
-    # The callback URL should match what's registered with the OAuth provider
     base_url = str(request.base_url).rstrip("/")
     callback_path = f"/api/v1/auth/oauth/{provider}/callback"
     redirect_uri = f"{base_url}{callback_path}"
@@ -211,7 +351,7 @@ async def oauth_authorize(
             redirect_uri=redirect_uri, state=state
         )
 
-        # If redirect=true, perform server-side redirect (for backward compatibility)
+        # If redirect=true, perform server-side redirect
         if redirect:
             return RedirectResponse(url=authorization_url)
 
@@ -233,10 +373,6 @@ async def oauth_authorize(
 async def oauth_callback(provider: str, code: str, state: str, request: Request, db: DBDep):
     """
     Handle OAuth callback.
-    - Exchange code for token
-    - Get user info
-    - Create/Update user in DB
-    - Return JWT
     """
     try:
         # Get OAuth provider instance
@@ -303,16 +439,14 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         )
 
         # Update the token_data dictionary using the actual database user's info
-        # Note: 'sub' must be the email to match get_current_user expectation
         token_data = {
-            "sub": user.email,  # Must be email for get_current_user to work
+            "sub": user.email,
             "email": user.email,
             "user_id": str(user.id),
-            "full_name": user.name,  # User model uses 'name' field, mapped to 'full_name' in token
-            # This flag is important for the frontend to know where to redirect
+            "full_name": user.name,
             "is_onboarded": getattr(
                 user, "isOnboarded", False
-            ),  # Prisma uses camelCase 'isOnboarded'
+            ),
         }
 
         # Generate JWT token
@@ -324,65 +458,14 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     except HTTPException:
         raise
     except ValueError as e:
-        # Re-raise ValueError from OAuth provider with better context
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:
-        # Include exception type and message for better debugging
         import traceback
-
         error_detail = f"{type(e).__name__}: {str(e)}"
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {error_detail}",
         )
-
-
-# ==========================================
-#  SESSION & PASSWORD MANAGEMENT
-# ==========================================
-
-
-@router.post("/logout")
-async def logout():
-    """
-    End user session.
-    """
-    return {"message": "Successfully logged out"}
-
-
-# --- Password & Email Management (Stubs) ---
-
-
-class PasswordResetRequest(BaseModel):
-    email: EmailStr
-
-
-class EmailConfirmation(BaseModel):
-    token: str
-
-
-@router.post("/reset-password")
-async def reset_password(request: PasswordResetRequest):
-    """
-    Request a password reset email.
-    """
-    # 1. Check if user exists
-    user = await db.user.find_unique(where={"email": request.email})
-    if user:
-        # TODO: Generate reset token and send email via SendGrid/AWS
-        print(f" MOCK EMAIL: Sending password reset link to {request.email}")
-
-    # Always return 200 to prevent email enumeration attacks
-    return {"message": "If an account exists, a reset email has been sent."}
-
-
-@router.post("/confirm-email")
-async def confirm_email(data: EmailConfirmation):
-    """
-    Verify email address using a token.
-    """
-    # TODO: Validate token and update user.isActive = True
-    return {"message": "Email successfully confirmed"}
