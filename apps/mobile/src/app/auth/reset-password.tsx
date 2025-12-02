@@ -17,22 +17,31 @@
  */
 
 import React from 'react';
-import { StatusBar } from 'react-native';
-import { Stack } from 'expo-router';
-import Toast from 'react-native-toast-message';
-import { ApiProvider } from '../context/ApiContext';
-import { AuthProvider } from '../context/AuthContext';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { ResetPasswordScreen } from '../../screens/ResetPasswordScreen';
 
-export default function RootLayout() {
+type ResetParams = {
+  email?: string | string[];
+  otp?: string | string[];
+};
+
+export default function ResetPasswordRoute() {
+  const router = useRouter();
+  const { email, otp } = useLocalSearchParams<ResetParams>();
+
+  const emailValue = Array.isArray(email) ? email[0] : email;
+  const otpValue = Array.isArray(otp) ? otp[0] : otp;
+
   return (
-    <ApiProvider>
-      <AuthProvider>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <Stack screenOptions={{ headerShown: false }} />
-        <Toast />
-      </AuthProvider>
-    </ApiProvider>
+    <ResetPasswordScreen
+      email={emailValue ?? ''}
+      otp={otpValue ?? ''}
+      onNavigate={(screen) => {
+        if (screen === 'login') {
+          router.replace('/auth');
+        }
+      }}
+    />
   );
 }
-
 

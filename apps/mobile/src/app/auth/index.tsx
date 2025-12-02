@@ -17,22 +17,23 @@
  */
 
 import React from 'react';
-import { StatusBar } from 'react-native';
-import { Stack } from 'expo-router';
-import Toast from 'react-native-toast-message';
-import { ApiProvider } from '../context/ApiContext';
-import { AuthProvider } from '../context/AuthContext';
+import { useRouter } from 'expo-router';
+import { AuthScreen } from '../../screens/AuthScreen';
 
-export default function RootLayout() {
+export default function AuthIndex() {
+  const router = useRouter();
+
   return (
-    <ApiProvider>
-      <AuthProvider>
-        <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
-        <Stack screenOptions={{ headerShown: false }} />
-        <Toast />
-      </AuthProvider>
-    </ApiProvider>
+    <AuthScreen
+      onForgotPassword={() => router.push('/auth/forgot-password')}
+      onSignupSuccess={(email) =>
+        router.push({
+          pathname: '/auth/otp',
+          params: { email, reason: 'signup-verification' },
+        })
+      }
+      onLoginSuccess={() => router.push('/dashboard')}
+    />
   );
 }
-
 

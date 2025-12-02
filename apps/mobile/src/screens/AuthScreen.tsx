@@ -1,4 +1,22 @@
-import React from 'react';
+/*
+ * Maigie - Your Intelligent Study Companion
+ * Copyright (C) 2025 Maigie
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published
+ * by the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -10,14 +28,16 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
-  SafeAreaView,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, G } from 'react-native-svg';
 import { useAuth } from '../hooks/useAuth';
 
 interface Props {
   onForgotPassword: () => void;
   onSignupSuccess: (email: string) => void;
+  onLoginSuccess: () => void;
 }
 
 const GoogleIcon = () => (
@@ -43,7 +63,7 @@ const GoogleIcon = () => (
   </Svg>
 );
 
-export const AuthScreen = ({ onForgotPassword, onSignupSuccess }: Props) => {
+export const AuthScreen = ({ onForgotPassword, onSignupSuccess, onLoginSuccess }: Props) => {
   const {
     isSignUp,
     setIsSignUp,
@@ -56,6 +76,7 @@ export const AuthScreen = ({ onForgotPassword, onSignupSuccess }: Props) => {
     setPassword,
     handleAuth,
   } = useAuth();
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -100,14 +121,26 @@ export const AuthScreen = ({ onForgotPassword, onSignupSuccess }: Props) => {
               autoCapitalize="none"
             />
             
-            <TextInput
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#9CA3AF"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
+            <View style={styles.passwordContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Password"
+                placeholderTextColor="#9CA3AF"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIcon}
+              >
+                <Ionicons
+                  name={showPassword ? 'eye-off' : 'eye'}
+                  size={20}
+                  color="#9CA3AF"
+                />
+              </TouchableOpacity>
+            </View>
 
             {!isSignUp && (
               <TouchableOpacity 
@@ -120,7 +153,7 @@ export const AuthScreen = ({ onForgotPassword, onSignupSuccess }: Props) => {
 
             <TouchableOpacity 
               style={styles.primaryButton}
-              onPress={() => handleAuth(onSignupSuccess)}
+              onPress={() => handleAuth(onSignupSuccess, onLoginSuccess)}
               disabled={loading}
             >
               {loading ? (
@@ -212,6 +245,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1F2937',
     marginBottom: 16,
+  },
+  passwordContainer: {
+    position: 'relative',
+    marginBottom: 16,
+  },
+  passwordInput: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingRight: 50,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#1F2937',
+  },
+  eyeIcon: {
+    position: 'absolute',
+    right: 16,
+    top: 14,
+    padding: 4,
   },
   primaryButton: {
     backgroundColor: '#4F46E5', // Indigo-600 close to the blue in image

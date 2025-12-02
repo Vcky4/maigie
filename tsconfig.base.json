@@ -19,7 +19,8 @@
       "@maigie/ai": ["libs/ai/src/index.ts"],
       "@maigie/db": ["libs/db/src/index.ts"],
       "@maigie/auth": ["libs/auth/src/index.ts"],
-      "@maigie/ui": ["libs/ui/src/index.ts"]
+      "@maigie/ui": ["libs/ui/src/index.ts"],
+      "@maigie/endpoints": ["libs/endpoints.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]
