@@ -19,9 +19,10 @@ conf = ConnectionConfig(
     MAIL_SSL_TLS=False,
     USE_CREDENTIALS=True,
     VALIDATE_CERTS=True,
-    TEMPLATE_FOLDER=TEMPLATE_FOLDER
+    TEMPLATE_FOLDER=TEMPLATE_FOLDER,
 )
 # ... existing imports ...
+
 
 async def send_welcome_email(email: EmailStr, name: str):
     """
@@ -37,23 +38,19 @@ async def send_welcome_email(email: EmailStr, name: str):
     message = MessageSchema(
         subject="You're in! Welcome to Maigie",
         recipients=[email],
-        template_body={
-            "name": name, 
-            "login_url": login_url,
-            "app_name": "Maigie"
-        },
-        subtype=MessageType.html
+        template_body={"name": name, "login_url": login_url, "app_name": "Maigie"},
+        subtype=MessageType.html,
     )
 
     fm = FastMail(conf)
-    
+
     try:
         await fm.send_message(message, template_name="welcome.html")
         logger.info(f"Welcome email sent to {email}")
     except Exception as e:
         logger.error(f"Failed to send welcome email: {e}")
 
-        
+
 async def send_verification_email(email: EmailStr, otp: str):
     """
     Sends a 6-digit OTP code to the user.
@@ -67,12 +64,12 @@ async def send_verification_email(email: EmailStr, otp: str):
         subject="Your Maigie Verification Code",
         recipients=[email],
         # variable name 'code' must match what is in your HTML file {{ code }}
-        template_body={"code": otp, "app_name": "Maigie"}, 
-        subtype=MessageType.html
+        template_body={"code": otp, "app_name": "Maigie"},
+        subtype=MessageType.html,
     )
 
     fm = FastMail(conf)
-    
+
     try:
         await fm.send_message(message, template_name="verification.html")
         logger.info(f"Verification email sent to {email}")

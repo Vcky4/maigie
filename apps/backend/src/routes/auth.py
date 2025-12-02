@@ -45,19 +45,24 @@ router = APIRouter()
 #  REQUEST MODELS
 # ==========================================
 
+
 class VerifyRequest(BaseModel):
     email: EmailStr
     code: str
 
+
 class ResendOTPRequest(BaseModel):
     email: EmailStr
+
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
+
 # ==========================================
 #  JWT & OTP AUTHENTICATION
 # ==========================================
+
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def signup(user_data: UserSignup):
@@ -108,7 +113,7 @@ async def signup(user_data: UserSignup):
     except Exception as e:
         # If email fails, print the error but DO NOT crash the request.
         logger.error(f"Email delivery failed during signup: {e}")
-    
+
     return new_user
 
 
@@ -119,30 +124,26 @@ async def verify_email(data: VerifyRequest):
     """
     # 1. Find user
     user = await db.user.find_unique(where={"email": data.email})
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     if user.isActive:
         return {"message": "Email already verified"}
 
     # 2. Validation Logic
     now = datetime.now(timezone.utc)
-    
+
     if not user.verificationCode or user.verificationCode != data.code:
         raise HTTPException(status_code=400, detail="Invalid verification code")
-        
+
     if user.verificationCodeExpiresAt and user.verificationCodeExpiresAt < now:
         raise HTTPException(status_code=400, detail="Verification code expired")
 
     # 3. Activate user
     updated_user = await db.user.update(
         where={"id": user.id},
-        data={
-            "isActive": True,
-            "verificationCode": None,
-            "verificationCodeExpiresAt": None
-        }
+        data={"isActive": True, "verificationCode": None, "verificationCodeExpiresAt": None},
     )
 
     # 4. Send Welcome Email (Fire and Forget)
@@ -154,6 +155,7 @@ async def verify_email(data: VerifyRequest):
 
     return {"message": "Email verified successfully"}
 
+
 @router.post("/resend-otp")
 async def resend_otp_code(data: ResendOTPRequest):
     """
@@ -162,7 +164,7 @@ async def resend_otp_code(data: ResendOTPRequest):
     """
     # 1. Find User
     user = await db.user.find_unique(where={"email": data.email})
-    
+
     if not user:
         # Security: Don't reveal if email exists or not.
         return {"message": "If this account exists, a new code has been sent."}
@@ -179,8 +181,7 @@ async def resend_otp_code(data: ResendOTPRequest):
         if time_remaining > timedelta(minutes=14):
             wait_seconds = int(time_remaining.total_seconds() - (14 * 60))
             raise HTTPException(
-                status_code=429, 
-                detail=f"Please wait {wait_seconds} seconds before resending."
+                status_code=429, detail=f"Please wait {wait_seconds} seconds before resending."
             )
 
     # 3. Generate New OTP
@@ -190,10 +191,7 @@ async def resend_otp_code(data: ResendOTPRequest):
     # 4. Update Database
     await db.user.update(
         where={"id": user.id},
-        data={
-            "verificationCode": new_otp,
-            "verificationCodeExpiresAt": new_expiry
-        }
+        data={"verificationCode": new_otp, "verificationCodeExpiresAt": new_expiry},
     )
 
     # 5. Send Email
@@ -217,25 +215,27 @@ async def login_for_access_token(
     user = await db.user.find_unique(where={"email": form_data.username})
 
     # 2. Validate Credentials
-    if not user or not user.passwordHash or not verify_password(form_data.password, user.passwordHash):
+    if (
+        not user
+        or not user.passwordHash
+        or not verify_password(form_data.password, user.passwordHash)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # 3. Check Activation Status
     if not user.isActive:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Account inactive. Please verify your email."
+            detail="Account inactive. Please verify your email.",
         )
 
     # 4. Generate Token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -264,14 +264,12 @@ async def login_json(user_data: UserLogin):
     if not user.isActive:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Account inactive. Please verify your email."
+            detail="Account inactive. Please verify your email.",
         )
 
     # 4. Generate Token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.email}, expires_delta=access_token_expires
-    )
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
 
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -310,6 +308,7 @@ async def reset_password(request: PasswordResetRequest):
 # ==========================================
 #  OAUTH AUTHENTICATION
 # ==========================================
+
 
 @router.get("/oauth/providers")
 async def get_oauth_providers():
@@ -444,9 +443,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
             "email": user.email,
             "user_id": str(user.id),
             "full_name": user.name,
-            "is_onboarded": getattr(
-                user, "isOnboarded", False
-            ),
+            "is_onboarded": getattr(user, "isOnboarded", False),
         }
 
         # Generate JWT token
@@ -464,6 +461,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         )
     except Exception as e:
         import traceback
+
         error_detail = f"{type(e).__name__}: {str(e)}"
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

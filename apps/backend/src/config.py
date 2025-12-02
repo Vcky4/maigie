@@ -74,7 +74,6 @@ class Settings(BaseSettings):
 
     # --- Database ---
     DATABASE_URL: str = ""  # Loaded from .env
-    
 
     # --- Redis Cache ---
     REDIS_URL: str = "redis://localhost:6379/0"

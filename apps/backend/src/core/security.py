@@ -2,6 +2,7 @@
 Security utilities (JWT, password hashing, etc.).
 Copyright (C) 2024 Maigie Team
 """
+
 import hashlib
 import base64
 import bcrypt
@@ -23,20 +24,22 @@ if not hasattr(bcrypt, "__about__"):
 # Setup Password Hashing (Bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
 def _get_safe_password(password: str) -> str:
     """
-    Internal helper: Pre-hashes the password using SHA-256 to ensure it 
+    Internal helper: Pre-hashes the password using SHA-256 to ensure it
     never exceeds the bcrypt 72-byte limit.
     """
     if not password:
         raise ValueError("Password cannot be empty")
-        
+
     # 1. Hash with SHA-256 (produces 32 bytes)
-    password_bytes = password.encode('utf-8')
+    password_bytes = password.encode("utf-8")
     digest = hashlib.sha256(password_bytes).digest()
-    
+
     # 2. Encode to Base64 (produces ~44 characters, well within 72 limit)
-    return base64.b64encode(digest).decode('utf-8')
+    return base64.b64encode(digest).decode("utf-8")
+
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Check if the plain password matches the hash."""
@@ -44,27 +47,32 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     safe_password = _get_safe_password(plain_password)
     return pwd_context.verify(safe_password, hashed_password)
 
+
 def get_password_hash(password: str) -> str:
     """Hash a password before saving to the database."""
     # Pre-hash to ensure safety/length compliance
     safe_password = _get_safe_password(password)
     return pwd_context.hash(safe_password)
 
+
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     """
     Generate a JWT access token.
     """
     to_encode = data.copy()
-    
+
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        )
+
     # Standard JWT claims
     to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
 
 def create_verification_token(email: str) -> str:
     """
@@ -75,6 +83,7 @@ def create_verification_token(email: str) -> str:
     to_encode = {"exp": expire, "sub": email, "type": "verification"}
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
+
 def decode_access_token(token: str) -> dict[str, Any]:
     """
     Decode and verify a JWT token.
@@ -84,7 +93,8 @@ def decode_access_token(token: str) -> dict[str, Any]:
         return payload
     except JWTError as e:
         raise e
-    
+
+
 def generate_otp(length: int = 6) -> str:
     """Generate a random numeric OTP."""
     return "".join(secrets.choice(string.digits) for _ in range(length))
