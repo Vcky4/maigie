@@ -5,10 +5,6 @@ from uuid import uuid4
 # --- We are skipping these tests temporarily to unblock the PR merge ---
 # The feature works (verified via Swagger), but the async test harness needs fixes.
 
-
-import pytest
-from httpx import AsyncClient
-from uuid import uuid4
 from src.core.database import db  # <--- Import your DB client
 
 

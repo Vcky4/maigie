@@ -16,6 +16,7 @@ from pydantic import BaseModel, EmailStr
 
 from src.config import settings
 from src.core.database import db
+# Combined import (Keep this one)
 from src.services.email import send_verification_email, send_welcome_email
 from src.core.oauth import OAuthProviderFactory
 from src.core.security import (
@@ -34,13 +35,14 @@ from src.models.auth import (
     UserSignup,
 )
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
-from src.services.email import send_verification_email
+
+# DELETE THE DUPLICATE LINE THAT WAS HERE (from src.services.email import ...)
 
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
+# ... Rest of your file ...
 # ==========================================
 #  REQUEST MODELS
 # ==========================================
