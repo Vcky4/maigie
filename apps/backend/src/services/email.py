@@ -5,23 +5,28 @@ from pydantic import EmailStr
 from src.config import settings
 
 logger = logging.getLogger(__name__)
+# src/services/email.py
+
+# ... imports ...
 
 # define where templates are stored
 TEMPLATE_FOLDER = Path(__file__).parent.parent / "templates" / "email"
 
+# FIX: Use 'or' to provide dummy values if settings are None (like in CI/Testing)
 conf = ConnectionConfig(
-    MAIL_USERNAME=settings.SMTP_USER,
-    MAIL_PASSWORD=settings.SMTP_PASSWORD,
-    MAIL_FROM=settings.EMAILS_FROM_EMAIL,
-    MAIL_PORT=settings.SMTP_PORT,
-    MAIL_SERVER=settings.SMTP_HOST,
+    MAIL_USERNAME=settings.SMTP_USER or "mock_user",
+    MAIL_PASSWORD=settings.SMTP_PASSWORD or "mock_password",
+    MAIL_FROM=settings.EMAILS_FROM_EMAIL or "noreply@maigie.com",
+    MAIL_PORT=settings.SMTP_PORT or 587,
+    MAIL_SERVER=settings.SMTP_HOST or "localhost",
     MAIL_STARTTLS=True,
     MAIL_SSL_TLS=False,
     USE_CREDENTIALS=True,
     VALIDATE_CERTS=True,
     TEMPLATE_FOLDER=TEMPLATE_FOLDER,
 )
-# ... existing imports ...
+
+# ... rest of the function ...
 
 
 async def send_welcome_email(email: EmailStr, name: str):
