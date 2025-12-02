@@ -16,6 +16,7 @@ from pydantic import BaseModel, EmailStr
 
 from src.config import settings
 from src.core.database import db
+
 # Combined import (Keep this one)
 from src.services.email import send_verification_email, send_welcome_email
 from src.core.oauth import OAuthProviderFactory
