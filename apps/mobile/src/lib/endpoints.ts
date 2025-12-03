@@ -31,6 +31,8 @@ export const endpoints = {
     forgotPassword: `${versionPrefix}/auth/forgot-password`,
     verifyOtp: `${versionPrefix}/auth/verify-otp`,
     resetPassword: `${versionPrefix}/auth/reset-password`,
+    oauthAuthorize: (provider: string) => `${versionPrefix}/auth/oauth/${provider}/authorize`,
+    oauthCallback: (provider: string) => `${versionPrefix}/auth/oauth/${provider}/callback`,
   },
   
   // User endpoints (add more as needed)

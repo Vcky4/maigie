@@ -18,6 +18,7 @@
 
 import React, { createContext, useState, ReactNode, useContext } from 'react';
 import Toast from 'react-native-toast-message';
+import { Linking } from 'react-native';
 import { useApi } from './ApiContext';
 import { endpoints } from '../lib/endpoints';
 
@@ -30,6 +31,7 @@ interface AuthContextType {
   forgotPassword: (email: string) => Promise<void>;
   verifyOtp: (email: string, otp: string) => Promise<void>;
   resetPassword: (email: string, otp: string, password: string) => Promise<void>;
+  googleLogin: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -186,6 +188,67 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const googleLogin = async () => {
+    setIsLoading(true);
+    try {
+      // Step 1: Get authorization URL from backend
+      const authorizeResponse = await api.get<{ authorization_url: string; state: string }>(
+        endpoints.auth.oauthAuthorize('google'),
+        { requiresAuth: false }
+      );
+
+      const { authorization_url } = authorizeResponse;
+
+      // Step 2: For mobile apps, we need to handle OAuth via deep linking
+      // The backend redirects to its callback URL, which then needs to redirect to our app
+      // This requires:
+      // 1. Backend to redirect to app deep link after successful OAuth
+      // 2. App to handle the deep link and extract token
+      
+      // Simplified approach: Open browser and let backend handle OAuth
+      // Backend should redirect to a deep link like: maigie://oauth-callback?token=...
+      // For now, we'll use a web-based approach where backend handles everything
+      // and returns token via a redirect URL we can intercept
+      
+      // Open authorization URL in browser
+      const supported = await Linking.canOpenURL(authorization_url);
+      
+      if (!supported) {
+        throw new Error('Cannot open Google authorization URL');
+      }
+
+      // Open browser - user authenticates, backend processes callback
+      // Backend should redirect to a URL we can intercept (deep link or custom scheme)
+      await Linking.openURL(authorization_url);
+
+      Toast.show({
+        type: 'info',
+        text1: 'Redirecting',
+        text2: 'Please complete authentication in your browser',
+      });
+
+      // Note: To complete this implementation, you need to:
+      // 1. Configure deep linking in app.config.js (scheme: 'maigie')
+      // 2. Set up a deep link handler in your app (e.g., in _layout.tsx or a dedicated handler)
+      // 3. Backend should redirect to: maigie://oauth-callback?token=ACCESS_TOKEN&state=STATE
+      // 4. App extracts token from deep link and stores it
+      
+      // For a production implementation, consider using expo-auth-session
+      // which handles the OAuth flow more elegantly
+      
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Google sign-in failed';
+      Toast.show({
+        type: 'error',
+        text1: 'Google Sign-In Failed',
+        text2: errorMessage,
+      });
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <AuthContext.Provider value={{ 
       login, 
@@ -194,6 +257,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       forgotPassword, 
       verifyOtp, 
       resetPassword,
+      googleLogin,
       isLoading, 
       userToken 
     }}>

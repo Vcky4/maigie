@@ -138,6 +138,12 @@ jobs:
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
           LOG_FORMAT: ${{ secrets.LOG_FORMAT }}
           SENTRY_TRACES_SAMPLE_RATE: ${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}
+          EMAILS_FROM_EMAIL: ${{secrets.EMAILS_FROM_EMAIL}}
+          EMAILS_FROM_NAME: ${{secrets.EMAILS_FROM_NAME}}
+          SMTP_HOST: ${{secrets.SMTP_HOST}}
+          SMTP_PORT: ${{secrets.SMTP_PORT}}
+          SMTP_USER: ${{secrets.SMTP_USER}}
+          SMTP_PASSWORD: ${{secrets.SMTP_PASSWORD}}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -242,6 +248,12 @@ jobs:
             export LOG_LEVEL="${{ secrets.LOG_LEVEL }}"
             export LOG_FORMAT="${{ secrets.LOG_FORMAT }}"
             export SENTRY_TRACES_SAMPLE_RATE="${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}"
+            export EMAILS_FROM_EMAIL: "${{secrets.EMAILS_FROM_EMAIL}}"
+            export EMAILS_FROM_NAME: "${{secrets.EMAILS_FROM_NAME}}"
+            export SMTP_HOST: "${{secrets.SMTP_HOST}}"
+            export SMTP_PORT: "${{secrets.SMTP_PORT}}"
+            export SMTP_USER: "${{secrets.SMTP_USER}}"
+            export SMTP_PASSWORD: "${{secrets.SMTP_PASSWORD}}"
             
             cd /opt/maigie/previews
             

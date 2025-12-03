@@ -33,6 +33,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, G } from 'react-native-svg';
 import { useAuth } from '../hooks/useAuth';
+import { useAuthContext } from '../context/AuthContext';
 import { colors } from '../lib/colors';
 
 interface Props {
@@ -77,8 +78,21 @@ export const AuthScreen = ({ onForgotPassword, onSignupSuccess, onLoginSuccess }
     setPassword,
     handleAuth,
   } = useAuth();
+  const { googleLogin, isLoading } = useAuthContext();
   const [showPassword, setShowPassword] = useState(false);
   const [focusedInput, setFocusedInput] = useState<string | null>(null);
+
+  const handleGoogleAuth = async () => {
+    try {
+      await googleLogin();
+      // Note: onLoginSuccess should NOT be called here because googleLogin()
+      // only opens the browser - the actual OAuth authentication happens
+      // asynchronously. The onLoginSuccess callback should be triggered
+      // when the deep link handler receives the token from the OAuth callback.
+    } catch {
+      // Error handled in context
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -188,11 +202,21 @@ export const AuthScreen = ({ onForgotPassword, onSignupSuccess, onLoginSuccess }
               <View style={styles.dividerLine} />
             </View>
 
-            <TouchableOpacity style={styles.googleButton}>
-              <GoogleIcon />
-              <Text style={styles.googleButtonText}>
-                {isSignUp ? 'Sign up with Google' : 'Log in with Google'}
-              </Text>
+            <TouchableOpacity 
+              style={styles.googleButton}
+              onPress={handleGoogleAuth}
+              disabled={isLoading || loading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color={colors.text.secondary} />
+              ) : (
+                <>
+                  <GoogleIcon />
+                  <Text style={styles.googleButtonText}>
+                    {isSignUp ? 'Sign up with Google' : 'Log in with Google'}
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
 
             <TouchableOpacity 
