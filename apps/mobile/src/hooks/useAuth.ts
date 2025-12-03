@@ -21,7 +21,7 @@ import Toast from 'react-native-toast-message';
 import { useAuthContext } from '../context/AuthContext';
 
 export const useAuth = () => {
-  const { login, signup, isLoading } = useAuthContext();
+  const { login, signup, isLoading, resendOtp } = useAuthContext();
   
   const [isSignUp, setIsSignUp] = useState(false);
   
@@ -55,10 +55,24 @@ export const useAuth = () => {
         }
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+
+      if (errorMessage === 'Account inactive. Please verify your email.') {
+        try {
+          await resendOtp(email);
+          if (onSignupSuccess) {
+            onSignupSuccess(email);
+          }
+        } catch (resendError) {
+          console.error('Failed to resend OTP:', resendError);
+        }
+        return;
+      }
+
       Toast.show({
         type: 'error',
         text1: 'Authentication Failed',
-        text2: error instanceof Error ? error.message : 'An unknown error occurred',
+        text2: errorMessage,
       });
       throw error;
     }

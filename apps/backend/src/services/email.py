@@ -7,11 +7,14 @@ from pathlib import Path
 
 from fastapi_mail import ConnectionConfig
 from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader
+from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
 from pydantic import EmailStr
 
 from src.config import settings
 
 logger = logging.getLogger(__name__)
+# src/services/email.py
 
 # define where templates are stored
 TEMPLATE_FOLDER = Path(__file__).parent.parent / "templates" / "email"
@@ -156,11 +159,93 @@ async def send_verification_email(email: EmailStr, otp: str):
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
         raise
+# Get the from email address for Reply-To header (same as MAIL_FROM)
+_from_email = settings.EMAILS_FROM_EMAIL or "noreply@maigie.com"
+
+# ... rest of the function ...
+
+
+def _send_multipart_email_sync(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    headers: dict[str, str] | None = None,
+):
+    """
+    Synchronous helper function to send multipart emails with both HTML and plaintext alternatives.
+    Uses SMTP directly for full control over multipart messages.
+    """
+    # Create multipart message
+    multipart_msg = MIMEMultipart("alternative")
+    multipart_msg["Subject"] = subject
+    multipart_msg["To"] = to_email
+    multipart_msg["From"] = f"{settings.EMAILS_FROM_NAME or 'Maigie'} <{_from_email}>"
+
+    # Add custom headers
+    if headers:
+        for key, value in headers.items():
+            multipart_msg[key] = value
+
+    # Add plaintext part first (lower priority)
+    text_part = MIMEText(text_body, "plain", "utf-8")
+    multipart_msg.attach(text_part)
+
+    # Add HTML part (higher priority)
+    html_part = MIMEText(html_body, "html", "utf-8")
+    multipart_msg.attach(html_part)
+
+    # Send via SMTP
+    smtp_host = settings.SMTP_HOST or "localhost"
+    smtp_port = settings.SMTP_PORT or 587
+    smtp_user = settings.SMTP_USER or "mock_user"
+    smtp_password = settings.SMTP_PASSWORD or "mock_password"
+    use_tls = conf.MAIL_STARTTLS
+    use_ssl = conf.MAIL_SSL_TLS
+
+    try:
+        if use_ssl:
+            server = smtplib.SMTP_SSL(smtp_host, smtp_port)
+        else:
+            server = smtplib.SMTP(smtp_host, smtp_port)
+
+        if use_tls and not use_ssl:
+            server.starttls()
+
+        if conf.USE_CREDENTIALS:
+            server.login(smtp_user, smtp_password)
+
+        server.send_message(multipart_msg)
+        server.quit()
+    except Exception as e:
+        logger.error(f"SMTP error sending email to {to_email}: {e}")
+        raise
+
+
+async def _send_multipart_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    headers: dict[str, str] | None = None,
+):
+    """
+    Async wrapper for sending multipart emails.
+    """
+    await asyncio.to_thread(
+        _send_multipart_email_sync,
+        to_email,
+        subject,
+        html_body,
+        text_body,
+        headers,
+    )
 
 
 async def send_welcome_email(email: EmailStr, name: str):
     """
     Sends the official welcome email after successful verification.
+    Includes both HTML and plaintext alternatives.
     """
     if not settings.SMTP_HOST:
         logger.warning(f"SMTP not configured. Skipping welcome email to {email}")
@@ -177,6 +262,12 @@ async def send_welcome_email(email: EmailStr, name: str):
         text_body = f"Welcome to Maigie, {name}! You can now login at {login_url}"
 
     html_body = html_template.render(**template_data)
+
+    # Render both HTML and plaintext templates
+    html_template = jinja_env.get_template("welcome.html")
+    text_template = jinja_env.get_template("welcome.txt")
+    html_body = html_template.render(**template_data)
+    text_body = text_template.render(**template_data)
 
     headers = {
         "Reply-To": _from_email,
@@ -201,6 +292,8 @@ async def send_welcome_email(email: EmailStr, name: str):
 async def send_password_reset_email(email: EmailStr, otp: str, name: str):
     """
     Sends the password reset OTP code.
+    Sends a 6-digit OTP code to the user.
+    Includes both HTML and plaintext alternatives.
     """
     if not settings.SMTP_HOST:
         logger.warning(f"SMTP not configured. Mocking reset email to {email} with OTP: {otp}")
@@ -221,12 +314,25 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
         "Reply-To": _from_email,
         "X-Mailer": "Maigie API",
         "X-Entity-Ref-ID": f"reset-{email}",
+    template_data = {"code": otp, "app_name": "Maigie"}
+
+    # Render both HTML and plaintext templates
+    html_template = jinja_env.get_template("verification.html")
+    text_template = jinja_env.get_template("verification.txt")
+    html_body = html_template.render(**template_data)
+    text_body = text_template.render(**template_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"verification-{email}",
     }
 
     try:
         await _send_multipart_email(
             to_email=str(email),
             subject="Reset Your Maigie Password",
+            subject="Your Maigie Verification Code",
             html_body=html_body,
             text_body=text_body,
             headers=headers,
@@ -234,4 +340,7 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
         logger.info(f"Password reset email sent to {email}")
     except Exception as e:
         logger.error(f"Failed to send reset email: {e}")
+        logger.info(f"Verification email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send email: {e}")
         raise

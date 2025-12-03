@@ -2,6 +2,19 @@
 Authentication routes (JWT Signup/Login + OAuth + OTP Verification).
 
 Copyright (C) 2025 Maigie
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import logging
@@ -42,6 +55,10 @@ from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
+# Get logger for this module
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 router = APIRouter()
 
 
@@ -405,7 +422,7 @@ async def get_oauth_providers():
     """
     List available providers.
     """
-    return {"providers": ["google", "github"]}
+    return {"providers": ["google"]}  # TODO: Add "github" when GitHub OAuth is enabled
 
 
 @router.get("/oauth/{provider}/authorize", response_model=OAuthAuthorizeResponse)

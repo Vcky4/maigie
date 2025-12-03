@@ -18,8 +18,13 @@
 
 import React, { createContext, useState, ReactNode, useContext } from 'react';
 import Toast from 'react-native-toast-message';
+// eslint-disable-next-line @nx/enforce-module-boundaries
+import * as WebBrowser from 'expo-web-browser';
+import * as Linking from 'expo-linking';
 import { useApi } from './ApiContext';
 import { endpoints } from '../lib/endpoints';
+
+WebBrowser.maybeCompleteAuthSession();
 
 interface AuthContextType {
   userToken: string | null;
@@ -29,7 +34,9 @@ interface AuthContextType {
   logout: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   verifyOtp: (email: string, otp: string) => Promise<void>;
+  resendOtp: (email: string) => Promise<void>;
   resetPassword: (email: string, otp: string, password: string) => Promise<void>;
+  googleLogin: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -58,11 +65,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Login failed';
-      Toast.show({
-        type: 'error',
-        text1: 'Login Failed',
-        text2: errorMessage,
-      });
+      
+      // Don't show toast for inactive account error as it's handled by useAuth to redirect
+      if (errorMessage !== 'Account inactive. Please verify your email.') {
+        Toast.show({
+          type: 'error',
+          text1: 'Login Failed',
+          text2: errorMessage,
+        });
+      }
       throw error; // Re-throw to let UI handle if needed
     } finally {
       setIsLoading(false);
@@ -139,10 +150,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const verifyOtp = async (email: string, otp: string) => {
     setIsLoading(true);
     try {
-      await api.post(endpoints.auth.verifyOtp, { email, otp }, {
+      const data = await api.post<{ access_token?: string }>(endpoints.auth.verifyOtp, { email, code:otp }, {
         requiresAuth: false, // OTP verification doesn't require auth token
       });
       
+      if (data?.access_token) {
+        await api.setToken(data.access_token);
+      }
+
       Toast.show({
         type: 'success',
         text1: 'Verified',
@@ -153,6 +168,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       Toast.show({
         type: 'error',
         text1: 'Verification Failed',
+        text2: errorMessage,
+      });
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resendOtp = async (email: string) => {
+    setIsLoading(true);
+    try {
+      await api.post(endpoints.auth.resendOtp, { email }, {
+        requiresAuth: false,
+      });
+      
+      Toast.show({
+        type: 'success',
+        text1: 'Code Resent',
+        text2: `A new code has been sent to ${email}`,
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to resend code';
+      Toast.show({
+        type: 'error',
+        text1: 'Resend Failed',
         text2: errorMessage,
       });
       throw error;
@@ -186,6 +226,75 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const googleLogin = async () => {
+    setIsLoading(true);
+    try {
+      // Create redirect URL for the app
+      const redirectUrl = Linking.createURL('oauth-callback');
+      
+      // Step 1: Get authorization URL from backend
+      // Pass redirect_uri so backend knows where to redirect back to
+      const authorizeResponse = await api.get<{ authorization_url: string; state: string }>(
+        `${endpoints.auth.oauthAuthorize('google')}?redirect_uri=${encodeURIComponent(redirectUrl)}`,
+        { requiresAuth: false }
+      );
+
+      const { authorization_url } = authorizeResponse;
+
+      // Step 2: Open in-app browser for OAuth flow
+      const result = await WebBrowser.openAuthSessionAsync(
+        authorization_url,
+        redirectUrl
+      );
+
+      if (result.type === 'success' && result.url) {
+        // Parse code and state from redirect URL
+        const { queryParams } = Linking.parse(result.url);
+        const { code, state } = queryParams || {};
+
+        if (typeof code === 'string' && typeof state === 'string') {
+          // Step 3: Exchange code for access token
+          const response = await api.post<{ access_token: string }>(
+            endpoints.auth.oauthCallback('google'),
+            { code, state },
+            { requiresAuth: false }
+          );
+
+          if (response?.access_token) {
+            await api.setToken(response.access_token);
+            
+            Toast.show({
+              type: 'success',
+              text1: 'Login Successful',
+              text2: 'Welcome back!',
+            });
+          } else {
+            throw new Error('No access token received from backend');
+          }
+        } else {
+          throw new Error('No authorization code received');
+        }
+      } else if (result.type !== 'cancel') {
+        // Handle other errors or dismissals if necessary
+        throw new Error('Authentication session failed');
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Google sign-in failed';
+      // Ignore user cancellation
+      if (errorMessage !== 'Authentication session failed' && errorMessage !== 'User cancelled') {
+        Toast.show({
+          type: 'error',
+          text1: 'Google Sign-In Failed',
+          text2: errorMessage,
+        });
+        console.error(error);
+        throw error; // Re-throw error so caller knows login failed
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <AuthContext.Provider value={{ 
       login, 
@@ -193,7 +302,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       signup, 
       forgotPassword, 
       verifyOtp, 
+      resendOtp,
       resetPassword,
+      googleLogin,
       isLoading, 
       userToken 
     }}>

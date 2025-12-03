@@ -1,0 +1,12 @@
+Welcome to Maigie
+
+Hi {{ name }},
+
+Congratulations, your account has been successfully verified. We are thrilled to have you on board.
+
+You can now log in to your dashboard and start exploring.
+
+Visit your dashboard: {{ login_url }}
+
+If you have any questions, feel free to reply to this email.
+

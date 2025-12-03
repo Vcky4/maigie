@@ -44,6 +44,8 @@ export default function OtpRoute() {
           });
         } else if (screen === 'login') {
           router.replace('/auth');
+        } else if (screen === 'dashboard') {
+          router.replace('/dashboard');
         } else if (screen === 'forgot-password') {
           router.replace('/auth/forgot-password');
         }

@@ -28,9 +28,12 @@ export const endpoints = {
     login: `${versionPrefix}/auth/login/json`,
     signup: `${versionPrefix}/auth/signup`,
     logout: `${versionPrefix}/auth/logout`,
-    forgotPassword: `${versionPrefix}/auth/forgot-password`,
-    verifyOtp: `${versionPrefix}/auth/verify-otp`,
-    resetPassword: `${versionPrefix}/auth/reset-password`,
+    forgotPassword: `${versionPrefix}/auth/reset-password`,
+    verifyOtp: `${versionPrefix}/auth/verify-email`,
+    resendOtp: `${versionPrefix}/auth/resend-otp`,
+    resetPassword: `${versionPrefix}/auth/change-password`,
+    oauthAuthorize: (provider: string) => `${versionPrefix}/auth/oauth/${provider}/authorize`,
+    oauthCallback: (provider: string) => `${versionPrefix}/auth/oauth/${provider}/callback`,
   },
   
   // User endpoints (add more as needed)

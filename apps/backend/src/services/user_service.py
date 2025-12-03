@@ -2,7 +2,7 @@
 User database services for OAuth authentication.
 
 This module provides services for handling OAuth user data, including
-user lookup and creation for OAuth providers like Google and GitHub.
+user lookup and creation for OAuth providers like Google.
 
 Copyright (C) 2025 Maigie
 

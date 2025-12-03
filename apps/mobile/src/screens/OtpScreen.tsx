@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -45,8 +45,20 @@ interface Props {
 export const OtpScreen = ({ email, reason, onNavigate, onBack }: Props) => {
   const [otp, setOtp] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [timer, setTimer] = useState(30);
   const [focusedInput, setFocusedInput] = useState(false);
-  const { verifyOtp } = useAuthContext();
+  const { verifyOtp, resendOtp } = useAuthContext();
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (timer > 0) {
+      interval = setInterval(() => {
+        setTimer((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [timer]);
 
   const handleVerify = async () => {
     if (!otp) {
@@ -69,14 +81,28 @@ export const OtpScreen = ({ email, reason, onNavigate, onBack }: Props) => {
         Toast.show({
           type: 'success',
           text1: 'Verified',
-          text2: 'Email verified successfully. Please log in.',
+          text2: 'Email verified successfully. Proceeding to dashboard.',
         });
-        onNavigate('login');
+        onNavigate('dashboard');
       }
     } catch {
       // Error handled in context
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (timer > 0 || resendLoading) return;
+    
+    setResendLoading(true);
+    try {
+      await resendOtp(email);
+      setTimer(30);
+    } catch {
+      // Error handled in context
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -128,6 +154,25 @@ export const OtpScreen = ({ email, reason, onNavigate, onBack }: Props) => {
                 <ActivityIndicator color="#fff" />
               ) : (
                 <Text style={styles.primaryButtonText}>Verify</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.resendButton}
+              onPress={handleResend}
+              disabled={timer > 0 || resendLoading || loading}
+            >
+              {resendLoading ? (
+                 <ActivityIndicator size="small" color={colors.primary.main} />
+              ) : (
+                <Text style={[
+                  styles.resendText,
+                  (timer > 0) && styles.resendTextDisabled
+                ]}>
+                  {timer > 0 
+                    ? `Resend code in ${timer}s`
+                    : "Didn't receive code? Resend"}
+                </Text>
               )}
             </TouchableOpacity>
 
@@ -220,6 +265,19 @@ const styles = StyleSheet.create({
     color: colors.text.white,
     fontSize: 16,
     fontWeight: '600',
+  },
+  resendButton: {
+    marginTop: 24,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  resendText: {
+    color: colors.primary.main,
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  resendTextDisabled: {
+    color: colors.text.tertiary,
   },
   footer: {
     alignItems: 'center',
