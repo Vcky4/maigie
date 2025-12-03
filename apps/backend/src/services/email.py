@@ -4,9 +4,11 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
+
 from fastapi_mail import ConnectionConfig
+from jinja2 import Environment, FileSystemLoader
 from pydantic import EmailStr
+
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -18,7 +20,7 @@ TEMPLATE_FOLDER = Path(__file__).parent.parent / "templates" / "email"
 jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATE_FOLDER)))
 
 # FIX: Use 'or' to provide dummy values if settings are None (like in CI/Testing)
-# We keep your CI fix here because it's critical for GitHub Actions
+# We combine your CI fix with the upstream configuration style
 conf = ConnectionConfig(
     MAIL_USERNAME=settings.SMTP_USER or "mock_user",
     MAIL_PASSWORD=settings.SMTP_PASSWORD or "mock_password",
@@ -45,8 +47,8 @@ def _send_multipart_email_sync(
     headers: dict[str, str] | None = None,
 ):
     """
-    Synchronous helper function to send multipart emails with both HTML and plaintext alternatives.
-    Uses SMTP directly for full control over multipart messages.
+    Synchronous helper function to send multipart emails (HTML + Text).
+    Uses SMTP directly for full control.
     """
     # Create multipart message
     multipart_msg = MIMEMultipart("alternative")
@@ -117,7 +119,6 @@ async def _send_multipart_email(
 async def send_verification_email(email: EmailStr, otp: str):
     """
     Sends a 6-digit OTP code to the user.
-    Includes both HTML and plaintext alternatives.
     """
     if not settings.SMTP_HOST:
         logger.warning(
@@ -127,14 +128,12 @@ async def send_verification_email(email: EmailStr, otp: str):
 
     template_data = {"code": otp, "app_name": "Maigie"}
 
-    # Render both HTML and plaintext templates
-    # Note: You might need to create verification.txt if it doesn't exist
+    # Render templates using the new Jinja2 env
     html_template = jinja_env.get_template("verification.html")
     try:
         text_template = jinja_env.get_template("verification.txt")
         text_body = text_template.render(**template_data)
     except Exception:
-        # Fallback if txt template is missing
         text_body = f"Your verification code is: {otp}"
 
     html_body = html_template.render(**template_data)
@@ -162,17 +161,14 @@ async def send_verification_email(email: EmailStr, otp: str):
 async def send_welcome_email(email: EmailStr, name: str):
     """
     Sends the official welcome email after successful verification.
-    Includes both HTML and plaintext alternatives.
     """
     if not settings.SMTP_HOST:
         logger.warning(f"SMTP not configured. Skipping welcome email to {email}")
         return
 
-    # Link to your frontend login page
     login_url = f"{settings.FRONTEND_BASE_URL}/login"
     template_data = {"name": name, "login_url": login_url, "app_name": "Maigie"}
 
-    # Render templates
     html_template = jinja_env.get_template("welcome.html")
     try:
         text_template = jinja_env.get_template("welcome.txt")
@@ -205,7 +201,6 @@ async def send_welcome_email(email: EmailStr, name: str):
 async def send_password_reset_email(email: EmailStr, otp: str, name: str):
     """
     Sends the password reset OTP code.
-    Includes both HTML and plaintext alternatives.
     """
     if not settings.SMTP_HOST:
         logger.warning(f"SMTP not configured. Mocking reset email to {email} with OTP: {otp}")
@@ -213,7 +208,6 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
 
     template_data = {"code": otp, "name": name, "app_name": "Maigie"}
 
-    # Render templates
     html_template = jinja_env.get_template("reset_password.html")
     try:
         text_template = jinja_env.get_template("reset_password.txt")
