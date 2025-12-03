@@ -28,21 +28,22 @@ export const endpoints = {
     login: `${versionPrefix}/auth/login/json`,
     signup: `${versionPrefix}/auth/signup`,
     logout: `${versionPrefix}/auth/logout`,
-    forgotPassword: `${versionPrefix}/auth/reset-password`,
+    forgotPassword: `${versionPrefix}/auth/forgot-password`,
     verifyOtp: `${versionPrefix}/auth/verify-email`,
     resendOtp: `${versionPrefix}/auth/resend-otp`,
-    resetPassword: `${versionPrefix}/auth/change-password`,
+    resetPassword: `${versionPrefix}/auth/reset-password`,
+    verifyResetCode: `${versionPrefix}/auth/verify-reset-code`,
     oauthAuthorize: (provider: string) => `${versionPrefix}/auth/oauth/${provider}/authorize`,
     oauthCallback: (provider: string) => `${versionPrefix}/auth/oauth/${provider}/callback`,
   },
-  
+
   // User endpoints (add more as needed)
   users: {
     me: `${versionPrefix}/users/me`,
     profile: `${versionPrefix}/users/profile`,
     updateProfile: `${versionPrefix}/users/profile`,
   },
-  
+
   // Add more endpoint groups as your API grows
 } as const;
 

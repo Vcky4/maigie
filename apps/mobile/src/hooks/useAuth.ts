@@ -40,6 +40,16 @@ export const useAuth = () => {
       return;
     }
 
+    //if password isn't up to 8 characters, show error
+    if (password.length < 8) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Password must be at least 8 characters long',
+      });
+      return;
+    }
+
     try {
       if (isSignUp) {
         await signup(email, password, name);

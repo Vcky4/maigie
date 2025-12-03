@@ -34,6 +34,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   verifyOtp: (email: string, otp: string) => Promise<void>;
+  verifyResetCode: (email: string, code: string) => Promise<void>;
   resendOtp: (email: string) => Promise<void>;
   resetPassword: (email: string, otp: string, password: string) => Promise<void>;
   googleLogin: () => Promise<void>;
@@ -176,6 +177,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const verifyResetCode = async (email: string, code: string) => {
+    setIsLoading(true);
+    try {
+      await api.post(endpoints.auth.verifyResetCode, { email, code }, {
+        requiresAuth: false, // Reset code verification doesn't require auth token
+      });
+
+      Toast.show({
+        type: 'success',
+        text1: 'Code Verified',
+        text2: 'Reset code verified successfully',
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Verification failed';
+      Toast.show({
+        type: 'error',
+        text1: 'Verification Failed',
+        text2: errorMessage,
+      });
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const resendOtp = async (email: string) => {
     setIsLoading(true);
     try {
@@ -204,7 +230,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const resetPassword = async (email: string, otp: string, password: string) => {
     setIsLoading(true);
     try {
-      await api.post(endpoints.auth.resetPassword, { email, otp, password }, {
+      await api.post(endpoints.auth.resetPassword, { email, code: otp, new_password: password }, {
         requiresAuth: false, // Reset password doesn't require auth token
       });
       
@@ -301,7 +327,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       logout, 
       signup, 
       forgotPassword, 
-      verifyOtp, 
+      verifyOtp,
+      verifyResetCode,
       resendOtp,
       resetPassword,
       googleLogin,

@@ -48,7 +48,7 @@ export const OtpScreen = ({ email, reason, onNavigate, onBack }: Props) => {
   const [resendLoading, setResendLoading] = useState(false);
   const [timer, setTimer] = useState(30);
   const [focusedInput, setFocusedInput] = useState(false);
-  const { verifyOtp, resendOtp } = useAuthContext();
+  const { verifyOtp, verifyResetCode, resendOtp } = useAuthContext();
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -72,11 +72,14 @@ export const OtpScreen = ({ email, reason, onNavigate, onBack }: Props) => {
 
     setLoading(true);
     try {
-      await verifyOtp(email, otp);
-      
       if (reason === 'forgot-password') {
+        // Use verifyResetCode endpoint for password reset flow
+        await verifyResetCode(email, otp);
+        // Navigate to reset password screen with email and code
         onNavigate('reset-password', { email, otp });
       } else {
+        // Use verifyOtp endpoint for email verification flow
+        await verifyOtp(email, otp);
         // Email verification case
         Toast.show({
           type: 'success',
