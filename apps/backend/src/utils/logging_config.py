@@ -188,6 +188,7 @@ def configure_logging() -> None:
     # Create console handler with encoding error handling
     class SafeStreamHandler(logging.StreamHandler):
         """StreamHandler that handles encoding errors gracefully."""
+
         def emit(self, record):
             try:
                 super().emit(record)
