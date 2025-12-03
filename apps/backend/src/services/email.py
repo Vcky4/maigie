@@ -80,3 +80,27 @@ async def send_verification_email(email: EmailStr, otp: str):
         logger.info(f"Verification email sent to {email}")
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
+
+
+async def send_password_reset_email(email: EmailStr, otp: str, name: str):
+    """
+    Sends the password reset OTP.
+    """
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Mocking reset email to {email} with OTP: {otp}")
+        return
+
+    message = MessageSchema(
+        subject="Reset Your Maigie Password",
+        recipients=[email],
+        template_body={"code": otp, "name": name, "app_name": "Maigie"},
+        subtype=MessageType.html,
+    )
+
+    fm = FastMail(conf)
+
+    try:
+        await fm.send_message(message, template_name="reset_password.html")
+        logger.info(f"Password reset email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send reset email: {e}")
