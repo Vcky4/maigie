@@ -84,10 +84,13 @@ export const AuthScreen = ({ onForgotPassword, onSignupSuccess, onLoginSuccess }
 
   const handleGoogleAuth = async () => {
     try {
-      await googleLogin();
-      onLoginSuccess();
-    } catch {
-      // Error handled in context
+      await googleLogin().then(() => {
+        onLoginSuccess();
+      }).catch(() => {
+        // Error handled in context
+      });
+    } catch (error) {
+      console.error('Failed to handle Google authentication:', error);
     }
   };
 

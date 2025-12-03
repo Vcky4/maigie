@@ -248,20 +248,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       );
 
       if (result.type === 'success' && result.url) {
-        // Parse token from redirect URL
+        // Parse code and state from redirect URL
         const { queryParams } = Linking.parse(result.url);
-        const token = queryParams?.token || queryParams?.access_token;
+        const { code, state } = queryParams || {};
 
-        if (typeof token === 'string') {
-          await api.setToken(token);
-          
-          Toast.show({
-            type: 'success',
-            text1: 'Login Successful',
-            text2: 'Welcome back!',
-          });
+        if (typeof code === 'string' && typeof state === 'string') {
+          // Step 3: Exchange code for access token
+          const response = await api.post<{ access_token: string }>(
+            endpoints.auth.oauthCallback('google'),
+            { code, state },
+            { requiresAuth: false }
+          );
+
+          if (response?.access_token) {
+            await api.setToken(response.access_token);
+            
+            Toast.show({
+              type: 'success',
+              text1: 'Login Successful',
+              text2: 'Welcome back!',
+            });
+          } else {
+            throw new Error('No access token received from backend');
+          }
         } else {
-          throw new Error('No token received from login');
+          throw new Error('No authorization code received');
         }
       } else if (result.type !== 'cancel') {
         // Handle other errors or dismissals if necessary
@@ -277,6 +288,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           text2: errorMessage,
         });
         console.error(error);
+        throw error; // Re-throw error so caller knows login failed
       }
     } finally {
       setIsLoading(false);
