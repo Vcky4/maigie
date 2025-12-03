@@ -248,12 +248,12 @@ jobs:
             export LOG_LEVEL="${{ secrets.LOG_LEVEL }}"
             export LOG_FORMAT="${{ secrets.LOG_FORMAT }}"
             export SENTRY_TRACES_SAMPLE_RATE="${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}"
-            export EMAILS_FROM_EMAIL: "${{secrets.EMAILS_FROM_EMAIL}}"
-            export EMAILS_FROM_NAME: "${{secrets.EMAILS_FROM_NAME}}"
-            export SMTP_HOST: "${{secrets.SMTP_HOST}}"
-            export SMTP_PORT: "${{secrets.SMTP_PORT}}"
-            export SMTP_USER: "${{secrets.SMTP_USER}}"
-            export SMTP_PASSWORD: "${{secrets.SMTP_PASSWORD}}"
+            export EMAILS_FROM_EMAIL="${{secrets.EMAILS_FROM_EMAIL}}"
+            export EMAILS_FROM_NAME="${{secrets.EMAILS_FROM_NAME}}"
+            export SMTP_HOST="${{secrets.SMTP_HOST}}"
+            export SMTP_PORT="${{secrets.SMTP_PORT}}"
+            export SMTP_USER="${{secrets.SMTP_USER}}"
+            export SMTP_PASSWORD="${{secrets.SMTP_PASSWORD}}"
             
             cd /opt/maigie/previews
             

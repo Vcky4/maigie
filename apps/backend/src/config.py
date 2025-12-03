@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Maigie API"
     APP_VERSION: str = "0.1.0"
     APP_DESCRIPTION: str = "AI-powered student companion API"  # <--- THIS WAS MISSING
-    DEBUG: bool = True
+    DEBUG: bool = False
     ENVIRONMENT: str = "development"
 
     # --- API & URLs ---
