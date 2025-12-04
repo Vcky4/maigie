@@ -39,7 +39,7 @@ const plans = [
   },
   {
     name: "Premium Monthly",
-    price: "9.99",
+    price: "*.99",
     period: "/mo",
     description: "Unlimited access for serious students.",
     features: [
@@ -54,7 +54,7 @@ const plans = [
   },
   {
     name: "Premium Yearly",
-    price: "7.99",
+    price: "*.99",
     period: "/mo",
     description: "Best value for long-term learning.",
     features: [
