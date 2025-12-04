@@ -20,18 +20,39 @@ import React, { useState } from 'react';
 import { Navbar } from '../components/landing/Navbar';
 import { Footer } from '../components/landing/Footer';
 import { motion } from 'framer-motion';
-import { ArrowRight, Check } from 'lucide-react';
+import { ArrowRight, Check, Loader2 } from 'lucide-react';
+import { createContactInBrevo } from '../services/brevo';
 
 export function WaitlistPage() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate API call
-    setTimeout(() => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await createContactInBrevo(email);
+      
+      if (result.success) {
+        setSubmitted(true);
+      } else {
+        // Still show success to user even if Brevo fails (graceful degradation)
+        // But log the error for monitoring
+        console.warn('Brevo integration failed, but continuing:', result.error);
+        setSubmitted(true);
+      }
+    } catch (err) {
+      // Handle unexpected errors
+      console.error('Unexpected error during waitlist signup:', err);
+      // Still show success to user (graceful degradation)
       setSubmitted(true);
-    }, 500);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -70,10 +91,20 @@ export function WaitlistPage() {
                   </div>
                   <button
                     type="submit"
-                    className="w-full flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-xl text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary shadow-lg transition-all"
+                    disabled={loading}
+                    className="w-full flex items-center justify-center px-5 py-3 border border-transparent text-base font-medium rounded-xl text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Join Waitlist
-                    <ArrowRight className="ml-2" size={20} />
+                    {loading ? (
+                      <>
+                        <Loader2 className="mr-2 animate-spin" size={20} />
+                        Joining...
+                      </>
+                    ) : (
+                      <>
+                        Join Waitlist
+                        <ArrowRight className="ml-2" size={20} />
+                      </>
+                    )}
                   </button>
                 </div>
                 <p className="mt-4 text-xs text-gray-500">
