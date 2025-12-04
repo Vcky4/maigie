@@ -477,7 +477,7 @@ async def oauth_authorize(
     provider = provider.lower()
 
     # TEMPORARY: Hardcoded redirect URI for testing - REMOVE AFTER TESTING
-    redirect_uri = "https://pr-51-api-preview.maigie.com/api/v1/auth/oauth/google/callback"
+    redirect_uri = "http://pr-51-api-preview.maigie.com/api/v1/auth/oauth/google/callback"
     # Original code (commented out):
     # base_url = get_base_url_from_request(request)
     # callback_path = f"/api/v1/auth/oauth/{provider}/callback"
@@ -534,7 +534,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     provider = provider.lower()
 
     # TEMPORARY: Hardcoded redirect URI for testing - REMOVE AFTER TESTING
-    redirect_uri = "https://pr-51-api-preview.maigie.com/api/v1/auth/oauth/google/callback"
+    redirect_uri = "http://pr-51-api-preview.maigie.com/api/v1/auth/oauth/google/callback"
     # Original code (commented out):
     # base_url = get_base_url_from_request(request)
     # callback_path = f"/api/v1/auth/oauth/{provider}/callback"
