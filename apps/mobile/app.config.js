@@ -30,6 +30,7 @@ module.exports = {
       supportsTablet: true,
     },
     android: {
+      package: 'com.maigie',
       adaptiveIcon: {
         foregroundImage: './assets/images/adaptive-icon.png',
         backgroundColor: '#ffffff',
@@ -55,6 +56,9 @@ module.exports = {
     experiments: {
       typedRoutes: true,
     },
+    cli: {
+      appVersionSource: 'remote',
+    },
     extra: {
       // API Base URL - can be overridden by environment variables
       apiBaseUrl:
@@ -63,6 +67,9 @@ module.exports = {
         (process.env.NODE_ENV === 'production'
           ? 'https://api.maigie.com'
             : 'https://pr-51-api-preview.maigie.com'),
+      eas: {
+        projectId: '2b78ec55-98f8-4ba6-a206-140c54c92c94',
+      },
     },
   },
 };

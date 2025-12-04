@@ -29,9 +29,6 @@ from pydantic import BaseModel, EmailStr
 
 from src.config import settings
 from src.core.database import db
-
-# Combined import (Keep this one)
-from src.services.email import send_verification_email, send_welcome_email
 from src.core.oauth import OAuthProviderFactory
 from src.core.security import (
     create_access_token,
@@ -47,6 +44,11 @@ from src.models.auth import (
     UserLogin,
     UserResponse,
     UserSignup,
+)
+from src.services.email import (
+    send_verification_email,
+    send_welcome_email,
+    send_password_reset_email,
 )
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
@@ -101,8 +103,19 @@ class ResendOTPRequest(BaseModel):
     email: EmailStr
 
 
-class PasswordResetRequest(BaseModel):
+class ForgotPasswordRequest(BaseModel):
     email: EmailStr
+
+
+class VerifyResetCodeRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+class ResetPasswordConfirm(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
 
 
 # ==========================================
@@ -189,11 +202,14 @@ async def verify_email(data: VerifyRequest):
     # 3. Activate user
     updated_user = await db.user.update(
         where={"id": user.id},
-        data={"isActive": True, "verificationCode": None, "verificationCodeExpiresAt": None},
+        data={
+            "isActive": True,
+            "verificationCode": None,
+            "verificationCodeExpiresAt": None,
+        },
     )
 
     # 4. Send Welcome Email (Fire and Forget)
-    # We do this inside a try/except so it doesn't fail the verification if email fails
     try:
         await send_welcome_email(updated_user.email, updated_user.name)
     except Exception as e:
@@ -219,7 +235,6 @@ async def resend_otp_code(data: ResendOTPRequest):
         raise HTTPException(status_code=400, detail="Account is already verified.")
 
     # 2. Rate Limiting (Database Strategy)
-    # If the current code expires in > 14 minutes, it means it was sent less than 1 minute ago.
     now = datetime.now(timezone.utc)
     if user.verificationCodeExpiresAt:
         time_remaining = user.verificationCodeExpiresAt - now
@@ -227,7 +242,8 @@ async def resend_otp_code(data: ResendOTPRequest):
         if time_remaining > timedelta(minutes=14):
             wait_seconds = int(time_remaining.total_seconds() - (14 * 60))
             raise HTTPException(
-                status_code=429, detail=f"Please wait {wait_seconds} seconds before resending."
+                status_code=429,
+                detail=f"Please wait {wait_seconds} seconds before resending.",
             )
 
     # 3. Generate New OTP
@@ -336,19 +352,91 @@ async def logout():
     return {"message": "Successfully logged out"}
 
 
-@router.post("/reset-password")
-async def reset_password(request: PasswordResetRequest):
-    """
-    Request a password reset email.
-    """
-    # 1. Check if user exists
-    user = await db.user.find_unique(where={"email": request.email})
-    if user:
-        # TODO: Generate reset token and send email via SendGrid/AWS
-        logger.info(f"MOCK EMAIL: Sending password reset link to {request.email}")
+# ==========================================
+#  PASSWORD RESET FLOW
+# ==========================================
 
-    # Always return 200 to prevent email enumeration attacks
-    return {"message": "If an account exists, a reset email has been sent."}
+
+@router.post("/forgot-password")
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Step 1: User provides email -> System sends OTP.
+    """
+    user = await db.user.find_unique(where={"email": request.email})
+
+    if user:
+        otp = generate_otp()
+        expiry = datetime.now(timezone.utc) + timedelta(minutes=15)
+
+        await db.user.update(
+            where={"id": user.id},
+            data={"passwordResetCode": otp, "passwordResetExpiresAt": expiry},
+        )
+
+        try:
+            await send_password_reset_email(user.email, otp, user.name)
+        except Exception as e:
+            logger.error(f"Failed to send reset email: {e}")
+
+    return {"message": "If an account exists, a reset code has been sent."}
+
+
+@router.post("/verify-reset-code")
+async def verify_reset_code(data: VerifyResetCodeRequest):
+    """
+    Step 2: Frontend sends code to check if it's valid BEFORE showing password inputs.
+    """
+    user = await db.user.find_unique(where={"email": data.email})
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid code or email")
+
+    now = datetime.now(timezone.utc)
+
+    if (
+        not user.passwordResetCode
+        or user.passwordResetCode != data.code
+        or not user.passwordResetExpiresAt
+        or user.passwordResetExpiresAt < now
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    return {"message": "Code is valid"}
+
+
+@router.post("/reset-password")
+async def reset_password_confirm(data: ResetPasswordConfirm):
+    """
+    Step 3: User provides OTP + New Password -> System updates password.
+    Note: We must verify the code AGAIN here for security reasons.
+    """
+    user = await db.user.find_unique(where={"email": data.email})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid code or email")
+
+    # Re-Verify Code (Security Requirement)
+    now = datetime.now(timezone.utc)
+    if (
+        not user.passwordResetCode
+        or user.passwordResetCode != data.code
+        or not user.passwordResetExpiresAt
+        or user.passwordResetExpiresAt < now
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset code")
+
+    # Hash and Update
+    hashed_password = get_password_hash(data.new_password)
+
+    await db.user.update(
+        where={"id": user.id},
+        data={
+            "passwordHash": hashed_password,
+            "passwordResetCode": None,  # Consume the code so it can't be reused
+            "passwordResetExpiresAt": None,
+        },
+    )
+
+    return {"message": "Password reset successfully. You can now login."}
 
 
 # ==========================================

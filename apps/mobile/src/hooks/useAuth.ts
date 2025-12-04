@@ -21,7 +21,7 @@ import Toast from 'react-native-toast-message';
 import { useAuthContext } from '../context/AuthContext';
 
 export const useAuth = () => {
-  const { login, signup, isLoading } = useAuthContext();
+  const { login, signup, isLoading, resendOtp } = useAuthContext();
   
   const [isSignUp, setIsSignUp] = useState(false);
   
@@ -36,6 +36,16 @@ export const useAuth = () => {
         type: 'error',
         text1: 'Validation Error',
         text2: 'Please fill in all fields',
+      });
+      return;
+    }
+
+    //if password isn't up to 8 characters, show error
+    if (password.length < 8) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Password must be at least 8 characters long',
       });
       return;
     }
@@ -55,10 +65,24 @@ export const useAuth = () => {
         }
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+
+      if (errorMessage === 'Account inactive. Please verify your email.') {
+        try {
+          await resendOtp(email);
+          if (onSignupSuccess) {
+            onSignupSuccess(email);
+          }
+        } catch (resendError) {
+          console.error('Failed to resend OTP:', resendError);
+        }
+        return;
+      }
+
       Toast.show({
         type: 'error',
         text1: 'Authentication Failed',
-        text2: error instanceof Error ? error.message : 'An unknown error occurred',
+        text2: errorMessage,
       });
       throw error;
     }
