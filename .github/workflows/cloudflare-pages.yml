@@ -34,6 +34,9 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build with Nx
+        env:
+          VITE_BREVO_API_KEY: ${{ secrets.VITE_BREVO_API_KEY }}
+          VITE_BREVO_ENABLED: ${{ secrets.VITE_BREVO_ENABLED || 'true' }}
         run: npx nx build web
 
       - name: Determine project name
@@ -67,4 +70,6 @@ jobs:
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
           # For PRs, this creates preview deployments
           # For pushes, this deploys to the branch
+          # Environment variables for runtime (if needed)
+          # Note: Build-time env vars are set in the build step above
 
