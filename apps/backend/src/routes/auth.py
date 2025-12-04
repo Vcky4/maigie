@@ -489,8 +489,6 @@ async def oauth_authorize(
         extra={
             "provider": provider,
             "redirect_uri": redirect_uri,
-            "base_url": base_url,
-            "callback_path": callback_path,
         },
     )
 
