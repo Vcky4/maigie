@@ -17,11 +17,14 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import base64
+import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -457,9 +460,16 @@ async def oauth_authorize(
     provider: str,
     request: Request,
     redirect: bool = False,
+    redirect_uri: str | None = None,
 ):
     """
     Initiate OAuth flow.
+
+    Args:
+        provider: OAuth provider name (e.g., "google")
+        redirect: If True, perform server-side redirect instead of returning JSON
+        redirect_uri: Optional custom redirect URI. If not provided, will be constructed
+                     from OAUTH_BASE_URL or request.base_url
     """
     try:
         # Get OAuth provider instance (validates provider and credentials)
@@ -470,18 +480,27 @@ async def oauth_authorize(
             detail=str(e),
         )
 
-    # Generate a secure state token for CSRF protection
-    state = secrets.token_urlsafe(32)
-
     # Normalize provider name to lowercase for consistent redirect URIs
     provider = provider.lower()
 
-    # TEMPORARY: Hardcoded redirect URI for testing - REMOVE AFTER TESTING
-    redirect_uri = "http://pr-51-api-preview.maigie.com/api/v1/auth/oauth/google/callback"
-    # Original code (commented out):
-    # base_url = get_base_url_from_request(request)
-    # callback_path = f"/api/v1/auth/oauth/{provider}/callback"
-    # redirect_uri = f"{base_url}{callback_path}"
+    # Build the callback redirect URI
+    # Use provided redirect_uri, or configured OAUTH_BASE_URL, or request-based URL
+    if redirect_uri:
+        # Use the provided redirect_uri as-is
+        redirect_uri = redirect_uri.rstrip("/")
+    else:
+        # Construct redirect URI from settings or request
+        if settings.OAUTH_BASE_URL:
+            base_url = settings.OAUTH_BASE_URL.rstrip("/")
+        else:
+            base_url = get_base_url_from_request(request)
+        callback_path = f"/api/v1/auth/oauth/{provider}/callback"
+        redirect_uri = f"{base_url}{callback_path}"
+
+    # Generate a secure state token for CSRF protection
+    # Encode the redirect_uri in the state so callback can use the same one
+    state_data = {"redirect_uri": redirect_uri, "random": secrets.token_urlsafe(32)}
+    state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode().rstrip("=")
 
     # Log the redirect URI for debugging (helps verify Google Cloud Console config)
     logger.info(
@@ -533,12 +552,27 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     # Normalize provider name to lowercase (must match authorization request)
     provider = provider.lower()
 
-    # TEMPORARY: Hardcoded redirect URI for testing - REMOVE AFTER TESTING
-    redirect_uri = "http://pr-51-api-preview.maigie.com/api/v1/auth/oauth/google/callback"
-    # Original code (commented out):
-    # base_url = get_base_url_from_request(request)
-    # callback_path = f"/api/v1/auth/oauth/{provider}/callback"
-    # redirect_uri = f"{base_url}{callback_path}"
+    # Extract redirect_uri from state if it was encoded there, otherwise construct it
+    redirect_uri = None
+    try:
+        # Try to decode state to get redirect_uri
+        # Add padding if needed
+        state_padded = state + "=" * (4 - len(state) % 4)
+        state_decoded = base64.urlsafe_b64decode(state_padded).decode()
+        state_data = json.loads(state_decoded)
+        redirect_uri = state_data.get("redirect_uri")
+    except Exception:
+        # If state doesn't contain redirect_uri, construct it the same way as authorize
+        pass
+
+    # If redirect_uri wasn't in state, construct it from settings or request
+    if not redirect_uri:
+        if settings.OAUTH_BASE_URL:
+            base_url = settings.OAUTH_BASE_URL.rstrip("/")
+        else:
+            base_url = get_base_url_from_request(request)
+        callback_path = f"/api/v1/auth/oauth/{provider}/callback"
+        redirect_uri = f"{base_url}{callback_path}"
 
     logger.info(
         "OAuth callback received",
@@ -617,6 +651,48 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
 
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as e:
+        # Handle HTTP errors from OAuth provider (e.g., Google)
+        error_message = "Unknown OAuth error"
+        error_data = {}
+
+        try:
+            # Try to extract error details from response
+            if hasattr(e, "response") and e.response is not None:
+                content_type = e.response.headers.get("content-type", "")
+                if "application/json" in content_type:
+                    try:
+                        error_data = e.response.json()
+                        error_message = (
+                            error_data.get("error_description") or error_data.get("error") or str(e)
+                        )
+                    except Exception:
+                        error_data = {"error": e.response.text}
+                        error_message = e.response.text
+                else:
+                    error_data = {"error": e.response.text}
+                    error_message = e.response.text
+
+                logger.error(
+                    "OAuth HTTP error from provider",
+                    extra={
+                        "status_code": e.response.status_code,
+                        "error": error_data,
+                        "redirect_uri": redirect_uri,
+                        "provider": provider,
+                    },
+                )
+        except Exception as parse_error:
+            logger.error(
+                "Failed to parse OAuth error response",
+                extra={"error": str(parse_error), "original_error": str(e)},
+            )
+            error_message = str(e)
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"OAuth provider error: {error_message}",
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -624,6 +700,15 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         )
     except Exception as e:
         import traceback
+
+        logger.error(
+            "OAuth callback unexpected error",
+            extra={
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
 
         error_detail = f"{type(e).__name__}: {str(e)}"
         raise HTTPException(

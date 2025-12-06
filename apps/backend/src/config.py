@@ -93,9 +93,11 @@ class Settings(BaseSettings):
     # TODO: Enable GitHub OAuth provider in the future
     # OAUTH_GITHUB_CLIENT_ID: str | None = None
     # OAUTH_GITHUB_CLIENT_SECRET: str | None = None
-    # Note: OAUTH_REDIRECT_URI is not used - redirect URI is dynamically constructed
-    # from request.base_url in the OAuth routes. This setting is kept for reference only.
-    OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
+    # OAuth base URL for redirect URI (use deployed domain for both local and production)
+    # If set, this will override the dynamically constructed base URL from request
+    # Example: https://api.maigie.com or https://pr-51-api-preview.maigie.com
+    # If not set, will fall back to get_base_url_from_request()
+    OAUTH_BASE_URL: str | None = None
 
     # --- Celery (Background Workers) ---
     CELERY_BROKER_URL: str = ""
