@@ -17,12 +17,15 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import logging
 from typing import Any, Protocol
 
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from ..config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class OAuthProvider(Protocol):
@@ -88,11 +91,45 @@ class GoogleOAuthProvider:
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             }
+
+            logger.info(
+                "Google OAuth token request",
+                extra={
+                    "redirect_uri": redirect_uri,
+                    "has_code": bool(code),
+                    "client_id": self.client_id[:10] + "..." if self.client_id else None,
+                },
+            )
+
             response = await http_client.post(
                 self.access_token_url,
                 data=token_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
+
+            # Log error details before raising exception
+            if response.status_code != 200:
+                try:
+                    error_response = response.json()
+                    logger.error(
+                        "Google OAuth token error",
+                        extra={
+                            "error": error_response,
+                            "redirect_uri": redirect_uri,
+                            "status_code": response.status_code,
+                        },
+                    )
+                except Exception:
+                    error_text = response.text
+                    logger.error(
+                        "Google OAuth token error (non-JSON)",
+                        extra={
+                            "error": error_text,
+                            "redirect_uri": redirect_uri,
+                            "status_code": response.status_code,
+                        },
+                    )
+
             response.raise_for_status()
             token_response = response.json()
 
