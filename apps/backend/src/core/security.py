@@ -1,7 +1,7 @@
 """
 Security utilities (JWT, password hashing, etc.).
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -18,178 +18,97 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import hashlib
-from datetime import datetime, timedelta
-from typing import Any
-
+import base64
 import bcrypt
-from jose import JWTError, jwt
+from datetime import datetime, timedelta, timezone
+from typing import Any, Union
+from jose import jwt, JWTError
 from passlib.context import CryptContext
+from src.config import settings
+import secrets
+import string
 
-from ..config import get_settings
+# --- FIX START: Monkey patch for bcrypt 4.1.0+ compatibility ---
+# Passlib relies on an __about__ attribute that was removed in newer bcrypt versions.
+# This injects it back to prevent the AttributeError in your logs.
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = type("about", (object,), {"__version__": bcrypt.__version__})
+# --- FIX END ---
 
-# Password hashing context (used for verification of existing hashes)
+# Setup Password Hashing (Bcrypt)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# bcrypt has a 72-byte limit for passwords
-BCRYPT_MAX_PASSWORD_LENGTH = 72
 
-
-def get_password_hash(password: str) -> str:
+def _get_safe_password(password: str) -> str:
     """
-    Hash a password using bcrypt directly.
-
-    bcrypt has a 72-byte limit, so passwords longer than that are pre-hashed
-    with SHA256 before being hashed with bcrypt.
-
-    We use bcrypt directly instead of passlib to avoid initialization issues
-    with passlib's bug detection mechanism.
-
-    Args:
-        password: Plain text password to hash
-
-    Returns:
-        Hashed password (bcrypt hash string)
-
-    Raises:
-        ValueError: If password hashing fails
+    Internal helper: Pre-hashes the password using SHA-256 to ensure it
+    never exceeds the bcrypt 72-byte limit.
     """
+    if not password:
+        raise ValueError("Password cannot be empty")
+
+    # 1. Hash with SHA-256 (produces 32 bytes)
     password_bytes = password.encode("utf-8")
+    digest = hashlib.sha256(password_bytes).digest()
 
-    # If password exceeds bcrypt's 72-byte limit, pre-hash with SHA256
-    if len(password_bytes) > BCRYPT_MAX_PASSWORD_LENGTH:
-        sha256_hash = hashlib.sha256(password_bytes).hexdigest()
-        password_to_hash = sha256_hash.encode("utf-8")
-    else:
-        password_to_hash = password_bytes
-
-    # Use bcrypt directly to avoid passlib initialization issues
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password_to_hash, salt)
-    return hashed.decode("utf-8")
+    # 2. Encode to Base64 (produces ~44 characters, well within 72 limit)
+    return base64.b64encode(digest).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Verify a password against a hash.
+    """Check if the plain password matches the hash."""
+    # We must pre-hash the plain password exactly the same way before verifying
+    safe_password = _get_safe_password(plain_password)
+    return pwd_context.verify(safe_password, hashed_password)
 
-    If the password exceeds bcrypt's 72-byte limit, it will be pre-hashed
-    with SHA256 before verification (matching how it was hashed).
 
-    Args:
-        plain_password: Plain text password
-        hashed_password: Hashed password to verify against
-
-    Returns:
-        True if password matches, False otherwise
-    """
-    password_bytes = plain_password.encode("utf-8")
-    hashed_bytes = hashed_password.encode("utf-8")
-
-    # If password exceeds bcrypt's 72-byte limit, pre-hash with SHA256
-    if len(password_bytes) > BCRYPT_MAX_PASSWORD_LENGTH:
-        sha256_hash = hashlib.sha256(password_bytes).hexdigest()
-        password_to_verify = sha256_hash.encode("utf-8")
-    else:
-        password_to_verify = password_bytes
-
-    # Use bcrypt directly to verify
-    try:
-        return bcrypt.checkpw(password_to_verify, hashed_bytes)
-    except (ValueError, TypeError):
-        # Fallback to passlib for compatibility with old hashes
-        # This handles edge cases and different hash formats
-        if len(password_bytes) > BCRYPT_MAX_PASSWORD_LENGTH:
-            sha256_hash = hashlib.sha256(password_bytes).hexdigest()
-            return pwd_context.verify(sha256_hash, hashed_password)
-        return pwd_context.verify(plain_password, hashed_password)
+def get_password_hash(password: str) -> str:
+    """Hash a password before saving to the database."""
+    # Pre-hash to ensure safety/length compliance
+    safe_password = _get_safe_password(password)
+    return pwd_context.hash(safe_password)
 
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     """
-    Create a JWT access token.
-
-    Args:
-        data: Data to encode in the token
-        expires_delta: Optional expiration time delta
-
-    Returns:
-        Encoded JWT token
+    Generate a JWT access token.
     """
-    settings = get_settings()
     to_encode = data.copy()
 
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        )
 
+    # Standard JWT claims
     to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 
-def create_refresh_token(data: dict[str, Any]) -> str:
+def create_verification_token(email: str) -> str:
     """
-    Create a JWT refresh token.
-
-    Args:
-        data: Data to encode in the token
-
-    Returns:
-        Encoded JWT refresh token
+    Generate a short-lived token for email verification.
     """
-    settings = get_settings()
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-
-    to_encode.update({"exp": expire, "type": "refresh"})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
+    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    # We use the same secret key but a specific 'type' claim to differentiate it from login tokens
+    to_encode = {"exp": expire, "sub": email, "type": "verification"}
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
 def decode_access_token(token: str) -> dict[str, Any]:
     """
-    Decode and verify a JWT access token.
-
-    Args:
-        token: JWT token to decode
-
-    Returns:
-        Decoded token payload
-
-    Raises:
-        JWTError: If token is invalid or expired
+    Decode and verify a JWT token.
     """
-    settings = get_settings()
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        # Verify token type
-        if payload.get("type") != "access":
-            raise JWTError("Invalid token type")
         return payload
     except JWTError as e:
-        raise JWTError(f"Invalid token: {e}")
+        raise e
 
 
-def decode_refresh_token(token: str) -> dict[str, Any]:
-    """
-    Decode and verify a JWT refresh token.
-
-    Args:
-        token: JWT refresh token to decode
-
-    Returns:
-        Decoded token payload
-
-    Raises:
-        JWTError: If token is invalid or expired
-    """
-    settings = get_settings()
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        # Verify token type
-        if payload.get("type") != "refresh":
-            raise JWTError("Invalid token type")
-        return payload
-    except JWTError as e:
-        raise JWTError(f"Invalid refresh token: {e}")
+def generate_otp(length: int = 6) -> str:
+    """Generate a random numeric OTP."""
+    return "".join(secrets.choice(string.digits) for _ in range(length))

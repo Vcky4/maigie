@@ -10,7 +10,7 @@
 
 2. **Configure Environment** (Optional)
    Create a `.env` file in `apps/backend`:
-   ```bash
+   ```bash 
    # Required
    ENVIRONMENT=development
    LOG_LEVEL=DEBUG

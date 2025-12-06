@@ -29,12 +29,15 @@ prisma = "^0.15.0"
 python-json-logger = "^2.0.7"
 sentry-sdk = {extras = ["fastapi"], version = "^2.0.0"}
 prometheus-client = "^0.21.0"
+itsdangerous = "^2.2.0"
+fastapi-mail = "^1.5.8"
+bcrypt = "4.0.1"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
 pytest-asyncio = "^0.24.0"
 ruff = "^0.6.0"
-black = "^24.8.0"
+black = "^24.4.2"
 mypy = "^1.11.0"
 httpx = "^0.28.1"
 coverage = "^7.12.0"
@@ -44,6 +47,8 @@ isort = "^7.0.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+# --- Tool Configurations ---
 
 # --- Tool Configurations ---
 
@@ -71,9 +76,10 @@ disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests"]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
+asyncio_default_fixture_loop_scope = "function"  
+testpaths = ["tests"]
+
 
 
 [tool.isort]

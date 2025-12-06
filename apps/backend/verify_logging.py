@@ -5,7 +5,7 @@ Verification script for structured logging and error tracking.
 This script tests the logging configuration and demonstrates
 that errors are properly logged with full context.
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 """
 
 import asyncio

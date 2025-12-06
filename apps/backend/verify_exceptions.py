@@ -104,7 +104,9 @@ def verify_exception_handling(base_url: str = "http://localhost:8000") -> bool:
     print_section("Test 3: Validation Error (400)")
     try:
         response = httpx.post(
-            f"{base_url}/api/v1/ai/chat", json={}, timeout=10.0  # Missing required 'message' field
+            f"{base_url}/api/v1/ai/chat",
+            json={},
+            timeout=10.0,  # Missing required 'message' field
         )
 
         if response.status_code == 400:

@@ -124,7 +124,8 @@ try:
     providers = OAuthProviderFactory.get_available_providers()
     check("✓ get_available_providers works", len(providers) > 0)
     check("✓ Google provider available", "google" in providers)
-    check("✓ GitHub provider available", "github" in providers)
+    # TODO: Enable GitHub OAuth provider in the future
+    # check("✓ GitHub provider available", "github" in providers)
 
     # Check provider instantiation
     try:
@@ -138,16 +139,17 @@ try:
     except Exception as e:
         check(f"Google provider instantiation: {str(e)}", False, warning=True)
 
-    try:
-        github_provider = OAuthProviderFactory.get_provider("github")
-        check("✓ GitHubOAuthProvider can be instantiated", True)
-        check(
-            "✓ GitHub provider has required attributes",
-            hasattr(github_provider, "authorize_url")
-            and hasattr(github_provider, "access_token_url"),
-        )
-    except Exception as e:
-        check(f"GitHub provider instantiation: {str(e)}", False, warning=True)
+    # TODO: Enable GitHub OAuth provider in the future
+    # try:
+    #     github_provider = OAuthProviderFactory.get_provider("github")
+    #     check("✓ GitHubOAuthProvider can be instantiated", True)
+    #     check(
+    #         "✓ GitHub provider has required attributes",
+    #         hasattr(github_provider, "authorize_url")
+    #         and hasattr(github_provider, "access_token_url"),
+    #     )
+    # except Exception as e:
+    #     check(f"GitHub provider instantiation: {str(e)}", False, warning=True)
 
     # Check invalid provider
     try:
@@ -271,18 +273,20 @@ try:
         "✓ OAUTH_GOOGLE_CLIENT_SECRET setting exists",
         hasattr(settings, "OAUTH_GOOGLE_CLIENT_SECRET"),
     )
-    check("✓ OAUTH_GITHUB_CLIENT_ID setting exists", hasattr(settings, "OAUTH_GITHUB_CLIENT_ID"))
-    check(
-        "✓ OAUTH_GITHUB_CLIENT_SECRET setting exists",
-        hasattr(settings, "OAUTH_GITHUB_CLIENT_SECRET"),
-    )
+    # TODO: Enable GitHub OAuth provider in the future
+    # check("✓ OAUTH_GITHUB_CLIENT_ID setting exists", hasattr(settings, "OAUTH_GITHUB_CLIENT_ID"))
+    # check(
+    #     "✓ OAUTH_GITHUB_CLIENT_SECRET setting exists",
+    #     hasattr(settings, "OAUTH_GITHUB_CLIENT_SECRET"),
+    # )
     check("✓ OAUTH_REDIRECT_URI setting exists", hasattr(settings, "OAUTH_REDIRECT_URI"))
 
     # Check if OAuth credentials are configured (warnings if not)
     if not settings.OAUTH_GOOGLE_CLIENT_ID:
         check("⚠️  Google OAuth client ID not configured", False, warning=True)
-    if not settings.OAUTH_GITHUB_CLIENT_ID:
-        check("⚠️  GitHub OAuth client ID not configured", False, warning=True)
+    # TODO: Enable GitHub OAuth provider in the future
+    # if not settings.OAUTH_GITHUB_CLIENT_ID:
+    #     check("⚠️  GitHub OAuth client ID not configured", False, warning=True)
 
 except Exception as e:
     check(f"OAuth configuration available: {str(e)}", False)

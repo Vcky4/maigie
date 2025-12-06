@@ -5,7 +5,7 @@ This module provides a production-ready Redis caching layer that integrates
 seamlessly with the FastAPI application lifecycle. It includes connection
 management, error handling, serialization, and common caching utilities.
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published

@@ -25,6 +25,9 @@ module.exports = {
           DEFAULT: '#101729',
           foreground: '#FFFFFF',
         },
+        charcoal: {
+          DEFAULT: '#111827',
+        },
         surface: '#FFFFFF',
         muted: '#F2F3F8',
         success: '#22C55E',

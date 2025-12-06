@@ -85,6 +85,71 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: List variables in .env.example
+        run: |
+          echo "Variables found in .env.example:"
+          chmod +x scripts/extract-env-keys.sh
+          scripts/extract-env-keys.sh .env.example || echo "No .env.example found or no variables extracted"
+
+      - name: Generate .env from .env.example for preview
+        env:
+          ENVIRONMENT: preview
+          # Dynamically pass ALL possible GitHub secrets that match keys in .env.example
+          # The script will automatically check each key and use secret if available, otherwise use default
+          # If a secret doesn't exist in GitHub, it will be empty and script will use .env.example default
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          OAUTH_GOOGLE_CLIENT_ID: ${{ secrets.OAUTH_GOOGLE_CLIENT_ID }}
+          OAUTH_GOOGLE_CLIENT_SECRET: ${{ secrets.OAUTH_GOOGLE_CLIENT_SECRET }}
+          OAUTH_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
+          OAUTH_GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
+          OAUTH_REDIRECT_URI: ${{ secrets.OAUTH_REDIRECT_URI }}
+          CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+          CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
+          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          DEBUG: ${{ secrets.DEBUG }}
+          ALGORITHM: ${{ secrets.ALGORITHM }}
+          ACCESS_TOKEN_EXPIRE_MINUTES: ${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
+          REFRESH_TOKEN_EXPIRE_DAYS: ${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          ALLOWED_HOSTS: ${{ secrets.ALLOWED_HOSTS }}
+          REDIS_KEY_PREFIX: ${{ secrets.REDIS_KEY_PREFIX }}
+          REDIS_SOCKET_TIMEOUT: ${{ secrets.REDIS_SOCKET_TIMEOUT }}
+          REDIS_SOCKET_CONNECT_TIMEOUT: ${{ secrets.REDIS_SOCKET_CONNECT_TIMEOUT }}
+          WEBSOCKET_HEARTBEAT_INTERVAL: ${{ secrets.WEBSOCKET_HEARTBEAT_INTERVAL }}
+          WEBSOCKET_HEARTBEAT_TIMEOUT: ${{ secrets.WEBSOCKET_HEARTBEAT_TIMEOUT }}
+          WEBSOCKET_MAX_RECONNECT_ATTEMPTS: ${{ secrets.WEBSOCKET_MAX_RECONNECT_ATTEMPTS }}
+          CELERY_TASK_SERIALIZER: ${{ secrets.CELERY_TASK_SERIALIZER }}
+          CELERY_RESULT_SERIALIZER: ${{ secrets.CELERY_RESULT_SERIALIZER }}
+          CELERY_ACCEPT_CONTENT: ${{ secrets.CELERY_ACCEPT_CONTENT }}
+          CELERY_TIMEZONE: ${{ secrets.CELERY_TIMEZONE }}
+          CELERY_ENABLE_UTC: ${{ secrets.CELERY_ENABLE_UTC }}
+          CELERY_TASK_ALWAYS_EAGER: ${{ secrets.CELERY_TASK_ALWAYS_EAGER }}
+          CELERY_TASK_ACKS_LATE: ${{ secrets.CELERY_TASK_ACKS_LATE }}
+          CELERY_TASK_REJECT_ON_WORKER_LOST: ${{ secrets.CELERY_TASK_REJECT_ON_WORKER_LOST }}
+          CELERY_WORKER_PREFETCH_MULTIPLIER: ${{ secrets.CELERY_WORKER_PREFETCH_MULTIPLIER }}
+          CELERY_TASK_DEFAULT_QUEUE: ${{ secrets.CELERY_TASK_DEFAULT_QUEUE }}
+          CELERY_TASK_DEFAULT_EXCHANGE: ${{ secrets.CELERY_TASK_DEFAULT_EXCHANGE }}
+          CELERY_TASK_DEFAULT_ROUTING_KEY: ${{ secrets.CELERY_TASK_DEFAULT_ROUTING_KEY }}
+          CELERY_RESULT_EXPIRES: ${{ secrets.CELERY_RESULT_EXPIRES }}
+          LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
+          LOG_FORMAT: ${{ secrets.LOG_FORMAT }}
+          SENTRY_TRACES_SAMPLE_RATE: ${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}
+          EMAILS_FROM_EMAIL: ${{secrets.EMAILS_FROM_EMAIL}}
+          EMAILS_FROM_NAME: ${{secrets.EMAILS_FROM_NAME}}
+          SMTP_HOST: ${{secrets.SMTP_HOST}}
+          SMTP_PORT: ${{secrets.SMTP_PORT}}
+          SMTP_USER: ${{secrets.SMTP_USER}}
+          SMTP_PASSWORD: ${{secrets.SMTP_PASSWORD}}
+        run: |
+          chmod +x scripts/generate-env-from-secrets.sh
+          chmod +x scripts/load-all-secrets.sh
+          source scripts/load-all-secrets.sh .env.example || true
+          ./scripts/generate-env-from-secrets.sh .env .env.example
+
       - name: Generate Preview ID
         id: preview
         run: |
@@ -117,7 +182,28 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
+
+      - name: Upload env template and generator for preview
+        run: |
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            .env.example \
+            .env \
+            scripts/generate-env-from-secrets.sh \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/maigie/previews/
 
       - name: Deploy to Contabo VPS
         run: |
@@ -132,6 +218,56 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
+            # Set ALL GitHub secrets as environment variables (dynamically based on .env.example keys)
+            # The script will check each key and use secret if available, otherwise use default from .env.example
+            export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
+            export SECRET_KEY="${{ secrets.SECRET_KEY }}"
+            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
+            export REDIS_URL="${{ secrets.REDIS_URL }}"
+            export OAUTH_GOOGLE_CLIENT_ID="${{ secrets.OAUTH_GOOGLE_CLIENT_ID }}"
+            export OAUTH_GOOGLE_CLIENT_SECRET="${{ secrets.OAUTH_GOOGLE_CLIENT_SECRET }}"
+            export OAUTH_GITHUB_CLIENT_ID="${{ secrets.OAUTH_GITHUB_CLIENT_ID }}"
+            export OAUTH_GITHUB_CLIENT_SECRET="${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}"
+            export OAUTH_REDIRECT_URI="${{ secrets.OAUTH_REDIRECT_URI }}"
+            export CELERY_BROKER_URL="${{ secrets.CELERY_BROKER_URL }}"
+            export CELERY_RESULT_BACKEND="${{ secrets.CELERY_RESULT_BACKEND }}"
+            export FRONTEND_BASE_URL="${{ secrets.FRONTEND_BASE_URL }}"
+            export APP_NAME="${{ secrets.APP_NAME }}"
+            export DEBUG="${{ secrets.DEBUG }}"
+            export ALGORITHM="${{ secrets.ALGORITHM }}"
+            export ACCESS_TOKEN_EXPIRE_MINUTES="${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}"
+            export REFRESH_TOKEN_EXPIRE_DAYS="${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}"
+            export CORS_ORIGINS="${{ secrets.CORS_ORIGINS }}"
+            export ALLOWED_HOSTS="${{ secrets.ALLOWED_HOSTS }}"
+            export REDIS_KEY_PREFIX="${{ secrets.REDIS_KEY_PREFIX }}"
+            export REDIS_SOCKET_TIMEOUT="${{ secrets.REDIS_SOCKET_TIMEOUT }}"
+            export REDIS_SOCKET_CONNECT_TIMEOUT="${{ secrets.REDIS_SOCKET_CONNECT_TIMEOUT }}"
+            export WEBSOCKET_HEARTBEAT_INTERVAL="${{ secrets.WEBSOCKET_HEARTBEAT_INTERVAL }}"
+            export WEBSOCKET_HEARTBEAT_TIMEOUT="${{ secrets.WEBSOCKET_HEARTBEAT_TIMEOUT }}"
+            export WEBSOCKET_MAX_RECONNECT_ATTEMPTS="${{ secrets.WEBSOCKET_MAX_RECONNECT_ATTEMPTS }}"
+            export CELERY_TASK_SERIALIZER="${{ secrets.CELERY_TASK_SERIALIZER }}"
+            export CELERY_RESULT_SERIALIZER="${{ secrets.CELERY_RESULT_SERIALIZER }}"
+            export CELERY_ACCEPT_CONTENT="${{ secrets.CELERY_ACCEPT_CONTENT }}"
+            export CELERY_TIMEZONE="${{ secrets.CELERY_TIMEZONE }}"
+            export CELERY_ENABLE_UTC="${{ secrets.CELERY_ENABLE_UTC }}"
+            export CELERY_TASK_ALWAYS_EAGER="${{ secrets.CELERY_TASK_ALWAYS_EAGER }}"
+            export CELERY_TASK_ACKS_LATE="${{ secrets.CELERY_TASK_ACKS_LATE }}"
+            export CELERY_TASK_REJECT_ON_WORKER_LOST="${{ secrets.CELERY_TASK_REJECT_ON_WORKER_LOST }}"
+            export CELERY_WORKER_PREFETCH_MULTIPLIER="${{ secrets.CELERY_WORKER_PREFETCH_MULTIPLIER }}"
+            export CELERY_TASK_DEFAULT_QUEUE="${{ secrets.CELERY_TASK_DEFAULT_QUEUE }}"
+            export CELERY_TASK_DEFAULT_EXCHANGE="${{ secrets.CELERY_TASK_DEFAULT_EXCHANGE }}"
+            export CELERY_TASK_DEFAULT_ROUTING_KEY="${{ secrets.CELERY_TASK_DEFAULT_ROUTING_KEY }}"
+            export CELERY_RESULT_EXPIRES="${{ secrets.CELERY_RESULT_EXPIRES }}"
+            export LOG_LEVEL="${{ secrets.LOG_LEVEL }}"
+            export LOG_FORMAT="${{ secrets.LOG_FORMAT }}"
+            export SENTRY_TRACES_SAMPLE_RATE="${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}"
+            export EMAILS_FROM_EMAIL="${{secrets.EMAILS_FROM_EMAIL}}"
+            export EMAILS_FROM_NAME="${{secrets.EMAILS_FROM_NAME}}"
+            export SMTP_HOST="${{secrets.SMTP_HOST}}"
+            export SMTP_PORT="${{secrets.SMTP_PORT}}"
+            export SMTP_USER="${{secrets.SMTP_USER}}"
+            export SMTP_PASSWORD="${{secrets.SMTP_PASSWORD}}"
+            
             cd /opt/maigie/previews
             
             # Clean up existing preview for this PR if it exists
@@ -163,6 +299,23 @@ jobs:
             # Create preview directory
             mkdir -p ${{ steps.preview.outputs.id }}
             cd ${{ steps.preview.outputs.id }}
+
+            # Prepare .env from template using generator script
+            # Script and template are uploaded to /opt/maigie/previews/ in previous step
+            if [ -f "../.env.example" ] && [ -f "../scripts/generate-env-from-secrets.sh" ]; then
+              cp ../.env.example .env.example
+              cp ../scripts/generate-env-from-secrets.sh ./generate-env-from-secrets.sh
+              chmod +x ./generate-env-from-secrets.sh
+              export ENVIRONMENT="preview"
+              export PREVIEW_ID="${{ steps.preview.outputs.id }}"
+            elif [ -f "../.env.example" ] && [ -f "../generate-env-from-secrets.sh" ]; then
+              # Fallback: check if script was uploaded directly (without scripts/ directory)
+              cp ../.env.example .env.example
+              cp ../generate-env-from-secrets.sh ./generate-env-from-secrets.sh
+              chmod +x ./generate-env-from-secrets.sh
+              export ENVIRONMENT="preview"
+              export PREVIEW_ID="${{ steps.preview.outputs.id }}"
+            fi
             
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
@@ -173,6 +326,24 @@ jobs:
             
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
+
+            # If generator is available, build DATABASE_URL and create .env
+            if [ -f "./generate-env-from-secrets.sh" ]; then
+              export DATABASE_URL="postgresql://maigie:${POSTGRES_PASSWORD}@postgres:5432/maigie_preview_${{ steps.preview.outputs.id }}"
+              export ENVIRONMENT="preview"
+              export PREVIEW_ID="${{ steps.preview.outputs.id }}"
+              export REDIS_URL="redis://redis:6379/0"
+              
+              # GitHub secrets are already available as environment variables (passed via envs in ssh-action)
+              # SENTRY_DSN and SECRET_KEY are passed from GitHub secrets
+              
+              echo "Running generate-env-from-secrets.sh with environment variables..."
+              ./generate-env-from-secrets.sh .env .env.example
+              
+              echo ""
+              echo "Final .env file contents:"
+              cat .env
+            fi
             
             # Create docker-compose.yml
             cat > docker-compose.yml << EOF
@@ -208,10 +379,9 @@ jobs:
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
                 container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
+                env_file:
+                  - .env
                 environment:
-                  DATABASE_URL: postgresql://maigie:${POSTGRES_PASSWORD}@postgres:5432/maigie_preview_${{ steps.preview.outputs.id }}
-                  REDIS_URL: redis://redis:6379/0
-                  ENVIRONMENT: preview
                   PREVIEW_ID: ${{ steps.preview.outputs.id }}
                 ports:
                   - "0:8000"
@@ -224,7 +394,7 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    prisma migrate deploy &&
+                    prisma db push &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
@@ -240,31 +410,97 @@ jobs:
             # Start preview environment (this will create fresh database)
             docker-compose up -d
             
+            # Give containers a moment to start, then check initial logs
+            sleep 5
+            echo "Initial container status:"
+            docker-compose ps
+            echo "Initial backend logs:"
+            docker-compose logs --tail=50 backend || true
+            
             # Wait for backend container to be running and get port
             echo "Waiting for backend container to start..."
+            PORT=""
             for i in {1..30}; do
               if docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
                 PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
                 if [ -n "$PORT" ]; then
-                  echo "Backend is running on port $PORT"
+                  echo "Backend container is running on port $PORT"
                   break
                 fi
-              fi
-              if [ $i -eq 30 ]; then
-                echo "Failed to get port after 30 attempts"
-                docker-compose logs
-                docker ps -a
-                exit 1
               fi
               sleep 2
             done
             
             if [ -z "$PORT" ]; then
-              echo "Failed to get port"
-              docker-compose logs
-              docker ps -a
+              echo "❌ Failed to get port after 30 attempts"
+              echo "Container logs:"
+              docker-compose logs backend
+              echo "Container status:"
+              docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
               exit 1
             fi
+            
+            # Wait for backend application to be ready (health check)
+            echo "Waiting for backend application to be ready..."
+            MAX_HEALTH_CHECKS=60
+            HEALTH_CHECK_COUNT=0
+            PORT_OPEN=false
+            
+            while [ $HEALTH_CHECK_COUNT -lt $MAX_HEALTH_CHECKS ]; do
+              # Check if container is still running
+              if ! docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
+                echo "❌ Backend container stopped unexpectedly"
+                echo "Container logs:"
+                docker-compose logs backend
+                echo "Container status:"
+                docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
+                exit 1
+              fi
+              
+              # Try to connect to the health endpoint
+              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:$PORT/health 2>/dev/null || echo "000")
+              
+              if [ "$HTTP_CODE" = "200" ]; then
+                echo "✓ Backend is healthy and responding on port $PORT"
+                break
+              elif [ "$HTTP_CODE" = "503" ]; then
+                # Service is running but not ready yet (database/cache not connected)
+                PORT_OPEN=true
+                if [ $((HEALTH_CHECK_COUNT % 5)) -eq 0 ]; then
+                  echo "Backend is running but not ready yet (HTTP $HTTP_CODE), waiting..."
+                  echo "Health check response:"
+                  curl -s http://localhost:$PORT/health || true
+                fi
+              elif [ "$HTTP_CODE" = "000" ]; then
+                # Connection refused or timeout - port not open yet
+                if [ $((HEALTH_CHECK_COUNT % 5)) -eq 0 ]; then
+                  echo "Port $PORT not responding yet (attempt $HEALTH_CHECK_COUNT/$MAX_HEALTH_CHECKS)..."
+                  echo "Recent container logs:"
+                  docker-compose logs --tail=30 backend
+                fi
+              else
+                # Got a response but unexpected status code
+                PORT_OPEN=true
+                echo "⚠️  Backend responded with HTTP $HTTP_CODE"
+                curl -s http://localhost:$PORT/health || true
+              fi
+              
+              HEALTH_CHECK_COUNT=$((HEALTH_CHECK_COUNT + 1))
+              if [ $HEALTH_CHECK_COUNT -eq $MAX_HEALTH_CHECKS ]; then
+                echo "❌ Backend health check failed after $MAX_HEALTH_CHECKS attempts"
+                echo "Port open: $PORT_OPEN, Last HTTP code: $HTTP_CODE"
+                echo "Full container logs:"
+                docker-compose logs backend
+                echo "Attempting to curl health endpoint:"
+                curl -v --max-time 5 http://localhost:$PORT/health || echo "Failed to connect"
+                echo "Container status:"
+                docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
+                echo "Checking if port is listening:"
+                netstat -tlnp 2>/dev/null | grep ":$PORT " || ss -tlnp 2>/dev/null | grep ":$PORT " || echo "Port not found in listening ports"
+                exit 1
+              fi
+              sleep 2
+            done
             
             echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
             echo "Preview deployed on port: $PORT"
@@ -273,6 +509,7 @@ jobs:
         id: setup-domain
         if: github.event_name == 'pull_request'
         run: |
+          # Get PORT from VPS
           PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cat /tmp/preview_port_${{ steps.preview.outputs.id }}.txt 2>/dev/null | cut -d= -f2")
@@ -283,6 +520,13 @@ jobs:
               "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
           fi
           
+          if [ -z "$PORT" ]; then
+            echo "❌ Failed to get port for preview backend"
+            exit 1
+          fi
+          
+          echo "✓ Backend is running on port: $PORT"
+          
           PREVIEW_DOMAIN_VALUE="${{ secrets.PREVIEW_DOMAIN }}"
           if [ -z "$PREVIEW_DOMAIN_VALUE" ]; then
             PREVIEW_DOMAIN_VALUE="maigie.com"
@@ -290,10 +534,8 @@ jobs:
           
           PREVIEW_DOMAIN="${{ steps.preview.outputs.id }}-api-preview.${PREVIEW_DOMAIN_VALUE}"
           
-          # Create Nginx config on VPS
-          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cat > /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf << 'NGINX_EOF'
+          # Create Nginx config locally with variables already expanded
+          cat > /tmp/nginx-preview.conf << EOF
           server {
               listen 80;
               server_name ${PREVIEW_DOMAIN};
@@ -319,8 +561,19 @@ jobs:
                   access_log off;
               }
           }
-          NGINX_EOF
-          sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo systemctl reload nginx"
+          EOF
+          
+          # Copy config to VPS
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            /tmp/nginx-preview.conf \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf
+          
+          # Move to Nginx directory and reload
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo systemctl reload nginx"
+          
+          echo "✓ Nginx config created and reloaded for ${PREVIEW_DOMAIN} → localhost:${PORT}"
           
           # Add Cloudflare Tunnel route and DNS record via API
           if [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_TUNNEL_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
@@ -362,12 +615,8 @@ jobs:
               echo "$UPDATE_RESPONSE" | jq '.' || true
             fi
             
-            # Get tunnel hostname for DNS record target
-            TUNNEL_HOSTNAME=$(curl -s -X GET \
-              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}" | \
-              jq -r '.result.name + ".cfargotunnel.com"')
+            # Get tunnel hostname for DNS record target (use tunnel ID directly)
+            TUNNEL_HOSTNAME="${{ secrets.CLOUDFLARE_TUNNEL_ID }}.cfargotunnel.com"
             
             # Extract subdomain from preview domain (e.g., pr-44-api-preview from pr-44-api-preview.maigie.com)
             DNS_NAME=$(echo "${PREVIEW_DOMAIN}" | cut -d. -f1)
@@ -450,6 +699,62 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Generate .env from .env.example for production
+        env:
+          ENVIRONMENT: production
+          # Pass all GitHub secrets that match keys in .env.example
+          # The script will automatically check each key and use secret if available, otherwise use default
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          OAUTH_GOOGLE_CLIENT_ID: ${{ secrets.OAUTH_GOOGLE_CLIENT_ID }}
+          OAUTH_GOOGLE_CLIENT_SECRET: ${{ secrets.OAUTH_GOOGLE_CLIENT_SECRET }}
+          OAUTH_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
+          OAUTH_GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
+          OAUTH_REDIRECT_URI: ${{ secrets.OAUTH_REDIRECT_URI }}
+          CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+          CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
+          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          DEBUG: ${{ secrets.DEBUG }}
+          ALGORITHM: ${{ secrets.ALGORITHM }}
+          ACCESS_TOKEN_EXPIRE_MINUTES: ${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
+          REFRESH_TOKEN_EXPIRE_DAYS: ${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          ALLOWED_HOSTS: ${{ secrets.ALLOWED_HOSTS }}
+          REDIS_KEY_PREFIX: ${{ secrets.REDIS_KEY_PREFIX }}
+          REDIS_SOCKET_TIMEOUT: ${{ secrets.REDIS_SOCKET_TIMEOUT }}
+          REDIS_SOCKET_CONNECT_TIMEOUT: ${{ secrets.REDIS_SOCKET_CONNECT_TIMEOUT }}
+          WEBSOCKET_HEARTBEAT_INTERVAL: ${{ secrets.WEBSOCKET_HEARTBEAT_INTERVAL }}
+          WEBSOCKET_HEARTBEAT_TIMEOUT: ${{ secrets.WEBSOCKET_HEARTBEAT_TIMEOUT }}
+          WEBSOCKET_MAX_RECONNECT_ATTEMPTS: ${{ secrets.WEBSOCKET_MAX_RECONNECT_ATTEMPTS }}
+          CELERY_TASK_SERIALIZER: ${{ secrets.CELERY_TASK_SERIALIZER }}
+          CELERY_RESULT_SERIALIZER: ${{ secrets.CELERY_RESULT_SERIALIZER }}
+          CELERY_ACCEPT_CONTENT: ${{ secrets.CELERY_ACCEPT_CONTENT }}
+          CELERY_TIMEZONE: ${{ secrets.CELERY_TIMEZONE }}
+          CELERY_ENABLE_UTC: ${{ secrets.CELERY_ENABLE_UTC }}
+          CELERY_TASK_ALWAYS_EAGER: ${{ secrets.CELERY_TASK_ALWAYS_EAGER }}
+          CELERY_TASK_ACKS_LATE: ${{ secrets.CELERY_TASK_ACKS_LATE }}
+          CELERY_TASK_REJECT_ON_WORKER_LOST: ${{ secrets.CELERY_TASK_REJECT_ON_WORKER_LOST }}
+          CELERY_WORKER_PREFETCH_MULTIPLIER: ${{ secrets.CELERY_WORKER_PREFETCH_MULTIPLIER }}
+          CELERY_TASK_DEFAULT_QUEUE: ${{ secrets.CELERY_TASK_DEFAULT_QUEUE }}
+          CELERY_TASK_DEFAULT_EXCHANGE: ${{ secrets.CELERY_TASK_DEFAULT_EXCHANGE }}
+          CELERY_TASK_DEFAULT_ROUTING_KEY: ${{ secrets.CELERY_TASK_DEFAULT_ROUTING_KEY }}
+          CELERY_RESULT_EXPIRES: ${{ secrets.CELERY_RESULT_EXPIRES }}
+          LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
+          LOG_FORMAT: ${{ secrets.LOG_FORMAT }}
+          SENTRY_TRACES_SAMPLE_RATE: ${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}
+          EMAILS_FROM_EMAIL: ${{ secrets.EMAILS_FROM_EMAIL }}
+          EMAILS_FROM_NAME: ${{ secrets.EMAILS_FROM_NAME }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          chmod +x scripts/generate-env-from-secrets.sh
+          ./scripts/generate-env-from-secrets.sh .env .env.example
+
       - name: Build Docker Image
         working-directory: ./apps/backend
         run: docker build -t maigie-backend:latest .
@@ -463,13 +768,26 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Deploy to Contabo VPS
         run: |
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            production-image.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/production-image.tar.gz
+            production-image.tar.gz .env \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Production
         uses: appleboy/ssh-action@v1.0.0
@@ -483,6 +801,11 @@ jobs:
             # Load Docker image
             docker load < /tmp/production-image.tar.gz
             rm /tmp/production-image.tar.gz
+
+            # Update .env from uploaded file
+            if [ -f /tmp/.env ]; then
+              mv /tmp/.env .env
+            fi
             
             # Tag the loaded image for docker-compose (if needed)
             docker tag maigie-backend:latest maigie-backend:latest || true
@@ -548,7 +871,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    prisma migrate deploy &&
+                    prisma db push &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
             
@@ -576,8 +899,8 @@ jobs:
             # Wait for services to be ready
             sleep 15
             
-            # Run migrations
-            docker-compose exec -T backend prisma migrate deploy || echo "Migrations already applied"
+            # Run db push
+            docker-compose exec -T backend prisma db push || echo "Schema push failed"
             
             echo "Production deployment complete!"
 
@@ -590,6 +913,62 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Generate .env from .env.example for staging
+        env:
+          ENVIRONMENT: staging
+          # Pass all GitHub secrets that match keys in .env.example
+          # The script will automatically check each key and use secret if available, otherwise use default
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          OAUTH_GOOGLE_CLIENT_ID: ${{ secrets.OAUTH_GOOGLE_CLIENT_ID }}
+          OAUTH_GOOGLE_CLIENT_SECRET: ${{ secrets.OAUTH_GOOGLE_CLIENT_SECRET }}
+          OAUTH_GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
+          OAUTH_GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
+          OAUTH_REDIRECT_URI: ${{ secrets.OAUTH_REDIRECT_URI }}
+          CELERY_BROKER_URL: ${{ secrets.CELERY_BROKER_URL }}
+          CELERY_RESULT_BACKEND: ${{ secrets.CELERY_RESULT_BACKEND }}
+          FRONTEND_BASE_URL: ${{ secrets.FRONTEND_BASE_URL }}
+          APP_NAME: ${{ secrets.APP_NAME }}
+          DEBUG: ${{ secrets.DEBUG }}
+          ALGORITHM: ${{ secrets.ALGORITHM }}
+          ACCESS_TOKEN_EXPIRE_MINUTES: ${{ secrets.ACCESS_TOKEN_EXPIRE_MINUTES }}
+          REFRESH_TOKEN_EXPIRE_DAYS: ${{ secrets.REFRESH_TOKEN_EXPIRE_DAYS }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+          ALLOWED_HOSTS: ${{ secrets.ALLOWED_HOSTS }}
+          REDIS_KEY_PREFIX: ${{ secrets.REDIS_KEY_PREFIX }}
+          REDIS_SOCKET_TIMEOUT: ${{ secrets.REDIS_SOCKET_TIMEOUT }}
+          REDIS_SOCKET_CONNECT_TIMEOUT: ${{ secrets.REDIS_SOCKET_CONNECT_TIMEOUT }}
+          WEBSOCKET_HEARTBEAT_INTERVAL: ${{ secrets.WEBSOCKET_HEARTBEAT_INTERVAL }}
+          WEBSOCKET_HEARTBEAT_TIMEOUT: ${{ secrets.WEBSOCKET_HEARTBEAT_TIMEOUT }}
+          WEBSOCKET_MAX_RECONNECT_ATTEMPTS: ${{ secrets.WEBSOCKET_MAX_RECONNECT_ATTEMPTS }}
+          CELERY_TASK_SERIALIZER: ${{ secrets.CELERY_TASK_SERIALIZER }}
+          CELERY_RESULT_SERIALIZER: ${{ secrets.CELERY_RESULT_SERIALIZER }}
+          CELERY_ACCEPT_CONTENT: ${{ secrets.CELERY_ACCEPT_CONTENT }}
+          CELERY_TIMEZONE: ${{ secrets.CELERY_TIMEZONE }}
+          CELERY_ENABLE_UTC: ${{ secrets.CELERY_ENABLE_UTC }}
+          CELERY_TASK_ALWAYS_EAGER: ${{ secrets.CELERY_TASK_ALWAYS_EAGER }}
+          CELERY_TASK_ACKS_LATE: ${{ secrets.CELERY_TASK_ACKS_LATE }}
+          CELERY_TASK_REJECT_ON_WORKER_LOST: ${{ secrets.CELERY_TASK_REJECT_ON_WORKER_LOST }}
+          CELERY_WORKER_PREFETCH_MULTIPLIER: ${{ secrets.CELERY_WORKER_PREFETCH_MULTIPLIER }}
+          CELERY_TASK_DEFAULT_QUEUE: ${{ secrets.CELERY_TASK_DEFAULT_QUEUE }}
+          CELERY_TASK_DEFAULT_EXCHANGE: ${{ secrets.CELERY_TASK_DEFAULT_EXCHANGE }}
+          CELERY_TASK_DEFAULT_ROUTING_KEY: ${{ secrets.CELERY_TASK_DEFAULT_ROUTING_KEY }}
+          CELERY_RESULT_EXPIRES: ${{ secrets.CELERY_RESULT_EXPIRES }}
+          LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
+          LOG_FORMAT: ${{ secrets.LOG_FORMAT }}
+          SENTRY_TRACES_SAMPLE_RATE: ${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}
+          EMAILS_FROM_EMAIL: ${{ secrets.EMAILS_FROM_EMAIL }}
+          EMAILS_FROM_NAME: ${{ secrets.EMAILS_FROM_NAME }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        run: |
+          chmod +x scripts/generate-env-from-secrets.sh
+          ./scripts/generate-env-from-secrets.sh .env .env.example
 
       - name: Build Docker Image
         working-directory: ./apps/backend
@@ -604,13 +983,26 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Deploy to Contabo VPS
         run: |
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            staging-image.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/staging-image.tar.gz
+            staging-image.tar.gz .env \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Staging
         uses: appleboy/ssh-action@v1.0.0
@@ -624,14 +1016,14 @@ jobs:
             # Load Docker image
             docker load < /tmp/staging-image.tar.gz
             rm /tmp/staging-image.tar.gz
+
+            # Update .env from uploaded file
+            if [ -f /tmp/.env ]; then
+              mv /tmp/.env .env
+            fi
             
             # Tag the loaded image for docker-compose (if needed)
             docker tag maigie-backend:staging maigie-backend:staging || true
-            
-            # Update environment variables
-            export DATABASE_URL="${{ secrets.STAGING_DATABASE_URL }}"
-            export REDIS_URL="redis://redis:6379/0"
-            export ENVIRONMENT="staging"
             
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
@@ -694,7 +1086,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    prisma migrate deploy &&
+                    prisma db push &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
@@ -723,8 +1115,8 @@ jobs:
             # Wait for services to be ready
             sleep 15
             
-            # Run migrations and seed
-            docker-compose exec -T backend prisma migrate deploy || echo "Migrations already applied"
+            # Run db push and seed
+            docker-compose exec -T backend prisma db push || echo "Schema push failed"
             docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
             
             echo "Staging deployment complete!"
@@ -748,7 +1140,20 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Cleanup Preview Environment
         env:
