@@ -27,6 +27,7 @@ module.exports = {
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
     ios: {
+      bundleIdentifier: 'com.maigie',
       supportsTablet: true,
     },
     android: {
