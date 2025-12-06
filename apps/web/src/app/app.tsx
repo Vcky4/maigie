@@ -25,6 +25,14 @@ import { ContactPage } from '../pages/ContactPage';
 import { PrivacyPage } from '../pages/PrivacyPage';
 import { TermsPage } from '../pages/TermsPage';
 import { CookieNotice } from '../components/layout/CookieNotice';
+import { SignupPage } from '../features/auth/pages/SignupPage';
+import { LoginPage } from '../features/auth/pages/LoginPage';
+import { OTPVerificationPage } from '../features/auth/pages/OTPVerificationPage';
+import { ForgotPasswordPage } from '../features/auth/pages/ForgotPasswordPage';
+import { ResetPasswordPage } from '../features/auth/pages/ResetPasswordPage';
+import { OAuthCallbackPage } from '../features/auth/pages/OAuthCallbackPage';
+import { DashboardPage } from '../pages/DashboardPage';
+import { RedirectIfAuthenticated } from '../components/auth/RedirectIfAuthenticated';
 import '../styles.css';
 
 export function App() {
@@ -37,6 +45,15 @@ export function App() {
         <Route path="/contact" element={<ContactPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        {/* Auth routes - redirect if already authenticated */}
+        <Route path="/signup" element={<RedirectIfAuthenticated><SignupPage /></RedirectIfAuthenticated>} />
+        <Route path="/login" element={<RedirectIfAuthenticated><LoginPage /></RedirectIfAuthenticated>} />
+        <Route path="/auth/oauth/callback" element={<OAuthCallbackPage />} />
+        <Route path="/verify-otp" element={<RedirectIfAuthenticated><OTPVerificationPage /></RedirectIfAuthenticated>} />
+        <Route path="/forgot-password" element={<RedirectIfAuthenticated><ForgotPasswordPage /></RedirectIfAuthenticated>} />
+        <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
+        {/* Protected routes */}
+        <Route path="/dashboard" element={<DashboardPage />} />
       </Routes>
       <CookieNotice />
     </Router>

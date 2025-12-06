@@ -182,7 +182,20 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Upload env template and generator for preview
         run: |
@@ -755,7 +768,20 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Deploy to Contabo VPS
         run: |
@@ -957,7 +983,20 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Deploy to Contabo VPS
         run: |
@@ -1101,7 +1140,20 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          # Verify known_hosts was populated, if not it's okay since StrictHostKeyChecking=no is used
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
       - name: Cleanup Preview Environment
         env:
