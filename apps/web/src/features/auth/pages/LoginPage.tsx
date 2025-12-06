@@ -89,6 +89,20 @@ export function LoginPage() {
     }
   };
 
+  const handleGoogleLogin = async () => {
+    try {
+      await handleGoogleAuth();
+    } catch (error: unknown) {
+      // Extract error message - handleGoogleAuth already throws Error with message
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'Google sign-in failed. Please try again.';
+      setErrors({
+        submit: errorMessage,
+      });
+    }
+  };
+
   return (
     <AuthForm>
       <div className="flex flex-col flex-1">
@@ -154,7 +168,7 @@ export function LoginPage() {
 
         <div className="mt-6">
           <GoogleOAuthButton
-            onClick={handleGoogleAuth}
+            onClick={handleGoogleLogin}
             loading={isGoogleLoading}
             disabled={loginMutation.isPending || isGoogleLoading}
             label="Sign in with Google"

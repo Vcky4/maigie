@@ -81,11 +81,12 @@ export function SignupPage() {
     try {
       await handleGoogleAuth();
     } catch (error: unknown) {
-      const errorMessage = error && typeof error === 'object' && 'response' in error
-        ? (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
-        : undefined;
+      // Extract error message - handleGoogleAuth already throws Error with message
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'Google signup failed. Please try again.';
       setErrors({
-        submit: errorMessage || 'Google signup failed. Please try again.',
+        submit: errorMessage,
       });
     }
   };
