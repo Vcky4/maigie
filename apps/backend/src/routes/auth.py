@@ -17,6 +17,8 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import base64
+import json
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -458,9 +460,16 @@ async def oauth_authorize(
     provider: str,
     request: Request,
     redirect: bool = False,
+    redirect_uri: str | None = None,
 ):
     """
     Initiate OAuth flow.
+    
+    Args:
+        provider: OAuth provider name (e.g., "google")
+        redirect: If True, perform server-side redirect instead of returning JSON
+        redirect_uri: Optional custom redirect URI. If not provided, will be constructed
+                     from OAUTH_BASE_URL or request.base_url
     """
     try:
         # Get OAuth provider instance (validates provider and credentials)
@@ -471,20 +480,27 @@ async def oauth_authorize(
             detail=str(e),
         )
 
-    # Generate a secure state token for CSRF protection
-    state = secrets.token_urlsafe(32)
-
     # Normalize provider name to lowercase for consistent redirect URIs
     provider = provider.lower()
 
     # Build the callback redirect URI
-    # Use configured OAUTH_BASE_URL if set, otherwise use request-based URL
-    if settings.OAUTH_BASE_URL:
-        base_url = settings.OAUTH_BASE_URL.rstrip("/")
+    # Use provided redirect_uri, or configured OAUTH_BASE_URL, or request-based URL
+    if redirect_uri:
+        # Use the provided redirect_uri as-is
+        redirect_uri = redirect_uri.rstrip("/")
     else:
-        base_url = get_base_url_from_request(request)
-    callback_path = f"/api/v1/auth/oauth/{provider}/callback"
-    redirect_uri = f"{base_url}{callback_path}"
+        # Construct redirect URI from settings or request
+        if settings.OAUTH_BASE_URL:
+            base_url = settings.OAUTH_BASE_URL.rstrip("/")
+        else:
+            base_url = get_base_url_from_request(request)
+        callback_path = f"/api/v1/auth/oauth/{provider}/callback"
+        redirect_uri = f"{base_url}{callback_path}"
+
+    # Generate a secure state token for CSRF protection
+    # Encode the redirect_uri in the state so callback can use the same one
+    state_data = {"redirect_uri": redirect_uri, "random": secrets.token_urlsafe(32)}
+    state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode().rstrip("=")
 
     # Log the redirect URI for debugging (helps verify Google Cloud Console config)
     logger.info(
@@ -536,14 +552,27 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     # Normalize provider name to lowercase (must match authorization request)
     provider = provider.lower()
 
-    # Build redirect URI - must match exactly what was used in authorization request
-    # Use configured OAUTH_BASE_URL if set, otherwise use request-based URL
-    if settings.OAUTH_BASE_URL:
-        base_url = settings.OAUTH_BASE_URL.rstrip("/")
-    else:
-        base_url = get_base_url_from_request(request)
-    callback_path = f"/api/v1/auth/oauth/{provider}/callback"
-    redirect_uri = f"{base_url}{callback_path}"
+    # Extract redirect_uri from state if it was encoded there, otherwise construct it
+    redirect_uri = None
+    try:
+        # Try to decode state to get redirect_uri
+        # Add padding if needed
+        state_padded = state + "=" * (4 - len(state) % 4)
+        state_decoded = base64.urlsafe_b64decode(state_padded).decode()
+        state_data = json.loads(state_decoded)
+        redirect_uri = state_data.get("redirect_uri")
+    except Exception:
+        # If state doesn't contain redirect_uri, construct it the same way as authorize
+        pass
+
+    # If redirect_uri wasn't in state, construct it from settings or request
+    if not redirect_uri:
+        if settings.OAUTH_BASE_URL:
+            base_url = settings.OAUTH_BASE_URL.rstrip("/")
+        else:
+            base_url = get_base_url_from_request(request)
+        callback_path = f"/api/v1/auth/oauth/{provider}/callback"
+        redirect_uri = f"{base_url}{callback_path}"
 
     logger.info(
         "OAuth callback received",
