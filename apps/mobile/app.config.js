@@ -26,6 +26,12 @@ module.exports = {
     scheme: 'maigie',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
+    updates: {
+      url: 'https://u.expo.dev/2b78ec55-98f8-4ba6-a206-140c54c92c94',
+    },
+    runtimeVersion: {
+      policy: 'appVersion',
+    },
     ios: {
       bundleIdentifier: 'com.maigie',
       supportsTablet: true,
