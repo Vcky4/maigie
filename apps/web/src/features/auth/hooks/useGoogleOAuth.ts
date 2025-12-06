@@ -80,14 +80,20 @@ export function useGoogleOAuth() {
       // Verify state matches what we stored
       const storedState = sessionStorage.getItem('oauth_state');
       const provider = sessionStorage.getItem('oauth_provider') || 'google';
-      const storedRedirectUri = sessionStorage.getItem('oauth_redirect_uri');
       
       // Validate state to prevent CSRF attacks
       if (!storedState) {
+        console.error('OAuth callback: No stored state found');
         throw new Error('OAuth session expired. Please try again.');
       }
       
+      // React Router's useSearchParams already decodes URL parameters
+      // Compare states directly (both should be base64-encoded strings)
       if (storedState !== state) {
+        console.error('OAuth callback: State mismatch', {
+          received: state.substring(0, 50),
+          stored: storedState.substring(0, 50),
+        });
         // Clean up invalid session
         sessionStorage.removeItem('oauth_state');
         sessionStorage.removeItem('oauth_provider');
@@ -97,6 +103,7 @@ export function useGoogleOAuth() {
 
       // Step 3: Exchange code for access token
       // Backend will extract redirect_uri from state and use it when exchanging code
+      // Pass the original state (not decoded) to the backend
       const tokenResponse = await authApi.oauthCallback(provider, code, state);
       
       if (!tokenResponse?.access_token) {

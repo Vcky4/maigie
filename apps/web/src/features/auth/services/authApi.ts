@@ -130,10 +130,14 @@ export const authApi = {
    * Exchange OAuth code for access token
    */
   oauthCallback: async (provider: string, code: string, state: string): Promise<TokenResponse> => {
+    // Ensure state is properly encoded for URL (axios should handle this, but be explicit)
     const response = await apiClient.get<TokenResponse>(
       `/auth/oauth/${provider}/callback`,
       {
-        params: { code, state },
+        params: { 
+          code, 
+          state, // axios will URL-encode this automatically
+        },
       }
     );
     return response.data;

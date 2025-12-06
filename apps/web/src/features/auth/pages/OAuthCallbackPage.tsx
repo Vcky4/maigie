@@ -3,7 +3,7 @@
  * Handles the redirect from OAuth providers (Google, etc.)
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useGoogleOAuth } from '../hooks/useGoogleOAuth';
 import { AuthForm } from '../components/AuthForm';
@@ -15,8 +15,14 @@ export function OAuthCallbackPage() {
   const { handleOAuthCallback, isLoading } = useGoogleOAuth();
   const [error, setError] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  const processedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent multiple executions
+    if (processedRef.current) {
+      return;
+    }
+
     const code = searchParams.get('code');
     const state = searchParams.get('state');
     const errorParam = searchParams.get('error');
@@ -24,6 +30,7 @@ export function OAuthCallbackPage() {
 
     // Handle OAuth provider errors (e.g., user denied access)
     if (errorParam) {
+      processedRef.current = true;
       const errorMessage = errorDescription 
         ? `Authentication failed: ${decodeURIComponent(errorDescription)}`
         : 'Authentication was cancelled or failed. Please try again.';
@@ -34,10 +41,14 @@ export function OAuthCallbackPage() {
 
     // Validate required parameters
     if (!code || !state) {
+      processedRef.current = true;
       setError('Invalid OAuth callback. Missing required parameters.');
       setErrorDetails('The authentication response was incomplete. Please try logging in again.');
       return;
     }
+
+    // Mark as processed before async operation
+    processedRef.current = true;
 
     // Process the OAuth callback
     handleOAuthCallback(code, state).catch((err) => {
@@ -46,7 +57,8 @@ export function OAuthCallbackPage() {
       setError(errorMessage);
       setErrorDetails('Please check your connection and try again.');
     });
-  }, [searchParams, handleOAuthCallback, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <AuthForm>
