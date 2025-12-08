@@ -813,6 +813,26 @@ jobs:
               mv /tmp/.env .env
             fi
             
+            # Ensure environment-specific variables are set correctly
+            # Use sed to update existing values or append if not present
+            if grep -q "^DATABASE_URL=" .env 2>/dev/null; then
+              sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${{ secrets.PRODUCTION_DATABASE_URL }}|" .env
+            else
+              echo "DATABASE_URL=${{ secrets.PRODUCTION_DATABASE_URL }}" >> .env
+            fi
+            
+            if grep -q "^REDIS_URL=" .env 2>/dev/null; then
+              sed -i "s|^REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|" .env
+            else
+              echo "REDIS_URL=redis://redis:6379/0" >> .env
+            fi
+            
+            if grep -q "^ENVIRONMENT=" .env 2>/dev/null; then
+              sed -i "s|^ENVIRONMENT=.*|ENVIRONMENT=production|" .env
+            else
+              echo "ENVIRONMENT=production" >> .env
+            fi
+            
             # Tag the loaded image for docker-compose (if needed)
             docker tag maigie-backend:latest maigie-backend:latest || true
             
@@ -887,13 +907,6 @@ jobs:
             networks:
               maigie_network:
                 driver: bridge
-            EOF
-            
-            # Update .env file
-            cat > .env << EOF
-            DATABASE_URL=${{ secrets.PRODUCTION_DATABASE_URL }}
-            REDIS_URL=redis://redis:6379/0
-            ENVIRONMENT=production
             EOF
             
             # Stop existing containers
@@ -1030,6 +1043,26 @@ jobs:
               mv /tmp/.env .env
             fi
             
+            # Ensure environment-specific variables are set correctly
+            # Use sed to update existing values or append if not present
+            if grep -q "^DATABASE_URL=" .env 2>/dev/null; then
+              sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${{ secrets.STAGING_DATABASE_URL }}|" .env
+            else
+              echo "DATABASE_URL=${{ secrets.STAGING_DATABASE_URL }}" >> .env
+            fi
+            
+            if grep -q "^REDIS_URL=" .env 2>/dev/null; then
+              sed -i "s|^REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|" .env
+            else
+              echo "REDIS_URL=redis://redis:6379/0" >> .env
+            fi
+            
+            if grep -q "^ENVIRONMENT=" .env 2>/dev/null; then
+              sed -i "s|^ENVIRONMENT=.*|ENVIRONMENT=staging|" .env
+            else
+              echo "ENVIRONMENT=staging" >> .env
+            fi
+            
             # Tag the loaded image for docker-compose (if needed)
             docker tag maigie-backend:staging maigie-backend:staging || true
             
@@ -1105,13 +1138,6 @@ jobs:
             networks:
               maigie_network:
                 driver: bridge
-            EOF
-            
-            # Update .env file
-            cat > .env << EOF
-            DATABASE_URL=${{ secrets.STAGING_DATABASE_URL }}
-            REDIS_URL=redis://redis:6379/0
-            ENVIRONMENT=staging
             EOF
             
             # Stop existing containers
