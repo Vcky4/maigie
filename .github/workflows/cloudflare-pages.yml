@@ -38,7 +38,7 @@ jobs:
 
       - name: Build with Nx
         env:
-          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'http://localhost:8000' }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: npx nx build web
 
       - name: Determine project name
