@@ -24,6 +24,7 @@ import { AboutPage } from '../pages/AboutPage';
 import { ContactPage } from '../pages/ContactPage';
 import { PrivacyPage } from '../pages/PrivacyPage';
 import { TermsPage } from '../pages/TermsPage';
+import { AuthRedirectPage } from '../pages/AuthRedirectPage';
 import { CookieNotice } from '../components/layout/CookieNotice';
 import { SignupPage } from '../features/auth/pages/SignupPage';
 import { LoginPage } from '../features/auth/pages/LoginPage';
@@ -54,6 +55,7 @@ export function App() {
         <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
         {/* Protected routes */}
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/auth/mobile/callback" element={<AuthRedirectPage />} />
       </Routes>
       <CookieNotice />
     </Router>
