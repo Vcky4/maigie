@@ -18,7 +18,7 @@
 
 // Backend API base URL - defaults to localhost:8000 for development
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-const WAITLIST_ENDPOINT = `${API_BASE_URL}/api/v1/waitlist/signup`;
+const WAITLIST_ENDPOINT = `${API_BASE_URL}/waitlist/signup`;
 
 export interface WaitlistResponse {
   success: boolean;
