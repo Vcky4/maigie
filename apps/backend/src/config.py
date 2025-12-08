@@ -127,6 +127,10 @@ class Settings(BaseSettings):
     WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60  # seconds
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
+    # Brevo (formerly Sendinblue) CRM Integration
+    BREVO_API_KEY: str = ""
+    BREVO_ENABLED: bool = True
+
     model_config = SettingsConfigDict(
         # Look for .env file in the backend directory
         # __file__ is apps/backend/src/config.py

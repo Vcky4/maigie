@@ -16,81 +16,91 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-const BREVO_API_URL = 'https://api.brevo.com/v3/contacts';
-const BREVO_API_KEY = import.meta.env.VITE_BREVO_API_KEY;
-const BREVO_ENABLED = import.meta.env.VITE_BREVO_ENABLED !== 'false';
+// Backend API base URL - defaults to localhost:8000 for development
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const WAITLIST_ENDPOINT = `${API_BASE_URL}/api/v1/waitlist/signup`;
 
-export interface CreateContactResponse {
-  id?: number;
-  email?: string;
-  [key: string]: unknown;
+export interface WaitlistResponse {
+  success: boolean;
+  contact_id?: number;
+  message: string;
 }
 
-export interface CreateContactError {
-  code?: string;
+export interface WaitlistError {
+  detail?: string;
   message?: string;
 }
 
 /**
- * Create a contact in Brevo (formerly Sendinblue) CRM.
+ * Create a contact in Brevo (formerly Sendinblue) CRM via backend API.
+ * 
+ * The backend handles the actual Brevo API integration, keeping the API key secure.
  * 
  * @param email - The email address of the contact
- * @returns Promise resolving to the contact creation response or null if disabled/failed
+ * @returns Promise resolving to the waitlist signup response
  */
 export async function createContactInBrevo(
   email: string
 ): Promise<{ success: boolean; contactId?: number; error?: string }> {
-  // Check if Brevo integration is enabled and API key is configured
-  if (!BREVO_ENABLED || !BREVO_API_KEY) {
-    console.warn('Brevo integration disabled or API key not configured');
-    return { success: false, error: 'Integration not configured' };
-  }
-
   // Validate email format
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { success: false, error: 'Invalid email address' };
   }
 
   try {
-    const response = await fetch(BREVO_API_URL, {
+    const response = await fetch(WAITLIST_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'api-key': BREVO_API_KEY,
       },
       body: JSON.stringify({ email }),
     });
 
-    // Handle successful creation (201) or contact already exists (204)
-    if (response.status === 201 || response.status === 204) {
-      let contactId: number | undefined;
-      if (response.status === 201) {
-        const data = (await response.json()) as CreateContactResponse;
-        contactId = data.id;
-      }
-      console.log('Contact created successfully in Brevo:', email);
-      return { success: true, contactId };
+    // Handle successful creation
+    if (response.status === 201) {
+      const data = (await response.json()) as WaitlistResponse;
+      console.log('Contact created successfully via backend:', email);
+      return { 
+        success: true, 
+        contactId: data.contact_id 
+      };
     }
 
     // Handle errors
     if (response.status === 400) {
-      const error = (await response.json()) as CreateContactError;
-      console.error('Brevo API error (400):', error);
-      return { success: false, error: error.message || 'Invalid request' };
+      const error = (await response.json()) as WaitlistError;
+      console.error('Backend API error (400):', error);
+      return { 
+        success: false, 
+        error: error.detail || error.message || 'Invalid request' 
+      };
     }
 
-    if (response.status === 401 || response.status === 403) {
-      console.error('Brevo API authentication error:', response.status);
-      return { success: false, error: 'Authentication failed' };
+    if (response.status === 503) {
+      const error = (await response.json()) as WaitlistError;
+      console.error('Backend API error (503):', error);
+      return { 
+        success: false, 
+        error: error.detail || 'Service unavailable' 
+      };
     }
 
     // Handle other errors
     const errorText = await response.text();
-    console.error('Brevo API error:', response.status, errorText);
-    return { success: false, error: `API error: ${response.status}` };
+    let errorMessage = `API error: ${response.status}`;
+    try {
+      const error = JSON.parse(errorText) as WaitlistError;
+      errorMessage = error.detail || error.message || errorMessage;
+    } catch {
+      // If parsing fails, use the text as-is
+      errorMessage = errorText || errorMessage;
+    }
+    
+    console.error('Backend API error:', response.status, errorMessage);
+    return { success: false, error: errorMessage };
   } catch (error) {
     // Network errors or other exceptions
-    console.error('Failed to create contact in Brevo:', error);
+    console.error('Failed to create contact via backend:', error);
     const errorMessage = error instanceof Error ? error.message : 'Network error';
     return { success: false, error: errorMessage };
   }

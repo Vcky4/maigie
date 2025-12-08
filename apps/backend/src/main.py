@@ -58,6 +58,7 @@ from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
+from .routes.waitlist import router as waitlist_router
 from .utils.dependencies import (
     cleanup_db_client,
     close_redis_client,
@@ -517,6 +518,9 @@ def create_app() -> FastAPI:
 
     # Real-time communication router
     app.include_router(realtime_router)
+
+    # Waitlist router
+    app.include_router(waitlist_router)
 
     # Example/demonstration endpoints
     app.include_router(examples_router)
