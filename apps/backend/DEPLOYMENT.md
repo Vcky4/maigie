@@ -15,7 +15,7 @@ This guide explains how to deploy the Maigie backend to Contabo VPS using Docker
 3. **GitHub Repository** with Actions enabled
 4. **SSH Key** for VPS access
 
-## Initial VPS Setup
+## Initial VPS Setup 
 
 1. SSH into your Contabo VPS:
    ```bash

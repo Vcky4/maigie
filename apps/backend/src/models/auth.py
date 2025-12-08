@@ -1,7 +1,7 @@
 """
 Authentication models (Pydantic schemas).
 
-Copyright (C) 2024 Maigie Team
+Copyright (C) 2025 Maigie
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published
@@ -17,15 +17,33 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
+
+# --- Token Schemas ---
 
 
-class UserRegister(BaseModel):
+class Token(BaseModel):
+    """Token response schema."""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class TokenData(BaseModel):
+    """Schema for data embedded in the token."""
+
+    email: str | None = None  # <--- THIS WAS MISSING
+
+
+# --- Request Models (Input) ---
+
+
+class UserSignup(BaseModel):
     """User registration schema."""
 
     email: EmailStr
-    password: str
-    full_name: str | None = None
+    password: str = Field(min_length=8, description="Password must be at least 8 characters")
+    name: str = Field(..., description="Full Name")
 
 
 class UserLogin(BaseModel):
@@ -35,24 +53,52 @@ class UserLogin(BaseModel):
     password: str
 
 
-class TokenResponse(BaseModel):
-    """Token response schema."""
-
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int
+# --- Response Models (Output) ---
 
 
-class RefreshTokenRequest(BaseModel):
-    """Refresh token request schema."""
+class UserPreferencesResponse(BaseModel):
+    """Schema for user preferences."""
 
-    refresh_token: str
+    theme: str
+    language: str
+    notifications: bool
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserResponse(BaseModel):
     """User response schema."""
 
     id: str
-    email: str
-    full_name: str | None = None
+    email: EmailStr
+    name: str | None = None
+    tier: str
+    isActive: bool  # noqa: N815
+    preferences: UserPreferencesResponse | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("tier")
+    def serialize_tier(self, v, _info):
+        """Serialize Tier enum to string."""
+        if v is None:
+            return "FREE"
+        if isinstance(v, str):
+            return v
+        # Handle Prisma enum objects - they might have .value or be directly string-like
+        if hasattr(v, "value"):
+            return str(v.value)
+        if hasattr(v, "name"):
+            return str(v.name)
+        # Fallback: convert to string
+        return str(v)
+
+
+class OAuthAuthorizeResponse(BaseModel):
+    """OAuth authorization URL response schema."""
+
+    authorization_url: str
+    state: str
+    provider: str
+
+    model_config = ConfigDict(from_attributes=True)

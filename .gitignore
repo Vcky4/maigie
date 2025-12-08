@@ -31,6 +31,8 @@ npm-debug.*
 *.orig.*
 web-build/
 cache/
+android/
+ios/
 
 
 vitest.config.*.timestamp*
