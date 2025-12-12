@@ -48,6 +48,8 @@ from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
+from .routes.subscriptions import router as subscriptions_router
+from .routes.stripe_webhook import router as stripe_webhook_router
 from .routes.waitlist import router as waitlist_router
 from .utils.dependencies import (
     cleanup_db_client,
@@ -339,6 +341,9 @@ def create_app() -> FastAPI:
     # --- REGISTER ROUTERS ---
     app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
+    app.include_router(
+        subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions", tags=["Subscriptions"]
+    )
 
     app.include_router(ai_router)
     app.include_router(courses_router)
@@ -346,6 +351,9 @@ def create_app() -> FastAPI:
     app.include_router(schedule_router)
     app.include_router(resources_router)
     app.include_router(realtime_router)
+
+    # Webhook endpoints (no auth required, verified by Stripe signature)
+    app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
 
     # Waitlist router
     app.include_router(waitlist_router)

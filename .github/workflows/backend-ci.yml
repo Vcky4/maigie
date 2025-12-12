@@ -146,6 +146,12 @@ jobs:
           SMTP_PASSWORD: ${{secrets.SMTP_PASSWORD}}
           BREVO_API_KEY: ${{secrets.BREVO_API_KEY}}
           BREVO_ENABLED: ${{secrets.BREVO_ENABLED}}
+          STRIPE_SECRET_KEY: ${{secrets.STRIPE_SECRET_KEY}}
+          STRIPE_PUBLISHABLE_KEY: ${{secrets.STRIPE_PUBLISHABLE_KEY}}
+          STRIPE_WEBHOOK_SECRET: ${{secrets.STRIPE_WEBHOOK_SECRET}}
+          STRIPE_PRICE_ID_MONTHLY: ${{secrets.STRIPE_PRICE_ID_MONTHLY}}
+          STRIPE_PRICE_ID_YEARLY: ${{secrets.STRIPE_PRICE_ID_YEARLY}}
+          FRONTEND_URL: ${{secrets.FRONTEND_URL}}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -271,6 +277,12 @@ jobs:
             export SMTP_PASSWORD="${{secrets.SMTP_PASSWORD}}"
             export BREVO_API_KEY="${{secrets.BREVO_API_KEY}}"
             export BREVO_ENABLED="${{secrets.BREVO_ENABLED}}"
+            export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
+            export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
+            export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+            export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
+            export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
+            export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
             
             cd /opt/maigie/previews
             
@@ -757,6 +769,12 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           BREVO_ENABLED: ${{ secrets.BREVO_ENABLED }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_PRICE_ID_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_MONTHLY }}
+          STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -987,6 +1005,12 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           BREVO_ENABLED: ${{ secrets.BREVO_ENABLED }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_PRICE_ID_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_MONTHLY }}
+          STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1089,6 +1113,12 @@ jobs:
             export SMTP_PASSWORD="${{secrets.SMTP_PASSWORD}}"
             export BREVO_API_KEY="${{secrets.BREVO_API_KEY}}"
             export BREVO_ENABLED="${{secrets.BREVO_ENABLED}}"
+            export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
+            export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
+            export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+            export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
+            export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
+            export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
             
             cd /opt/maigie/staging
             

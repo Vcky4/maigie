@@ -131,6 +131,14 @@ class Settings(BaseSettings):
     BREVO_API_KEY: str = ""
     BREVO_ENABLED: bool = True
 
+    # --- Stripe Subscription ---
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_ID_MONTHLY: str = ""
+    STRIPE_PRICE_ID_YEARLY: str = ""
+    FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",

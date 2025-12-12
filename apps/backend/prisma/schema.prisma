@@ -32,6 +32,14 @@ model User {
   passwordResetCode        String?
   passwordResetExpiresAt   DateTime?
   
+  // Stripe subscription fields
+  stripeCustomerId      String?   @unique
+  stripeSubscriptionId  String?   @unique
+  stripeSubscriptionStatus String? // active, canceled, past_due, trialing, etc.
+  stripePriceId         String?   // The price ID they subscribed to
+  subscriptionCurrentPeriodStart DateTime?
+  subscriptionCurrentPeriodEnd   DateTime?
+  
   // Relation: One User has One set of Preferences
   // (We changed this from 'Json?' to a relation)
   preferences   UserPreferences?
