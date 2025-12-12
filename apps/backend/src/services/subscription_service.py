@@ -169,9 +169,7 @@ async def update_user_subscription_from_stripe(
 
     try:
         # Retrieve subscription with expanded items to get price information
-        subscription = stripe.Subscription.retrieve(
-            subscription_id, expand=["items.data.price"]
-        )
+        subscription = stripe.Subscription.retrieve(subscription_id, expand=["items.data.price"])
         # Handle both object and dict formats for customer_id
         customer_id = (
             subscription.customer
@@ -187,22 +185,35 @@ async def update_user_subscription_from_stripe(
             return None
 
         # Determine tier based on price ID
-        # Handle both Stripe object and dict formats
-        price_id = None
-        if hasattr(subscription, "items"):
-            # Stripe object - items might be a list or have a data attribute
-            items = subscription.items
-            if hasattr(items, "data") and items.data:
-                price_id = items.data[0].price.id
-            elif isinstance(items, list) and len(items) > 0:
-                price_id = items[0].price.id
+        # Convert Stripe object to dict for consistent access
+        if hasattr(subscription, "to_dict"):
+            sub_dict = subscription.to_dict()
         elif isinstance(subscription, dict):
-            # Dict format from webhook
-            items = subscription.get("items", {})
-            if isinstance(items, dict) and items.get("data"):
-                price_id = items["data"][0]["price"]["id"]
-            elif isinstance(items, list) and len(items) > 0:
-                price_id = items[0].get("price", {}).get("id")
+            sub_dict = subscription
+        else:
+            # Fallback: try to access attributes directly
+            sub_dict = None
+
+        price_id = None
+        try:
+            if sub_dict:
+                # Access as dict
+                items = sub_dict.get("items", {})
+                if isinstance(items, dict) and items.get("data") and len(items["data"]) > 0:
+                    price_id = items["data"][0].get("price", {}).get("id")
+                elif isinstance(items, list) and len(items) > 0:
+                    price_id = items[0].get("price", {}).get("id")
+            else:
+                # Try direct attribute access as fallback
+                items = getattr(subscription, "items", None)
+                if items:
+                    if hasattr(items, "data") and items.data and len(items.data) > 0:
+                        price_id = items.data[0].price.id
+                    elif isinstance(items, list) and len(items) > 0:
+                        price_id = items[0].price.id
+        except (AttributeError, KeyError, IndexError, TypeError) as e:
+            logger.warning(f"Could not extract price_id from subscription: {e}")
+            price_id = None
 
         tier = "FREE"
         if price_id == settings.STRIPE_PRICE_ID_MONTHLY:
@@ -210,23 +221,35 @@ async def update_user_subscription_from_stripe(
         elif price_id == settings.STRIPE_PRICE_ID_YEARLY:
             tier = "PREMIUM_YEARLY"
 
+        # Get subscription ID and status (handle both object and dict)
+        sub_id = subscription.id if hasattr(subscription, "id") else subscription.get("id")
+        sub_status = (
+            subscription.status if hasattr(subscription, "status") else subscription.get("status")
+        )
+        sub_period_start = (
+            subscription.current_period_start
+            if hasattr(subscription, "current_period_start")
+            else subscription.get("current_period_start")
+        )
+        sub_period_end = (
+            subscription.current_period_end
+            if hasattr(subscription, "current_period_end")
+            else subscription.get("current_period_end")
+        )
+
         # Update user subscription data
         updated_user = await db_client.user.update(
             where={"id": user.id},
             data={
-                "stripeSubscriptionId": subscription.id,
-                "stripeSubscriptionStatus": subscription.status,
+                "stripeSubscriptionId": sub_id,
+                "stripeSubscriptionStatus": sub_status,
                 "stripePriceId": price_id,
                 "tier": tier,
                 "subscriptionCurrentPeriodStart": (
-                    datetime.fromtimestamp(subscription.current_period_start)
-                    if subscription.current_period_start
-                    else None
+                    datetime.fromtimestamp(sub_period_start) if sub_period_start else None
                 ),
                 "subscriptionCurrentPeriodEnd": (
-                    datetime.fromtimestamp(subscription.current_period_end)
-                    if subscription.current_period_end
-                    else None
+                    datetime.fromtimestamp(sub_period_end) if sub_period_end else None
                 ),
             },
         )
