@@ -20,7 +20,7 @@ from ..dependencies import CurrentUser
 from ..services.subscription_service import (
     cancel_subscription,
     create_checkout_session,
-    create_portal_session,
+    create_portal_session as create_stripe_portal_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ async def create_portal_session(
     return_url = f"{base_url}/subscription"
 
     try:
-        session_data = await create_portal_session(
+        session_data = await create_stripe_portal_session(
             user=current_user,
             return_url=return_url,
         )
