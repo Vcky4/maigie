@@ -168,8 +168,16 @@ async def update_user_subscription_from_stripe(
         db_client = db
 
     try:
-        subscription = stripe.Subscription.retrieve(subscription_id)
-        customer_id = subscription.customer
+        # Retrieve subscription with expanded items to get price information
+        subscription = stripe.Subscription.retrieve(
+            subscription_id, expand=["items.data.price"]
+        )
+        # Handle both object and dict formats for customer_id
+        customer_id = (
+            subscription.customer
+            if hasattr(subscription, "customer")
+            else subscription.get("customer")
+        )
 
         # Find user by Stripe customer ID
         user = await db_client.user.find_unique(where={"stripeCustomerId": customer_id})
@@ -179,7 +187,23 @@ async def update_user_subscription_from_stripe(
             return None
 
         # Determine tier based on price ID
-        price_id = subscription.items.data[0].price.id if subscription.items.data else None
+        # Handle both Stripe object and dict formats
+        price_id = None
+        if hasattr(subscription, "items"):
+            # Stripe object - items might be a list or have a data attribute
+            items = subscription.items
+            if hasattr(items, "data") and items.data:
+                price_id = items.data[0].price.id
+            elif isinstance(items, list) and len(items) > 0:
+                price_id = items[0].price.id
+        elif isinstance(subscription, dict):
+            # Dict format from webhook
+            items = subscription.get("items", {})
+            if isinstance(items, dict) and items.get("data"):
+                price_id = items["data"][0]["price"]["id"]
+            elif isinstance(items, list) and len(items) > 0:
+                price_id = items[0].get("price", {}).get("id")
+
         tier = "FREE"
         if price_id == settings.STRIPE_PRICE_ID_MONTHLY:
             tier = "PREMIUM_MONTHLY"
