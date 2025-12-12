@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     EMAILS_FROM_EMAIL: str | None = None
     EMAILS_FROM_NAME: str | None = None
+    EMAIL_LOGO_URL: str = ""  # URL to logo image for email templates
 
     # --- Application Info ---
     APP_NAME: str = "Maigie API"

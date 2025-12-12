@@ -140,6 +140,7 @@ jobs:
           SENTRY_TRACES_SAMPLE_RATE: ${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}
           EMAILS_FROM_EMAIL: ${{secrets.EMAILS_FROM_EMAIL}}
           EMAILS_FROM_NAME: ${{secrets.EMAILS_FROM_NAME}}
+          EMAIL_LOGO_URL: ${{secrets.EMAIL_LOGO_URL}}
           SMTP_HOST: ${{secrets.SMTP_HOST}}
           SMTP_PORT: ${{secrets.SMTP_PORT}}
           SMTP_USER: ${{secrets.SMTP_USER}}
@@ -272,6 +273,7 @@ jobs:
             export SENTRY_TRACES_SAMPLE_RATE="${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}"
             export EMAILS_FROM_EMAIL="${{secrets.EMAILS_FROM_EMAIL}}"
             export EMAILS_FROM_NAME="${{secrets.EMAILS_FROM_NAME}}"
+            export EMAIL_LOGO_URL="${{secrets.EMAIL_LOGO_URL}}"
             export SMTP_HOST="${{secrets.SMTP_HOST}}"
             export SMTP_PORT="${{secrets.SMTP_PORT}}"
             export SMTP_USER="${{secrets.SMTP_USER}}"
@@ -1109,6 +1111,7 @@ jobs:
             export SENTRY_TRACES_SAMPLE_RATE="${{ secrets.SENTRY_TRACES_SAMPLE_RATE }}"
             export EMAILS_FROM_EMAIL="${{secrets.EMAILS_FROM_EMAIL}}"
             export EMAILS_FROM_NAME="${{secrets.EMAILS_FROM_NAME}}"
+            export EMAIL_LOGO_URL="${{secrets.EMAIL_LOGO_URL}}"
             export SMTP_HOST="${{secrets.SMTP_HOST}}"
             export SMTP_PORT="${{secrets.SMTP_PORT}}"
             export SMTP_USER="${{secrets.SMTP_USER}}"
