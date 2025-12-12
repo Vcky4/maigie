@@ -1,7 +1,7 @@
 """
 Stripe webhook handler for subscription events.
 
-This module handles Stripe webhook events to keep subscription data in sync.
+This module handles Stripe webhook events via webhook destinations to keep subscription data in sync.
 
 Copyright (C) 2025 Maigie
 """
@@ -28,7 +28,7 @@ async def stripe_webhook(
     settings: Settings = Depends(get_settings),
 ):
     """
-    Handle Stripe webhook events.
+    Handle Stripe webhook events from webhook destinations.
 
     This endpoint processes various Stripe events related to subscriptions:
     - customer.subscription.created
@@ -36,6 +36,12 @@ async def stripe_webhook(
     - customer.subscription.deleted
     - invoice.payment_succeeded
     - invoice.payment_failed
+
+    Configure webhook destinations in Stripe Dashboard:
+    1. Go to Developers → Webhook destinations
+    2. Create a destination pointing to: https://your-api-domain.com/api/v1/webhooks/stripe
+    3. Set STRIPE_WEBHOOK_DESTINATION_ID in environment variables
+    4. Copy the signing secret and set STRIPE_WEBHOOK_SECRET
 
     Args:
         request: FastAPI request object
@@ -47,6 +53,17 @@ async def stripe_webhook(
     """
     # Read raw body (must be bytes for signature verification)
     body = await request.body()
+
+    # Check for destination ID in headers (if using webhook destinations)
+    destination_id = request.headers.get("stripe-destination-id")
+    if destination_id and settings.STRIPE_WEBHOOK_DESTINATION_ID:
+        if destination_id != settings.STRIPE_WEBHOOK_DESTINATION_ID:
+            logger.warning(
+                f"Webhook destination ID mismatch: received {destination_id}, "
+                f"expected {settings.STRIPE_WEBHOOK_DESTINATION_ID}"
+            )
+        else:
+            logger.debug(f"Webhook event from destination: {destination_id}")
 
     # Verify signature and parse event
     try:

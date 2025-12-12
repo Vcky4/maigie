@@ -149,6 +149,7 @@ jobs:
           STRIPE_SECRET_KEY: ${{secrets.STRIPE_SECRET_KEY}}
           STRIPE_PUBLISHABLE_KEY: ${{secrets.STRIPE_PUBLISHABLE_KEY}}
           STRIPE_WEBHOOK_SECRET: ${{secrets.STRIPE_WEBHOOK_SECRET}}
+          STRIPE_WEBHOOK_DESTINATION_ID: ${{secrets.STRIPE_WEBHOOK_DESTINATION_ID}}
           STRIPE_PRICE_ID_MONTHLY: ${{secrets.STRIPE_PRICE_ID_MONTHLY}}
           STRIPE_PRICE_ID_YEARLY: ${{secrets.STRIPE_PRICE_ID_YEARLY}}
           FRONTEND_URL: ${{secrets.FRONTEND_URL}}
@@ -280,6 +281,7 @@ jobs:
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+            export STRIPE_WEBHOOK_DESTINATION_ID="${{ secrets.STRIPE_WEBHOOK_DESTINATION_ID }}"
             export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
             export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
@@ -1116,6 +1118,7 @@ jobs:
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
+            export STRIPE_WEBHOOK_DESTINATION_ID="${{ secrets.STRIPE_WEBHOOK_DESTINATION_ID }}"
             export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
             export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"

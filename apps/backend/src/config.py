@@ -134,7 +134,10 @@ class Settings(BaseSettings):
     # --- Stripe Subscription ---
     STRIPE_SECRET_KEY: str = ""
     STRIPE_PUBLISHABLE_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""  # Webhook signing secret (whsec_...) from webhook destination
+    STRIPE_WEBHOOK_DESTINATION_ID: str = (
+        ""  # Webhook destination ID (required when using destinations)
+    )
     STRIPE_PRICE_ID_MONTHLY: str = ""
     STRIPE_PRICE_ID_YEARLY: str = ""
     FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
