@@ -102,12 +102,52 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
         user.stripeSubscriptionId, expand=["items.data.price"]
     )
 
+    # Check if subscription is active (not canceled, past_due, etc.)
+    subscription_status = (
+        subscription.status if hasattr(subscription, "status") else subscription.get("status")
+    )
+    if subscription_status not in ["active", "trialing"]:
+        raise ValueError(
+            f"Cannot modify subscription with status: {subscription_status}. "
+            "Subscription must be active or trialing."
+        )
+
     # Get current price ID
+    # Handle both object and dict formats for items (same pattern as update_user_subscription_from_stripe)
     current_price_id = None
     subscription_item_id = None
-    if subscription.items and subscription.items.data:
-        current_price_id = subscription.items.data[0].price.id
-        subscription_item_id = subscription.items.data[0].id
+
+    try:
+        # Convert Stripe object to dict for consistent access
+        if hasattr(subscription, "to_dict"):
+            sub_dict = subscription.to_dict()
+        elif isinstance(subscription, dict):
+            sub_dict = subscription
+        else:
+            sub_dict = None
+
+        if sub_dict:
+            # Access as dict
+            items = sub_dict.get("items", {})
+            if isinstance(items, dict) and items.get("data") and len(items["data"]) > 0:
+                current_price_id = items["data"][0].get("price", {}).get("id")
+                subscription_item_id = items["data"][0].get("id")
+            elif isinstance(items, list) and len(items) > 0:
+                current_price_id = items[0].get("price", {}).get("id")
+                subscription_item_id = items[0].get("id")
+        else:
+            # Try direct attribute access as fallback
+            items = getattr(subscription, "items", None)
+            if items:
+                if hasattr(items, "data") and items.data and len(items.data) > 0:
+                    current_price_id = items.data[0].price.id
+                    subscription_item_id = items.data[0].id
+                elif isinstance(items, list) and len(items) > 0:
+                    current_price_id = items[0].price.id
+                    subscription_item_id = items[0].id
+    except (AttributeError, KeyError, IndexError, TypeError) as e:
+        logger.warning(f"Could not extract subscription items: {e}")
+        raise ValueError(f"Could not retrieve current subscription details: {e}")
 
     if not current_price_id or not subscription_item_id:
         raise ValueError("Could not retrieve current subscription details")
@@ -183,10 +223,19 @@ async def create_checkout_session(
     customer_id = await get_or_create_stripe_customer(user)
 
     # Check if user already has an active subscription
+    # First check database, then verify with Stripe
     if user.stripeSubscriptionId:
+        logger.info(
+            f"User {user.id} has subscription ID {user.stripeSubscriptionId} in database, "
+            f"attempting to modify instead of creating new checkout"
+        )
         # User has existing subscription - modify it instead
         try:
             result = await modify_existing_subscription(user, price_id)
+            logger.info(
+                f"Successfully modified subscription for user {user.id}: "
+                f"upgrade={result['is_upgrade']}, subscription_id={result['subscription_id']}"
+            )
             # Return a dict that looks like a checkout session for compatibility
             # The frontend will handle this differently
             return {
@@ -198,11 +247,62 @@ async def create_checkout_session(
             }
         except ValueError as e:
             # If same plan or other validation error, raise it
+            logger.warning(f"Cannot modify subscription for user {user.id}: {e}")
             raise
+        except stripe.error.StripeError as e:
+            # Stripe-specific errors should be raised, not silently ignored
+            logger.error(
+                f"Stripe error modifying subscription for user {user.id}: {e}",
+                exc_info=True,
+            )
+            raise ValueError(f"Failed to modify subscription: {str(e)}")
         except Exception as e:
-            logger.error(f"Error modifying subscription: {e}")
-            # Fall through to create new checkout session as fallback
-            pass
+            # Other unexpected errors - log and raise instead of silently falling through
+            logger.error(
+                f"Unexpected error modifying subscription for user {user.id}: {e}",
+                exc_info=True,
+            )
+            raise ValueError(f"Failed to modify subscription: {str(e)}")
+    else:
+        # Also check Stripe directly in case database is out of sync
+        try:
+            # List active subscriptions for this customer
+            subscriptions = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
+            if subscriptions.data and len(subscriptions.data) > 0:
+                active_subscription = subscriptions.data[0]
+                logger.info(
+                    f"Found active Stripe subscription {active_subscription.id} for customer {customer_id}, "
+                    f"but user {user.id} doesn't have it in database. Updating database and modifying subscription."
+                )
+                # Update user record with subscription ID
+                await db.user.update(
+                    where={"id": user.id},
+                    data={"stripeSubscriptionId": active_subscription.id},
+                )
+                # Refresh user object
+                user.stripeSubscriptionId = active_subscription.id
+                # Now try to modify
+                result = await modify_existing_subscription(user, price_id)
+                logger.info(
+                    f"Successfully modified subscription for user {user.id} after syncing: "
+                    f"upgrade={result['is_upgrade']}, subscription_id={result['subscription_id']}"
+                )
+                return {
+                    "session_id": result["subscription_id"],
+                    "url": None,
+                    "modified": True,
+                    "is_upgrade": result["is_upgrade"],
+                    "current_period_end": result["current_period_end"].isoformat(),
+                }
+        except stripe.error.StripeError as e:
+            logger.warning(
+                f"Could not check Stripe for existing subscriptions for customer {customer_id}: {e}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Error checking Stripe subscriptions for user {user.id}: {e}",
+                exc_info=True,
+            )
 
     # No existing subscription or modification failed - create new checkout session
     session = stripe.checkout.Session.create(
