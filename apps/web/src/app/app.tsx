@@ -33,6 +33,10 @@ import { ForgotPasswordPage } from '../features/auth/pages/ForgotPasswordPage';
 import { ResetPasswordPage } from '../features/auth/pages/ResetPasswordPage';
 import { OAuthCallbackPage } from '../features/auth/pages/OAuthCallbackPage';
 import { DashboardPage } from '../pages/DashboardPage';
+import { SubscriptionPage } from '../pages/SubscriptionPage';
+import { SubscriptionSuccessPage } from '../pages/SubscriptionSuccessPage';
+import { SubscriptionCancelPage } from '../pages/SubscriptionCancelPage';
+import { DashboardLayout } from '../components/layout/DashboardLayout';
 import { RedirectIfAuthenticated } from '../components/auth/RedirectIfAuthenticated';
 import '../styles.css';
 
@@ -53,8 +57,13 @@ export function App() {
         <Route path="/verify-otp" element={<RedirectIfAuthenticated><OTPVerificationPage /></RedirectIfAuthenticated>} />
         <Route path="/forgot-password" element={<RedirectIfAuthenticated><ForgotPasswordPage /></RedirectIfAuthenticated>} />
         <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
+        
         {/* Protected routes */}
-        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<DashboardLayout><DashboardPage /></DashboardLayout>} />
+        <Route path="/subscription" element={<DashboardLayout><SubscriptionPage /></DashboardLayout>} />
+        <Route path="/subscription/success" element={<DashboardLayout><SubscriptionSuccessPage /></DashboardLayout>} />
+        <Route path="/subscription/cancel" element={<DashboardLayout><SubscriptionCancelPage /></DashboardLayout>} />
+        
         <Route path="/auth/mobile/callback" element={<AuthRedirectPage />} />
       </Routes>
       <CookieNotice />

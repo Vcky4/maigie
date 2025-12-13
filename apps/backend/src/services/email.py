@@ -125,7 +125,11 @@ async def send_verification_email(email: EmailStr, otp: str):
         )
         return
 
-    template_data = {"code": otp, "app_name": "Maigie"}
+    template_data = {
+        "code": otp,
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
 
     # Render templates
     html_template = jinja_env.get_template("verification.html")
@@ -166,7 +170,12 @@ async def send_welcome_email(email: EmailStr, name: str):
         return
 
     login_url = f"{settings.FRONTEND_BASE_URL}/login"
-    template_data = {"name": name, "login_url": login_url, "app_name": "Maigie"}
+    template_data = {
+        "name": name,
+        "login_url": login_url,
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
 
     html_template = jinja_env.get_template("welcome.html")
     try:
@@ -205,7 +214,12 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
         logger.warning(f"SMTP not configured. Mocking reset email to {email} with OTP: {otp}")
         return
 
-    template_data = {"code": otp, "name": name, "app_name": "Maigie"}
+    template_data = {
+        "code": otp,
+        "name": name,
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
 
     html_template = jinja_env.get_template("reset_password.html")
     try:

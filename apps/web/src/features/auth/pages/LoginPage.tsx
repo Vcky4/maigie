@@ -3,7 +3,7 @@
  */
 
 import { useState, FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AuthForm } from '../components/AuthForm';
 import { AuthLogo } from '../components/AuthLogo';
 import { AuthInput } from '../components/AuthInput';
@@ -16,6 +16,8 @@ import { useGoogleOAuth } from '../hooks/useGoogleOAuth';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const redirect = searchParams.get('redirect');
   const loginMutation = useLogin();
   const { handleGoogleAuth, isLoading: isGoogleLoading } = useGoogleOAuth();
 
@@ -55,6 +57,8 @@ export function LoginPage() {
         email: formData.email,
         password: formData.password,
       });
+      // Redirect to dashboard or the specified redirect URL
+      navigate(redirect || '/dashboard');
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'response' in error) {
         const errorResponse = error as { 

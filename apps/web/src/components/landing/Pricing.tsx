@@ -16,16 +16,20 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Check } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../../features/auth/store/authStore';
+import { subscriptionApi } from '../../features/subscription/services/subscriptionApi';
 
 const plans = [
   {
     name: "Free",
     price: "0",
     period: "/mo",
+    id: "free",
     description: "Essential tools for casual learners.",
     features: [
       "50 AI chat messages/month",
@@ -41,6 +45,7 @@ const plans = [
     name: "Premium Monthly",
     price: "*.99",
     period: "/mo",
+    id: "monthly",
     description: "Unlimited access for serious students.",
     features: [
       "Unlimited AI chat",
@@ -56,6 +61,7 @@ const plans = [
     name: "Premium Yearly",
     price: "*.99",
     period: "/mo",
+    id: "yearly",
     description: "Best value for long-term learning.",
     features: [
       "All Premium features",
@@ -70,6 +76,36 @@ const plans = [
 ];
 
 export function Pricing() {
+  const navigate = useNavigate();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+
+  const handlePlanClick = async (plan: typeof plans[0]) => {
+    if (plan.id === 'free') {
+      navigate('/signup');
+      return;
+    }
+
+    if (!isAuthenticated) {
+      // Redirect to login with return path to subscription page
+      navigate(`/login?redirect=/subscription`);
+      return;
+    }
+
+    // Use checkout session if authenticated
+    try {
+      setLoadingPlan(plan.id);
+      const response = await subscriptionApi.createCheckoutSession(plan.id as 'monthly' | 'yearly');
+      window.location.href = response.url;
+    } catch (error) {
+      console.error('Failed to start checkout:', error);
+      // Fallback to subscription page on error
+      navigate('/subscription');
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
   return (
     <section id="pricing" className="py-24 bg-gray-50 relative overflow-hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
@@ -121,13 +157,17 @@ export function Pricing() {
                 ))}
               </ul>
 
-              <button className={cn(
-                "w-full py-3 px-6 rounded-xl font-semibold transition-all duration-200",
-                plan.popular 
-                  ? "bg-primary text-white hover:bg-primary/90 shadow-md hover:shadow-lg" 
-                  : "bg-gray-50 text-gray-900 hover:bg-gray-100 border border-gray-200"
-              )}>
-                {plan.cta}
+              <button 
+                onClick={() => handlePlanClick(plan)}
+                disabled={loadingPlan === plan.id}
+                className={cn(
+                  "w-full py-3 px-6 rounded-xl font-semibold transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed",
+                  plan.popular 
+                    ? "bg-primary text-white hover:bg-primary/90 shadow-md hover:shadow-lg" 
+                    : "bg-gray-50 text-gray-900 hover:bg-gray-100 border border-gray-200"
+                )}
+              >
+                {loadingPlan === plan.id ? 'Loading...' : plan.cta}
               </button>
             </motion.div>
           ))}

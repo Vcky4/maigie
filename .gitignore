@@ -9,6 +9,7 @@ node_modules
 venv/
 env/
 .env
+.env.local
 *.pyc
 __pycache__/
 *.py[cod]
