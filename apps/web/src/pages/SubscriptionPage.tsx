@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../features/auth/store/authStore';
 import { subscriptionApi } from '../features/subscription/services/subscriptionApi';
-import { Check, CreditCard, ExternalLink, AlertTriangle } from 'lucide-react';
+import { Check, CreditCard, AlertTriangle } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function SubscriptionPage() {
@@ -97,10 +97,11 @@ export function SubscriptionPage() {
             <span className="text-3xl font-extrabold text-gray-900">$*.99</span>
             <span className="text-gray-500 ml-1">/mo</span>
           </div>
+          <p className="mt-1 text-xs text-primary font-medium">Billed monthly</p>
           <p className="mt-4 text-sm text-gray-500">Flexible monthly billing for consistent learners.</p>
           
           <ul className="mt-6 space-y-3">
-            {['Unlimited AI chat', 'Unlimited courses', 'Priority support'].map((feature) => (
+            {['Unlimited AI chat', 'Unlimited courses', 'Priority support', 'Premium resources'].map((feature) => (
               <li key={feature} className="flex items-start text-sm text-gray-600">
                 <Check className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" />
                 {feature}

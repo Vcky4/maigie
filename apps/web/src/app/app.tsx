@@ -33,11 +33,12 @@ import { ForgotPasswordPage } from '../features/auth/pages/ForgotPasswordPage';
 import { ResetPasswordPage } from '../features/auth/pages/ResetPasswordPage';
 import { OAuthCallbackPage } from '../features/auth/pages/OAuthCallbackPage';
 import { DashboardPage } from '../pages/DashboardPage';
-import { SubscriptionPage } from '../pages/SubscriptionPage';
+import { SettingsPage } from '../pages/SettingsPage';
 import { SubscriptionSuccessPage } from '../pages/SubscriptionSuccessPage';
 import { SubscriptionCancelPage } from '../pages/SubscriptionCancelPage';
 import { DashboardLayout } from '../components/layout/DashboardLayout';
 import { RedirectIfAuthenticated } from '../components/auth/RedirectIfAuthenticated';
+import { ProtectedRoute } from '../components/auth/ProtectedRoute';
 import '../styles.css';
 
 export function App() {
@@ -59,10 +60,11 @@ export function App() {
         <Route path="/reset-password" element={<RedirectIfAuthenticated><ResetPasswordPage /></RedirectIfAuthenticated>} />
         
         {/* Protected routes */}
-        <Route path="/dashboard" element={<DashboardLayout><DashboardPage /></DashboardLayout>} />
-        <Route path="/subscription" element={<DashboardLayout><SubscriptionPage /></DashboardLayout>} />
-        <Route path="/subscription/success" element={<DashboardLayout><SubscriptionSuccessPage /></DashboardLayout>} />
-        <Route path="/subscription/cancel" element={<DashboardLayout><SubscriptionCancelPage /></DashboardLayout>} />
+        <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout><DashboardPage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/settings" element={<ProtectedRoute><DashboardLayout><SettingsPage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/subscription" element={<ProtectedRoute><DashboardLayout><SettingsPage /></DashboardLayout></ProtectedRoute>} /> {/* Legacy route redirect */}
+        <Route path="/subscription/success" element={<ProtectedRoute><DashboardLayout><SubscriptionSuccessPage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/subscription/cancel" element={<ProtectedRoute><DashboardLayout><SubscriptionCancelPage /></DashboardLayout></ProtectedRoute>} />
         
         <Route path="/auth/mobile/callback" element={<AuthRedirectPage />} />
       </Routes>

@@ -53,6 +53,22 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'auth-storage',
       storage: createJSONStorage(() => localStorage),
+      onRehydrateStorage: () => (state) => {
+        // If state is hydrated but empty, check if we have a token in localStorage
+        // and try to recover the session state partially
+        const token = localStorage.getItem('access_token');
+        if (token && (!state || !state.accessToken)) {
+          console.log('Recovering session from localStorage token');
+          // We can't set state directly here easily without using set inside, 
+          // but state is the hydrated state.
+          // In newer Zustand, we can just let useCurrentUser handle the fetching
+          // if we ensure accessToken is populated.
+          
+          // However, since we can't easily modify state here, 
+          // we rely on the component using useCurrentUser to fetch the user
+          // if it sees the token in localStorage.
+        }
+      },
       partialize: (state) => ({
         user: state.user,
         accessToken: state.accessToken,

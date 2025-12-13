@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../features/auth/store/authStore';
 import { 
   LayoutDashboard, 
-  CreditCard, 
+  Settings, 
   LogOut, 
   Menu, 
   X,
@@ -31,24 +31,13 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const navItems = [
     { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
-    { name: 'Subscription', icon: CreditCard, path: '/subscription' },
+    { name: 'Settings', icon: Settings, path: '/settings' },
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* Mobile Sidebar Overlay */}
-      {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-          onClick={() => setIsSidebarOpen(false)}
-        />
-      )}
-
-      {/* Sidebar */}
-      <aside className={cn(
-        "fixed lg:static inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 transform transition-transform duration-200 ease-in-out lg:transform-none flex flex-col",
-        isSidebarOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
+    <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row">
+      {/* Desktop Sidebar */}
+      <aside className="hidden lg:flex fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-gray-200 flex-col">
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b border-gray-200">
           <Link to="/dashboard" className="flex items-center gap-2">
@@ -57,12 +46,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             </div>
             <span className="text-xl font-bold text-gray-900">Maigie</span>
           </Link>
-          <button 
-            className="ml-auto lg:hidden p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
-            onClick={() => setIsSidebarOpen(false)}
-          >
-            <X className="w-5 h-5" />
-          </button>
         </div>
 
         {/* Navigation */}
@@ -81,7 +64,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                     ? "bg-primary/10 text-primary" 
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
-                onClick={() => setIsSidebarOpen(false)}
               >
                 <Icon className="w-5 h-5" />
                 {item.name}
@@ -116,24 +98,53 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 lg:ml-64 pb-16 lg:pb-0">
         {/* Mobile Header */}
         <header className="h-16 bg-white border-b border-gray-200 lg:hidden flex items-center px-4 sticky top-0 z-30">
-          <button
-            onClick={toggleSidebar}
-            className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          <span className="ml-4 text-lg font-semibold text-gray-900">
+          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center mr-3">
+            <span className="text-white font-bold text-lg">M</span>
+          </div>
+          <span className="text-lg font-semibold text-gray-900">
             {navItems.find(item => item.path === location.pathname)?.name || 'Dashboard'}
           </span>
+          <button
+            onClick={handleLogout}
+            className="ml-auto p-2 text-gray-500 hover:bg-gray-100 rounded-lg"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8">
           {children}
         </main>
+
+        {/* Mobile Bottom Navigation */}
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 lg:hidden z-50 px-4 py-2">
+          <div className="flex justify-around items-center">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+              
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={cn(
+                    "flex flex-col items-center gap-1 p-2 rounded-lg transition-colors min-w-[64px]",
+                    isActive 
+                      ? "text-primary" 
+                      : "text-gray-500 hover:text-gray-900"
+                  )}
+                >
+                  <Icon className={cn("w-6 h-6", isActive && "fill-current/10")} />
+                  <span className="text-xs font-medium">{item.name}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
       </div>
     </div>
   );
