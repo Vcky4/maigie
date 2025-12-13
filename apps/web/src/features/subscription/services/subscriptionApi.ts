@@ -23,7 +23,10 @@ api.interceptors.request.use((config) => {
 
 export interface CheckoutSessionResponse {
   session_id: string;
-  url: string;
+  url: string | null;
+  modified?: boolean;
+  is_upgrade?: boolean | null;
+  current_period_end?: string | null;
 }
 
 export interface PortalSessionResponse {

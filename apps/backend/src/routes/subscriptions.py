@@ -38,7 +38,10 @@ class CheckoutSessionResponse(BaseModel):
     """Response model for checkout session."""
 
     session_id: str
-    url: str
+    url: str | None = None
+    modified: bool = False
+    is_upgrade: bool | None = None
+    current_period_end: str | None = None
 
 
 class PortalSessionResponse(BaseModel):
@@ -98,8 +101,24 @@ async def create_subscription_checkout(
             cancel_url=cancel_url,
         )
 
+        # If subscription was modified directly (not through checkout)
+        if session_data.get("modified"):
+            return CheckoutSessionResponse(
+                session_id=session_data["session_id"],
+                url=None,
+                modified=True,
+                is_upgrade=session_data.get("is_upgrade"),
+                current_period_end=session_data.get("current_period_end"),
+            )
+
         return CheckoutSessionResponse(**session_data)
 
+    except ValueError as e:
+        # Handle validation errors (e.g., already on same plan)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except Exception as e:
         logger.error(f"Error creating checkout session: {e}")
         raise HTTPException(

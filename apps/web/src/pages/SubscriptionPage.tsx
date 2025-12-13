@@ -1,22 +1,50 @@
 import React, { useState } from 'react';
 import { useAuthStore } from '../features/auth/store/authStore';
 import { subscriptionApi } from '../features/subscription/services/subscriptionApi';
-import { Check, CreditCard, AlertTriangle } from 'lucide-react';
+import { Check, CreditCard, AlertTriangle, CheckCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export function SubscriptionPage() {
   const user = useAuthStore((state) => state.user);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const handleSubscribe = async (period: 'monthly' | 'yearly') => {
     setIsLoading(true);
     setError(null);
+    setSuccessMessage(null);
     try {
       const response = await subscriptionApi.createCheckoutSession(period);
-      window.location.href = response.url;
-    } catch (err) {
-      setError('Failed to start checkout. Please try again.');
+      
+      // If subscription was modified directly (upgrade/downgrade)
+      if (response.modified && !response.url) {
+        const isUpgrade = response.is_upgrade;
+        const periodEnd = response.current_period_end 
+          ? new Date(response.current_period_end).toLocaleDateString()
+          : 'the end of your billing period';
+        
+        if (isUpgrade) {
+          setSuccessMessage(
+            `Your subscription has been upgraded! You've been charged a prorated amount, and your new billing cycle starts on ${periodEnd}.`
+          );
+        } else {
+          setSuccessMessage(
+            `Your subscription will be downgraded on ${periodEnd}. You'll be charged the new rate at that time.`
+          );
+        }
+        
+        // Refresh user data to show updated tier
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else if (response.url) {
+        // New subscription - redirect to Stripe checkout
+        window.location.href = response.url;
+      }
+    } catch (err: any) {
+      const errorMessage = err?.response?.data?.detail || 'Failed to process subscription. Please try again.';
+      setError(errorMessage);
       console.error(err);
     } finally {
       setIsLoading(false);
@@ -52,6 +80,13 @@ export function SubscriptionPage() {
         <div className="bg-red-50 text-red-600 p-4 rounded-lg flex items-center gap-2">
           <AlertTriangle className="w-5 h-5" />
           {error}
+        </div>
+      )}
+
+      {successMessage && (
+        <div className="bg-green-50 text-green-700 p-4 rounded-lg flex items-center gap-2">
+          <CheckCircle className="w-5 h-5" />
+          {successMessage}
         </div>
       )}
 
@@ -116,10 +151,16 @@ export function SubscriptionPage() {
               "mt-8 w-full font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               user?.tier === 'PREMIUM_MONTHLY'
                 ? "bg-gray-100 text-gray-500 border border-gray-200"
+                : user?.tier === 'PREMIUM_YEARLY'
+                ? "bg-white border-2 border-orange-500 text-orange-600 hover:bg-orange-50"
                 : "bg-white border-2 border-primary text-primary hover:bg-primary/5"
             )}
           >
-            {user?.tier === 'PREMIUM_MONTHLY' ? 'Current Plan' : 'Subscribe Monthly'}
+            {user?.tier === 'PREMIUM_MONTHLY' 
+              ? 'Current Plan' 
+              : user?.tier === 'PREMIUM_YEARLY'
+              ? 'Downgrade to Monthly'
+              : 'Subscribe Monthly'}
           </button>
         </div>
 
@@ -152,10 +193,16 @@ export function SubscriptionPage() {
               "mt-8 w-full font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
               user?.tier === 'PREMIUM_YEARLY'
                 ? "bg-gray-100 text-gray-500 border border-gray-200"
+                : user?.tier === 'PREMIUM_MONTHLY'
+                ? "bg-primary text-white hover:bg-primary/90"
                 : "bg-primary text-white hover:bg-primary/90"
             )}
           >
-            {user?.tier === 'PREMIUM_YEARLY' ? 'Current Plan' : 'Subscribe Yearly'}
+            {user?.tier === 'PREMIUM_YEARLY' 
+              ? 'Current Plan' 
+              : user?.tier === 'PREMIUM_MONTHLY'
+              ? 'Upgrade to Yearly'
+              : 'Subscribe Yearly'}
           </button>
         </div>
       </div>

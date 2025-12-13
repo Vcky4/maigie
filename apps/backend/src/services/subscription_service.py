@@ -56,11 +56,120 @@ async def get_or_create_stripe_customer(user: User) -> str:
     return customer.id
 
 
+def _is_upgrade(current_tier: str, new_price_id: str) -> bool:
+    """
+    Determine if changing from current tier to new price is an upgrade.
+
+    Args:
+        current_tier: Current tier (FREE, PREMIUM_MONTHLY, PREMIUM_YEARLY)
+        new_price_id: New Stripe price ID
+
+    Returns:
+        True if upgrade, False if downgrade
+    """
+    # Define tier hierarchy: FREE < PREMIUM_MONTHLY < PREMIUM_YEARLY
+    tier_order = {"FREE": 0, "PREMIUM_MONTHLY": 1, "PREMIUM_YEARLY": 2}
+
+    current_order = tier_order.get(current_tier, 0)
+
+    new_tier = "FREE"
+    if new_price_id == settings.STRIPE_PRICE_ID_MONTHLY:
+        new_tier = "PREMIUM_MONTHLY"
+    elif new_price_id == settings.STRIPE_PRICE_ID_YEARLY:
+        new_tier = "PREMIUM_YEARLY"
+
+    new_order = tier_order.get(new_tier, 0)
+
+    return new_order > current_order
+
+
+async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
+    """
+    Modify an existing subscription (upgrade or downgrade).
+
+    Args:
+        user: User model instance with active subscription
+        new_price_id: New Stripe price ID to switch to
+
+    Returns:
+        Updated subscription information
+    """
+    if not user.stripeSubscriptionId:
+        raise ValueError("User does not have an active subscription")
+
+    # Retrieve current subscription
+    subscription = stripe.Subscription.retrieve(
+        user.stripeSubscriptionId, expand=["items.data.price"]
+    )
+
+    # Get current price ID
+    current_price_id = None
+    subscription_item_id = None
+    if subscription.items and subscription.items.data:
+        current_price_id = subscription.items.data[0].price.id
+        subscription_item_id = subscription.items.data[0].id
+
+    if not current_price_id or not subscription_item_id:
+        raise ValueError("Could not retrieve current subscription details")
+
+    # Check if it's the same price
+    if current_price_id == new_price_id:
+        raise ValueError("User is already subscribed to this plan")
+
+    # Determine if upgrade or downgrade
+    current_tier = str(user.tier) if user.tier else "FREE"
+    is_upgrade = _is_upgrade(current_tier, new_price_id)
+
+    # Prepare subscription modification parameters
+    current_period_end = subscription.current_period_end
+
+    if is_upgrade:
+        # Upgrade: Charge now (prorated), but billing cycle starts at end of current period
+        modified_subscription = stripe.Subscription.modify(
+            user.stripeSubscriptionId,
+            items=[
+                {
+                    "id": subscription_item_id,
+                    "price": new_price_id,
+                }
+            ],
+            proration_behavior="create_prorations",  # Charge prorated amount now
+            billing_cycle_anchor=current_period_end,  # New billing cycle starts at period end
+            metadata={"user_id": user.id, "upgrade": "true"},
+        )
+    else:
+        # Downgrade: Charge at next billing date (end of current period), changes take effect then
+        modified_subscription = stripe.Subscription.modify(
+            user.stripeSubscriptionId,
+            items=[
+                {
+                    "id": subscription_item_id,
+                    "price": new_price_id,
+                }
+            ],
+            proration_behavior="none",  # Don't charge until next billing date
+            billing_cycle_anchor=current_period_end,  # Changes take effect at period end
+            metadata={"user_id": user.id, "downgrade": "true"},
+        )
+
+    # Update user subscription data
+    await update_user_subscription_from_stripe(modified_subscription.id)
+
+    return {
+        "subscription_id": modified_subscription.id,
+        "status": modified_subscription.status,
+        "is_upgrade": is_upgrade,
+        "current_period_end": datetime.fromtimestamp(modified_subscription.current_period_end),
+    }
+
+
 async def create_checkout_session(
     user: User, price_id: str, success_url: str, cancel_url: str
 ) -> dict:
     """
     Create a Stripe checkout session for subscription.
+
+    If user already has a subscription, this will modify it instead of creating a new one.
 
     Args:
         user: User model instance
@@ -69,10 +178,33 @@ async def create_checkout_session(
         cancel_url: URL to redirect if user cancels
 
     Returns:
-        Checkout session object
+        Checkout session object or modification result
     """
     customer_id = await get_or_create_stripe_customer(user)
 
+    # Check if user already has an active subscription
+    if user.stripeSubscriptionId:
+        # User has existing subscription - modify it instead
+        try:
+            result = await modify_existing_subscription(user, price_id)
+            # Return a dict that looks like a checkout session for compatibility
+            # The frontend will handle this differently
+            return {
+                "session_id": result["subscription_id"],
+                "url": None,  # No redirect needed, subscription already modified
+                "modified": True,
+                "is_upgrade": result["is_upgrade"],
+                "current_period_end": result["current_period_end"].isoformat(),
+            }
+        except ValueError as e:
+            # If same plan or other validation error, raise it
+            raise
+        except Exception as e:
+            logger.error(f"Error modifying subscription: {e}")
+            # Fall through to create new checkout session as fallback
+            pass
+
+    # No existing subscription or modification failed - create new checkout session
     session = stripe.checkout.Session.create(
         customer=customer_id,
         payment_method_types=["card"],
@@ -94,6 +226,7 @@ async def create_checkout_session(
     return {
         "session_id": session.id,
         "url": session.url,
+        "modified": False,
     }
 
 
