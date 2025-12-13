@@ -88,68 +88,76 @@ export function SubscriptionPage() {
         </div>
       </div>
 
-      {/* Plans Selection (only show if not premium) */}
-      {!isPremium && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Monthly Plan */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-shadow">
-            <h3 className="text-lg font-bold text-gray-900">Premium Monthly</h3>
-            <div className="mt-2 flex items-baseline">
-              <span className="text-3xl font-extrabold text-gray-900">$*.99</span>
-              <span className="text-gray-500 ml-1">/mo</span>
-            </div>
-            <p className="mt-4 text-sm text-gray-500">Flexible monthly billing for consistent learners.</p>
-            
-            <ul className="mt-6 space-y-3">
-              {['Unlimited AI chat', 'Unlimited courses', 'Priority support'].map((feature) => (
-                <li key={feature} className="flex items-start text-sm text-gray-600">
-                  <Check className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-
-            <button
-              onClick={() => handleSubscribe('monthly')}
-              disabled={isLoading}
-              className="mt-8 w-full bg-white border-2 border-primary text-primary hover:bg-primary/5 font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50"
-            >
-              Subscribe Monthly
-            </button>
+      {/* Plans Selection */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Monthly Plan */}
+        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm hover:shadow-md transition-shadow">
+          <h3 className="text-lg font-bold text-gray-900">Premium Monthly</h3>
+          <div className="mt-2 flex items-baseline">
+            <span className="text-3xl font-extrabold text-gray-900">$*.99</span>
+            <span className="text-gray-500 ml-1">/mo</span>
           </div>
+          <p className="mt-4 text-sm text-gray-500">Flexible monthly billing for consistent learners.</p>
+          
+          <ul className="mt-6 space-y-3">
+            {['Unlimited AI chat', 'Unlimited courses', 'Priority support'].map((feature) => (
+              <li key={feature} className="flex items-start text-sm text-gray-600">
+                <Check className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" />
+                {feature}
+              </li>
+            ))}
+          </ul>
 
-          {/* Yearly Plan */}
-          <div className="bg-white rounded-xl border border-primary ring-1 ring-primary p-6 shadow-md relative">
-            <div className="absolute top-0 right-0 bg-primary text-white text-xs font-bold px-3 py-1 rounded-bl-lg rounded-tr-lg">
-              BEST VALUE
-            </div>
-            <h3 className="text-lg font-bold text-gray-900">Premium Yearly</h3>
-            <div className="mt-2 flex items-baseline">
-              <span className="text-3xl font-extrabold text-gray-900">$*.99</span>
-              <span className="text-gray-500 ml-1">/mo</span>
-            </div>
-            <p className="mt-1 text-xs text-primary font-medium">Billed yearly (Save 20%)</p>
-            <p className="mt-4 text-sm text-gray-500">Commit to your learning journey and save.</p>
-            
-            <ul className="mt-6 space-y-3">
-              {['All Monthly features', 'Offline mode', 'Detailed analytics', 'Early access'].map((feature) => (
-                <li key={feature} className="flex items-start text-sm text-gray-600">
-                  <Check className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-
-            <button
-              onClick={() => handleSubscribe('yearly')}
-              disabled={isLoading}
-              className="mt-8 w-full bg-primary text-white hover:bg-primary/90 font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50"
-            >
-              Subscribe Yearly
-            </button>
-          </div>
+          <button
+            onClick={() => handleSubscribe('monthly')}
+            disabled={isLoading || user?.tier === 'PREMIUM_MONTHLY'}
+            className={cn(
+              "mt-8 w-full font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+              user?.tier === 'PREMIUM_MONTHLY'
+                ? "bg-gray-100 text-gray-500 border border-gray-200"
+                : "bg-white border-2 border-primary text-primary hover:bg-primary/5"
+            )}
+          >
+            {user?.tier === 'PREMIUM_MONTHLY' ? 'Current Plan' : 'Subscribe Monthly'}
+          </button>
         </div>
-      )}
+
+        {/* Yearly Plan */}
+        <div className="bg-white rounded-xl border border-primary ring-1 ring-primary p-6 shadow-md relative">
+          <div className="absolute top-0 right-0 bg-primary text-white text-xs font-bold px-3 py-1 rounded-bl-lg rounded-tr-lg">
+            BEST VALUE
+          </div>
+          <h3 className="text-lg font-bold text-gray-900">Premium Yearly</h3>
+          <div className="mt-2 flex items-baseline">
+            <span className="text-3xl font-extrabold text-gray-900">$*.99</span>
+            <span className="text-gray-500 ml-1">/mo</span>
+          </div>
+          <p className="mt-1 text-xs text-primary font-medium">Billed yearly (Save 20%)</p>
+          <p className="mt-4 text-sm text-gray-500">Commit to your learning journey and save.</p>
+          
+          <ul className="mt-6 space-y-3">
+            {['All Monthly features', 'Offline mode', 'Detailed analytics', 'Early access'].map((feature) => (
+              <li key={feature} className="flex items-start text-sm text-gray-600">
+                <Check className="w-4 h-4 text-green-500 mr-2 flex-shrink-0 mt-0.5" />
+                {feature}
+              </li>
+            ))}
+          </ul>
+
+          <button
+            onClick={() => handleSubscribe('yearly')}
+            disabled={isLoading || user?.tier === 'PREMIUM_YEARLY'}
+            className={cn(
+              "mt-8 w-full font-semibold py-2.5 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
+              user?.tier === 'PREMIUM_YEARLY'
+                ? "bg-gray-100 text-gray-500 border border-gray-200"
+                : "bg-primary text-white hover:bg-primary/90"
+            )}
+          >
+            {user?.tier === 'PREMIUM_YEARLY' ? 'Current Plan' : 'Subscribe Yearly'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
