@@ -248,3 +248,51 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
     except Exception as e:
         logger.error(f"Failed to send reset email: {e}")
         raise
+
+
+async def send_subscription_success_email(email: EmailStr, name: str, tier: str):
+    """
+    Sends email confirmation after successful subscription.
+    """
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping subscription email to {email}")
+        return
+
+    tier_name = "Premium Monthly" if tier == "PREMIUM_MONTHLY" else "Premium Yearly"
+    dashboard_url = f"{settings.FRONTEND_BASE_URL}/dashboard"
+
+    template_data = {
+        "name": name,
+        "tier_name": tier_name,
+        "dashboard_url": dashboard_url,
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
+
+    html_template = jinja_env.get_template("subscription_success.html")
+    try:
+        text_template = jinja_env.get_template("subscription_success.txt")
+        text_body = text_template.render(**template_data)
+    except Exception:
+        text_body = f"Thank you for subscribing to {tier_name}, {name}!"
+
+    html_body = html_template.render(**template_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"subscription-{email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(email),
+            subject="Subscription Confirmed!",
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Subscription success email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send subscription email: {e}")
+        # Don't raise here, as subscription was successful

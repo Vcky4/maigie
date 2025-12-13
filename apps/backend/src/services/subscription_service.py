@@ -18,6 +18,7 @@ from prisma.models import User
 
 from ..config import Settings, get_settings
 from ..core.database import db
+from ..services.email import send_subscription_success_email
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,22 @@ async def update_user_subscription_from_stripe(
                 ),
             },
         )
+
+        # Send email if upgraded from FREE to Premium
+        # Convert enum to string for comparison just in case
+        old_tier = str(user.tier) if user.tier else "FREE"
+        new_tier = str(updated_user.tier)
+
+        if old_tier == "FREE" and new_tier.startswith("PREMIUM"):
+            try:
+                # Run as background task or just await (it's async)
+                await send_subscription_success_email(
+                    email=updated_user.email,
+                    name=updated_user.name or "User",
+                    tier=new_tier,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send subscription success email: {e}")
 
         return updated_user
 

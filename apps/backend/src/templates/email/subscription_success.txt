@@ -1,0 +1,10 @@
+Hi {{ name }},
+
+Thank you for upgrading to {{ tier_name }}! Your subscription is now active, and you have access to all premium features.
+
+You can now log in to your dashboard and start exploring: {{ dashboard_url }}
+
+You can manage your subscription at any time from your settings.
+
+Best regards,
+The {{ app_name }} Team
