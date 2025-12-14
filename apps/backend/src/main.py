@@ -339,11 +339,9 @@ def create_app() -> FastAPI:
         }
 
     # --- REGISTER ROUTERS ---
-    app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"])
-    app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users", tags=["Users"])
-    app.include_router(
-        subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions", tags=["Subscriptions"]
-    )
+    app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth")
+    app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
+    app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
 
     app.include_router(ai_router)
     app.include_router(courses_router)

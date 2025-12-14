@@ -5,7 +5,7 @@ from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.auth import UserResponse
 
-router = APIRouter()
+router = APIRouter(tags=["users"])
 
 
 # Schema for updating preferences
