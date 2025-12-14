@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../features/auth/store/authStore';
-import { 
-  LayoutDashboard, 
-  Settings, 
-  LogOut, 
-  Menu, 
+import {
+  LayoutDashboard,
+  Settings,
+  LogOut,
+  Menu,
   X,
   User
 } from 'lucide-react';
@@ -41,10 +41,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         {/* Logo */}
         <div className="h-16 flex items-center px-6 border-b border-gray-200">
           <Link to="/dashboard" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-white font-bold text-xl">M</span>
-            </div>
-            <span className="text-xl font-bold text-gray-900">Maigie</span>
+            <img src="/assets/logo.png" alt="Maigie Logo" className="h-8 w-auto" />
+            <span className="ml-2 text-2xl font-bold text-primary hidden">maigie</span>
           </Link>
         </div>
 
@@ -53,15 +51,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
-            
+
             return (
               <Link
                 key={item.path}
                 to={item.path}
                 className={cn(
                   "flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-lg transition-colors",
-                  isActive 
-                    ? "bg-primary/10 text-primary" 
+                  isActive
+                    ? "bg-primary/10 text-primary"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                 )}
               >
@@ -101,9 +99,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       <div className="flex-1 flex flex-col min-w-0 lg:ml-64 pb-16 lg:pb-0">
         {/* Mobile Header */}
         <header className="h-16 bg-white border-b border-gray-200 lg:hidden flex items-center px-4 sticky top-0 z-30">
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center mr-3">
-            <span className="text-white font-bold text-lg">M</span>
-          </div>
+          <img src="/assets/logo-s.png" alt="Maigie Logo" className="h-8 w-auto mr-2" />
           <span className="text-lg font-semibold text-gray-900">
             {navItems.find(item => item.path === location.pathname)?.name || 'Dashboard'}
           </span>
@@ -126,15 +122,15 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname === item.path;
-              
+
               return (
                 <Link
                   key={item.path}
                   to={item.path}
                   className={cn(
                     "flex flex-col items-center gap-1 p-2 rounded-lg transition-colors min-w-[64px]",
-                    isActive 
-                      ? "text-primary" 
+                    isActive
+                      ? "text-primary"
                       : "text-gray-500 hover:text-gray-900"
                   )}
                 >
