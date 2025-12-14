@@ -164,7 +164,9 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
     current_period_end = subscription.current_period_end
 
     if is_upgrade:
-        # Upgrade: Charge now (prorated), but billing cycle starts at end of current period
+        # Upgrade: Charge now (prorated), billing cycle unchanged (starts counting at period end)
+        # Using "unchanged" keeps the current billing cycle, so upgrade takes effect immediately
+        # but the billing cycle anchor remains the same (effectively starts at period end)
         modified_subscription = stripe.Subscription.modify(
             user.stripeSubscriptionId,
             items=[
@@ -174,11 +176,12 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
                 }
             ],
             proration_behavior="create_prorations",  # Charge prorated amount now
-            billing_cycle_anchor=current_period_end,  # New billing cycle starts at period end
+            billing_cycle_anchor="unchanged",  # Keep same billing cycle (period end)
             metadata={"user_id": user.id, "upgrade": "true"},
         )
     else:
-        # Downgrade: Charge at next billing date (end of current period), changes take effect then
+        # Downgrade: Charge at next billing date, changes take effect at period end
+        # Using "unchanged" schedules the change for the next billing cycle
         modified_subscription = stripe.Subscription.modify(
             user.stripeSubscriptionId,
             items=[
@@ -188,7 +191,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
                 }
             ],
             proration_behavior="none",  # Don't charge until next billing date
-            billing_cycle_anchor=current_period_end,  # Changes take effect at period end
+            billing_cycle_anchor="unchanged",  # Changes take effect at period end
             metadata={"user_id": user.id, "downgrade": "true"},
         )
 
