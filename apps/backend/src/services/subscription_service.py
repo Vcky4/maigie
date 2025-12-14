@@ -160,40 +160,86 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
     current_tier = str(user.tier) if user.tier else "FREE"
     is_upgrade = _is_upgrade(current_tier, new_price_id)
 
+    # Check if we're changing billing intervals (monthly <-> yearly)
+    # Retrieve both prices to check their intervals
+    current_price_obj = stripe.Price.retrieve(current_price_id)
+    new_price_obj = stripe.Price.retrieve(new_price_id)
+
+    current_interval = (
+        current_price_obj.recurring.get("interval") if current_price_obj.recurring else None
+    )
+    new_interval = new_price_obj.recurring.get("interval") if new_price_obj.recurring else None
+    is_interval_change = current_interval != new_interval
+
     # Prepare subscription modification parameters
     current_period_end = subscription.current_period_end
 
     if is_upgrade:
-        # Upgrade: Charge now (prorated), billing cycle unchanged (starts counting at period end)
-        # Using "unchanged" keeps the current billing cycle, so upgrade takes effect immediately
-        # but the billing cycle anchor remains the same (effectively starts at period end)
-        modified_subscription = stripe.Subscription.modify(
-            user.stripeSubscriptionId,
-            items=[
-                {
-                    "id": subscription_item_id,
-                    "price": new_price_id,
-                }
-            ],
-            proration_behavior="create_prorations",  # Charge prorated amount now
-            billing_cycle_anchor="unchanged",  # Keep same billing cycle (period end)
-            metadata={"user_id": user.id, "upgrade": "true"},
-        )
+        if is_interval_change:
+            # Upgrade with interval change (e.g., monthly to yearly)
+            # Stripe doesn't allow "unchanged" for interval changes
+            # Charge prorated now, billing cycle resets to now
+            modified_subscription = stripe.Subscription.modify(
+                user.stripeSubscriptionId,
+                items=[
+                    {
+                        "id": subscription_item_id,
+                        "price": new_price_id,
+                    }
+                ],
+                proration_behavior="create_prorations",  # Charge prorated amount now
+                billing_cycle_anchor="now",  # Must use "now" for interval changes
+                metadata={"user_id": user.id, "upgrade": "true", "interval_change": "true"},
+            )
+        else:
+            # Upgrade within same interval (e.g., free to monthly, or price change)
+            # Charge now (prorated), billing cycle unchanged
+            modified_subscription = stripe.Subscription.modify(
+                user.stripeSubscriptionId,
+                items=[
+                    {
+                        "id": subscription_item_id,
+                        "price": new_price_id,
+                    }
+                ],
+                proration_behavior="create_prorations",  # Charge prorated amount now
+                billing_cycle_anchor="unchanged",  # Keep same billing cycle
+                metadata={"user_id": user.id, "upgrade": "true"},
+            )
     else:
-        # Downgrade: Charge at next billing date, changes take effect at period end
-        # Using "unchanged" schedules the change for the next billing cycle
-        modified_subscription = stripe.Subscription.modify(
-            user.stripeSubscriptionId,
-            items=[
-                {
-                    "id": subscription_item_id,
-                    "price": new_price_id,
-                }
-            ],
-            proration_behavior="none",  # Don't charge until next billing date
-            billing_cycle_anchor="unchanged",  # Changes take effect at period end
-            metadata={"user_id": user.id, "downgrade": "true"},
-        )
+        if is_interval_change:
+            # Downgrade with interval change (e.g., yearly to monthly)
+            # Stripe doesn't allow "unchanged" for interval changes
+            # Schedule change for period end using subscription schedule
+            # For now, we'll change immediately but charge at period end
+            # Note: This is a limitation - we can't perfectly schedule interval changes
+            modified_subscription = stripe.Subscription.modify(
+                user.stripeSubscriptionId,
+                items=[
+                    {
+                        "id": subscription_item_id,
+                        "price": new_price_id,
+                    }
+                ],
+                proration_behavior="none",  # Don't charge until next billing date
+                billing_cycle_anchor="now",  # Must use "now" for interval changes
+                metadata={"user_id": user.id, "downgrade": "true", "interval_change": "true"},
+            )
+        else:
+            # Downgrade within same interval
+            # Charge at next billing date, changes take effect at period end
+            modified_subscription = stripe.Subscription.modify(
+                user.stripeSubscriptionId,
+                items=[
+                    {
+                        "id": subscription_item_id,
+                        "price": new_price_id,
+                    }
+                ],
+                proration_behavior="none",  # Don't charge until next billing date
+                billing_cycle_anchor="unchanged",  # Changes take effect at period end
+                metadata={"user_id": user.id, "downgrade": "true"},
+            )
 
     # Update user subscription data
     await update_user_subscription_from_stripe(modified_subscription.id)
