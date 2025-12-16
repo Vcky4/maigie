@@ -46,6 +46,8 @@ model User {
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  // c
+  courses        Course[]
 }
 
 model UserPreferences {
@@ -57,4 +59,67 @@ model UserPreferences {
   language      String    @default("en")
   notifications Boolean   @default(true)
   studyGoals    Json?     // Flexible JSON for specific onboarding data
+}
+
+
+// ==========================================
+//  COURSES MODULE
+// ==========================================
+
+model Course {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title         String
+  description   String?
+  difficulty    String    @default("Beginner") // Beginner, Intermediate, Advanced
+  targetDate    DateTime?
+  isAIGenerated Boolean   @default(false)
+  archived      Boolean   @default(false)
+  
+  // Cached progress (0.0 to 100.0) to allow fast sorting/filtering without heavy calculation
+  progress      Float     @default(0.0) 
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  modules       Module[]
+
+  @@index([userId])
+}
+
+model Module {
+  id          String   @id @default(cuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  title       String
+  description String?
+  order       Int      @default(0) // Used for drag-and-drop ordering
+  completed   Boolean  @default(false)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  topics      Topic[]
+
+  @@index([courseId])
+}
+
+model Topic {
+  id             String   @id @default(cuid())
+  moduleId       String
+  module         Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  title          String
+  content        String?  // Stores Markdown content or JSON from AI
+  order          Int      @default(0)
+  completed      Boolean  @default(false)
+  estimatedHours Float?   // Optional time tracking
+  
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([moduleId])
 }
