@@ -57,7 +57,7 @@ security = HTTPBearer()
 
 
 async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)]
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ) -> User:
     """
     Validate JWT and retrieve the current user from the database.

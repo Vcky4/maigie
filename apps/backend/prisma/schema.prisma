@@ -17,6 +17,14 @@ enum Tier {
   PREMIUM_YEARLY
 }
 
+// Added this to support the Difficulty field safely
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
 model User {
   id            String    @id @default(uuid())
   email         String    @unique
@@ -27,27 +35,26 @@ model User {
   tier          Tier      @default(FREE)
   isActive      Boolean   @default(true)
   isOnboarded   Boolean   @default(false)
+  
   verificationCode          String?   // Stores the 6-digit OTP
   verificationCodeExpiresAt DateTime? // Stores when it expires
-  passwordResetCode        String?
-  passwordResetExpiresAt   DateTime?
+  passwordResetCode         String?
+  passwordResetExpiresAt    DateTime?
   
   // Stripe subscription fields
-  stripeCustomerId      String?   @unique
-  stripeSubscriptionId  String?   @unique
-  stripeSubscriptionStatus String? // active, canceled, past_due, trialing, etc.
-  stripePriceId         String?   // The price ID they subscribed to
+  stripeCustomerId               String?   @unique
+  stripeSubscriptionId           String?   @unique
+  stripeSubscriptionStatus       String? 
+  stripePriceId                  String?   
   subscriptionCurrentPeriodStart DateTime?
   subscriptionCurrentPeriodEnd   DateTime?
   
-  // Relation: One User has One set of Preferences
-  // (We changed this from 'Json?' to a relation)
+  // Relations
   preferences   UserPreferences?
+  courses       Course[] // Defined only ONCE here
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-  // c
-  courses        Course[]
 }
 
 model UserPreferences {
@@ -55,38 +62,38 @@ model UserPreferences {
   userId        String    @unique
   user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   
-  theme         String    @default("light") // light/dark
+  theme         String    @default("light") 
   language      String    @default("en")
   notifications Boolean   @default(true)
-  studyGoals    Json?     // Flexible JSON for specific onboarding data
+  studyGoals    Json?     
 }
-
 
 // ==========================================
 //  COURSES MODULE
 // ==========================================
 
 model Course {
-  id            String    @id @default(cuid())
+  id            String      @id @default(cuid()) // Consistent ID style
   userId        String
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   
   title         String
   description   String?
-  difficulty    String    @default("Beginner") // Beginner, Intermediate, Advanced
+  difficulty    Difficulty  @default(BEGINNER) // Using your Enum
   targetDate    DateTime?
-  isAIGenerated Boolean   @default(false)
-  archived      Boolean   @default(false)
+  isAIGenerated Boolean     @default(false)
+  archived      Boolean     @default(false)
   
-  // Cached progress (0.0 to 100.0) to allow fast sorting/filtering without heavy calculation
-  progress      Float     @default(0.0) 
+  // Cached progress (0.0 to 100.0) - CRITICAL for performance
+  progress      Float       @default(0.0) 
   
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
   
   modules       Module[]
 
   @@index([userId])
+  @@index([userId, archived]) // Valid composite index
 }
 
 model Module {
@@ -96,8 +103,10 @@ model Module {
   
   title       String
   description String?
-  order       Int      @default(0) // Used for drag-and-drop ordering
-  completed   Boolean  @default(false)
+  order       Float    @default(0) // Float allows easier drag-and-drop
+  
+  // We usually track completion at the module level too for UI speed
+  completed   Boolean  @default(false) 
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -105,6 +114,7 @@ model Module {
   topics      Topic[]
 
   @@index([courseId])
+  @@index([courseId, order])
 }
 
 model Topic {
@@ -113,13 +123,14 @@ model Topic {
   module         Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   
   title          String
-  content        String?  // Stores Markdown content or JSON from AI
-  order          Int      @default(0)
+  content        String?  // Markdown content
+  order          Float    @default(0)
   completed      Boolean  @default(false)
-  estimatedHours Float?   // Optional time tracking
+  estimatedHours Float?
   
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([moduleId])
+  @@index([moduleId, order])
 }
