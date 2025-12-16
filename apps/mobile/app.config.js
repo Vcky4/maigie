@@ -25,7 +25,6 @@ module.exports = {
     icon: './assets/images/icon.png',
     scheme: 'maigie',
     userInterfaceStyle: 'automatic',
-    newArchEnabled: true,
     updates: {
       url: 'https://u.expo.dev/2b78ec55-98f8-4ba6-a206-140c54c92c94',
     },
@@ -50,6 +49,7 @@ module.exports = {
     },
     plugins: [
       'expo-router',
+      "expo-web-browser",
       [
         'expo-splash-screen',
         {
@@ -73,7 +73,7 @@ module.exports = {
         process.env.API_BASE_URL ||
         (process.env.NODE_ENV === 'production'
           ? 'https://api.maigie.com'
-            : 'https://pr-51-api-preview.maigie.com'),
+          : 'https://pr-51-api-preview.maigie.com'),
       eas: {
         projectId: '2b78ec55-98f8-4ba6-a206-140c54c92c94',
       },
