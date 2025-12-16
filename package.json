@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "license": "AGPL-3.0",
   "scripts": {
-    "nx": "nx"
+    "nx": "nx",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "private": true,
   "devDependencies": {

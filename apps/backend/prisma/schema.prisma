@@ -43,6 +43,9 @@ model User {
   // Relation: One User has One set of Preferences
   // (We changed this from 'Json?' to a relation)
   preferences   UserPreferences?
+  
+  // Relations
+  courses       Course[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -57,4 +60,73 @@ model UserPreferences {
   language      String    @default("en")
   notifications Boolean   @default(true)
   studyGoals    Json?     // Flexible JSON for specific onboarding data
+}
+
+// --- Courses Module ---
+
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+model Course {
+  id            String      @id @default(uuid())
+  userId        String
+  title         String
+  description   String?
+  difficulty    Difficulty?
+  targetDate    DateTime?
+  isAIGenerated Boolean     @default(false)
+  archived      Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  
+  // Relations
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modules       Module[]
+  
+  // Indexes for performance
+  @@index([userId])
+  @@index([userId, archived])
+  @@index([userId, isAIGenerated])
+}
+
+model Module {
+  id          String   @id @default(uuid())
+  courseId    String
+  title       String
+  order       Float    // Float type for efficient drag-and-drop reordering
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topics      Topic[]
+  
+  // Indexes for performance
+  @@index([courseId])
+  @@index([courseId, order])
+}
+
+model Topic {
+  id             String   @id @default(uuid())
+  moduleId       String
+  title          String
+  order          Float    // Float type for efficient drag-and-drop reordering
+  content        String?
+  completed      Boolean  @default(false)
+  estimatedHours Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  // Relations
+  module         Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  
+  // Indexes for performance
+  @@index([moduleId])
+  @@index([moduleId, order])
+  @@index([moduleId, completed])
 }
