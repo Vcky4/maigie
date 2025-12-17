@@ -62,6 +62,8 @@ class Settings(BaseSettings):
         "http://localhost:4200",
         "http://localhost:5173",
         "http://localhost:3000",
+        "https://maigie.com",
+        "https://www.maigie.com",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: ListStr = ["*"]
