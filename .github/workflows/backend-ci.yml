@@ -941,7 +941,7 @@ jobs:
             sleep 15
             
             # Run db push
-            docker-compose exec -T backend prisma db push || echo "Schema push failed"
+            docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
             
             echo "Production deployment complete!"
 
@@ -1250,7 +1250,7 @@ jobs:
             sleep 15
             
             # Run db push and seed
-            docker-compose exec -T backend prisma db push || echo "Schema push failed"
+            docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
             docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
             
             echo "Staging deployment complete!"
@@ -1368,15 +1368,16 @@ jobs:
             if [ -d \"${PREVIEW_ID}\" ]; then \
               cd ${PREVIEW_ID} && \
               docker-compose down -v 2>/dev/null || true && \
-              docker rm -f maigie-preview-backend-${PREVIEW_ID} maigie-preview-postgres-${PREVIEW_ID} maigie-preview-redis-${PREVIEW_ID} 2>/dev/null || true && \
-              docker volume rm ${PREVIEW_ID}_postgres_data 2>/dev/null || true && \
               cd .. && \
               rm -rf ${PREVIEW_ID} && \
-              sudo rm -f /www/server/panel/vhost/nginx/${PREVIEW_ID}.preview.conf && \
-              sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true && \
-              docker rmi maigie-backend-preview:${PREVIEW_ID} 2>/dev/null || true && \
-              echo '✓ Cleaned up preview environment'; \
-            fi"
+            fi && \
+            # Force remove containers even if directory doesn't exist (handles orphaned containers) \
+            docker rm -f maigie-preview-backend-${PREVIEW_ID} maigie-preview-postgres-${PREVIEW_ID} maigie-preview-redis-${PREVIEW_ID} 2>/dev/null || true && \
+            docker volume rm ${PREVIEW_ID}_postgres_data 2>/dev/null || true && \
+            sudo rm -f /www/server/panel/vhost/nginx/${PREVIEW_ID}.preview.conf && \
+            sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true && \
+            docker rmi maigie-backend-preview:${PREVIEW_ID} 2>/dev/null || true && \
+            echo '✓ Cleaned up preview environment'"
 
       - name: Comment on PR
         uses: actions/github-script@v7

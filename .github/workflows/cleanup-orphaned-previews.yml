@@ -1,0 +1,87 @@
+name: Cleanup Orphaned Preview Containers
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force cleanup all preview containers (ignores PR status)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  cleanup-orphaned:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+
+      - name: Copy cleanup script to VPS
+        run: |
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            scripts/cleanup-orphaned-containers.sh \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/cleanup-orphaned-containers.sh
+
+      - name: Run cleanup script on VPS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            bash -c "chmod +x /tmp/cleanup-orphaned-containers.sh && \
+            /tmp/cleanup-orphaned-containers.sh '$GITHUB_TOKEN' '$REPO_OWNER' '$REPO_NAME'"
+
+      - name: Get cleanup log
+        run: |
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "tail -50 /var/log/maigie-cleanup-orphaned.log" || echo "No log file found"
+
+      - name: Run standard cleanup script
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_TUNNEL_ID: ${{ secrets.CLOUDFLARE_TUNNEL_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          PREVIEW_DOMAIN: ${{ secrets.PREVIEW_DOMAIN }}
+        run: |
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            bash -c "cd /opt/maigie && \
+            if [ -f scripts/cleanup-previews.sh ]; then \
+              chmod +x scripts/cleanup-previews.sh && \
+              CLOUDFLARE_ACCOUNT_ID='$CLOUDFLARE_ACCOUNT_ID' \
+              CLOUDFLARE_TUNNEL_ID='$CLOUDFLARE_TUNNEL_ID' \
+              CLOUDFLARE_API_TOKEN='$CLOUDFLARE_API_TOKEN' \
+              CLOUDFLARE_ZONE_ID='$CLOUDFLARE_ZONE_ID' \
+              PREVIEW_DOMAIN='${PREVIEW_DOMAIN:-maigie.com}' \
+              scripts/cleanup-previews.sh '${{ secrets.GITHUB_TOKEN }}' '${{ github.repository_owner }}' '${{ github.event.repository.name }}'; \
+            else \
+              echo 'Cleanup script not found on VPS'; \
+            fi"
+
+      - name: List remaining preview containers
+        run: |
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker ps -a --filter 'name=preview' --format 'table {{.Names}}\t{{.Status}}\t{{.CreatedAt}}' || echo 'No preview containers found'"
