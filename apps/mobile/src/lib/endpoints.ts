@@ -39,7 +39,7 @@ export const endpoints = {
 
   // User endpoints (add more as needed)
   users: {
-    me: `${versionPrefix}/users/me`,
+    me: `${versionPrefix}/auth/me`,
     profile: `${versionPrefix}/users/profile`,
     updateProfile: `${versionPrefix}/users/profile`,
   },

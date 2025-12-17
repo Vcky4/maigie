@@ -16,28 +16,15 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { useApi } from '../context/ApiContext';
+import React, { createContext, useContext, ReactNode } from 'react';
+import { useApi } from './ApiContext';
 import { endpoints } from '../lib/endpoints';
+import { CancelSubscriptionResponse, CheckoutSessionResponse, PortalSessionResponse, SubscriptionContextType } from '../lib/types';
 
-export interface CheckoutSessionResponse {
-  session_id: string;
-  url: string | null;
-  modified?: boolean;
-  is_upgrade?: boolean | null;
-  current_period_end?: string | null;
-}
 
-export interface PortalSessionResponse {
-  url: string;
-}
+const SubscriptionContext = createContext<SubscriptionContextType | null>(null);
 
-export interface CancelSubscriptionResponse {
-  status: string;
-  cancel_at_period_end: boolean;
-  current_period_end: string;
-}
-
-export const useSubscriptionService = () => {
+export const SubscriptionProvider = ({ children }: { children: ReactNode }) => {
   const api = useApi();
 
   const createCheckoutSession = async (
@@ -57,10 +44,23 @@ export const useSubscriptionService = () => {
     return api.post<CancelSubscriptionResponse>(endpoints.subscriptions.cancel);
   };
 
-  return {
-    createCheckoutSession,
-    createPortalSession,
-    cancelSubscription,
-  };
+  return (
+    <SubscriptionContext.Provider
+      value={{
+        createCheckoutSession,
+        createPortalSession,
+        cancelSubscription,
+      }}
+    >
+      {children}
+    </SubscriptionContext.Provider>
+  );
 };
 
+export const useSubscriptionContext = () => {
+  const context = useContext(SubscriptionContext);
+  if (!context) {
+    throw new Error('useSubscriptionContext must be used within a SubscriptionProvider');
+  }
+  return context;
+};

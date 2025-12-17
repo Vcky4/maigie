@@ -16,13 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { createContext, useState, ReactNode, useContext } from 'react';
+import React, { createContext, useState, ReactNode, useContext, useEffect } from 'react';
+// eslint-disable-next-line @nx/enforce-module-boundaries
 import Toast from 'react-native-toast-message';
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import * as WebBrowser from 'expo-web-browser';
+// eslint-disable-next-line @nx/enforce-module-boundaries
 import * as Linking from 'expo-linking';
 import { useApi } from './ApiContext';
 import { endpoints } from '../lib/endpoints';
+import { UserResponse } from '../lib/types';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -38,16 +41,42 @@ interface AuthContextType {
   resendOtp: (email: string) => Promise<void>;
   resetPassword: (email: string, otp: string, password: string) => Promise<void>;
   googleLogin: () => Promise<void>;
+  user: UserResponse | null;
+  fetchUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState<UserResponse | null>(null);
   const api = useApi();
-  
+
   // Get token from ApiContext
   const userToken = api.userToken;
+
+  useEffect(() => {
+    fetchUser();
+  }, [userToken]);
+
+  const fetchUser = async () => {
+    setIsLoading(true);
+    if (!userToken) return;
+    try {
+      const userData = await api.get<UserResponse>(endpoints.users.me);
+      setUser(userData);
+    } catch (error) {
+      console.error('Failed to fetch user:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to fetch user information',
+      });
+      setUser(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);
@@ -66,7 +95,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Login failed';
-      
+
       // Don't show toast for inactive account error as it's handled by useAuth to redirect
       if (errorMessage !== 'Account inactive. Please verify your email.') {
         Toast.show({
@@ -93,7 +122,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         text1: 'Account Created',
         text2: 'Please log in with your new account',
       });
-      
+
       // Optional: Auto-login after signup could go here if backend returned a token
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Signup failed';
@@ -129,7 +158,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await api.post(endpoints.auth.forgotPassword, { email }, {
         requiresAuth: false, // Forgot password doesn't require auth token
       });
-      
+
       Toast.show({
         type: 'success',
         text1: 'Code Sent',
@@ -151,10 +180,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const verifyOtp = async (email: string, otp: string) => {
     setIsLoading(true);
     try {
-      const data = await api.post<{ access_token?: string }>(endpoints.auth.verifyOtp, { email, code:otp }, {
+      const data = await api.post<{ access_token?: string }>(endpoints.auth.verifyOtp, { email, code: otp }, {
         requiresAuth: false, // OTP verification doesn't require auth token
       });
-      
+
       if (data?.access_token) {
         await api.setToken(data.access_token);
       }
@@ -208,7 +237,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await api.post(endpoints.auth.resendOtp, { email }, {
         requiresAuth: false,
       });
-      
+
       Toast.show({
         type: 'success',
         text1: 'Code Resent',
@@ -233,7 +262,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await api.post(endpoints.auth.resetPassword, { email, code: otp, new_password: password }, {
         requiresAuth: false, // Reset password doesn't require auth token
       });
-      
+
       Toast.show({
         type: 'success',
         text1: 'Password Reset',
@@ -257,7 +286,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       // Create redirect URL for the app
       const redirectUrl = Linking.createURL('oauth-callback');
-      
+
       // Step 1: Get authorization URL from backend
       // Pass redirect_uri so backend knows where to redirect back to
       const authorizeResponse = await api.get<{ authorization_url: string; state: string }>(
@@ -288,7 +317,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
           if (response?.access_token) {
             await api.setToken(response.access_token);
-            
+
             Toast.show({
               type: 'success',
               text1: 'Login Successful',
@@ -322,18 +351,20 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ 
-      login, 
-      logout, 
-      signup, 
-      forgotPassword, 
+    <AuthContext.Provider value={{
+      login,
+      logout,
+      signup,
+      forgotPassword,
       verifyOtp,
       verifyResetCode,
       resendOtp,
       resetPassword,
       googleLogin,
-      isLoading, 
-      userToken 
+      isLoading,
+      userToken,
+      user,
+      fetchUser
     }}>
       {children}
     </AuthContext.Provider>

@@ -34,30 +34,21 @@ import * as Linking from 'expo-linking';
 import Toast from 'react-native-toast-message';
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import { Check } from 'lucide-react-native';
-import { useSubscriptionService } from '../services/subscriptionService';
-import { useApi } from '../context/ApiContext';
-import { endpoints } from '../lib/endpoints';
+import { useSubscriptionContext } from '../context/SubscriptionContext';
+import { useAuthContext } from '../context/AuthContext';
 import { colors } from '../lib/colors';
 
 WebBrowser.maybeCompleteAuthSession();
 
-interface UserResponse {
-  id: string;
-  email: string;
-  name: string | null;
-  tier: string;
-  isActive: boolean;
-}
-
 export default function SubscriptionScreen() {
-  const api = useApi();
-  const { createCheckoutSession, createPortalSession, cancelSubscription } = useSubscriptionService();
+  const { createCheckoutSession, createPortalSession, cancelSubscription } = useSubscriptionContext();
   const [loading, setLoading] = useState(false);
-  const [user, setUser] = useState<UserResponse | null>(null);
+  const { user, fetchUser } = useAuthContext();
   const [loadingUser, setLoadingUser] = useState(true);
 
   useEffect(() => {
-    loadUser();
+    fetchUser();
+    setLoadingUser(false);
     // Listen for deep links when returning from Stripe (fallback)
     const subscription = Linking.addEventListener('url', handleDeepLink);
     return () => {
@@ -65,27 +56,13 @@ export default function SubscriptionScreen() {
     };
   }, []);
 
-  const loadUser = async () => {
-    try {
-      const userData = await api.get<UserResponse>(endpoints.users.me);
-      setUser(userData);
-    } catch (error) {
-      console.error('Failed to load user:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load user information',
-      });
-    } finally {
-      setLoadingUser(false);
-    }
-  };
 
   const handleDeepLink = async (event: { url: string }) => {
     const { queryParams } = Linking.parse(event.url);
     if (queryParams?.session_id) {
       // Subscription successful, reload user data
-      await loadUser();
+      await fetchUser();
+      setLoadingUser(false);
       Toast.show({
         type: 'success',
         text1: 'Subscription Updated',
@@ -101,7 +78,7 @@ export default function SubscriptionScreen() {
 
       // If subscription was modified directly (upgrade/downgrade)
       if (session.modified) {
-        await loadUser();
+        await fetchUser();
         Toast.show({
           type: 'success',
           text1: 'Subscription Updated',
@@ -125,7 +102,7 @@ export default function SubscriptionScreen() {
           // Check subscription status
           setLoading(true); // Keep loading state while we verify
           setTimeout(() => {
-            loadUser();
+            fetchUser();
           }, 1000);
         }
       } else {
@@ -156,7 +133,7 @@ export default function SubscriptionScreen() {
       });
       // Reload user data after portal session
       setTimeout(() => {
-        loadUser();
+        fetchUser();
       }, 2000);
     } catch (error: any) {
       const errorMessage = error?.message || 'Failed to open customer portal';
@@ -186,7 +163,7 @@ export default function SubscriptionScreen() {
             setLoading(true);
             try {
               await cancelSubscription();
-              await loadUser();
+              await fetchUser();
               Toast.show({
                 type: 'success',
                 text1: 'Subscription Cancelled',
@@ -208,8 +185,9 @@ export default function SubscriptionScreen() {
     );
   };
 
-  const isPremium = user?.tier === 'premium';
-  const currentPlan = user?.tier || 'free';
+  const tier = user?.tier;
+  const isPremium = tier === 'PREMIUM_MONTHLY' || tier === 'PREMIUM_YEARLY';
+  const subscriptionInterval = tier === 'PREMIUM_MONTHLY' ? 'month' : (tier === 'PREMIUM_YEARLY' ? 'year' : null);
 
   if (loadingUser) {
     return (
@@ -238,7 +216,7 @@ export default function SubscriptionScreen() {
             <Text style={styles.planName}>Monthly</Text>
             <Text style={styles.planPrice}>₦3,000<Text style={styles.planPeriod}>/mo</Text></Text>
           </View>
-          {currentPlan === 'premium' && (
+          {isPremium && subscriptionInterval === 'month' && (
             <View style={styles.currentBadge}>
               <Text style={styles.currentBadgeText}>Current</Text>
             </View>
@@ -246,6 +224,7 @@ export default function SubscriptionScreen() {
         </View>
         
         <View style={styles.featureList}>
+          {/* ... features ... */}
           <View style={styles.featureItem}>
             <Check size={16} color={colors.primary.main} />
             <Text style={styles.featureText}>Unlimited AI conversations</Text>
@@ -264,17 +243,17 @@ export default function SubscriptionScreen() {
           style={[
             styles.subscribeButton,
             styles.outlineButton,
-            currentPlan === 'premium' && styles.currentButton,
+            isPremium && subscriptionInterval === 'month' && styles.currentButton,
             loading && styles.disabledButton,
           ]}
           onPress={() => handleSubscribe('monthly')}
-          disabled={loading || currentPlan === 'premium'}
+          disabled={loading || (isPremium && subscriptionInterval === 'month')}
         >
           {loading ? (
             <ActivityIndicator size="small" color={colors.primary.main} />
           ) : (
             <Text style={styles.outlineButtonText}>
-              {currentPlan === 'premium' ? 'Current Plan' : 'Subscribe Monthly'}
+              {isPremium && subscriptionInterval === 'month' ? 'Current Plan' : (isPremium ? 'Switch to Monthly' : 'Subscribe Monthly')}
             </Text>
           )}
         </TouchableOpacity>
@@ -292,7 +271,7 @@ export default function SubscriptionScreen() {
             <Text style={styles.planPrice}>₦30,000<Text style={styles.planPeriod}>/yr</Text></Text>
             <Text style={styles.savingsText}>Save 17% (₦6,000/year)</Text>
           </View>
-          {currentPlan === 'premium' && (
+          {isPremium && subscriptionInterval === 'year' && (
             <View style={styles.currentBadge}>
               <Text style={styles.currentBadgeText}>Current</Text>
             </View>
@@ -300,6 +279,7 @@ export default function SubscriptionScreen() {
         </View>
 
         <View style={styles.featureList}>
+          {/* ... features ... */}
           <View style={styles.featureItem}>
             <Check size={16} color={colors.primary.main} />
             <Text style={styles.featureText}>All Monthly features</Text>
@@ -317,17 +297,17 @@ export default function SubscriptionScreen() {
         <TouchableOpacity
           style={[
             styles.subscribeButton,
-            currentPlan === 'premium' && styles.currentButton,
+            isPremium && subscriptionInterval === 'year' && styles.currentButton,
             loading && styles.disabledButton,
           ]}
           onPress={() => handleSubscribe('yearly')}
-          disabled={loading || currentPlan === 'premium'}
+          disabled={loading || (isPremium && subscriptionInterval === 'year')}
         >
           {loading ? (
             <ActivityIndicator size="small" color={colors.text.white} />
           ) : (
             <Text style={styles.subscribeButtonText}>
-              {currentPlan === 'premium' ? 'Current Plan' : 'Subscribe Yearly'}
+              {isPremium && subscriptionInterval === 'year' ? 'Current Plan' : (isPremium ? 'Switch to Yearly' : 'Subscribe Yearly')}
             </Text>
           )}
         </TouchableOpacity>
