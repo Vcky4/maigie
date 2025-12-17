@@ -252,6 +252,13 @@ def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     settings = get_settings()
 
+    # Log CORS configuration for debugging
+    logger.info(
+        f"CORS configuration: origins={settings.CORS_ORIGINS}, "
+        f"credentials={settings.CORS_ALLOW_CREDENTIALS}, "
+        f"methods={settings.CORS_ALLOW_METHODS}"
+    )
+
     app = FastAPI(
         title=settings.APP_NAME,
         description=settings.APP_DESCRIPTION,
@@ -267,13 +274,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(AppException, app_exception_handler)
 
     # Middleware
-    app.add_middleware(SecurityHeadersMiddleware)
-    app.add_middleware(LoggingMiddleware)
-
-    # --- PLACEHOLDER FOR TEAMMATE (OAuth Session) ---
-    # OAuth requires session middleware to store the 'state' parameter securely.
-    # app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
-
+    # CORS middleware should be added early to handle preflight OPTIONS requests
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
@@ -281,6 +282,13 @@ def create_app() -> FastAPI:
         allow_methods=settings.CORS_ALLOW_METHODS,
         allow_headers=settings.CORS_ALLOW_HEADERS,
     )
+    
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(LoggingMiddleware)
+
+    # --- PLACEHOLDER FOR TEAMMATE (OAuth Session) ---
+    # OAuth requires session middleware to store the 'state' parameter securely.
+    # app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
 
     # Root endpoint
     @app.get("/")
