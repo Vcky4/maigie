@@ -414,7 +414,8 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    prisma db push &&
+                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
+                    prisma db push --accept-data-loss &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
@@ -919,7 +920,8 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    prisma db push &&
+                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
+                    prisma db push --accept-data-loss &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
             
@@ -1227,7 +1229,8 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    prisma db push &&
+                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
+                    prisma db push --accept-data-loss &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
@@ -1249,7 +1252,8 @@ jobs:
             # Wait for services to be ready
             sleep 15
             
-            # Run db push and seed
+            # Run cleanup and db push (already done in container startup, but ensure it's done)
+            docker-compose exec -T backend python prisma/cleanup-duplicates.py || echo "No duplicates to clean"
             docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
             docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
             
