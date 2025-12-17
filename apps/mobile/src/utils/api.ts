@@ -26,7 +26,7 @@ export const getApiUrl = (): string => {
     // Fallback for development
     console.warn('API_BASE_URL not configured, using default');
     return __DEV__
-      ? 'https://pr-51-api-preview.maigie.com'
+      ? 'https://pr-68-api-preview.maigie.com'
       : 'https://api.maigie.com';
   }
   

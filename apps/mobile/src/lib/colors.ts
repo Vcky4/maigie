@@ -50,6 +50,14 @@ export const colors = {
     shadow: '#4F46E5',
   },
 
+  // Semantic/status colors (used for success/danger actions)
+  status: {
+    success: '#16A34A', // Green-600
+    danger: '#EF4444', // Red-500
+    warning: '#F59E0B', // Amber-500
+    info: '#2563EB', // Blue-600
+  },
+
   // Google brand colors (for Google sign-in button)
   google: {
     blue: '#4285F4',
