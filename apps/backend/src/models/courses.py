@@ -2,25 +2,12 @@
 Course models (Pydantic schemas).
 
 Copyright (C) 2025 Maigie
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict  # <--- Added ConfigDict here
 
 
 class DifficultyLevel(str, Enum):
@@ -30,6 +17,13 @@ class DifficultyLevel(str, Enum):
     INTERMEDIATE = "INTERMEDIATE"
     ADVANCED = "ADVANCED"
     EXPERT = "EXPERT"
+
+
+class AICourseRequest(BaseModel):
+    """Schema for AI Course Generation request."""
+
+    topic: str = Field(..., min_length=1, max_length=100)
+    difficulty: DifficultyLevel = DifficultyLevel.BEGINNER
 
 
 # ============================================================================
@@ -69,8 +63,8 @@ class TopicResponse(BaseModel):
     createdAt: datetime
     updatedAt: datetime
 
-    class Config:
-        from_attributes = True
+    # CHANGED: Replaced class Config with model_config
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -110,8 +104,8 @@ class ModuleResponse(BaseModel):
     createdAt: datetime
     updatedAt: datetime
 
-    class Config:
-        from_attributes = True
+    # CHANGED: Replaced class Config with model_config
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ModuleSummary(BaseModel):
@@ -169,8 +163,8 @@ class CourseResponse(BaseModel):
     createdAt: datetime
     updatedAt: datetime
 
-    class Config:
-        from_attributes = True
+    # CHANGED: Replaced class Config with model_config
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CourseListItem(BaseModel):
@@ -191,8 +185,8 @@ class CourseListItem(BaseModel):
     createdAt: datetime
     updatedAt: datetime
 
-    class Config:
-        from_attributes = True
+    # CHANGED: Replaced class Config with model_config
+    model_config = ConfigDict(from_attributes=True)
 
 
 class CourseListResponse(BaseModel):

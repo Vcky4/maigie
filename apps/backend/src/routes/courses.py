@@ -2,29 +2,17 @@
 Course routes.
 
 Copyright (C) 2025 Maigie
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, BackgroundTasks, HTTPException
 from prisma import Client as PrismaClient
-from prisma.models import User
+from pydantic import BaseModel
 
 from ..dependencies import CurrentUser
 from ..models.courses import (
+    AICourseRequest,
     CourseCreate,
     CourseListItem,
     CourseListResponse,
@@ -32,7 +20,6 @@ from ..models.courses import (
     CourseUpdate,
     ModuleCreate,
     ModuleResponse,
-    ModuleSummary,
     ModuleUpdate,
     ProgressResponse,
     TopicCreate,
@@ -47,7 +34,10 @@ from ..utils.exceptions import (
     ValidationError,
 )
 
-router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
+# Import the AI worker service
+from src.services.ai_course import generate_course_content_task
+
+router = APIRouter(tags=["courses"])
 
 
 # ============================================================================
@@ -58,12 +48,6 @@ router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
 async def calculate_topic_list_progress(topics: list[Any]) -> tuple[float, int, int]:
     """
     Calculate progress from a list of topics.
-
-    Args:
-        topics: List of topic objects with 'completed' field
-
-    Returns:
-        Tuple of (progress_percentage, total_topics, completed_topics)
     """
     total = len(topics)
     if total == 0:
@@ -78,13 +62,6 @@ async def calculate_topic_list_progress(topics: list[Any]) -> tuple[float, int, 
 async def calculate_module_progress(db: PrismaClient, module_id: str) -> tuple[float, bool]:
     """
     Calculate progress for a single module.
-
-    Args:
-        db: Prisma client
-        module_id: Module ID
-
-    Returns:
-        Tuple of (progress_percentage, is_completed)
     """
     topics = await db.topic.find_many(where={"moduleId": module_id})
 
@@ -100,23 +77,12 @@ async def calculate_module_progress(db: PrismaClient, module_id: str) -> tuple[f
 async def calculate_course_progress(db: PrismaClient, course_id: str) -> tuple[float, int, int]:
     """
     Calculate overall course progress based on total topics.
-
-    Formula: (Completed Topics / Total Topics in Course) × 100
-
-    Args:
-        db: Prisma client
-        course_id: Course ID
-
-    Returns:
-        Tuple of (progress_percentage, total_topics, completed_topics)
     """
-    # Count total topics across all modules in the course
     total_topics = await db.topic.count(where={"module": {"courseId": course_id}})
 
     if total_topics == 0:
         return 0.0, 0, 0
 
-    # Count completed topics
     completed_topics = await db.topic.count(
         where={"module": {"courseId": course_id}, "completed": True}
     )
@@ -131,14 +97,6 @@ async def enrich_module_with_progress(
 ) -> dict[str, Any]:
     """
     Enrich a module with calculated progress and completion status.
-
-    Args:
-        db: Prisma client
-        module: Module object from database
-        include_topics: Whether to include topics in response
-
-    Returns:
-        Dictionary with enriched module data
     """
     topics = await db.topic.find_many(where={"moduleId": module.id}, order={"order": "asc"})
 
@@ -164,18 +122,6 @@ async def enrich_module_with_progress(
 async def check_course_ownership(db: PrismaClient, course_id: str, user_id: str) -> Any:
     """
     Check if course exists and belongs to user.
-
-    Args:
-        db: Prisma client
-        course_id: Course ID to check
-        user_id: User ID to verify ownership
-
-    Returns:
-        Course object if found and owned by user
-
-    Raises:
-        ResourceNotFoundError: If course not found
-        ForbiddenError: If user doesn't own the course
     """
     course = await db.course.find_unique(where={"id": course_id})
 
@@ -191,18 +137,6 @@ async def check_course_ownership(db: PrismaClient, course_id: str, user_id: str)
 async def check_module_ownership(db: PrismaClient, module_id: str, user_id: str) -> tuple[Any, Any]:
     """
     Check if module exists and belongs to user (via course).
-
-    Args:
-        db: Prisma client
-        module_id: Module ID to check
-        user_id: User ID to verify ownership
-
-    Returns:
-        Tuple of (module, course) if found and owned by user
-
-    Raises:
-        ResourceNotFoundError: If module not found
-        ForbiddenError: If user doesn't own the course
     """
     module = await db.module.find_unique(where={"id": module_id}, include={"course": True})
 
@@ -220,18 +154,6 @@ async def check_topic_ownership(
 ) -> tuple[Any, Any, Any]:
     """
     Check if topic exists and belongs to user (via module > course).
-
-    Args:
-        db: Prisma client
-        topic_id: Topic ID to check
-        user_id: User ID to verify ownership
-
-    Returns:
-        Tuple of (topic, module, course) if found and owned by user
-
-    Raises:
-        ResourceNotFoundError: If topic not found
-        ForbiddenError: If user doesn't own the course
     """
     topic = await db.topic.find_unique(
         where={"id": topic_id}, include={"module": {"include": {"course": True}}}
@@ -244,6 +166,64 @@ async def check_topic_ownership(
         raise ForbiddenError("You don't have permission to access this topic")
 
     return topic, topic.module, topic.module.course
+
+
+# ============================================================================
+# AI GENERATION ENDPOINT
+# ============================================================================
+
+
+@router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
+async def generate_ai_course(
+    request: AICourseRequest,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)],
+):
+    """
+    Triggers the AI background worker to generate a course.
+    Returns immediately with a placeholder course ID.
+    Updates are sent via WebSocket.
+    """
+    user_id = current_user.id
+
+    # 1. Check Subscription Limits (Free Tier = Max 2 AI Courses)
+    if current_user.tier == "FREE":
+        ai_course_count = await db.course.count(
+            where={"userId": user_id, "isAIGenerated": True, "archived": False}
+        )
+        if ai_course_count >= 2:
+            raise SubscriptionLimitError(
+                message="Free tier limit reached.",
+                detail="Upgrade to Premium for unlimited AI courses.",
+            )
+
+    # 2. Create "Placeholder" Course
+    # Note: We force the difficulty to uppercase to match the Prisma Enum
+    placeholder_course = await db.course.create(
+        data={
+            "userId": user_id,
+            "title": f"Learning {request.topic}",
+            "description": "Waiting for AI generation...",
+            "difficulty": request.difficulty.upper(),
+            "isAIGenerated": True,
+            "progress": 0.0,
+        }
+    )
+
+    # 3. Hand off to Background Worker
+    background_tasks.add_task(
+        generate_course_content_task,
+        course_id=placeholder_course.id,
+        user_id=user_id,
+        topic_prompt=request.topic,
+    )
+
+    return {
+        "message": "AI generation started",
+        "courseId": placeholder_course.id,
+        "status": "queued",
+    }
 
 
 # ============================================================================
@@ -266,8 +246,6 @@ async def list_courses(
 ):
     """
     List all courses for the authenticated user.
-
-    Supports filtering, searching, sorting, and pagination.
     """
     user_id = current_user.id
 
@@ -346,26 +324,20 @@ async def create_course(
     db: Annotated[PrismaClient, Depends(get_db_client)],
 ):
     """
-    Create a new course.
-
-    FREE tier users are limited to 2 AI-generated courses.
-    Premium users have unlimited AI-generated courses.
-    All users have unlimited manual courses.
+    Create a new course manually.
     """
     user_id = current_user.id
 
     # Check subscription tier limits for AI-generated courses
     if course_data.isAIGenerated:
-        # Check if user is on FREE tier
         if current_user.tier == "FREE":
-            # Count existing AI-generated courses
             ai_course_count = await db.course.count(
                 where={"userId": user_id, "isAIGenerated": True, "archived": False}
             )
 
             if ai_course_count >= 2:
                 raise SubscriptionLimitError(
-                    message="Free tier users are limited to 2 AI-generated courses. Upgrade to Premium for unlimited courses.",
+                    message="Free tier users are limited to 2 AI-generated courses.",
                     detail=f"User has {ai_course_count} AI-generated courses (limit: 2)",
                 )
 
@@ -457,15 +429,13 @@ async def update_course(
 ):
     """
     Update course metadata.
-
-    Only title, description, difficulty, targetDate, and archived status can be updated.
     """
     user_id = current_user.id
 
     # Check ownership
     await check_course_ownership(db, course_id, user_id)
 
-    # Build update data (only include non-None fields)
+    # Build update data
     update_data: dict[str, Any] = {}
     if course_data.title is not None:
         update_data["title"] = course_data.title
@@ -479,7 +449,7 @@ async def update_course(
         update_data["archived"] = course_data.archived
 
     # Update course
-    updated_course = await db.course.update(where={"id": course_id}, data=update_data)
+    await db.course.update(where={"id": course_id}, data=update_data)
 
     # Fetch full course data
     return await get_course(course_id, current_user, db)
@@ -493,8 +463,6 @@ async def delete_course(
 ):
     """
     Delete a course permanently.
-
-    Cascading delete will remove all associated modules and topics.
     """
     user_id = current_user.id
 
@@ -581,7 +549,6 @@ async def update_module(
     # Check ownership
     module, course = await check_module_ownership(db, module_id, user_id)
 
-    # Verify module belongs to the specified course
     if module.courseId != course_id:
         raise ValidationError("Module does not belong to the specified course")
 
@@ -617,11 +584,10 @@ async def delete_module(
     # Check ownership
     module, course = await check_module_ownership(db, module_id, user_id)
 
-    # Verify module belongs to the specified course
     if module.courseId != course_id:
         raise ValidationError("Module does not belong to the specified course")
 
-    # Delete module (cascading delete handles topics)
+    # Delete module
     await db.module.delete(where={"id": module_id})
 
     return None
@@ -652,7 +618,6 @@ async def create_topic(
     # Check ownership
     module, course = await check_module_ownership(db, module_id, user_id)
 
-    # Verify module belongs to the specified course
     if module.courseId != course_id:
         raise ValidationError("Module does not belong to the specified course")
 
@@ -690,7 +655,6 @@ async def update_topic(
     # Check ownership
     topic, module, course = await check_topic_ownership(db, topic_id, user_id)
 
-    # Verify topic belongs to the specified module and course
     if topic.moduleId != module_id or module.courseId != course_id:
         raise ValidationError("Topic does not belong to the specified module/course")
 
@@ -732,7 +696,6 @@ async def delete_topic(
     # Check ownership
     topic, module, course = await check_topic_ownership(db, topic_id, user_id)
 
-    # Verify topic belongs to the specified module and course
     if topic.moduleId != module_id or module.courseId != course_id:
         raise ValidationError("Topic does not belong to the specified module/course")
 
@@ -762,7 +725,6 @@ async def toggle_topic_completion(
     # Check ownership
     topic, module, course = await check_topic_ownership(db, topic_id, user_id)
 
-    # Verify topic belongs to the specified module and course
     if topic.moduleId != module_id or module.courseId != course_id:
         raise ValidationError("Topic does not belong to the specified module/course")
 
@@ -785,9 +747,6 @@ async def get_course_progress(
 ):
     """
     Get detailed progress analytics for a course.
-
-    Includes overall progress, module-by-module breakdown,
-    and estimated hours tracking.
     """
     user_id = current_user.id
 
