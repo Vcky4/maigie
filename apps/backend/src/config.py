@@ -62,6 +62,8 @@ class Settings(BaseSettings):
         "http://localhost:4200",
         "http://localhost:5173",
         "http://localhost:3000",
+        "https://maigie.com",
+        "https://www.maigie.com",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: ListStr = ["*"]
@@ -167,6 +169,19 @@ def get_settings() -> Settings:
         settings.CELERY_BROKER_URL = _get_redis_url_with_db(settings.REDIS_URL, 1)
     if not settings.CELERY_RESULT_BACKEND:
         settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
+
+    # Ensure production domains are always included in CORS origins
+    # This prevents CORS issues when environment variables override defaults
+    required_production_origins = [
+        "https://maigie.com",
+        "https://www.maigie.com",
+    ]
+
+    # Merge environment-provided origins with required production origins
+    # Use a set to avoid duplicates, then convert back to list
+    all_origins = set(settings.CORS_ORIGINS)
+    all_origins.update(required_production_origins)
+    settings.CORS_ORIGINS = list(all_origins)
 
     return settings
 
