@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import type { Course, Topic } from '../types/courses.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
 export const TopicPage = () => {
@@ -13,6 +13,14 @@ export const TopicPage = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
+  
+  // Note content state
+  const [content, setContent] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const savedIndicatorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (courseId) {
@@ -27,11 +35,20 @@ export const TopicPage = () => {
       
       if (topic) {
         setCurrentTopic(topic);
+        setContent(topic.content || '');
       } else {
         setError('Topic not found');
       }
     }
   }, [course, moduleId, topicId]);
+
+  // Adjust textarea height on content change
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+    }
+  }, [content]);
 
   const fetchCourse = async (id: string) => {
     try {
@@ -44,6 +61,41 @@ export const TopicPage = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newContent = e.target.value;
+    setContent(newContent);
+    setIsSaved(false); // Reset saved state immediately on change
+    
+    // Clear existing timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // Debounce save (auto-save after 1s of inactivity)
+    saveTimeoutRef.current = setTimeout(async () => {
+      if (courseId && moduleId && topicId) {
+        setIsSaving(true);
+        try {
+          await coursesApi.updateTopic(courseId, moduleId, topicId, { content: newContent });
+          setIsSaving(false);
+          setIsSaved(true);
+          
+          // Hide saved indicator after 2 seconds
+          if (savedIndicatorTimeoutRef.current) {
+            clearTimeout(savedIndicatorTimeoutRef.current);
+          }
+          savedIndicatorTimeoutRef.current = setTimeout(() => {
+            setIsSaved(false);
+          }, 2000);
+          
+        } catch (err) {
+          console.error('Failed to save content', err);
+          setIsSaving(false);
+        }
+      }
+    }, 1000);
   };
 
   const handleToggleComplete = async () => {
@@ -129,27 +181,43 @@ export const TopicPage = () => {
   return (
     <div className="max-w-4xl mx-auto flex flex-col min-h-[calc(100vh-8rem)]">
       {/* Header */}
-      <div className="mb-6">
-        <Link to={`/courses/${courseId}`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">
-          <ArrowLeft className="w-4 h-4" />
-          Back to Course
-        </Link>
-        <h1 className="text-2xl font-bold text-gray-900">{currentTopic.title}</h1>
+      <div className="mb-6 flex justify-between items-end">
+        <div>
+          <Link to={`/courses/${courseId}`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">
+            <ArrowLeft className="w-4 h-4" />
+            Back to Course
+          </Link>
+          <h1 className="text-2xl font-bold text-gray-900">{currentTopic.title}</h1>
+        </div>
+        <div className="h-6 flex items-center">
+          {isSaving ? (
+            <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
+              <Save className="w-4 h-4" />
+              Saving...
+            </div>
+          ) : isSaved ? (
+            <div className="text-sm text-green-600 flex items-center gap-2 animate-in fade-in duration-300">
+              <Check className="w-4 h-4" />
+              Saved
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 bg-white p-4 sm:p-8 rounded-xl border border-gray-200 shadow-sm mb-8">
-        {currentTopic.content ? (
-          <div className="prose max-w-none prose-indigo prose-img:rounded-xl prose-headings:font-bold prose-a:text-indigo-600 prose-p:text-gray-600 prose-headings:text-gray-900">
-             {/* Note: In a real app we'd use a markdown renderer here */}
-            <div className="whitespace-pre-wrap font-sans text-gray-800 leading-relaxed text-base sm:text-lg">
-              {currentTopic.content}
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-            <BookOpen className="w-12 h-12 mb-4 opacity-50" />
-            <p>No content available for this topic yet.</p>
+      {/* Content Editor */}
+      <div className="flex-1 bg-white p-4 sm:p-8 rounded-xl border border-gray-200 shadow-sm mb-8 relative">
+        <textarea
+          ref={textareaRef}
+          value={content}
+          onChange={handleContentChange}
+          placeholder="Start typing your notes here..."
+          className="w-full h-full min-h-[300px] resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300"
+          spellCheck={false}
+        />
+        {/* Helper text if empty */}
+        {content.length === 0 && (
+          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none text-center opacity-0">
+             {/* This is just a placeholder for structure, the real placeholder is on the textarea */}
           </div>
         )}
       </div>
@@ -205,4 +273,3 @@ export const TopicPage = () => {
     </div>
   );
 };
-
