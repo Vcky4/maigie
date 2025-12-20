@@ -36,6 +36,10 @@ import { DashboardPage } from '../pages/DashboardPage';
 import { SettingsPage } from '../pages/SettingsPage';
 import { SubscriptionSuccessPage } from '../pages/SubscriptionSuccessPage';
 import { SubscriptionCancelPage } from '../pages/SubscriptionCancelPage';
+import { CourseListPage } from '../features/courses/pages/CourseListPage';
+import { CourseDetailPage } from '../features/courses/pages/CourseDetailPage';
+import { CourseCreatePage } from '../features/courses/pages/CourseCreatePage';
+import { TopicPage } from '../features/courses/pages/TopicPage';
 import { DashboardLayout } from '../components/layout/DashboardLayout';
 import { RedirectIfAuthenticated } from '../components/auth/RedirectIfAuthenticated';
 import { ProtectedRoute } from '../components/auth/ProtectedRoute';
@@ -65,6 +69,12 @@ export function App() {
         <Route path="/subscription" element={<ProtectedRoute><DashboardLayout><SettingsPage /></DashboardLayout></ProtectedRoute>} /> {/* Legacy route redirect */}
         <Route path="/subscription/success" element={<ProtectedRoute><DashboardLayout><SubscriptionSuccessPage /></DashboardLayout></ProtectedRoute>} />
         <Route path="/subscription/cancel" element={<ProtectedRoute><DashboardLayout><SubscriptionCancelPage /></DashboardLayout></ProtectedRoute>} />
+
+        {/* Course Routes */}
+        <Route path="/courses" element={<ProtectedRoute><DashboardLayout><CourseListPage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/courses/new" element={<ProtectedRoute><DashboardLayout><CourseCreatePage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/courses/:id" element={<ProtectedRoute><DashboardLayout><CourseDetailPage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/courses/:courseId/modules/:moduleId/topics/:topicId" element={<ProtectedRoute><DashboardLayout><TopicPage /></DashboardLayout></ProtectedRoute>} />
         
         <Route path="/auth/mobile/callback" element={<AuthRedirectPage />} />
       </Routes>
