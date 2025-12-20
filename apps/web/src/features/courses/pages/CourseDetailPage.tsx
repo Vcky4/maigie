@@ -108,7 +108,7 @@ export const CourseDetailPage = () => {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">{course.title}</h1>
         <p className="text-gray-600 text-lg">{course.description}</p>
         
-        <div className="mt-6 flex items-center gap-6 text-sm text-gray-500">
+        <div className="mt-6 flex flex-wrap items-center gap-4 sm:gap-6 text-sm text-gray-500">
           <div className="flex items-center gap-2">
             <span className={cn(
               "px-2.5 py-0.5 rounded-full text-xs font-medium",
@@ -125,7 +125,7 @@ export const CourseDetailPage = () => {
       </div>
 
       {/* Progress */}
-      <div className="bg-white p-6 rounded-xl border border-gray-100 shadow-sm">
+      <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 shadow-sm">
         <div className="flex justify-between items-end mb-2">
           <div>
             <span className="text-2xl font-bold text-gray-900">{Math.round(course.progress)}%</span>
@@ -150,7 +150,7 @@ export const CourseDetailPage = () => {
         <div className="space-y-4">
           {course.modules.map((module) => (
             <div key={module.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:py-4 border-b border-gray-200">
                 <h3 className="font-semibold text-gray-900">{module.title}</h3>
                 {module.description && <p className="text-sm text-gray-500 mt-1">{module.description}</p>}
               </div>
@@ -160,7 +160,7 @@ export const CourseDetailPage = () => {
                   <Link 
                     key={topic.id}
                     to={`/courses/${course.id}/modules/${module.id}/topics/${topic.id}`}
-                    className="flex items-center gap-4 px-6 py-4 hover:bg-gray-50 transition-colors group"
+                    className="flex items-center gap-3 sm:gap-4 px-4 py-3 sm:px-6 sm:py-4 hover:bg-gray-50 transition-colors group"
                   >
                     <div className="flex-shrink-0">
                       {topic.completed ? (

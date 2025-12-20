@@ -53,12 +53,12 @@ export const CourseCreatePage = () => {
       </Link>
       
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className="p-8 border-b border-gray-100">
+        <div className="p-6 sm:p-8 border-b border-gray-100">
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Create New Course</h1>
           <p className="text-gray-500">Choose how you want to start your learning journey.</p>
         </div>
 
-        <div className="p-8">
+        <div className="p-6 sm:p-8">
           {/* Mode Selection */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
             <button

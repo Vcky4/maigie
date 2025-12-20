@@ -138,11 +138,11 @@ export const TopicPage = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 bg-white p-8 rounded-xl border border-gray-200 shadow-sm mb-8">
+      <div className="flex-1 bg-white p-4 sm:p-8 rounded-xl border border-gray-200 shadow-sm mb-8">
         {currentTopic.content ? (
-          <div className="prose max-w-none prose-indigo prose-img:rounded-xl prose-headings:font-bold prose-a:text-indigo-600">
+          <div className="prose max-w-none prose-indigo prose-img:rounded-xl prose-headings:font-bold prose-a:text-indigo-600 prose-p:text-gray-600 prose-headings:text-gray-900">
              {/* Note: In a real app we'd use a markdown renderer here */}
-            <div className="whitespace-pre-wrap font-sans text-gray-800 leading-relaxed">
+            <div className="whitespace-pre-wrap font-sans text-gray-800 leading-relaxed text-base sm:text-lg">
               {currentTopic.content}
             </div>
           </div>
@@ -155,12 +155,12 @@ export const TopicPage = () => {
       </div>
 
       {/* Footer Navigation */}
-      <div className="border-t border-gray-200 pt-6 flex justify-between items-center">
-        <div className="w-1/3">
+      <div className="border-t border-gray-200 pt-6 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 sm:gap-0">
+        <div className="w-full sm:w-1/3 flex justify-start">
           {prevTopic && (
             <Link 
               to={`/courses/${courseId}/modules/${prevTopic.moduleId}/topics/${prevTopic.id}`}
-              className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium truncate"
+              className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium truncate max-w-full"
             >
               <ChevronLeft className="w-4 h-4 flex-shrink-0" />
               <span className="truncate">{prevTopic.title}</span>
@@ -168,12 +168,12 @@ export const TopicPage = () => {
           )}
         </div>
 
-        <div className="flex justify-center w-1/3">
+        <div className="flex justify-center w-full sm:w-1/3">
           <button 
             onClick={handleToggleComplete}
             disabled={isCompleting}
             className={cn(
-              "flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all",
+              "w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all",
               currentTopic.completed 
                 ? "bg-green-100 text-green-700 hover:bg-green-200" 
                 : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm hover:shadow"
@@ -190,11 +190,11 @@ export const TopicPage = () => {
           </button>
         </div>
 
-        <div className="w-1/3 flex justify-end">
+        <div className="w-full sm:w-1/3 flex justify-end">
           {nextTopic && (
             <Link 
               to={`/courses/${courseId}/modules/${nextTopic.moduleId}/topics/${nextTopic.id}`}
-              className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium truncate"
+              className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium truncate max-w-full"
             >
               <span className="truncate">{nextTopic.title}</span>
               <ChevronRight className="w-4 h-4 flex-shrink-0" />
