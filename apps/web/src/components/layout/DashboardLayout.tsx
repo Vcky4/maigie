@@ -36,6 +36,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     { name: 'Settings', icon: Settings, path: '/settings' },
   ];
 
+  // Helper to check if a route is active (exact match or child route)
+  const isRouteActive = (itemPath: string) => {
+    return location.pathname === itemPath || location.pathname.startsWith(`${itemPath}/`);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col lg:flex-row">
       {/* Desktop Sidebar */}
@@ -52,7 +57,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <nav className="flex-1 px-4 py-6 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = location.pathname === item.path;
+            const isActive = isRouteActive(item.path);
 
             return (
               <Link
@@ -103,7 +108,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         <header className="h-16 bg-white border-b border-gray-200 lg:hidden flex items-center px-4 sticky top-0 z-30">
           <img src="/assets/logo-s.png" alt="Maigie Logo" className="h-8 w-auto mr-2" />
           <span className="text-lg font-semibold text-gray-900">
-            {navItems.find(item => item.path === location.pathname)?.name || 'Dashboard'}
+            {navItems.find(item => isRouteActive(item.path))?.name || 'Dashboard'}
           </span>
           <button
             onClick={handleLogout}
@@ -123,7 +128,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex justify-around items-center">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = location.pathname === item.path;
+              const isActive = isRouteActive(item.path);
 
               return (
                 <Link
@@ -147,4 +152,3 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
     </div>
   );
 }
-
