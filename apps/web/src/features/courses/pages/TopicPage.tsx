@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import type { Course, Topic } from '../types/courses.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
 export const TopicPage = () => {
@@ -98,6 +98,16 @@ export const TopicPage = () => {
     }, 1000);
   };
 
+  const handleStudy = () => {
+    // Placeholder for AI study feature
+    console.log('Study feature triggered');
+  };
+
+  const handleResources = () => {
+    // Placeholder for resources
+    console.log('Resources clicked');
+  };
+
   const handleToggleComplete = async () => {
     if (!currentTopic || !courseId || !moduleId || isCompleting) return;
 
@@ -181,26 +191,46 @@ export const TopicPage = () => {
   return (
     <div className="max-w-4xl mx-auto flex flex-col min-h-[calc(100vh-8rem)]">
       {/* Header */}
-      <div className="mb-6 flex justify-between items-end">
-        <div>
-          <Link to={`/courses/${courseId}`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">
-            <ArrowLeft className="w-4 h-4" />
-            Back to Course
-          </Link>
+      <div className="mb-6">
+        <Link to={`/courses/${courseId}`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">
+          <ArrowLeft className="w-4 h-4" />
+          Back to Course
+        </Link>
+        
+        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-900">{currentTopic.title}</h1>
-        </div>
-        <div className="h-6 flex items-center">
-          {isSaving ? (
-            <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
-              <Save className="w-4 h-4" />
-              Saving...
+          
+          <div className="flex items-center gap-3">
+            <div className="h-6 flex items-center mr-2">
+              {isSaving ? (
+                <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
+                  <Save className="w-4 h-4" />
+                  <span className="hidden sm:inline">Saving...</span>
+                </div>
+              ) : isSaved ? (
+                <div className="text-sm text-green-600 flex items-center gap-2 animate-in fade-in duration-300">
+                  <Check className="w-4 h-4" />
+                  <span className="hidden sm:inline">Saved</span>
+                </div>
+              ) : null}
             </div>
-          ) : isSaved ? (
-            <div className="text-sm text-green-600 flex items-center gap-2 animate-in fade-in duration-300">
-              <Check className="w-4 h-4" />
-              Saved
-            </div>
-          ) : null}
+
+            <button
+              onClick={handleResources}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+              Resources
+            </button>
+
+            <button
+              onClick={handleStudy}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shadow-sm"
+            >
+              <Brain className="w-4 h-4" />
+              Study
+            </button>
+          </div>
         </div>
       </div>
 
