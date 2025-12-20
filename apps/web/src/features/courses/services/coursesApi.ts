@@ -5,6 +5,8 @@ import type {
   CreateCourseRequest,
   UpdateCourseRequest,
   Difficulty,
+  Module,
+  Topic,
 } from '../types/courses.types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -45,6 +47,33 @@ export interface GenerateAICourseResponse {
   message: string;
   courseId: string;
   status: string;
+}
+
+export interface CreateModuleRequest {
+  title: string;
+  order: number;
+  description?: string;
+}
+
+export interface UpdateModuleRequest {
+  title?: string;
+  order?: number;
+  description?: string;
+}
+
+export interface CreateTopicRequest {
+  title: string;
+  order: number;
+  content?: string;
+  estimatedHours?: number;
+}
+
+export interface UpdateTopicRequest {
+  title?: string;
+  order?: number;
+  content?: string;
+  estimatedHours?: number;
+  completed?: boolean;
 }
 
 export const coursesApi = {
@@ -100,6 +129,42 @@ export const coursesApi = {
    */
   deleteCourse: async (id: string): Promise<void> => {
     await apiClient.delete(`/courses/${id}`);
+  },
+
+  // ==========================================
+  // Module Management
+  // ==========================================
+
+  createModule: async (courseId: string, data: CreateModuleRequest): Promise<Module> => {
+    const response = await apiClient.post<Module>(`/courses/${courseId}/modules`, data);
+    return response.data;
+  },
+
+  updateModule: async (courseId: string, moduleId: string, data: UpdateModuleRequest): Promise<Module> => {
+    const response = await apiClient.put<Module>(`/courses/${courseId}/modules/${moduleId}`, data);
+    return response.data;
+  },
+
+  deleteModule: async (courseId: string, moduleId: string): Promise<void> => {
+    await apiClient.delete(`/courses/${courseId}/modules/${moduleId}`);
+  },
+
+  // ==========================================
+  // Topic Management
+  // ==========================================
+
+  createTopic: async (courseId: string, moduleId: string, data: CreateTopicRequest): Promise<Topic> => {
+    const response = await apiClient.post<Topic>(`/courses/${courseId}/modules/${moduleId}/topics`, data);
+    return response.data;
+  },
+
+  updateTopic: async (courseId: string, moduleId: string, topicId: string, data: UpdateTopicRequest): Promise<Topic> => {
+    const response = await apiClient.put<Topic>(`/courses/${courseId}/modules/${moduleId}/topics/${topicId}`, data);
+    return response.data;
+  },
+
+  deleteTopic: async (courseId: string, moduleId: string, topicId: string): Promise<void> => {
+    await apiClient.delete(`/courses/${courseId}/modules/${moduleId}/topics/${topicId}`);
   },
 
   /**
