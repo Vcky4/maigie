@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { createContext, useState, ReactNode, useContext, useEffect } from 'react';
+import React, { createContext, useState, ReactNode, useContext, useEffect, useCallback, useRef } from 'react';
 // eslint-disable-next-line @nx/enforce-module-boundaries
 import Toast from 'react-native-toast-message';
 // eslint-disable-next-line @nx/enforce-module-boundaries
@@ -51,19 +51,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [user, setUser] = useState<UserResponse | null>(null);
   const api = useApi();
+  const apiRef = useRef(api);
+
+  // Keep api ref updated
+  useEffect(() => {
+    apiRef.current = api;
+  }, [api]);
 
   // Get token from ApiContext
   const userToken = api.userToken;
 
-  useEffect(() => {
-    fetchUser();
-  }, [userToken]);
-
-  const fetchUser = async () => {
+  const fetchUser = useCallback(async () => {
+    if (!userToken) {
+      setUser(null);
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
-    if (!userToken) return;
     try {
-      const userData = await api.get<UserResponse>(endpoints.users.me);
+      const userData = await apiRef.current.get<UserResponse>(endpoints.users.me);
       setUser(userData);
     } catch (error) {
       console.error('Failed to fetch user:', error);
@@ -76,7 +82,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userToken]);
+
+  useEffect(() => {
+    fetchUser();
+  }, [fetchUser]);
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);

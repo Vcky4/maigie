@@ -16,7 +16,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -43,33 +43,34 @@ WebBrowser.maybeCompleteAuthSession();
 export default function SubscriptionScreen() {
   const { createCheckoutSession, createPortalSession, cancelSubscription } = useSubscriptionContext();
   const [loading, setLoading] = useState(false);
-  const { user, fetchUser } = useAuthContext();
-  const [loadingUser, setLoadingUser] = useState(true);
-
+  const { user, fetchUser, isLoading: isLoadingUser } = useAuthContext();
+  const fetchUserRef = useRef(fetchUser);
+  
+  // Keep ref updated with latest fetchUser
   useEffect(() => {
-    fetchUser();
-    setLoadingUser(false);
-    // Listen for deep links when returning from Stripe (fallback)
-    const subscription = Linking.addEventListener('url', handleDeepLink);
-    return () => {
-      subscription.remove();
-    };
-  }, []);
+    fetchUserRef.current = fetchUser;
+  }, [fetchUser]);
 
-
-  const handleDeepLink = async (event: { url: string }) => {
+  const handleDeepLink = useCallback(async (event: { url: string }) => {
     const { queryParams } = Linking.parse(event.url);
     if (queryParams?.session_id) {
       // Subscription successful, reload user data
-      await fetchUser();
-      setLoadingUser(false);
+      await fetchUserRef.current();
       Toast.show({
         type: 'success',
         text1: 'Subscription Updated',
         text2: 'Your subscription has been updated successfully',
       });
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    // Listen for deep links when returning from Stripe (fallback)
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+    return () => {
+      subscription.remove();
+    };
+  }, [handleDeepLink]);
 
   const handleSubscribe = async (priceType: 'monthly' | 'yearly') => {
     setLoading(true);
@@ -185,11 +186,13 @@ export default function SubscriptionScreen() {
     );
   };
 
+  console.log(user);
+
   const tier = user?.tier;
   const isPremium = tier === 'PREMIUM_MONTHLY' || tier === 'PREMIUM_YEARLY';
   const subscriptionInterval = tier === 'PREMIUM_MONTHLY' ? 'month' : (tier === 'PREMIUM_YEARLY' ? 'year' : null);
 
-  if (loadingUser) {
+  if (isLoadingUser) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={colors.primary.main} />
