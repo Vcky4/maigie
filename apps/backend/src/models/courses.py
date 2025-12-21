@@ -62,6 +62,7 @@ class TopicResponse(BaseModel):
     estimatedHours: float | None
     createdAt: datetime
     updatedAt: datetime
+    note: dict | None = None
 
     # CHANGED: Replaced class Config with model_config
     model_config = ConfigDict(from_attributes=True)
