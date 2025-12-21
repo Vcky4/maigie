@@ -12,6 +12,7 @@ import type {
   PasswordReset,
   OTPRequest,
   VerifyResetCodeRequest,
+  ChangePasswordRequest,
 } from '../types/auth.types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -55,6 +56,17 @@ export const authApi = {
   getCurrentUser: async (): Promise<UserResponse> => {
     const response = await apiClient.get<UserResponse>('/auth/me');
     console.log('getCurrentUser response:', response.data);
+    return response.data;
+  },
+
+  /**
+   * Change password for logged in user
+   */
+  changePassword: async (data: ChangePasswordRequest): Promise<{ message: string }> => {
+    const response = await apiClient.post<{ message: string }>('/auth/change-password', {
+      current_password: data.currentPassword,
+      new_password: data.newPassword,
+    });
     return response.data;
   },
 
