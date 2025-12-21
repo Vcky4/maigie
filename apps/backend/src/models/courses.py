@@ -50,6 +50,9 @@ class TopicUpdate(BaseModel):
     completed: bool | None = None
 
 
+from ..models.notes import NoteResponse  # Import NoteResponse
+
+
 class TopicResponse(BaseModel):
     """Schema for topic response."""
 
@@ -62,7 +65,7 @@ class TopicResponse(BaseModel):
     estimatedHours: float | None
     createdAt: datetime
     updatedAt: datetime
-    note: dict | None = None
+    note: NoteResponse | None = None  # Use NoteResponse model instead of dict
 
     # CHANGED: Replaced class Config with model_config
     model_config = ConfigDict(from_attributes=True)
