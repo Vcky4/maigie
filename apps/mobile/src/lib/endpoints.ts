@@ -39,9 +39,16 @@ export const endpoints = {
 
   // User endpoints (add more as needed)
   users: {
-    me: `${versionPrefix}/users/me`,
+    me: `${versionPrefix}/auth/me`,
     profile: `${versionPrefix}/users/profile`,
     updateProfile: `${versionPrefix}/users/profile`,
+  },
+
+  // Subscription endpoints
+  subscriptions: {
+    checkout: `${versionPrefix}/subscriptions/checkout`,
+    portal: `${versionPrefix}/subscriptions/portal`,
+    cancel: `${versionPrefix}/subscriptions/cancel`,
   },
 
   // Add more endpoint groups as your API grows

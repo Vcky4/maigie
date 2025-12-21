@@ -40,6 +40,7 @@ from .models.error_response import ErrorResponse
 
 # --- Route Imports ---
 from .routes.ai import router as ai_router
+from .routes.websockets import router as websockets_router
 from .routes.auth import router as auth_router
 from .routes.users import router as users_router
 from .routes.courses import router as courses_router
@@ -352,7 +353,7 @@ def create_app() -> FastAPI:
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
 
     app.include_router(ai_router)
-    app.include_router(courses_router)
+    app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")
     app.include_router(goals_router)
     app.include_router(schedule_router)
     app.include_router(resources_router)

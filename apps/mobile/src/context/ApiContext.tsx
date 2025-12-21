@@ -44,6 +44,7 @@ const ApiContext = createContext<ApiContextType | null>(null);
 
 export const ApiProvider = ({ children }: { children: ReactNode }) => {
   const [userToken, setUserTokenState] = useState<string | null>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // Load token from AsyncStorage on mount
   useEffect(() => {
@@ -53,6 +54,8 @@ export const ApiProvider = ({ children }: { children: ReactNode }) => {
         setUserTokenState(token);
       } catch (error) {
         console.error('Failed to load token from storage:', error);
+      } finally {
+        setIsInitialized(true);
       }
     };
     loadToken();
@@ -126,6 +129,10 @@ export const ApiProvider = ({ children }: { children: ReactNode }) => {
   ): Promise<T> => {
     return request<T>(endpoint, { ...options, method: 'DELETE' });
   };
+
+  if (!isInitialized) {
+    return null; // Or a loading spinner
+  }
 
   return (
     <ApiContext.Provider
