@@ -1,9 +1,11 @@
 import axios from 'axios';
-import type { 
-  Note, 
-  CreateNoteRequest, 
-  UpdateNoteRequest, 
-  NoteListResponse 
+import type {
+  Note,
+  NoteAttachment,
+  CreateNoteRequest,
+  UpdateNoteRequest,
+  CreateNoteAttachmentRequest,
+  NoteListResponse
 } from '../types/notes.types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -29,11 +31,11 @@ export const notesApi = {
     return response.data;
   },
 
-  listNotes: async (params: { 
-    page?: number; 
-    size?: number; 
-    courseId?: string; 
-    search?: string 
+  listNotes: async (params: {
+    page?: number;
+    size?: number;
+    courseId?: string;
+    search?: string
   } = {}): Promise<NoteListResponse> => {
     const response = await apiClient.get<NoteListResponse>('/notes/', { params });
     return response.data;
@@ -52,5 +54,13 @@ export const notesApi = {
   deleteNote: async (id: string): Promise<void> => {
     await apiClient.delete(`/notes/${id}`);
   },
-};
 
+  addAttachment: async (noteId: string, data: CreateNoteAttachmentRequest): Promise<NoteAttachment> => {
+    const response = await apiClient.post<NoteAttachment>(`/notes/${noteId}/attachments`, data);
+    return response.data;
+  },
+
+  deleteAttachment: async (noteId: string, attachmentId: string): Promise<void> => {
+    await apiClient.delete(`/notes/${noteId}/attachments/${attachmentId}`);
+  },
+};

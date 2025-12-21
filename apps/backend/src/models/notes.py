@@ -16,6 +16,12 @@ class NoteTagResponse(BaseModel):
         from_attributes = True
 
 
+class NoteAttachmentCreate(BaseModel):
+    filename: str
+    url: str
+    size: Optional[int] = None
+
+
 class NoteAttachmentResponse(BaseModel):
     id: str
     filename: str

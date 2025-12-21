@@ -5,7 +5,7 @@ Service for Note management.
 from typing import List, Optional, Tuple
 
 from src.core.database import Prisma
-from src.models.notes import NoteCreate, NoteUpdate
+from src.models.notes import NoteAttachmentCreate, NoteCreate, NoteUpdate
 
 
 async def create_note(db: Prisma, user_id: str, data: NoteCreate):
@@ -165,3 +165,46 @@ async def list_notes(
     )
 
     return notes, total
+
+
+async def add_attachment(db: Prisma, note_id: str, user_id: str, data: NoteAttachmentCreate):
+    """
+    Add an attachment to a note.
+    """
+    # Check ownership
+    existing_note = await db.note.find_unique(where={"id": note_id})
+    if not existing_note or existing_note.userId != user_id:
+        return None
+
+    # Create attachment
+    attachment = await db.noteattachment.create(
+        data={
+            "noteId": note_id,
+            "filename": data.filename,
+            "url": data.url,
+            "size": data.size,
+        }
+    )
+
+    return attachment
+
+
+async def remove_attachment(db: Prisma, note_id: str, attachment_id: str, user_id: str) -> bool:
+    """
+    Remove an attachment from a note.
+    """
+    # Check ownership of the note via the attachment
+    # This also implicitly checks if the attachment exists and belongs to the note
+    attachment = await db.noteattachment.find_first(
+        where={
+            "id": attachment_id,
+            "noteId": note_id,
+            "note": {"userId": user_id},
+        }
+    )
+
+    if not attachment:
+        return False
+
+    await db.noteattachment.delete(where={"id": attachment_id})
+    return True

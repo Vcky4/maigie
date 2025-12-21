@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from src.dependencies import CurrentUser, DBDep
 from src.models.notes import (
+    NoteAttachmentCreate,
+    NoteAttachmentResponse,
     NoteCreate,
     NoteListResponse,
     NoteResponse,
@@ -175,3 +177,45 @@ async def unarchive_note(
             detail="Note not found or access denied",
         )
     return note
+
+
+@router.post(
+    "/{note_id}/attachments",
+    response_model=NoteAttachmentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_note_attachment(
+    note_id: str,
+    data: NoteAttachmentCreate,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Create a new attachment for a note.
+    """
+    attachment = await note_service.add_attachment(db, note_id, current_user.id, data)
+    if not attachment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or access denied",
+        )
+    return attachment
+
+
+@router.delete("/{note_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_note_attachment(
+    note_id: str,
+    attachment_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Delete a note attachment.
+    """
+    success = await note_service.remove_attachment(db, note_id, attachment_id, current_user.id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Attachment not found or access denied",
+        )
+    return None

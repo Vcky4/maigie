@@ -8,8 +8,23 @@ export interface Note {
   topicId?: string;
   archived: boolean;
   voiceRecordingUrl?: string;
+  tags?: NoteTag[];
+  attachments?: NoteAttachment[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface NoteTag {
+  id: string;
+  tag: string;
+}
+
+export interface NoteAttachment {
+  id: string;
+  filename: string;
+  url: string;
+  size?: number;
+  createdAt: string;
 }
 
 export interface CreateNoteRequest {
@@ -27,6 +42,12 @@ export interface UpdateNoteRequest {
   tags?: string[];
 }
 
+export interface CreateNoteAttachmentRequest {
+  filename: string;
+  url: string;
+  size?: number;
+}
+
 export interface NoteListResponse {
   items: Note[];
   total: number;
@@ -34,4 +55,3 @@ export interface NoteListResponse {
   size: number;
   pages: number;
 }
-
