@@ -76,11 +76,22 @@ async def get_or_create_oauth_user(oauth_info: OAuthUserInfo, db: DBDep) -> User
     email_user = await db.user.find_unique(where={"email": oauth_info.email})
 
     if email_user:
-        # Raise exception to prevent linking OAuth account to existing email/password account
-        raise AuthenticationError(
-            f"An account with email {oauth_info.email} already exists. "
-            "Please use your existing login method."
-        )
+        # User exists with this email. Allow login by returning the existing user.
+        # This effectively "links" the OAuth login to the existing account.
+
+        # If the user was pending verification, we can activate them since
+        # the OAuth provider (e.g., Google) has verified the email.
+        if not email_user.isActive:
+            email_user = await db.user.update(
+                where={"id": email_user.id},
+                data={
+                    "isActive": True,
+                    "verificationCode": None,
+                    "verificationCodeExpiresAt": None,
+                },
+            )
+
+        return email_user
 
     # Create a new user record
     new_user = await db.user.create(
