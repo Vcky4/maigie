@@ -52,9 +52,13 @@ export interface OTPRequest {
   code: string;
 }
 
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
 export interface AuthError {
   message: string;
   code?: string;
   statusCode?: number;
 }
-
