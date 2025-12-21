@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
+import { notesApi } from '../../notes/services/notesApi';
 import type { Course, Topic } from '../types/courses.types';
+import type { Note } from '../../notes/types/notes.types';
 import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
@@ -10,6 +12,7 @@ export const TopicPage = () => {
   
   const [course, setCourse] = useState<Course | null>(null);
   const [currentTopic, setCurrentTopic] = useState<Topic | null>(null);
+  const [currentNote, setCurrentNote] = useState<Note | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
@@ -35,7 +38,10 @@ export const TopicPage = () => {
       
       if (topic) {
         setCurrentTopic(topic);
-        setContent(topic.content || '');
+        // Use note content if available, fallback to topic content (migration support), or empty
+        const initialContent = topic.note?.content || topic.content || '';
+        setContent(initialContent);
+        setCurrentNote(topic.note || null);
       } else {
         setError('Topic not found');
       }
@@ -75,10 +81,27 @@ export const TopicPage = () => {
 
     // Debounce save (auto-save after 1s of inactivity)
     saveTimeoutRef.current = setTimeout(async () => {
-      if (courseId && moduleId && topicId) {
+      if (courseId && moduleId && topicId && currentTopic) {
         setIsSaving(true);
         try {
-          await coursesApi.updateTopic(courseId, moduleId, topicId, { content: newContent });
+          if (currentNote) {
+            // Update existing note
+            const updatedNote = await notesApi.updateNote(currentNote.id, { 
+              content: newContent,
+              title: currentTopic.title // Keep title in sync if needed
+            });
+            setCurrentNote(updatedNote);
+          } else {
+            // Create new note
+            const newNote = await notesApi.createNote({
+              title: currentTopic.title,
+              content: newContent,
+              courseId: courseId,
+              topicId: topicId,
+            });
+            setCurrentNote(newNote);
+          }
+          
           setIsSaving(false);
           setIsSaved(true);
           
