@@ -121,6 +121,11 @@ class ResetPasswordConfirm(BaseModel):
     new_password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 # ==========================================
 #  JWT & OTP AUTHENTICATION
 # ==========================================
@@ -440,6 +445,30 @@ async def reset_password_confirm(data: ResetPasswordConfirm):
     )
 
     return {"message": "Password reset successfully. You can now login."}
+
+
+@router.post("/change-password")
+async def change_password(
+    data: ChangePasswordRequest,
+    current_user: CurrentUser,
+):
+    """
+    Change password for logged-in users.
+    """
+    # Verify current password
+    if not current_user.passwordHash or not verify_password(
+        data.current_password, current_user.passwordHash
+    ):
+        raise HTTPException(status_code=400, detail="Incorrect current password")
+
+    # Update password
+    hashed_password = get_password_hash(data.new_password)
+    await db.user.update(
+        where={"id": current_user.id},
+        data={"passwordHash": hashed_password},
+    )
+
+    return {"message": "Password changed successfully"}
 
 
 # ==========================================
