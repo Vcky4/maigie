@@ -19,7 +19,7 @@ class StorageService:
         self.cdn_hostname = self.settings.BUNNY_CDN_HOSTNAME
 
         # Base URL for BunnyCDN Storage API (Germany region default, adjust if needed)
-        self.base_url = f"https://storage.bunnycdn.com/{self.storage_zone}"
+        self.base_url = f"https://uk.storage.bunnycdn.com/{self.storage_zone}"
 
     async def upload_file(self, file: UploadFile, path: str = "") -> dict:
         """
