@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link as RouterLink, useNavigate } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import type { Course, UpdateCourseRequest, Difficulty, Module, Topic } from '../types/courses.types';
 import { 
@@ -9,6 +9,10 @@ import {
 import { cn } from '../../../lib/utils';
 import { DeleteConfirmationModal } from '../components/modals/DeleteConfirmationModal';
 import { Reorder, useDragControls } from 'framer-motion';
+
+// Workaround for React 18 type definition mismatch with react-router-dom
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Link = RouterLink as any;
 
 // Temporary local types for editing state
 interface EditingModule extends Module {

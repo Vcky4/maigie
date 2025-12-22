@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Course, Topic } from '../types/courses.types';
 import type { Note, NoteAttachment } from '../../notes/types/notes.types';
@@ -10,6 +10,12 @@ import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Sa
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
+
+// Workaround for React 18 type definition mismatch with react-router-dom and react-markdown
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Link = RouterLink as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ReactMarkdown = ReactMarkdownOriginal as any;
 
 export const TopicPage = () => {
   const { courseId, moduleId, topicId } = useParams<{ courseId: string; moduleId: string; topicId: string }>();

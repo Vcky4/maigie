@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { notesApi } from '../services/notesApi';
 import { coursesApi } from '../../courses/services/coursesApi';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Note, NoteAttachment } from '../types/notes.types';
 import type { CourseListItem, Course, Module, Topic } from '../../courses/types/courses.types';
@@ -10,6 +10,12 @@ import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, H
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
+
+// Workaround for React 18 type definition mismatch
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ReactMarkdown = ReactMarkdownOriginal as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Link = RouterLink as any;
 
 // Helper for select arrow
 const ChevronDownIcon = () => (
