@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import UploadFile, HTTPException
 from src.services.storage_service import StorageService
 
+
 @pytest.mark.asyncio
 async def test_upload_file_success():
     """Test successful file upload to BunnyCDN."""
@@ -15,7 +16,7 @@ async def test_upload_file_success():
         mock_get_settings.return_value = mock_settings
 
         service = StorageService()
-        
+
         # Mock httpx Client
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
@@ -35,7 +36,7 @@ async def test_upload_file_success():
             assert result["filename"] == "test-image.png"
             assert result["url"] == "https://cdn.test.com/notes/test-image.png"
             assert result["size"] == len(b"fake-image-content")
-            
+
             # Verify HTTP call
             expected_url = "https://storage.bunnycdn.com/test-zone/notes/test-image.png"
             mock_client.put.assert_called_once()
@@ -43,12 +44,13 @@ async def test_upload_file_success():
             assert call_args[0][0] == expected_url
             assert call_args[1]["headers"]["AccessKey"] == "test-key"
 
+
 @pytest.mark.asyncio
 async def test_upload_file_missing_config():
     """Test upload fails when config is missing."""
     with patch("src.services.storage_service.get_settings") as mock_get_settings:
         mock_settings = MagicMock()
-        mock_settings.BUNNY_CDN_API_KEY = None # Missing
+        mock_settings.BUNNY_CDN_API_KEY = None  # Missing
         mock_get_settings.return_value = mock_settings
 
         service = StorageService()
@@ -56,9 +58,10 @@ async def test_upload_file_missing_config():
 
         with pytest.raises(HTTPException) as exc:
             await service.upload_file(file)
-        
+
         assert exc.value.status_code == 503
         assert "Storage configuration is missing" in exc.value.detail
+
 
 @pytest.mark.asyncio
 async def test_upload_file_api_error():
@@ -71,7 +74,7 @@ async def test_upload_file_api_error():
         mock_get_settings.return_value = mock_settings
 
         service = StorageService()
-        
+
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             # Simulate 401 Unauthorized from Bunny
@@ -85,7 +88,6 @@ async def test_upload_file_api_error():
 
             with pytest.raises(HTTPException) as exc:
                 await service.upload_file(file)
-            
+
             assert exc.value.status_code == 500
             assert "BunnyCDN upload failed" in exc.value.detail
-
