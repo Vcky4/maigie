@@ -9,6 +9,8 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field  # <--- Added ConfigDict here
 
+from ..models.notes import NoteResponse  # Import NoteResponse
+
 
 class DifficultyLevel(str, Enum):
     """Course difficulty levels."""
@@ -62,6 +64,7 @@ class TopicResponse(BaseModel):
     estimatedHours: float | None
     createdAt: datetime
     updatedAt: datetime
+    note: NoteResponse | None = None  # Use NoteResponse model instead of dict
 
     # CHANGED: Replaced class Config with model_config
     model_config = ConfigDict(from_attributes=True)

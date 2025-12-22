@@ -144,6 +144,10 @@ class Settings(BaseSettings):
     STRIPE_PRICE_ID_MONTHLY: str = ""
     STRIPE_PRICE_ID_YEARLY: str = ""
     FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
+    # --- BunnyCDN Storage ---
+    BUNNY_CDN_API_KEY: str | None = None
+    BUNNY_STORAGE_ZONE: str | None = None
+    BUNNY_CDN_HOSTNAME: str = "cdn.maigie.com"
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),

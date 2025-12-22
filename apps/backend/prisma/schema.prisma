@@ -114,6 +114,7 @@ model Course {
   updatedAt     DateTime   @updatedAt
 
   modules       Module[]
+  notes         Note[]
 
   @@index([userId])
   @@index([userId, archived])

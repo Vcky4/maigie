@@ -99,7 +99,9 @@ async def enrich_module_with_progress(
     """
     Enrich a module with calculated progress and completion status.
     """
-    topics = await db.topic.find_many(where={"moduleId": module.id}, order={"order": "asc"})
+    topics = await db.topic.find_many(
+        where={"moduleId": module.id}, include={"note": True}, order={"order": "asc"}
+    )
 
     progress, total, completed = await calculate_topic_list_progress(topics)
     is_completed = completed == total if total > 0 else True
@@ -157,7 +159,7 @@ async def check_topic_ownership(
     Check if topic exists and belongs to user (via module > course).
     """
     topic = await db.topic.find_unique(
-        where={"id": topic_id}, include={"module": {"include": {"course": True}}}
+        where={"id": topic_id}, include={"module": {"include": {"course": True}}, "note": True}
     )
 
     if not topic:
@@ -280,7 +282,7 @@ async def list_courses(
         skip=skip,
         take=pageSize,
         order=order_dict,
-        include={"modules": {"include": {"topics": True}}},
+        include={"modules": {"include": {"topics": {"include": {"note": True}}}}},
     )
 
     # Enrich courses with progress data
@@ -390,7 +392,7 @@ async def get_course(
     # Fetch modules with topics
     modules = await db.module.find_many(
         where={"courseId": course_id},
-        include={"topics": {"orderBy": {"order": "asc"}}},
+        include={"topics": {"include": {"note": True}, "orderBy": {"order": "asc"}}},
         order={"order": "asc"},
     )
 
@@ -630,7 +632,8 @@ async def create_topic(
             "order": topic_data.order,
             "content": topic_data.content,
             "estimatedHours": topic_data.estimatedHours,
-        }
+        },
+        include={"note": True},
     )
 
     return TopicResponse(**topic.model_dump())
@@ -673,7 +676,9 @@ async def update_topic(
         update_data["completed"] = topic_data.completed
 
     # Update topic
-    updated_topic = await db.topic.update(where={"id": topic_id}, data=update_data)
+    updated_topic = await db.topic.update(
+        where={"id": topic_id}, data=update_data, include={"note": True}
+    )
 
     return TopicResponse(**updated_topic.model_dump())
 
@@ -730,7 +735,9 @@ async def toggle_topic_completion(
         raise ValidationError("Topic does not belong to the specified module/course")
 
     # Update completion status
-    updated_topic = await db.topic.update(where={"id": topic_id}, data={"completed": completed})
+    updated_topic = await db.topic.update(
+        where={"id": topic_id}, data={"completed": completed}, include={"note": True}
+    )
 
     return TopicResponse(**updated_topic.model_dump())
 
