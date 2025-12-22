@@ -2,9 +2,11 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { Course, Topic } from '../types/courses.types';
 import type { Note, NoteAttachment } from '../../notes/types/notes.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye, EyeOff } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
@@ -31,6 +33,9 @@ export const TopicPage = () => {
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Editor State
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   
   // Preview Modal State
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
@@ -388,35 +393,67 @@ export const TopicPage = () => {
       </div>
 
       {/* Content Editor */}
-      <div className="flex items-center gap-1 p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
-        <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
-            <Bold className="w-4 h-4" />
-        </button>
-        <button onClick={() => insertFormat('*', '*')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Italic">
-            <Italic className="w-4 h-4" />
-        </button>
-        <div className="w-px h-4 bg-gray-300 mx-1" />
-        <button onClick={() => insertFormat('# ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 1">
-            <Heading1 className="w-4 h-4" />
-        </button>
-        <button onClick={() => insertFormat('## ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 2">
-            <Heading2 className="w-4 h-4" />
-        </button>
-        <div className="w-px h-4 bg-gray-300 mx-1" />
-        <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
-            <List className="w-4 h-4" />
+      <div className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
+        <div className="flex items-center gap-1">
+            <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
+                <Bold className="w-4 h-4" />
+            </button>
+            <button onClick={() => insertFormat('*', '*')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Italic">
+                <Italic className="w-4 h-4" />
+            </button>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <button onClick={() => insertFormat('# ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 1">
+                <Heading1 className="w-4 h-4" />
+            </button>
+            <button onClick={() => insertFormat('## ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 2">
+                <Heading2 className="w-4 h-4" />
+            </button>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
+                <List className="w-4 h-4" />
+            </button>
+        </div>
+
+        <button 
+            onClick={() => setIsPreviewMode(!isPreviewMode)} 
+            className={cn(
+                "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
+                isPreviewMode 
+                    ? "bg-indigo-100 text-indigo-700" 
+                    : "text-gray-600 hover:bg-gray-200"
+            )}
+        >
+            {isPreviewMode ? (
+                <>
+                    <EyeOff className="w-3.5 h-3.5" />
+                    Edit
+                </>
+            ) : (
+                <>
+                    <Eye className="w-3.5 h-3.5" />
+                    Preview
+                </>
+            )}
         </button>
       </div>
 
-      <div className="flex-1 bg-white p-4 sm:p-8 rounded-b-xl border border-gray-200 shadow-sm mb-8 relative">
-        <textarea
-          ref={textareaRef}
-          value={content}
-          onChange={handleContentChange}
-          placeholder="Start typing your notes here... (Markdown supported)"
-          className="w-full h-full min-h-[400px] resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
-          spellCheck={false}
-        />
+      <div className="flex-1 bg-white rounded-b-xl border border-gray-200 shadow-sm mb-8 relative min-h-[400px]">
+        {isPreviewMode ? (
+            <div className="w-full h-full p-8 prose prose-indigo max-w-none overflow-y-auto prose-p:my-1 prose-headings:my-2 prose-ul:my-2 prose-li:my-0">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {content || '*No content*'}
+                </ReactMarkdown>
+            </div>
+        ) : (
+            <textarea
+                ref={textareaRef}
+                value={content}
+                onChange={handleContentChange}
+                placeholder="Start typing your notes here... (Markdown supported)"
+                className="w-full h-full p-8 resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
+                spellCheck={false}
+            />
+        )}
       </div>
 
       {/* Attachments Section */}
