@@ -7,6 +7,13 @@ import type { CourseListItem, Course, Module, Topic } from '../../courses/types/
 import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
+// Helper for select arrow
+const ChevronDownIcon = () => (
+  <svg className="w-4 h-4 text-gray-500 pointer-events-none absolute right-3 top-1/2 -translate-y-1/2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+  </svg>
+);
+
 export function NoteDetailPage() {
   const { noteId } = useParams<{ noteId: string }>();
   const navigate = useNavigate();
@@ -316,51 +323,58 @@ export function NoteDetailPage() {
         />
         
         {/* Metadata Controls */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-100">
-            <div className="space-y-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
+            <div className="space-y-5">
                 {/* Course Selection */}
-                <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Link to Course</label>
-                    <select 
-                        value={selectedCourseId}
-                        onChange={(e) => setSelectedCourseId(e.target.value)}
-                        className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-white"
-                    >
-                        <option value="">Select a course...</option>
-                        {courses.map(course => (
-                            <option key={course.id} value={course.id}>{course.title}</option>
-                        ))}
-                    </select>
+                <div className="relative group">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Link to Course</label>
+                    <div className="relative">
+                        <select 
+                            value={selectedCourseId}
+                            onChange={(e) => setSelectedCourseId(e.target.value)}
+                            className="appearance-none block w-full pl-4 pr-10 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50/50 text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:bg-white transition-all duration-200 cursor-pointer hover:bg-gray-50 hover:border-gray-300"
+                        >
+                            <option value="">Select a course...</option>
+                            {courses.map(course => (
+                                <option key={course.id} value={course.id}>{course.title}</option>
+                            ))}
+                        </select>
+                        <ChevronDownIcon />
+                    </div>
                 </div>
 
                 {/* Topic Selection */}
-                <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Link to Topic</label>
-                    <select 
-                        value={selectedTopicId}
-                        onChange={(e) => setSelectedTopicId(e.target.value)}
-                        disabled={!selectedCourseId || loadingStructure}
-                        className="block w-full text-sm border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-white disabled:bg-gray-100 disabled:text-gray-400"
-                    >
-                        <option value="">Select a topic...</option>
-                        {availableTopics.map(topic => (
-                            <option key={topic.id} value={topic.id}>
-                                {topic.moduleTitle} - {topic.title}
-                            </option>
-                        ))}
-                    </select>
+                <div className="relative group">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Link to Topic</label>
+                    <div className="relative">
+                        <select 
+                            value={selectedTopicId}
+                            onChange={(e) => setSelectedTopicId(e.target.value)}
+                            disabled={!selectedCourseId || loadingStructure}
+                            className="appearance-none block w-full pl-4 pr-10 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50/50 text-gray-700 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 focus:bg-white transition-all duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed hover:enabled:bg-gray-50 hover:enabled:border-gray-300"
+                        >
+                            <option value="">Select a topic...</option>
+                            {availableTopics.map(topic => (
+                                <option key={topic.id} value={topic.id}>
+                                    {topic.moduleTitle} - {topic.title}
+                                </option>
+                            ))}
+                        </select>
+                        <ChevronDownIcon />
+                    </div>
                 </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-5">
                 {/* Tags */}
                 <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Tags</label>
-                    <div className="flex flex-wrap gap-2 items-center min-h-[38px] p-2 bg-white border border-gray-300 rounded-md shadow-sm">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5 ml-1">Tags</label>
+                    <div className="flex flex-wrap gap-2 items-center min-h-[42px] px-3 py-2 border border-gray-200 rounded-xl bg-gray-50/50 focus-within:ring-2 focus-within:ring-indigo-500/20 focus-within:border-indigo-500 focus-within:bg-white transition-all duration-200">
+                        <Tag className="w-4 h-4 text-gray-400 flex-shrink-0 mr-1" />
                         {tags.map(tag => (
-                            <span key={tag} className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-50 text-indigo-700">
+                            <span key={tag} className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">
                                 {tag}
-                                <button onClick={() => removeTag(tag)} className="ml-1 text-indigo-400 hover:text-indigo-900">
+                                <button onClick={() => removeTag(tag)} className="ml-1.5 text-indigo-400 hover:text-indigo-900 focus:outline-none">
                                     <X className="w-3 h-3" />
                                 </button>
                             </span>
@@ -370,16 +384,16 @@ export function NoteDetailPage() {
                             value={newTag}
                             onChange={(e) => setNewTag(e.target.value)}
                             onKeyDown={handleAddTag}
-                            placeholder={tags.length === 0 ? "Type tag & enter..." : ""}
-                            className="bg-transparent border-none focus:ring-0 p-0 text-sm flex-1 min-w-[60px]"
+                            placeholder={tags.length === 0 ? "Type tag & press Enter..." : ""}
+                            className="bg-transparent border-none focus:ring-0 p-0 text-sm flex-1 min-w-[120px] placeholder-gray-400 text-gray-700"
                         />
                     </div>
                 </div>
                 
                 {/* Timestamp */}
                 {!isNew && note && (
-                    <div className="flex items-center gap-2 text-xs text-gray-400 pt-2">
-                        <Calendar className="w-3 h-3" />
+                    <div className="flex items-center gap-2 text-xs text-gray-400 pt-1 ml-1">
+                        <Calendar className="w-3.5 h-3.5" />
                         <span>Last updated: {new Date(note.updatedAt).toLocaleString()}</span>
                     </div>
                 )}
