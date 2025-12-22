@@ -61,8 +61,8 @@ class NoteUpdate(BaseModel):
 class NoteResponse(NoteBase):
     id: str
     userId: str
-    tags: List[NoteTagResponse] = []
-    attachments: List[NoteAttachmentResponse] = []
+    tags: Optional[List[NoteTagResponse]] = []
+    attachments: Optional[List[NoteAttachmentResponse]] = []
     createdAt: datetime
     updatedAt: datetime
 
