@@ -69,7 +69,7 @@ ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
-
+#NEW
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
