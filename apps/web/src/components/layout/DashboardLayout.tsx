@@ -8,7 +8,8 @@ import {
   Menu,
   X,
   User,
-  BookOpen
+  BookOpen,
+  FileText
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -33,6 +34,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navItems = [
     { name: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
     { name: 'Courses', icon: BookOpen, path: '/courses' },
+    { name: 'Notes', icon: FileText, path: '/notes' },
     { name: 'Settings', icon: Settings, path: '/settings' },
   ];
 
