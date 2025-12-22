@@ -18,7 +18,7 @@ from google.generativeai.types import HarmBlockThreshold, HarmCategory
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # System instruction to define Maigie's persona
-SYSTEM_INSTRUCTION = SYSTEM_INSTRUCTION = """
+SYSTEM_INSTRUCTION = """
 You are Maigie, an intelligent study companion.
 Your goal is to help students organize learning, generate courses, and manage schedules.
 

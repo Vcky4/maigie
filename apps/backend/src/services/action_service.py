@@ -61,9 +61,11 @@ class ActionService:
                     await db.topic.create(
                         data={
                             "moduleId": module.id,
-                            "title": top_data
-                            if isinstance(top_data, str)
-                            else top_data.get("title"),
+                            "title": (
+                                top_data
+                                if isinstance(top_data, str)
+                                else top_data.get("title")
+                            ),
                             "order": float(j),
                         }
                     )
@@ -76,7 +78,7 @@ class ActionService:
             }
 
         except Exception as e:
-            print(f"❌ Action Failed: {e}")
+            print(f" Action Failed: {e}")
             return {"status": "error", "message": str(e)}
 
 
