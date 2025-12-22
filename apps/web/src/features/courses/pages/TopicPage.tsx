@@ -43,11 +43,21 @@ export const TopicPage = () => {
       
       if (topic) {
         setCurrentTopic(topic);
+        
         // Use note content if available, fallback to topic content (migration support), or empty
+        // Initially set content from the topic's embedded note or topic content
         const initialContent = topic.note?.content || topic.content || '';
         setContent(initialContent);
-        setCurrentNote(topic.note || null);
-        setAttachments(topic.note?.attachments || []);
+        
+        if (topic.note) {
+            // Fetch fresh note data to ensure we have latest attachments
+            // The course object might be stale or missing nested relations if not requested
+            setCurrentNote(topic.note); // Set initial state from course
+            fetchNoteDetails(topic.note.id);
+        } else {
+            setCurrentNote(null);
+            setAttachments([]);
+        }
       } else {
         setError('Topic not found');
       }
@@ -72,6 +82,21 @@ export const TopicPage = () => {
       console.error(err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchNoteDetails = async (noteId: string) => {
+    try {
+        const freshNote = await notesApi.getNote(noteId);
+        setCurrentNote(freshNote);
+        setAttachments(freshNote.attachments || []);
+        // Also update content if it's different (optional, but good for sync)
+        if (freshNote.content) {
+            setContent(freshNote.content);
+        }
+    } catch (err) {
+        console.error('Failed to fetch fresh note details', err);
+        // Fallback to what we have is already set in the useEffect
     }
   };
 
