@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../features/auth/store/authStore';
 import {
   LayoutDashboard,
@@ -12,6 +12,11 @@ import {
   FileText
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { AIChatWidget } from '../../features/courses/components/AIChatWidget';
+
+// Workaround for React 18 type definition mismatch with react-router-dom
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Link = RouterLink as any;
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -151,6 +156,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </nav>
       </div>
+      
+      {/* Global AI Chat Widget */}
+      <AIChatWidget />
     </div>
   );
 }
