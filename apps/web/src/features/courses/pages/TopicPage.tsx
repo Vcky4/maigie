@@ -3,8 +3,8 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
 import type { Course, Topic } from '../types/courses.types';
-import type { Note } from '../../notes/types/notes.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2 } from 'lucide-react';
+import type { Note, NoteAttachment } from '../../notes/types/notes.types';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, File as FileTextIcon, Loader, X } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
 export const TopicPage = () => {
@@ -24,6 +24,11 @@ export const TopicPage = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const savedIndicatorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Attachments state
+  const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (courseId) {
@@ -42,6 +47,7 @@ export const TopicPage = () => {
         const initialContent = topic.note?.content || topic.content || '';
         setContent(initialContent);
         setCurrentNote(topic.note || null);
+        setAttachments(topic.note?.attachments || []);
       } else {
         setError('Topic not found');
       }
@@ -121,6 +127,70 @@ export const TopicPage = () => {
 
     // Debounce save (auto-save after 1s of inactivity)
     saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0 || !courseId || !topicId || !currentTopic) return;
+    
+    // Auto-save the note if it's new before uploading attachment
+    if (!currentNote) {
+        setIsSaving(true);
+        try {
+            // Create new note
+            const newNote = await notesApi.createNote({
+                title: currentTopic.title,
+                content: content, // Use current content
+                courseId: courseId,
+                topicId: topicId,
+            });
+            setCurrentNote(newNote);
+            
+            // Continue with upload using the new note ID
+            await uploadAttachment(newNote.id, e.target.files[0]);
+        } catch (err) {
+            console.error('Failed to create note for upload', err);
+            alert('Failed to save note before upload.');
+        } finally {
+            setIsSaving(false);
+        }
+    } else {
+        await uploadAttachment(currentNote.id, e.target.files[0]);
+    }
+  };
+
+  const uploadAttachment = async (noteId: string, file: File) => {
+    setIsUploading(true);
+    try {
+        // 1. Upload file to CDN
+        const uploadResult = await notesApi.uploadFile(file);
+        
+        // 2. Link attachment to note
+        const newAttachment = await notesApi.addAttachment(noteId, {
+            filename: uploadResult.filename,
+            url: uploadResult.url,
+            size: uploadResult.size
+        });
+
+        setAttachments(prev => [...prev, newAttachment]);
+    } catch (err) {
+        console.error('Failed to upload attachment', err);
+        alert('Failed to upload attachment');
+    } finally {
+        setIsUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteAttachment = async (attachmentId: string) => {
+    if (!currentNote || !window.confirm('Are you sure you want to delete this attachment?')) return;
+    
+    try {
+        await notesApi.deleteAttachment(currentNote.id, attachmentId);
+        setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+    } catch (err) {
+        console.error('Failed to delete attachment', err);
+        alert('Failed to delete attachment');
+    }
   };
 
   // Toolbar Actions
@@ -317,6 +387,78 @@ export const TopicPage = () => {
           className="w-full h-full min-h-[400px] resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
           spellCheck={false}
         />
+      </div>
+
+      {/* Attachments Section */}
+      <div className="mb-8 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                <Paperclip className="w-5 h-5" />
+                Attachments
+            </h3>
+            <div className="relative">
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    disabled={isUploading || isSaving}
+                />
+                <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading || isSaving}
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                >
+                    {isUploading ? (
+                        <>
+                            <Loader className="w-4 h-4 animate-spin" />
+                            Uploading...
+                        </>
+                    ) : (
+                        <>
+                            <Paperclip className="w-4 h-4" />
+                            Add Attachment
+                        </>
+                    )}
+                </button>
+            </div>
+        </div>
+
+        {attachments.length === 0 ? (
+            <div className="bg-gray-50 border border-gray-200 border-dashed rounded-xl p-8 text-center">
+                <p className="text-gray-500 text-sm">No attachments yet. Upload files related to this topic.</p>
+            </div>
+        ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {attachments.map(attachment => (
+                    <div key={attachment.id} className="flex items-center p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 transition-colors group">
+                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg mr-3">
+                            <FileTextIcon className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <a 
+                                href={attachment.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="block text-sm font-medium text-gray-900 truncate hover:text-indigo-600"
+                            >
+                                {attachment.filename}
+                            </a>
+                            <span className="text-xs text-gray-500">
+                                {attachment.size ? `${(attachment.size / 1024).toFixed(1)} KB` : 'Unknown size'} • {new Date(attachment.createdAt).toLocaleDateString()}
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => handleDeleteAttachment(attachment.id)}
+                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                            title="Delete Attachment"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+                ))}
+            </div>
+        )}
       </div>
 
       {/* Footer Navigation */}

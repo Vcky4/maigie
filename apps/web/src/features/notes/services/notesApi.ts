@@ -63,4 +63,19 @@ export const notesApi = {
   deleteAttachment: async (noteId: string, attachmentId: string): Promise<void> => {
     await apiClient.delete(`/notes/${noteId}/attachments/${attachmentId}`);
   },
+
+  uploadFile: async (file: File): Promise<{ filename: string; url: string; size: number }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    // Use the separate upload route, not under notes
+    const response = await apiClient.post<{ filename: string; url: string; size: number }>('/upload/', formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+        },
+        params: {
+            path: 'notes/attachments' // Organize uploads in a subdirectory
+        }
+    });
+    return response.data;
+  },
 };
