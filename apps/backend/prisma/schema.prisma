@@ -52,6 +52,7 @@ model User {
   // Relations
   preferences   UserPreferences?
   courses       Course[] // Defined only ONCE here
+  notes         Note[]
 
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -91,6 +92,7 @@ model Course {
   updatedAt     DateTime    @updatedAt
   
   modules       Module[]
+  notes         Note[]
 
   @@index([userId])
   @@index([userId, archived]) // Valid composite index
@@ -128,9 +130,68 @@ model Topic {
   completed      Boolean  @default(false)
   estimatedHours Float?
   
+  note           Note?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([moduleId])
   @@index([moduleId, order])
+}
+
+// ==========================================
+//  NOTES MODULE
+// ==========================================
+
+model Note {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  content   String?  // Rich text content
+  summary   String?  // AI generated summary
+
+  courseId  String?
+  course    Course?  @relation(fields: [courseId], references: [id]) // Optional link to course
+
+  topicId   String?  @unique
+  topic     Topic?   @relation(fields: [topicId], references: [id]) // Optional link to topic
+
+  archived  Boolean  @default(false)
+  voiceRecordingUrl String?
+
+  tags      NoteTag[]
+  attachments NoteAttachment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([courseId])
+  @@index([topicId])
+  @@index([userId, archived])
+}
+
+model NoteTag {
+  id     String @id @default(cuid())
+  noteId String
+  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag    String
+
+  @@index([noteId])
+  @@index([tag])
+}
+
+model NoteAttachment {
+  id       String @id @default(cuid())
+  noteId   String
+  note     Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  filename String
+  url      String
+  size     Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([noteId])
 }

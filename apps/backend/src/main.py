@@ -52,6 +52,8 @@ from .routes.schedule import router as schedule_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.stripe_webhook import router as stripe_webhook_router
 from .routes.waitlist import router as waitlist_router
+from .routes.notes import router as notes_router
+from .routes.upload import router as upload_router
 from .utils.dependencies import (
     cleanup_db_client,
     close_redis_client,
@@ -358,6 +360,8 @@ def create_app() -> FastAPI:
     app.include_router(schedule_router)
     app.include_router(resources_router)
     app.include_router(realtime_router)
+    app.include_router(notes_router, prefix=f"{settings.API_V1_STR}/notes")
+    app.include_router(upload_router, prefix=f"{settings.API_V1_STR}/upload")
 
     # Webhook endpoints (no auth required, verified by Stripe signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
