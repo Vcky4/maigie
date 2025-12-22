@@ -1,3 +1,5 @@
+import { Note } from '../../notes/types/notes.types';
+
 export type Difficulty = 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED' | 'EXPERT';
 
 export interface Topic {
@@ -8,6 +10,7 @@ export interface Topic {
   order: number;
   completed: boolean;
   estimatedHours?: number;
+  note?: Note;
   createdAt: string;
   updatedAt: string;
 }

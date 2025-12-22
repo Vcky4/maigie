@@ -154,6 +154,9 @@ jobs:
           STRIPE_PRICE_ID_MONTHLY: ${{secrets.STRIPE_PRICE_ID_MONTHLY}}
           STRIPE_PRICE_ID_YEARLY: ${{secrets.STRIPE_PRICE_ID_YEARLY}}
           FRONTEND_URL: ${{secrets.FRONTEND_URL}}
+          BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
+          BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -287,6 +290,9 @@ jobs:
             export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
             export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
+            export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
+            export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
+            export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             
             cd /opt/maigie/previews
             
@@ -780,6 +786,9 @@ jobs:
           STRIPE_PRICE_ID_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_MONTHLY }}
           STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
+          BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1017,6 +1026,9 @@ jobs:
           STRIPE_PRICE_ID_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_MONTHLY }}
           STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+          BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
+          BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
+          BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1127,6 +1139,9 @@ jobs:
             export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
             export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
+            export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
+            export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
+            export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             
             cd /opt/maigie/staging
             

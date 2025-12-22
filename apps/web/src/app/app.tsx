@@ -40,6 +40,8 @@ import { CourseListPage } from '../features/courses/pages/CourseListPage';
 import { CourseDetailPage } from '../features/courses/pages/CourseDetailPage';
 import { CourseCreatePage } from '../features/courses/pages/CourseCreatePage';
 import { TopicPage } from '../features/courses/pages/TopicPage';
+import { NotesPage } from '../features/notes/pages/NotesPage';
+import { NoteDetailPage } from '../features/notes/pages/NoteDetailPage';
 import { DashboardLayout } from '../components/layout/DashboardLayout';
 import { RedirectIfAuthenticated } from '../components/auth/RedirectIfAuthenticated';
 import { ProtectedRoute } from '../components/auth/ProtectedRoute';
@@ -76,6 +78,10 @@ export function App() {
         <Route path="/courses/:id" element={<ProtectedRoute><DashboardLayout><CourseDetailPage /></DashboardLayout></ProtectedRoute>} />
         <Route path="/courses/:courseId/modules/:moduleId/topics/:topicId" element={<ProtectedRoute><DashboardLayout><TopicPage /></DashboardLayout></ProtectedRoute>} />
         
+        {/* Note Routes */}
+        <Route path="/notes" element={<ProtectedRoute><DashboardLayout><NotesPage /></DashboardLayout></ProtectedRoute>} />
+        <Route path="/notes/:noteId" element={<ProtectedRoute><DashboardLayout><NoteDetailPage /></DashboardLayout></ProtectedRoute>} />
+
         <Route path="/auth/mobile/callback" element={<AuthRedirectPage />} />
       </Routes>
       <CookieNotice />

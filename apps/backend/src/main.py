@@ -360,6 +360,8 @@ def create_app() -> FastAPI:
     app.include_router(schedule_router)
     app.include_router(resources_router)
     app.include_router(realtime_router)
+    app.include_router(notes_router, prefix=f"{settings.API_V1_STR}/notes")
+    app.include_router(upload_router, prefix=f"{settings.API_V1_STR}/upload")
 
     # Webhook endpoints (no auth required, verified by Stripe signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
