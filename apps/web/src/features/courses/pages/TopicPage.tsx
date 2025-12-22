@@ -4,7 +4,7 @@ import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
 import type { Course, Topic } from '../types/courses.types';
 import type { Note } from '../../notes/types/notes.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2 } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 
 export const TopicPage = () => {
@@ -69,6 +69,46 @@ export const TopicPage = () => {
     }
   };
 
+  const saveContent = async (newContent: string) => {
+    if (courseId && moduleId && topicId && currentTopic) {
+      setIsSaving(true);
+      try {
+        if (currentNote) {
+          // Update existing note
+          const updatedNote = await notesApi.updateNote(currentNote.id, { 
+            content: newContent,
+            title: currentTopic.title // Keep title in sync if needed
+          });
+          setCurrentNote(updatedNote);
+        } else {
+          // Create new note
+          const newNote = await notesApi.createNote({
+            title: currentTopic.title,
+            content: newContent,
+            courseId: courseId,
+            topicId: topicId,
+          });
+          setCurrentNote(newNote);
+        }
+        
+        setIsSaving(false);
+        setIsSaved(true);
+        
+        // Hide saved indicator after 2 seconds
+        if (savedIndicatorTimeoutRef.current) {
+          clearTimeout(savedIndicatorTimeoutRef.current);
+        }
+        savedIndicatorTimeoutRef.current = setTimeout(() => {
+          setIsSaved(false);
+        }, 2000);
+        
+      } catch (err) {
+        console.error('Failed to save content', err);
+        setIsSaving(false);
+      }
+    }
+  };
+
   const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newContent = e.target.value;
     setContent(newContent);
@@ -80,45 +120,35 @@ export const TopicPage = () => {
     }
 
     // Debounce save (auto-save after 1s of inactivity)
-    saveTimeoutRef.current = setTimeout(async () => {
-      if (courseId && moduleId && topicId && currentTopic) {
-        setIsSaving(true);
-        try {
-          if (currentNote) {
-            // Update existing note
-            const updatedNote = await notesApi.updateNote(currentNote.id, { 
-              content: newContent,
-              title: currentTopic.title // Keep title in sync if needed
-            });
-            setCurrentNote(updatedNote);
-          } else {
-            // Create new note
-            const newNote = await notesApi.createNote({
-              title: currentTopic.title,
-              content: newContent,
-              courseId: courseId,
-              topicId: topicId,
-            });
-            setCurrentNote(newNote);
-          }
-          
-          setIsSaving(false);
-          setIsSaved(true);
-          
-          // Hide saved indicator after 2 seconds
-          if (savedIndicatorTimeoutRef.current) {
-            clearTimeout(savedIndicatorTimeoutRef.current);
-          }
-          savedIndicatorTimeoutRef.current = setTimeout(() => {
-            setIsSaved(false);
-          }, 2000);
-          
-        } catch (err) {
-          console.error('Failed to save content', err);
-          setIsSaving(false);
+    saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
+  };
+
+  // Toolbar Actions
+  const insertFormat = (prefix: string, suffix: string = '') => {
+    if (!textareaRef.current) return;
+    
+    const start = textareaRef.current.selectionStart;
+    const end = textareaRef.current.selectionEnd;
+    const text = content;
+    const before = text.substring(0, start);
+    const selection = text.substring(start, end);
+    const after = text.substring(end);
+
+    const newContent = before + prefix + selection + suffix + after;
+    setContent(newContent);
+    
+    // Restore selection / focus
+    setTimeout(() => {
+        if (textareaRef.current) {
+            textareaRef.current.focus();
+            textareaRef.current.setSelectionRange(start + prefix.length, end + prefix.length);
         }
-      }
-    }, 1000);
+    }, 0);
+
+    // Trigger save
+    setIsSaved(false);
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
   };
 
   const handleStudy = () => {
@@ -258,21 +288,35 @@ export const TopicPage = () => {
       </div>
 
       {/* Content Editor */}
-      <div className="flex-1 bg-white p-4 sm:p-8 rounded-xl border border-gray-200 shadow-sm mb-8 relative">
+      <div className="flex items-center gap-1 p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
+        <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
+            <Bold className="w-4 h-4" />
+        </button>
+        <button onClick={() => insertFormat('*', '*')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Italic">
+            <Italic className="w-4 h-4" />
+        </button>
+        <div className="w-px h-4 bg-gray-300 mx-1" />
+        <button onClick={() => insertFormat('# ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 1">
+            <Heading1 className="w-4 h-4" />
+        </button>
+        <button onClick={() => insertFormat('## ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 2">
+            <Heading2 className="w-4 h-4" />
+        </button>
+        <div className="w-px h-4 bg-gray-300 mx-1" />
+        <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
+            <List className="w-4 h-4" />
+        </button>
+      </div>
+
+      <div className="flex-1 bg-white p-4 sm:p-8 rounded-b-xl border border-gray-200 shadow-sm mb-8 relative">
         <textarea
           ref={textareaRef}
           value={content}
           onChange={handleContentChange}
-          placeholder="Start typing your notes here..."
-          className="w-full h-full min-h-[300px] resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300"
+          placeholder="Start typing your notes here... (Markdown supported)"
+          className="w-full h-full min-h-[400px] resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
           spellCheck={false}
         />
-        {/* Helper text if empty */}
-        {content.length === 0 && (
-          <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none text-center opacity-0">
-             {/* This is just a placeholder for structure, the real placeholder is on the textarea */}
-          </div>
-        )}
       </div>
 
       {/* Footer Navigation */}

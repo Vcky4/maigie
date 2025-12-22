@@ -385,7 +385,7 @@ export function NoteDetailPage() {
                             onChange={(e) => setNewTag(e.target.value)}
                             onKeyDown={handleAddTag}
                             placeholder={tags.length === 0 ? "Type tag & press Enter..." : ""}
-                            className="bg-transparent border-none focus:ring-0 p-0 text-sm flex-1 min-w-[120px] placeholder-gray-400 text-gray-700"
+                            className="bg-transparent border-none focus:ring-0 outline-none p-0 text-sm flex-1 min-w-[120px] placeholder-gray-400 text-gray-700"
                         />
                     </div>
                 </div>
