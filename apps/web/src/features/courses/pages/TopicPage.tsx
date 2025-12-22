@@ -4,8 +4,10 @@ import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
 import type { Course, Topic } from '../types/courses.types';
 import type { Note, NoteAttachment } from '../../notes/types/notes.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, File as FileTextIcon, Loader, X } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye } from 'lucide-react';
 import { cn } from '../../../lib/utils';
+import { getFileIcon, getFileType } from '../../../lib/fileUtils';
+import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
 
 export const TopicPage = () => {
   const { courseId, moduleId, topicId } = useParams<{ courseId: string; moduleId: string; topicId: string }>();
@@ -29,6 +31,9 @@ export const TopicPage = () => {
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Preview Modal State
+  const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
 
   useEffect(() => {
     if (courseId) {
@@ -455,36 +460,50 @@ export const TopicPage = () => {
             </div>
         ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {attachments.map(attachment => (
+                {attachments.map(attachment => {
+                    const fileType = getFileType(attachment.filename);
+                    const FileIcon = getFileIcon(fileType);
+                    return (
                     <div key={attachment.id} className="flex items-center p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 transition-colors group">
                         <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg mr-3">
-                            <FileTextIcon className="w-5 h-5" />
+                            <FileIcon className="w-5 h-5" />
                         </div>
-                        <div className="flex-1 min-w-0">
-                            <a 
-                                href={attachment.url} 
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="block text-sm font-medium text-gray-900 truncate hover:text-indigo-600"
-                            >
+                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}>
+                            <p className="block text-sm font-medium text-gray-900 truncate hover:text-indigo-600">
                                 {attachment.filename}
-                            </a>
+                            </p>
                             <span className="text-xs text-gray-500">
                                 {attachment.size ? `${(attachment.size / 1024).toFixed(1)} KB` : 'Unknown size'} • {new Date(attachment.createdAt).toLocaleDateString()}
                             </span>
                         </div>
-                        <button
-                            onClick={() => handleDeleteAttachment(attachment.id)}
-                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                            title="Delete Attachment"
-                        >
-                            <X className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-all">
+                            <button
+                                onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}
+                                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                                title="Preview"
+                            >
+                                <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => handleDeleteAttachment(attachment.id)}
+                                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
+                                title="Delete Attachment"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
                     </div>
-                ))}
+                )})}
             </div>
         )}
       </div>
+
+      <FilePreviewModal 
+        isOpen={!!previewFile}
+        onClose={() => setPreviewFile(null)}
+        fileUrl={previewFile?.url || ''}
+        filename={previewFile?.name || ''}
+      />
 
       {/* Footer Navigation */}
       <div className="border-t border-gray-200 pt-6 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 sm:gap-0">
