@@ -62,9 +62,7 @@ class ActionService:
                         data={
                             "moduleId": module.id,
                             "title": (
-                                top_data
-                                if isinstance(top_data, str)
-                                else top_data.get("title")
+                                top_data if isinstance(top_data, str) else top_data.get("title")
                             ),
                             "order": float(j),
                         }
