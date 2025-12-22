@@ -1,6 +1,8 @@
+from uuid import uuid4
+
 import pytest
 from httpx import AsyncClient
-from uuid import uuid4
+
 from src.core.database import db
 from src.core.security import get_password_hash
 

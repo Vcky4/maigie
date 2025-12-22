@@ -6,9 +6,13 @@ Copyright (C) 2025 Maigie
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Query, status, BackgroundTasks, HTTPException
-from prisma import Client as PrismaClient
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
+
+from prisma import Client as PrismaClient
+
+# Import the AI worker service
+from src.services.ai_course import generate_course_content_task
 
 from ..dependencies import CurrentUser
 from ..models.courses import (
@@ -33,9 +37,6 @@ from ..utils.exceptions import (
     SubscriptionLimitError,
     ValidationError,
 )
-
-# Import the AI worker service
-from src.services.ai_course import generate_course_content_task
 
 router = APIRouter(tags=["courses"])
 

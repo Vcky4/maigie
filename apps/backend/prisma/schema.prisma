@@ -11,13 +11,16 @@ generator client {
   recursive_type_depth = 5
 }
 
+// ==========================================
+//  ENUMS
+// ==========================================
+
 enum Tier {
   FREE
   PREMIUM_MONTHLY
   PREMIUM_YEARLY
 }
 
-// Added this to support the Difficulty field safely
 enum Difficulty {
   BEGINNER
   INTERMEDIATE
@@ -25,47 +28,67 @@ enum Difficulty {
   EXPERT
 }
 
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ActionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// ==========================================
+//  USER & AUTH
+// ==========================================
+
 model User {
-  id            String    @id @default(uuid())
-  email         String    @unique
-  passwordHash  String?   // Nullable for OAuth users
-  name          String?
-  provider      String?   // "google", "email"
-  providerId    String?
-  tier          Tier      @default(FREE)
-  isActive      Boolean   @default(true)
-  isOnboarded   Boolean   @default(false)
-  
-  verificationCode          String?   // Stores the 6-digit OTP
-  verificationCodeExpiresAt DateTime? // Stores when it expires
-  passwordResetCode         String?
-  passwordResetExpiresAt    DateTime?
-  
+  id           String  @id @default(uuid())
+  email        String  @unique
+  passwordHash String? // Nullable for OAuth users
+  name         String?
+  provider     String? // "google", "email"
+  providerId   String?
+  tier         Tier    @default(FREE)
+  isActive     Boolean @default(true)
+  isOnboarded  Boolean @default(false)
+
+  verificationCode            String?   // Stores the 6-digit OTP
+  verificationCodeExpiresAt   DateTime? // Stores when it expires
+  passwordResetCode           String?
+  passwordResetExpiresAt      DateTime?
+
   // Stripe subscription fields
-  stripeCustomerId               String?   @unique
-  stripeSubscriptionId           String?   @unique
-  stripeSubscriptionStatus       String? 
-  stripePriceId                  String?   
+  stripeCustomerId             String?   @unique
+  stripeSubscriptionId         String?   @unique
+  stripeSubscriptionStatus     String?
+  stripePriceId                String?
   subscriptionCurrentPeriodStart DateTime?
   subscriptionCurrentPeriodEnd   DateTime?
-  
+
   // Relations
   preferences   UserPreferences?
-  courses       Course[] // Defined only ONCE here
+  courses       Course[]
+  
+  // NEW: Chat Relations
+  chatSessions  ChatSession[]
+  chatMessages  ChatMessage[] // Direct relation to help count usage (e.g., "50 messages/month")
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model UserPreferences {
-  id            String    @id @default(uuid())
-  userId        String    @unique
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  theme         String    @default("light") 
-  language      String    @default("en")
-  notifications Boolean   @default(true)
-  studyGoals    Json?     
+  id            String  @id @default(uuid())
+  userId        String  @unique
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  theme         String  @default("light")
+  language      String  @default("en")
+  notifications Boolean @default(true)
+  studyGoals    Json?
 }
 
 // ==========================================
@@ -73,44 +96,42 @@ model UserPreferences {
 // ==========================================
 
 model Course {
-  id            String      @id @default(cuid()) // Consistent ID style
+  id            String     @id @default(cuid())
   userId        String
-  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   title         String
   description   String?
-  difficulty    Difficulty  @default(BEGINNER) // Using your Enum
+  difficulty    Difficulty @default(BEGINNER)
   targetDate    DateTime?
-  isAIGenerated Boolean     @default(false)
-  archived      Boolean     @default(false)
-  
-  // Cached progress (0.0 to 100.0) - CRITICAL for performance
-  progress      Float       @default(0.0) 
-  
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  
+  isAIGenerated Boolean    @default(false)
+  archived      Boolean    @default(false)
+
+  // Cached progress (0.0 to 100.0)
+  progress      Float      @default(0.0)
+
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
   modules       Module[]
 
   @@index([userId])
-  @@index([userId, archived]) // Valid composite index
+  @@index([userId, archived])
 }
 
 model Module {
   id          String   @id @default(cuid())
   courseId    String
   course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  
+
   title       String
   description String?
-  order       Float    @default(0) // Float allows easier drag-and-drop
-  
-  // We usually track completion at the module level too for UI speed
-  completed   Boolean  @default(false) 
-  
+  order       Float    @default(0)
+  completed   Boolean  @default(false)
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  
+
   topics      Topic[]
 
   @@index([courseId])
@@ -121,16 +142,81 @@ model Topic {
   id             String   @id @default(cuid())
   moduleId       String
   module         Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  
+
   title          String
   content        String?  // Markdown content
   order          Float    @default(0)
   completed      Boolean  @default(false)
   estimatedHours Float?
-  
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([moduleId])
   @@index([moduleId, order])
+}
+
+// ==========================================
+//  CHAT & AI MODULE (NEW)
+// ==========================================
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  title     String?  // Auto-generated summary (e.g. "Biology Study Plan")
+  isActive  Boolean  @default(true) // False if archived/deleted
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages  ChatMessage[]
+
+  @@index([userId])
+  @@index([updatedAt]) // Useful for sorting "Recent Chats"
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role      ChatRole    // USER, ASSISTANT, SYSTEM
+  content   String      // The Markdown text response
+  
+  // Voice features
+  audioUrl  String?     // S3 URL if this was a voice message
+  duration  Float?      // Duration in seconds
+  
+  // Usage tracking (Critical for Free Tier limits)
+  tokenCount Int        @default(0) 
+
+  createdAt DateTime    @default(now())
+
+  // Relations
+  actions   AIActionLog[]
+
+  @@index([sessionId])
+  @@index([userId]) // Helps count "messages this month" quickly
+}
+
+model AIActionLog {
+  id         String       @id @default(cuid())
+  
+  messageId  String
+  message    ChatMessage  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  actionType String       // e.g., "create_course", "create_goal"
+  actionData Json         // The actual JSON payload used
+  status     ActionStatus @default(PENDING) 
+  error      String?      // If status == FAILED
+
+  createdAt  DateTime     @default(now())
+
+  @@index([messageId])
 }

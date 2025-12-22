@@ -21,7 +21,7 @@ import base64
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated
 
 import httpx
@@ -35,9 +35,9 @@ from src.core.database import db
 from src.core.oauth import OAuthProviderFactory
 from src.core.security import (
     create_access_token,
+    generate_otp,
     get_password_hash,
     verify_password,
-    generate_otp,
 )
 from src.dependencies import CurrentUser, DBDep
 from src.exceptions import AuthenticationError
@@ -49,9 +49,9 @@ from src.models.auth import (
     UserSignup,
 )
 from src.services.email import (
+    send_password_reset_email,
     send_verification_email,
     send_welcome_email,
-    send_password_reset_email,
 )
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
@@ -149,7 +149,7 @@ async def signup(user_data: UserSignup):
 
     # 3. Generate OTP and Expiry (15 minutes)
     otp_code = generate_otp()
-    otp_expires = datetime.now(timezone.utc) + timedelta(minutes=15)
+    otp_expires = datetime.now(UTC) + timedelta(minutes=15)
 
     # 4. Create user (Inactive + OTP stored in DB)
     new_user = await db.user.create(
@@ -199,7 +199,7 @@ async def verify_email(data: VerifyRequest):
         return {"message": "Email already verified"}
 
     # 2. Validation Logic
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if not user.verificationCode or user.verificationCode != data.code:
         raise HTTPException(status_code=400, detail="Invalid verification code")
@@ -243,7 +243,7 @@ async def resend_otp_code(data: ResendOTPRequest):
         raise HTTPException(status_code=400, detail="Account is already verified.")
 
     # 2. Rate Limiting (Database Strategy)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if user.verificationCodeExpiresAt:
         time_remaining = user.verificationCodeExpiresAt - now
         # If more than 14 minutes remain on the 15-minute timer
@@ -374,7 +374,7 @@ async def forgot_password(request: ForgotPasswordRequest):
 
     if user:
         otp = generate_otp()
-        expiry = datetime.now(timezone.utc) + timedelta(minutes=15)
+        expiry = datetime.now(UTC) + timedelta(minutes=15)
 
         await db.user.update(
             where={"id": user.id},
@@ -399,7 +399,7 @@ async def verify_reset_code(data: VerifyResetCodeRequest):
     if not user:
         raise HTTPException(status_code=400, detail="Invalid code or email")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if (
         not user.passwordResetCode
@@ -423,7 +423,7 @@ async def reset_password_confirm(data: ResetPasswordConfirm):
         raise HTTPException(status_code=400, detail="Invalid code or email")
 
     # Re-Verify Code (Security Requirement)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if (
         not user.passwordResetCode
         or user.passwordResetCode != data.code
