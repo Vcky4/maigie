@@ -18,7 +18,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+
 from src.core.websocket import manager  # Ensure src/core/socket.py was renamed to websocket.py
 
 logger = logging.getLogger(__name__)

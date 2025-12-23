@@ -20,7 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials  # <--- CHANGED
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # <--- CHANGED
 from jose import JWTError
 
 from prisma import Prisma

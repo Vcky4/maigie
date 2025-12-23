@@ -1,21 +1,22 @@
 from datetime import datetime
 from typing import List, Optional
+
 from pydantic import BaseModel, ConfigDict
 
 
 class TopicBase(BaseModel):
     title: str
-    content: Optional[str] = None
+    content: str | None = None
     order: int = 0
-    estimatedHours: Optional[float] = None
+    estimatedHours: float | None = None
     completed: bool = False
 
 
 class TopicUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    order: Optional[int] = None
-    completed: Optional[bool] = None
+    title: str | None = None
+    content: str | None = None
+    order: int | None = None
+    completed: bool | None = None
 
 
 class TopicResponse(TopicBase):
@@ -28,13 +29,13 @@ class TopicResponse(TopicBase):
 
 class ModuleBase(BaseModel):
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     order: int = 0
     completed: bool = False
 
 
 class ModuleCreate(ModuleBase):
-    topics: List[TopicBase] = []
+    topics: list[TopicBase] = []
 
 
 class ModuleResponse(ModuleBase):
@@ -42,29 +43,29 @@ class ModuleResponse(ModuleBase):
     courseId: str
     createdAt: datetime
     updatedAt: datetime
-    topics: List[TopicResponse] = []
+    topics: list[TopicResponse] = []
     model_config = ConfigDict(from_attributes=True)
 
 
 class CourseBase(BaseModel):
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     difficulty: str = "Beginner"
-    targetDate: Optional[datetime] = None
+    targetDate: datetime | None = None
     isAIGenerated: bool = False
     archived: bool = False
 
 
 class CourseCreate(CourseBase):
-    modules: List[ModuleCreate] = []
+    modules: list[ModuleCreate] = []
 
 
 class CourseUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    difficulty: Optional[str] = None
-    targetDate: Optional[datetime] = None
-    archived: Optional[bool] = None
+    title: str | None = None
+    description: str | None = None
+    difficulty: str | None = None
+    targetDate: datetime | None = None
+    archived: bool | None = None
 
 
 class CourseResponse(CourseBase):
@@ -73,5 +74,5 @@ class CourseResponse(CourseBase):
     progress: float
     createdAt: datetime
     updatedAt: datetime
-    modules: List[ModuleResponse] = []
+    modules: list[ModuleResponse] = []
     model_config = ConfigDict(from_attributes=True)

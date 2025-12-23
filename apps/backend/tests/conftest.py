@@ -1,8 +1,8 @@
 import os
+from collections.abc import AsyncGenerator
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from typing import AsyncGenerator
 
 try:
     from prisma.errors import TableNotFoundError
