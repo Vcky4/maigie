@@ -51,6 +51,8 @@ from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
+from src.routes.notes import router as notes_router
+from src.routes.upload import router as upload_router
 from .routes.waitlist import router as waitlist_router
 from .routes.websockets import router as websockets_router
 from .utils.dependencies import (
