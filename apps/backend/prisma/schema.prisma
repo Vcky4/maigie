@@ -227,15 +227,30 @@ model Note {
   id        String   @id @default(cuid())
   title     String
   content   String?  @db.Text
+  archived  Boolean  @default(false)
+  tags      String[] // Supports the tag filtering
+  
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   userId    String
   user      User     @relation(fields: [userId], references: [id])
 
-  // Since the error appeared near "modules Module[]", it seems "Course" also has notes.
-  // We add this relation to satisfy the link in the Course model.
   courseId  String?
   course    Course?  @relation(fields: [courseId], references: [id])
+
+  attachments NoteAttachment[]
+}
+
+model NoteAttachment {
+  id        String   @id @default(cuid())
+  name      String
+  url       String
+  type      String   // e.g., "image/png", "application/pdf"
+  size      Int?     // Size in bytes
+  
+  createdAt DateTime @default(now())
+
+  noteId    String
+  note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
 }
