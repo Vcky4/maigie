@@ -151,6 +151,8 @@ model Topic {
   completed      Boolean  @default(false)
   estimatedHours Float?
 
+   note           Note?
+
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -223,34 +225,60 @@ model AIActionLog {
   @@index([messageId])
 }
 
+
+// ==========================================
+//  NOTES MODULE
+// ==========================================
+
 model Note {
   id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   title     String
-  content   String?  @db.Text
+  content   String?  // Rich text content
+  summary   String?  // AI generated summary
+
+  courseId  String?
+  course    Course?  @relation(fields: [courseId], references: [id]) // Optional link to course
+
+  topicId   String?  @unique
+  topic     Topic?   @relation(fields: [topicId], references: [id]) // Optional link to topic
+
   archived  Boolean  @default(false)
-  tags      String[] // Supports the tag filtering
-  
+  voiceRecordingUrl String?
+
+  tags      NoteTag[]
+  attachments NoteAttachment[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  @@index([userId])
+  @@index([courseId])
+  @@index([topicId])
+  @@index([userId, archived])
+}
 
-  courseId  String?
-  course    Course?  @relation(fields: [courseId], references: [id])
+model NoteTag {
+  id     String @id @default(cuid())
+  noteId String
+  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag    String
 
-  attachments NoteAttachment[]
+  @@index([noteId])
+  @@index([tag])
 }
 
 model NoteAttachment {
-  id        String   @id @default(cuid())
-  name      String
-  url       String
-  type      String   // e.g., "image/png", "application/pdf"
-  size      Int?     // Size in bytes
-  
+  id       String @id @default(cuid())
+  noteId   String
+  note     Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  filename String
+  url      String
+  size     Int?
+
   createdAt DateTime @default(now())
 
-  noteId    String
-  note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  @@index([noteId])
 }
