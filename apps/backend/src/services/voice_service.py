@@ -31,10 +31,14 @@ class VoiceService:
 
             audio_part = {"mime_type": mime_type, "data": content}
 
-            # 3. Prompt Gemini to transcribe
+            # 3. Prompt Gemini to transcribe with better instructions
             response = await self.model.generate_content_async(
                 [
-                    "Please transcribe this audio file exactly as spoken. Do not add any commentary or markdown.",
+                    "Transcribe ONLY the actual spoken words in this audio. "
+                    "If there is silence, background noise, or no clear speech, respond with an empty string. "
+                    "Do not add any commentary, markdown, or descriptions. "
+                    "Do not transcribe silence as words. "
+                    "Only output the exact words that were spoken, nothing else.",
                     audio_part,
                 ]
             )

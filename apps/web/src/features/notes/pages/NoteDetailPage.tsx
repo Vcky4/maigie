@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import { notesApi } from '../services/notesApi';
 import { coursesApi } from '../../courses/services/coursesApi';
-import { chatApi } from '../../courses/services/chatApi';
 import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Note, NoteAttachment } from '../types/notes.types';
@@ -17,6 +16,59 @@ import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
 const ReactMarkdown = ReactMarkdownOriginal as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Link = RouterLink as any;
+
+// Web Speech Recognition API types
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+  isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: {
+      new (): SpeechRecognition;
+    };
+    webkitSpeechRecognition: {
+      new (): SpeechRecognition;
+    };
+  }
+}
 
 // Helper for select arrow
 const ChevronDownIcon = () => (
@@ -61,12 +113,9 @@ export function NoteDetailPage() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const savedIndicatorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Voice transcription state
+  // Voice transcription state (using Web Speech Recognition API)
   const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
-  const transcriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
     fetchCourses();
@@ -241,113 +290,76 @@ export function NoteDetailPage() {
     }
   };
 
-  // Real-time voice transcription
-  const startVoiceTranscription = async () => {
+  // Real-time voice transcription using Web Speech Recognition API
+  const startVoiceTranscription = () => {
+    // Check if browser supports Speech Recognition
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      alert('Your browser does not support speech recognition. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
-      
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-      mediaRecorderRef.current = mediaRecorder;
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
 
-      const audioChunks: Blob[] = [];
-      const CHUNK_INTERVAL_MS = 3000; // Send chunks every 3 seconds
+      // Configure recognition
+      recognition.continuous = true; // Keep listening
+      recognition.interimResults = false; // Only final results (raw speech-to-text)
+      recognition.lang = 'en-US'; // Language
 
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data);
-          
-          // Create a chunk file and transcribe it
-          const chunkBlob = new Blob([event.data], { type: 'audio/webm' });
-          const chunkFile = new File([chunkBlob], `chunk-${Date.now()}.webm`, { type: 'audio/webm' });
-          
-          // Queue transcription to avoid race conditions
-          transcriptionQueueRef.current = transcriptionQueueRef.current.then(async () => {
-            try {
-              setIsTranscribing(true);
-              const result = await chatApi.transcribeVoice(chunkFile);
-              
-              if (result.text && result.text.trim()) {
-                // Append transcribed text to content (only new text, no accumulation)
-                const transcribedText = result.text.trim();
-                
-                // Update content by appending only the new transcribed text
-                setContent(prev => {
-                  const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcribedText;
-                  // Trigger save
-                  setIsSaved(false);
-                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                  saveTimeoutRef.current = setTimeout(() => handleSave(), 1000);
-                  return newContent;
-                });
-              }
-            } catch (error) {
-              console.error('Transcription error:', error);
-              // Continue recording even if one chunk fails
-            } finally {
-              setIsTranscribing(false);
-            }
-          });
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        // Process all results - only final transcripts
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            const transcript = event.results[i][0].transcript;
+            
+            // Update content with final transcript (raw speech-to-text)
+            setContent(prev => {
+              const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcript;
+              setIsSaved(false);
+              if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = setTimeout(() => handleSave(), 1000);
+              return newContent;
+            });
+          }
         }
       };
 
-      mediaRecorder.onstop = () => {
-        // Process any remaining chunks
-        if (audioChunks.length > 0) {
-          const finalBlob = new Blob(audioChunks, { type: 'audio/webm' });
-          const finalFile = new File([finalBlob], 'final-chunk.webm', { type: 'audio/webm' });
-          
-          transcriptionQueueRef.current = transcriptionQueueRef.current.then(async () => {
-            try {
-              setIsTranscribing(true);
-              const result = await chatApi.transcribeVoice(finalFile);
-              
-              if (result.text && result.text.trim()) {
-                // Append transcribed text to content (only new text, no accumulation)
-                const transcribedText = result.text.trim();
-                
-                setContent(prev => {
-                  const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcribedText;
-                  setIsSaved(false);
-                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                  saveTimeoutRef.current = setTimeout(() => handleSave(), 1000);
-                  return newContent;
-                });
-              }
-            } catch (error) {
-              console.error('Final transcription error:', error);
-            } finally {
-              setIsTranscribing(false);
-            }
-          });
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'no-speech') {
+          // This is normal, just means no speech detected
+          return;
         }
-        
-        // Stop all tracks
-        stream.getTracks().forEach(track => track.stop());
-        audioStreamRef.current = null;
         setIsRecording(false);
       };
 
-      // Start recording with timeslices for chunked transcription
-      mediaRecorder.start(CHUNK_INTERVAL_MS);
-      setIsRecording(true);
+      recognition.onend = () => {
+        setIsRecording(false);
+        recognitionRef.current = null;
+      };
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+      };
+
+      // Start recognition
+      recognition.start();
       
     } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('Could not access microphone. Please check permissions.');
+      console.error('Error starting speech recognition:', error);
+      alert('Could not start speech recognition. Please check permissions.');
       setIsRecording(false);
     }
   };
 
   const stopVoiceTranscription = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(track => track.stop());
-      audioStreamRef.current = null;
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
     setIsRecording(false);
   };
@@ -363,11 +375,8 @@ export function NoteDetailPage() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
     };
   }, []);
@@ -445,7 +454,7 @@ export function NoteDetailPage() {
   };
 
   // Toolbar Actions
-  const insertFormat = (prefix: string, suffix: string = '') => {
+  const insertFormat = (prefix: string, suffix = '') => {
     if (!textareaRef.current) return;
     
     const start = textareaRef.current.selectionStart;
@@ -672,10 +681,10 @@ export function NoteDetailPage() {
                 <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
               )}
             </button>
-            {isTranscribing && (
+            {isRecording && (
               <div className="flex items-center gap-1 text-xs text-gray-500 px-2">
-                <Loader className="w-3 h-3 animate-spin" />
-                <span>Transcribing...</span>
+                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span>Listening...</span>
               </div>
             )}
         </div>
@@ -686,75 +695,6 @@ export function NoteDetailPage() {
             title={isPreviewMode ? "Edit Mode" : "Preview Mode"}
         >
             {isPreviewMode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-        </button>
-      </div>
-      <div className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
-        <div className="flex items-center gap-1">
-            <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
-                <Bold className="w-4 h-4" />
-            </button>
-            <button onClick={() => insertFormat('*', '*')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Italic">
-                <Italic className="w-4 h-4" />
-            </button>
-            <div className="w-px h-4 bg-gray-300 mx-1" />
-            <button onClick={() => insertFormat('# ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 1">
-                <Heading1 className="w-4 h-4" />
-            </button>
-            <button onClick={() => insertFormat('## ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 2">
-                <Heading2 className="w-4 h-4" />
-            </button>
-            <div className="w-px h-4 bg-gray-300 mx-1" />
-            <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
-                <List className="w-4 h-4" />
-            </button>
-            <div className="w-px h-4 bg-gray-300 mx-1" />
-            <button 
-              onClick={toggleVoiceTranscription}
-              className={cn(
-                "p-1.5 rounded transition-colors relative",
-                isRecording 
-                  ? "text-red-600 hover:bg-red-50 bg-red-50" 
-                  : "text-gray-600 hover:bg-gray-200"
-              )}
-              title={isRecording ? "Stop voice transcription" : "Start voice transcription"}
-            >
-              {isRecording ? (
-                <MicOff className="w-4 h-4" />
-              ) : (
-                <Mic className="w-4 h-4" />
-              )}
-              {isRecording && (
-                <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </button>
-            {isTranscribing && (
-              <div className="flex items-center gap-1 text-xs text-gray-500 px-2">
-                <Loader className="w-3 h-3 animate-spin" />
-                <span>Transcribing...</span>
-              </div>
-            )}
-        </div>
-        
-        <button 
-            onClick={() => setIsPreviewMode(!isPreviewMode)} 
-            className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
-                isPreviewMode 
-                    ? "bg-indigo-100 text-indigo-700" 
-                    : "text-gray-600 hover:bg-gray-200"
-            )}
-        >
-            {isPreviewMode ? (
-                <>
-                    <EyeOff className="w-3.5 h-3.5" />
-                    Edit
-                </>
-            ) : (
-                <>
-                    <Eye className="w-3.5 h-3.5" />
-                    Preview
-                </>
-            )}
         </button>
       </div>
 

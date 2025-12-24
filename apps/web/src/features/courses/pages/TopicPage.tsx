@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useParams, Link as RouterLink } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
-import { chatApi } from '../services/chatApi';
 import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Course, Topic } from '../types/courses.types';
@@ -17,6 +16,59 @@ import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
 const Link = RouterLink as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ReactMarkdown = ReactMarkdownOriginal as any;
+
+// Web Speech Recognition API types
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+  isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: {
+      new (): SpeechRecognition;
+    };
+    webkitSpeechRecognition: {
+      new (): SpeechRecognition;
+    };
+  }
+}
 
 export const TopicPage = () => {
   const { courseId, moduleId, topicId } = useParams<{ courseId: string; moduleId: string; topicId: string }>();
@@ -47,12 +99,9 @@ export const TopicPage = () => {
   // Preview Modal State
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
 
-  // Voice transcription state
+  // Voice transcription state (using Web Speech Recognition API)
   const [isRecording, setIsRecording] = useState(false);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
-  const transcriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
   useEffect(() => {
     if (courseId) {
@@ -305,113 +354,76 @@ export const TopicPage = () => {
     console.log('Resources clicked');
   };
 
-  // Real-time voice transcription
-  const startVoiceTranscription = async () => {
+  // Real-time voice transcription using Web Speech Recognition API
+  const startVoiceTranscription = () => {
+    // Check if browser supports Speech Recognition
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      alert('Your browser does not support speech recognition. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
-      
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-      mediaRecorderRef.current = mediaRecorder;
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
 
-      const audioChunks: Blob[] = [];
-      const CHUNK_INTERVAL_MS = 3000; // Send chunks every 3 seconds
+      // Configure recognition
+      recognition.continuous = true; // Keep listening
+      recognition.interimResults = false; // Only final results (raw speech-to-text)
+      recognition.lang = 'en-US'; // Language
 
-      mediaRecorder.ondataavailable = async (event) => {
-        if (event.data.size > 0) {
-          audioChunks.push(event.data);
-          
-          // Create a chunk file and transcribe it
-          const chunkBlob = new Blob([event.data], { type: 'audio/webm' });
-          const chunkFile = new File([chunkBlob], `chunk-${Date.now()}.webm`, { type: 'audio/webm' });
-          
-          // Queue transcription to avoid race conditions
-          transcriptionQueueRef.current = transcriptionQueueRef.current.then(async () => {
-            try {
-              setIsTranscribing(true);
-              const result = await chatApi.transcribeVoice(chunkFile);
-              
-              if (result.text && result.text.trim()) {
-                // Append transcribed text to content (only new text, no accumulation)
-                const transcribedText = result.text.trim();
-                
-                // Update content by appending only the new transcribed text
-                setContent(prev => {
-                  const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcribedText;
-                  // Trigger save
-                  setIsSaved(false);
-                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                  saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
-                  return newContent;
-                });
-              }
-            } catch (error) {
-              console.error('Transcription error:', error);
-              // Continue recording even if one chunk fails
-            } finally {
-              setIsTranscribing(false);
-            }
-          });
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        // Process all results - only final transcripts
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            const transcript = event.results[i][0].transcript;
+            
+            // Update content with final transcript (raw speech-to-text)
+            setContent(prev => {
+              const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcript;
+              setIsSaved(false);
+              if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
+              return newContent;
+            });
+          }
         }
       };
 
-      mediaRecorder.onstop = () => {
-        // Process any remaining chunks
-        if (audioChunks.length > 0) {
-          const finalBlob = new Blob(audioChunks, { type: 'audio/webm' });
-          const finalFile = new File([finalBlob], 'final-chunk.webm', { type: 'audio/webm' });
-          
-          transcriptionQueueRef.current = transcriptionQueueRef.current.then(async () => {
-            try {
-              setIsTranscribing(true);
-              const result = await chatApi.transcribeVoice(finalFile);
-              
-              if (result.text && result.text.trim()) {
-                // Append transcribed text to content (only new text, no accumulation)
-                const transcribedText = result.text.trim();
-                
-                setContent(prev => {
-                  const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcribedText;
-                  setIsSaved(false);
-                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-                  saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
-                  return newContent;
-                });
-              }
-            } catch (error) {
-              console.error('Final transcription error:', error);
-            } finally {
-              setIsTranscribing(false);
-            }
-          });
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'no-speech') {
+          // This is normal, just means no speech detected
+          return;
         }
-        
-        // Stop all tracks
-        stream.getTracks().forEach(track => track.stop());
-        audioStreamRef.current = null;
         setIsRecording(false);
       };
 
-      // Start recording with timeslices for chunked transcription
-      mediaRecorder.start(CHUNK_INTERVAL_MS);
-      setIsRecording(true);
+      recognition.onend = () => {
+        setIsRecording(false);
+        recognitionRef.current = null;
+      };
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+      };
+
+      // Start recognition
+      recognition.start();
       
     } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('Could not access microphone. Please check permissions.');
+      console.error('Error starting speech recognition:', error);
+      alert('Could not start speech recognition. Please check permissions.');
       setIsRecording(false);
     }
   };
 
   const stopVoiceTranscription = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(track => track.stop());
-      audioStreamRef.current = null;
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
     }
     setIsRecording(false);
   };
@@ -427,11 +439,8 @@ export const TopicPage = () => {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
     };
   }, []);
@@ -602,10 +611,10 @@ export const TopicPage = () => {
                 <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
               )}
             </button>
-            {isTranscribing && (
+            {isRecording && (
               <div className="flex items-center gap-1 text-xs text-gray-500 px-2">
-                <Loader className="w-3 h-3 animate-spin" />
-                <span>Transcribing...</span>
+                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span>Listening...</span>
               </div>
             )}
         </div>

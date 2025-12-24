@@ -256,18 +256,35 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             f"🔍 Original context topicId: {context.get('topicId') if context else None}"
                         )
 
-                        # If topicId is missing from action but present in enriched context, add it
-                        if not action_data.get("topicId"):
-                            if enriched_context and enriched_context.get("topicId"):
-                                action_data["topicId"] = enriched_context["topicId"]
-                                print(
-                                    f"📝 Added topicId from enriched_context: {enriched_context['topicId']}"
-                                )
-                            elif context and context.get("topicId"):
-                                action_data["topicId"] = context["topicId"]
-                                print(
-                                    f"📝 Added topicId from original context: {context['topicId']}"
-                                )
+                        # ALWAYS override topicId from context if available (AI might use title instead of ID)
+                        # Check if action_data has a topicId that looks like a title (not an ID format)
+                        action_topic_id = action_data.get("topicId")
+                        is_likely_title = action_topic_id and (
+                            len(action_topic_id)
+                            > 30  # IDs are typically shorter (CUID format ~25 chars)
+                            or " " in action_topic_id  # Titles have spaces, IDs don't
+                            or not action_topic_id.startswith("c")  # CUIDs start with 'c'
+                        )
+
+                        # ALWAYS override topicId with actual ID from context (AI might use title)
+                        # Priority: enriched_context > original context > action_data (only if valid ID)
+                        if enriched_context and enriched_context.get("topicId"):
+                            # Always use enriched context topicId (it's the real ID from DB)
+                            action_data["topicId"] = enriched_context["topicId"]
+                            print(
+                                f"📝 Set topicId from enriched_context: {enriched_context['topicId']} (was: {action_topic_id})"
+                            )
+                        elif context and context.get("topicId"):
+                            # Fallback to original context topicId
+                            action_data["topicId"] = context["topicId"]
+                            print(
+                                f"📝 Set topicId from original context: {context['topicId']} (was: {action_topic_id})"
+                            )
+                        elif is_likely_title:
+                            # If AI provided a title but we don't have context, that's an error
+                            print(
+                                f"⚠️ AI provided topicId that looks like a title: {action_topic_id}, but no context available"
+                            )
 
                         # Same for courseId
                         if not action_data.get("courseId"):
