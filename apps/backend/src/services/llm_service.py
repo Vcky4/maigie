@@ -191,6 +191,10 @@ class GeminiService:
             summary_prompt = f"""Please provide a concise summary of the following content.
 Focus on the key points and main ideas. Keep it brief but comprehensive.
 
+IMPORTANT: Return ONLY the summary content. Do not include any introductory phrases, 
+concluding remarks, or conversational text like "Here is a summary:" or "Keep up the excellent work!".
+Just provide the summary directly.
+
 Content:
 {content}
 
@@ -200,7 +204,50 @@ Summary:"""
                 summary_prompt, safety_settings=self.safety_settings
             )
 
-            return response.text
+            # Clean up any remaining conversational text that might have been added
+            summary_text = response.text.strip()
+
+            # Remove common AI introductory phrases if they appear
+            intro_phrases = [
+                "That's a great",
+                "Here is a",
+                "Here's a",
+                "This is a",
+                "Below is a",
+                "The following is",
+                "Keep up the",
+                "Great work",
+            ]
+
+            for phrase in intro_phrases:
+                if summary_text.lower().startswith(phrase.lower()):
+                    # Find the first sentence end after the intro
+                    sentences = summary_text.split(".")
+                    if len(sentences) > 1:
+                        # Skip the first sentence if it's an intro phrase
+                        summary_text = ".".join(sentences[1:]).strip()
+                        if summary_text.startswith(" "):
+                            summary_text = summary_text[1:]
+                    break
+
+            # Remove outro phrases at the end
+            outro_phrases = [
+                "keep up the excellent work",
+                "great work",
+                "excellent work",
+                "well done",
+            ]
+
+            summary_lower = summary_text.lower()
+            for phrase in outro_phrases:
+                if summary_lower.endswith(phrase.lower() + "."):
+                    # Remove the last sentence if it's an outro
+                    sentences = summary_text.rsplit(".", 1)
+                    if len(sentences) > 1:
+                        summary_text = sentences[0].strip() + "."
+                    break
+
+            return summary_text
 
         except Exception as e:
             print(f"Gemini Summary Error: {e}")
