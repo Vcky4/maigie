@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
+import { ChatWebSocketClient, chatApi } from '../services/chatApi';
+import { useAuthStore } from '../../../features/auth/store/authStore';
 
 interface Message {
   id: string;
@@ -35,7 +37,11 @@ export const AIChatWidget = () => {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const wsClientRef = useRef<ChatWebSocketClient | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const location = useLocation();
+  const { isAuthenticated } = useAuthStore();
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -63,12 +69,9 @@ export const AIChatWidget = () => {
   };
 
   const handleSendMessage = () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || !wsClientRef.current?.isConnected()) return;
 
-    const context = getPageContext();
     const userMessageContent = inputValue;
-    
-    console.log("Sending message with context:", context);
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -85,26 +88,8 @@ export const AIChatWidget = () => {
       setIsExpanded(true);
     }
 
-    setTimeout(() => {
-      let responseText = "I'm processing your request...";
-      
-      if (location.pathname.includes('/courses')) {
-        responseText = "I see you're looking at courses. Need help understanding a specific topic or finding a module?";
-      } else if (location.pathname.includes('/notes')) {
-        responseText = "Working on your notes? I can help summarize them or generate quiz questions.";
-      } else if (location.pathname.includes('/dashboard')) {
-        responseText = "On the dashboard! Want a summary of your progress this week?";
-      }
-
-      const aiResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: responseText,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, aiResponse]);
-      setIsTyping(false);
-    }, 1500);
+    // Send message via WebSocket
+    wsClientRef.current?.send(userMessageContent);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -114,13 +99,53 @@ export const AIChatWidget = () => {
     }
   };
 
-  const toggleVoice = () => {
-    setIsListening(!isListening);
+  const toggleVoice = async () => {
     if (!isListening) {
-      setTimeout(() => {
-         setInputValue("Can you summarize this page for me?");
-         setIsListening(false);
-      }, 2000);
+      // Start recording
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
+          
+          try {
+            setIsTyping(true);
+            const result = await chatApi.transcribeVoice(audioFile);
+            setInputValue(result.text);
+            setIsListening(false);
+            setIsTyping(false);
+            inputRef.current?.focus();
+          } catch (error) {
+            console.error('Transcription error:', error);
+            setIsListening(false);
+            setIsTyping(false);
+          }
+
+          // Stop all tracks
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsListening(true);
+      } catch (error) {
+        console.error('Error accessing microphone:', error);
+        alert('Could not access microphone. Please check permissions.');
+      }
+    } else {
+      // Stop recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
     }
   };
 
@@ -139,6 +164,58 @@ export const AIChatWidget = () => {
     setIsMentionMenuOpen(false);
     inputRef.current?.focus();
   };
+
+  // Initialize WebSocket connection
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const handleMessage = (message: string) => {
+      const aiResponse: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: message,
+        timestamp: new Date()
+      };
+      setMessages(prev => [...prev, aiResponse]);
+      setIsTyping(false);
+    };
+
+    const handleError = (error: Error) => {
+      console.error('WebSocket error:', error);
+      setIsTyping(false);
+    };
+
+    const handleConnect = () => {
+      console.log('WebSocket connected');
+    };
+
+    const handleDisconnect = () => {
+      console.log('WebSocket disconnected');
+    };
+
+    wsClientRef.current = new ChatWebSocketClient(
+      handleMessage,
+      handleError,
+      handleConnect,
+      handleDisconnect
+    );
+
+    wsClientRef.current.connect();
+
+    // Handle action events (e.g., course created)
+    wsClientRef.current.on('event', (data: any) => {
+      console.log('Action event:', data);
+      // You can trigger UI updates here, e.g., refresh course list
+    });
+
+    return () => {
+      wsClientRef.current?.disconnect();
+      // Stop any ongoing recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, [isAuthenticated]);
 
   // Close menus when clicking outside
   useEffect(() => {
@@ -232,24 +309,6 @@ export const AIChatWidget = () => {
           )}
         </AnimatePresence>
 
-        {/* Collapsed Chat Handle */}
-        {!isExpanded && !isTyping && (
-          <motion.div 
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            onClick={() => setIsExpanded(true)}
-            className="absolute -top-10 left-0 right-0 h-9 bg-white rounded-t-lg border border-gray-200 border-b-0 flex items-center justify-between px-3 text-xs text-gray-500 z-0 mx-4 cursor-pointer hover:bg-gray-50 transition-colors shadow-sm"
-          >
-             <div className="flex items-center gap-2">
-                <img src="/assets/logo-s.png" alt="Maigie" className="w-4 h-4 object-contain opacity-70" />
-                <span className="font-medium">Maigie Chat</span>
-             </div>
-             <div className="flex gap-2">
-                <ChevronUp className="w-3 h-3" />
-             </div>
-          </motion.div>
-        )}
-        
         {/* Collapsed Chat Handle */}
         {!isExpanded && !isTyping && (
           <motion.div 
