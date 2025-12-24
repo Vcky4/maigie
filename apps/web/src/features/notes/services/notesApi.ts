@@ -78,4 +78,14 @@ export const notesApi = {
     });
     return response.data;
   },
+
+  retakeNote: async (noteId: string): Promise<Note> => {
+    const response = await apiClient.post<Note>(`/notes/${noteId}/retake`);
+    return response.data;
+  },
+
+  addSummaryToNote: async (noteId: string): Promise<Note> => {
+    const response = await apiClient.post<Note>(`/notes/${noteId}/add-summary`);
+    return response.data;
+  },
 };

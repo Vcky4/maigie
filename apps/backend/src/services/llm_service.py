@@ -60,16 +60,43 @@ AVAILABLE ACTIONS:
 }
 <<<ACTION_END>>>
 
+3. RETAKE/REWRITE NOTE:
+<<<ACTION_START>>>
+{
+  "type": "retake_note",
+  "data": {
+    "noteId": "note_id_from_context"
+  }
+}
+<<<ACTION_END>>>
+
+4. ADD SUMMARY TO NOTE:
+<<<ACTION_START>>>
+{
+  "type": "add_summary",
+  "data": {
+    "noteId": "note_id_from_context"
+  }
+}
+<<<ACTION_END>>>
+
 RULES:
-1. Only generate the JSON if the user explicitly asks to *create* or *generate* something.
+1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, or *summarize* something.
 2. For note creation:
    - Use the topicId from the context if available
    - Use the courseId from the context if available (optional)
    - If context includes noteId, you can reference the existing note but cannot create a duplicate
-3. The JSON must be valid.
-4. Keep the conversational part of your response encouraging and brief.
-5. If the user asks for a summary, provide it directly in your response without using action tags.
-6. When creating notes, use the topic/course information from context to make the note relevant and contextual.
+3. For retake_note action:
+   - Use when user asks to "retake", "rewrite", "improve", or "regenerate" a note
+   - Use noteId from context (current note being viewed)
+   - The AI will rewrite the note content with better formatting
+4. For add_summary action:
+   - Use when user asks to "add summary", "summarize this note", or "create summary"
+   - Use noteId from context (current note being viewed)
+   - The AI will add a summary section to the note
+5. The JSON must be valid.
+6. Keep the conversational part of your response encouraging and brief.
+7. When creating notes, use the topic/course information from context to make the note relevant and contextual.
 """
 
 
@@ -178,6 +205,45 @@ Summary:"""
         except Exception as e:
             print(f"Gemini Summary Error: {e}")
             raise HTTPException(status_code=500, detail="Summary generation failed")
+
+    async def rewrite_note_content(
+        self, content: str, title: str = None, context: dict = None
+    ) -> str:
+        """
+        Rewrite and improve note content with better markdown formatting.
+        """
+        try:
+            context_info = ""
+            if context:
+                context_parts = []
+                if context.get("topicTitle"):
+                    context_parts.append(f"Topic: {context['topicTitle']}")
+                if context.get("courseTitle"):
+                    context_parts.append(f"Course: {context['courseTitle']}")
+                if context_parts:
+                    context_info = "\n".join(context_parts) + "\n\n"
+
+            title_info = f"Note Title: {title}\n\n" if title else ""
+
+            rewrite_prompt = f"""Please rewrite and improve the following note content. 
+Make it more comprehensive, well-structured, and educational with proper markdown formatting.
+Use headings, lists, code blocks, and other markdown elements appropriately.
+Return ONLY the improved note content in markdown format without any additional commentary or explanation.
+
+{title_info}{context_info}Original Content:
+{content}
+
+Rewritten Content:"""
+
+            response = await self.model.generate_content_async(
+                rewrite_prompt, safety_settings=self.safety_settings
+            )
+
+            return response.text.strip()
+
+        except Exception as e:
+            print(f"Gemini Rewrite Error: {e}")
+            raise HTTPException(status_code=500, detail="Note rewrite failed")
 
 
 # Global instance

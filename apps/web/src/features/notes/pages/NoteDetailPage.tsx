@@ -5,8 +5,8 @@ import { coursesApi } from '../../courses/services/coursesApi';
 import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Note, NoteAttachment } from '../types/notes.types';
-import type { CourseListItem, Course, Module, Topic } from '../../courses/types/courses.types';
-import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, Eye, EyeOff, Mic, MicOff } from 'lucide-react';
+import type { CourseListItem, Course } from '../../courses/types/courses.types';
+import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, Eye, EyeOff, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
@@ -116,6 +116,10 @@ export function NoteDetailPage() {
   // Voice transcription state (using Web Speech Recognition API)
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+
+  // AI actions state
+  const [isRetaking, setIsRetaking] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
 
   useEffect(() => {
     fetchCourses();
@@ -380,6 +384,67 @@ export function NoteDetailPage() {
       }
     };
   }, []);
+
+  // AI action handlers
+  const handleRetakeNote = async () => {
+    if (!note?.id) {
+      alert('Please save the note first before retaking it.');
+      return;
+    }
+
+    if (!content.trim() && !title.trim()) {
+      alert('Please add some content or title before retaking the note.');
+      return;
+    }
+
+    setIsRetaking(true);
+    
+    try {
+      const updatedNote = await notesApi.retakeNote(note.id);
+      setContent(updatedNote.content || '');
+      setNote(updatedNote);
+      setIsRetaking(false);
+      
+      // Trigger save indicator
+      setIsSaved(true);
+      if (savedIndicatorTimeoutRef.current) clearTimeout(savedIndicatorTimeoutRef.current);
+      savedIndicatorTimeoutRef.current = setTimeout(() => setIsSaved(false), 2000);
+    } catch (error) {
+      console.error('Error retaking note:', error);
+      setIsRetaking(false);
+      alert('Failed to retake note. Please try again.');
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!note?.id) {
+      alert('Please save the note first before adding a summary.');
+      return;
+    }
+
+    if (!content.trim()) {
+      alert('Please add some content before summarizing.');
+      return;
+    }
+
+    setIsSummarizing(true);
+    
+    try {
+      const updatedNote = await notesApi.addSummaryToNote(note.id);
+      setContent(updatedNote.content || '');
+      setNote(updatedNote);
+      setIsSummarizing(false);
+      
+      // Trigger save indicator
+      setIsSaved(true);
+      if (savedIndicatorTimeoutRef.current) clearTimeout(savedIndicatorTimeoutRef.current);
+      savedIndicatorTimeoutRef.current = setTimeout(() => setIsSaved(false), 2000);
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      setIsSummarizing(false);
+      alert('Failed to generate summary. Please try again.');
+    }
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -687,6 +752,35 @@ export function NoteDetailPage() {
                 <span>Listening...</span>
               </div>
             )}
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <button 
+              onClick={handleRetakeNote}
+              disabled={isRetaking || isSummarizing}
+              className={cn(
+                "p-1.5 rounded transition-colors flex items-center gap-1",
+                isRetaking 
+                  ? "text-indigo-600 bg-indigo-50" 
+                  : "text-gray-600 hover:bg-gray-200"
+              )}
+              title="Retake Note (AI will regenerate content)"
+            >
+              <RefreshCw className={cn("w-4 h-4", isRetaking && "animate-spin")} />
+              <span className="text-xs hidden sm:inline">Retake</span>
+            </button>
+            <button 
+              onClick={handleSummarize}
+              disabled={isRetaking || isSummarizing}
+              className={cn(
+                "p-1.5 rounded transition-colors flex items-center gap-1",
+                isSummarizing 
+                  ? "text-indigo-600 bg-indigo-50" 
+                  : "text-gray-600 hover:bg-gray-200"
+              )}
+              title="Generate Summary"
+            >
+              <Sparkles className={cn("w-4 h-4", isSummarizing && "animate-pulse")} />
+              <span className="text-xs hidden sm:inline">Summarize</span>
+            </button>
         </div>
 
         <button 

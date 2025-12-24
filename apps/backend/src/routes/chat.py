@@ -245,8 +245,26 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     action_payload = json.loads(json_str)
                     action_data = action_payload.get("data", {})
 
-                    # 2. Enrich action data with context if missing (e.g., topicId)
-                    if action_payload.get("type") == "create_note":
+                    # 2. Enrich action data with context if missing (e.g., topicId, noteId)
+                    action_type = action_payload.get("type")
+
+                    # For retake_note and add_summary, ensure noteId is populated from context
+                    if action_type in ["retake_note", "add_summary"]:
+                        if not action_data.get("noteId"):
+                            if enriched_context and enriched_context.get("noteId"):
+                                action_data["noteId"] = enriched_context["noteId"]
+                                print(
+                                    f"📝 Set noteId from enriched_context: {enriched_context['noteId']}"
+                                )
+                            elif context and context.get("noteId"):
+                                action_data["noteId"] = context["noteId"]
+                                print(f"📝 Set noteId from original context: {context['noteId']}")
+                            else:
+                                print(
+                                    "⚠️ No noteId found in context for retake_note/add_summary action"
+                                )
+
+                    if action_type == "create_note":
                         # Debug: Log what we have
                         print(f"🔍 Action data topicId: {action_data.get('topicId')}")
                         print(

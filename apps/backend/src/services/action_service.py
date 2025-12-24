@@ -25,6 +25,10 @@ class ActionService:
             return await self.create_course(action_data, user_id)
         elif action_type == "create_note":
             return await self.create_note(action_data, user_id)
+        elif action_type == "retake_note":
+            return await self.retake_note(action_data, user_id)
+        elif action_type == "add_summary":
+            return await self.add_summary(action_data, user_id)
 
         # Add more actions here later (create_goal, create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
@@ -135,6 +139,118 @@ class ActionService:
             return {"status": "error", "message": str(e)}
         except Exception as e:
             print(f"❌ Note Creation Error: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def retake_note(self, data: dict, user_id: str):
+        """
+        Retake/rewrite a note using AI.
+        Expected data: { "noteId": "..." }
+        """
+        try:
+            from src.services.llm_service import llm_service
+            from src.models.notes import NoteUpdate
+
+            note_id = data.get("noteId")
+            if not note_id:
+                return {"status": "error", "message": "noteId is required"}
+
+            # Get the note
+            note = await db.note.find_unique(where={"id": note_id})
+            if not note:
+                return {"status": "error", "message": f"Note with ID {note_id} not found"}
+
+            # Verify ownership
+            if note.userId != user_id:
+                return {"status": "error", "message": "Note not found or access denied"}
+
+            if not note.content:
+                return {"status": "error", "message": "Note has no content to retake"}
+
+            # Build context for AI
+            context = {}
+            if note.topicId:
+                topic = await db.topic.find_unique(
+                    where={"id": note.topicId}, include={"module": {"include": {"course": True}}}
+                )
+                if topic:
+                    context["topicTitle"] = topic.title
+                    if topic.module:
+                        context["moduleTitle"] = topic.module.title
+                        if topic.module.course:
+                            context["courseTitle"] = topic.module.course.title
+
+            # Use AI to rewrite the content
+            rewritten_content = await llm_service.rewrite_note_content(
+                content=note.content, title=note.title, context=context
+            )
+
+            # Update the note
+            updated_note = await db.note.update(
+                where={"id": note_id}, data={"content": rewritten_content}
+            )
+
+            return {
+                "status": "success",
+                "action": "retake_note",
+                "note_id": updated_note.id,
+                "message": f"Successfully retook note: {updated_note.title}",
+            }
+
+        except Exception as e:
+            print(f"❌ Retake Note Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+    async def add_summary(self, data: dict, user_id: str):
+        """
+        Add a summary to a note using AI.
+        Expected data: { "noteId": "..." }
+        """
+        try:
+            from src.services.llm_service import llm_service
+
+            note_id = data.get("noteId")
+            if not note_id:
+                return {"status": "error", "message": "noteId is required"}
+
+            # Get the note
+            note = await db.note.find_unique(where={"id": note_id})
+            if not note:
+                return {"status": "error", "message": f"Note with ID {note_id} not found"}
+
+            # Verify ownership
+            if note.userId != user_id:
+                return {"status": "error", "message": "Note not found or access denied"}
+
+            if not note.content:
+                return {"status": "error", "message": "Note has no content to summarize"}
+
+            # Generate summary using AI
+            summary = await llm_service.generate_summary(note.content)
+
+            # Append summary to content
+            summary_section = "\n\n---\n\n## Summary\n\n" + summary
+            updated_content = note.content + summary_section
+
+            # Update the note
+            updated_note = await db.note.update(
+                where={"id": note_id}, data={"content": updated_content}
+            )
+
+            return {
+                "status": "success",
+                "action": "add_summary",
+                "note_id": updated_note.id,
+                "message": f"Successfully added summary to note: {updated_note.title}",
+            }
+
+        except Exception as e:
+            print(f"❌ Add Summary Error: {e}")
+            import traceback
+
+            traceback.print_exc()
             return {"status": "error", "message": str(e)}
 
 
