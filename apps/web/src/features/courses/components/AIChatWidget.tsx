@@ -388,10 +388,19 @@ export const AIChatWidget = () => {
 
     wsClientRef.current.connect();
 
-    // Handle action events (e.g., course created)
+    // Handle action events (e.g., course created, note created)
     wsClientRef.current.on('event', (data: any) => {
       console.log('Action event:', data);
-      // You can trigger UI updates here, e.g., refresh course list
+      
+      // Dispatch a custom event that pages can listen to for refetching
+      const event = new CustomEvent('aiActionCompleted', {
+        detail: {
+          action: data.action || data.type,
+          status: data.status,
+          payload: data
+        }
+      });
+      window.dispatchEvent(event);
     });
 
     return () => {

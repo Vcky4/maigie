@@ -220,8 +220,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             # --- NEW: Action Detection Logic ---
             # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
+            # Use more flexible regex to handle whitespace variations
             action_match = re.search(
-                r"<<<ACTION_START>>>(.*?)<<<ACTION_END>>>", ai_response_text, re.DOTALL
+                r"<<<ACTION_START>>>\s*(.*?)\s*<<<ACTION_END>>>", ai_response_text, re.DOTALL
             )
 
             clean_response = ai_response_text  # Default to full text
@@ -233,25 +234,76 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # 1. Extract and Parse JSON
                     json_str = action_match.group(1).strip()
                     action_payload = json.loads(json_str)
+                    action_data = action_payload.get("data", {})
 
-                    # 2. Execute Action (Create Course)
+                    # 2. Enrich action data with context if missing (e.g., topicId)
+                    if action_payload.get("type") == "create_note":
+                        # If topicId is missing from action but present in context, add it
+                        if (
+                            not action_data.get("topicId")
+                            and enriched_context
+                            and enriched_context.get("topicId")
+                        ):
+                            action_data["topicId"] = enriched_context["topicId"]
+                            print(f"📝 Added topicId from context: {enriched_context['topicId']}")
+                        # Same for courseId
+                        if (
+                            not action_data.get("courseId")
+                            and enriched_context
+                            and enriched_context.get("courseId")
+                        ):
+                            action_data["courseId"] = enriched_context["courseId"]
+                            print(f"📝 Added courseId from context: {enriched_context['courseId']}")
+
+                    # 3. Execute Action
                     action_result = await action_service.execute_action(
                         action_type=action_payload.get("type"),
-                        action_data=action_payload.get("data"),
+                        action_data=action_data,
                         user_id=user.id,
                     )
 
-                    # 3. Clean the response (remove the hidden JSON tags)
-                    clean_response = ai_response_text.replace(action_match.group(0), "").strip()
+                    # 4. Clean the response (remove ALL instances of action markers and content)
+                    # Remove the entire action block including any surrounding whitespace/newlines
+                    action_block = action_match.group(0)
+                    clean_response = re.sub(
+                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+                        "",
+                        ai_response_text,
+                        flags=re.DOTALL,
+                    ).strip()
 
-                    # 4. Append a confirmation message if successful
+                    # 5. Append a confirmation message if successful
                     if action_result and action_result.get("status") == "success":
                         clean_response += f"\n\n✅ **System:** {action_result['message']}"
+                    elif action_result and action_result.get("status") == "error":
+                        clean_response += (
+                            f"\n\n⚠️ **System:** {action_result.get('message', 'Action failed')}"
+                        )
 
+                except json.JSONDecodeError as e:
+                    print(f"❌ Action JSON Parse Error: {e}")
+                    print(f"   JSON string: {json_str[:200] if 'json_str' in locals() else 'N/A'}")
+                    # Still remove the action block even if parsing failed
+                    clean_response = re.sub(
+                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+                        "",
+                        ai_response_text,
+                        flags=re.DOTALL,
+                    ).strip()
                 except Exception as e:
                     print(f"❌ Action Execution Error: {e}")
+                    import traceback
+
+                    traceback.print_exc()
+                    # Remove action block on error too
+                    clean_response = re.sub(
+                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+                        "",
+                        ai_response_text,
+                        flags=re.DOTALL,
+                    ).strip()
                     clean_response += (
-                        "\n\n(⚠️ I tried to execute the action, but an error occurred.)"
+                        "\n\n⚠️ **System:** I tried to execute the action, but an error occurred."
                     )
 
             # 7. Save AI Message to DB (We save the CLEAN text)

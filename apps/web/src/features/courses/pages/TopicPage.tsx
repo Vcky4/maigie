@@ -52,6 +52,31 @@ export const TopicPage = () => {
     }
   }, [courseId]);
 
+  // Listen for AI action events to refetch data
+  useEffect(() => {
+    if (!courseId) return;
+    
+    const handleActionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { action, status, payload } = customEvent.detail;
+      
+      // If a note was created for this topic, refetch the course
+      if (action === 'create_note' && status === 'success') {
+        if (payload?.note_id) {
+          // Refetch course to get updated note data
+          fetchCourse(courseId);
+          // Also fetch note details if we have the note ID
+          fetchNoteDetails(payload.note_id);
+        }
+      }
+    };
+
+    window.addEventListener('aiActionCompleted', handleActionEvent);
+    return () => {
+      window.removeEventListener('aiActionCompleted', handleActionEvent);
+    };
+  }, [courseId]);
+
   useEffect(() => {
     if (course && moduleId && topicId) {
       const module = course.modules.find(m => m.id === moduleId);
@@ -235,7 +260,7 @@ export const TopicPage = () => {
   };
 
   // Toolbar Actions
-  const insertFormat = (prefix: string, suffix: string = '') => {
+  const insertFormat = (prefix: string, suffix = '') => {
     if (!textareaRef.current) return;
     
     const start = textareaRef.current.selectionStart;
