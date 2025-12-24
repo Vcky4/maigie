@@ -636,6 +636,25 @@ export const TopicPage = () => {
         </div>
       </div>
 
+      {/* Summary Section */}
+      {currentNote?.summary && (
+        <div className="mb-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 shadow-sm p-6">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-indigo-900 uppercase tracking-wider mb-2">
+                Summary
+              </h3>
+              <div className="prose prose-sm prose-indigo max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {currentNote.summary}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Content Editor */}
       <div className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
         <div className="flex items-center gap-1">
