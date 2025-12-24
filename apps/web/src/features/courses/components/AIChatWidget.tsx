@@ -23,6 +23,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  isStreaming?: boolean;
 }
 
 export const AIChatWidget = () => {
@@ -40,6 +41,8 @@ export const AIChatWidget = () => {
   const wsClientRef = useRef<ChatWebSocketClient | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const streamingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const streamingMessageIdRef = useRef<string | null>(null);
   const location = useLocation();
   const { isAuthenticated } = useAuthStore();
 
@@ -61,6 +64,13 @@ export const AIChatWidget = () => {
       scrollToBottom();
     }
   }, [messages, isExpanded, isTyping]);
+
+  // Auto-scroll during streaming
+  useEffect(() => {
+    if (isExpanded && streamingMessageIdRef.current) {
+      scrollToBottom();
+    }
+  }, [messages.find(msg => msg.id === streamingMessageIdRef.current)?.content, isExpanded]);
 
   const getPageContext = () => {
     const pageName = location.pathname === '/dashboard' ? 'Dashboard' : 
@@ -165,19 +175,69 @@ export const AIChatWidget = () => {
     inputRef.current?.focus();
   };
 
+  // Stream text character by character
+  const streamText = (fullText: string, messageId: string) => {
+    let currentIndex = 0;
+    const streamingSpeed = 15; // milliseconds per character (adjust for speed)
+
+    const stream = () => {
+      if (currentIndex < fullText.length) {
+        const partialText = fullText.substring(0, currentIndex + 1);
+        
+        setMessages(prev => {
+          const updated = prev.map(msg => 
+            msg.id === messageId 
+              ? { ...msg, content: partialText, isStreaming: true }
+              : msg
+          );
+          return updated;
+        });
+
+        currentIndex++;
+        streamingTimeoutRef.current = setTimeout(stream, streamingSpeed);
+        
+        // Auto-scroll during streaming
+        if (isExpanded) {
+          setTimeout(() => scrollToBottom(), 0);
+        }
+      } else {
+        // Streaming complete
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === messageId 
+              ? { ...msg, isStreaming: false }
+              : msg
+          )
+        );
+        setIsTyping(false);
+        streamingMessageIdRef.current = null;
+        scrollToBottom();
+      }
+    };
+
+    stream();
+  };
+
   // Initialize WebSocket connection
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const handleMessage = (message: string) => {
+      setIsTyping(false); // Hide typing indicator, streaming will show the text
+      const messageId = Date.now().toString();
       const aiResponse: Message = {
-        id: Date.now().toString(),
+        id: messageId,
         role: 'assistant',
-        content: message,
-        timestamp: new Date()
+        content: '',
+        timestamp: new Date(),
+        isStreaming: true
       };
+      
       setMessages(prev => [...prev, aiResponse]);
-      setIsTyping(false);
+      streamingMessageIdRef.current = messageId;
+      
+      // Start streaming the text
+      streamText(message, messageId);
     };
 
     const handleError = (error: Error) => {
@@ -213,6 +273,10 @@ export const AIChatWidget = () => {
       // Stop any ongoing recording
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
+      }
+      // Clear streaming timeout
+      if (streamingTimeoutRef.current) {
+        clearTimeout(streamingTimeoutRef.current);
       }
     };
   }, [isAuthenticated]);
@@ -287,6 +351,14 @@ export const AIChatWidget = () => {
                       msg.role === 'user' ? "text-gray-900" : "text-gray-700"
                     )}>
                       {msg.content}
+                      {msg.isStreaming && (
+                        <span 
+                          className="inline-block w-0.5 h-4 bg-indigo-500 ml-0.5 align-middle"
+                          style={{
+                            animation: 'blink 1s ease-in-out infinite'
+                          }}
+                        />
+                      )}
                     </div>
                   </div>
                 ))}
