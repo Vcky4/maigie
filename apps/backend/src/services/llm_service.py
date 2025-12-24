@@ -191,7 +191,7 @@ class GeminiService:
             summary_prompt = f"""Please provide a concise summary of the following content.
 Focus on the key points and main ideas. Keep it brief but comprehensive.
 
-IMPORTANT: Return ONLY the summary content. Do not include any introductory phrases, 
+IMPORTANT: Return ONLY the summary content. Do not include any introductory phrases,
 concluding remarks, or conversational text like "Here is a summary:" or "Keep up the excellent work!".
 Just provide the summary directly.
 
