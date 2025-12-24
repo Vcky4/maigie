@@ -1,12 +1,13 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
+import React, { useEffect, useState, useRef } from 'react';
+import { useParams, Link as RouterLink } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import { notesApi } from '../../notes/services/notesApi';
+import { chatApi } from '../services/chatApi';
 import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Course, Topic } from '../types/courses.types';
 import type { Note, NoteAttachment } from '../../notes/types/notes.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, BookOpen, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye, EyeOff, Mic, MicOff } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
@@ -45,6 +46,13 @@ export const TopicPage = () => {
   
   // Preview Modal State
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
+
+  // Voice transcription state
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const transcriptionQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     if (courseId) {
@@ -297,6 +305,137 @@ export const TopicPage = () => {
     console.log('Resources clicked');
   };
 
+  // Real-time voice transcription
+  const startVoiceTranscription = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      mediaRecorderRef.current = mediaRecorder;
+
+      const audioChunks: Blob[] = [];
+      const CHUNK_INTERVAL_MS = 3000; // Send chunks every 3 seconds
+
+      mediaRecorder.ondataavailable = async (event) => {
+        if (event.data.size > 0) {
+          audioChunks.push(event.data);
+          
+          // Create a chunk file and transcribe it
+          const chunkBlob = new Blob([event.data], { type: 'audio/webm' });
+          const chunkFile = new File([chunkBlob], `chunk-${Date.now()}.webm`, { type: 'audio/webm' });
+          
+          // Queue transcription to avoid race conditions
+          transcriptionQueueRef.current = transcriptionQueueRef.current.then(async () => {
+            try {
+              setIsTranscribing(true);
+              const result = await chatApi.transcribeVoice(chunkFile);
+              
+              if (result.text && result.text.trim()) {
+                // Append transcribed text to content (only new text, no accumulation)
+                const transcribedText = result.text.trim();
+                
+                // Update content by appending only the new transcribed text
+                setContent(prev => {
+                  const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcribedText;
+                  // Trigger save
+                  setIsSaved(false);
+                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+                  saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
+                  return newContent;
+                });
+              }
+            } catch (error) {
+              console.error('Transcription error:', error);
+              // Continue recording even if one chunk fails
+            } finally {
+              setIsTranscribing(false);
+            }
+          });
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        // Process any remaining chunks
+        if (audioChunks.length > 0) {
+          const finalBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          const finalFile = new File([finalBlob], 'final-chunk.webm', { type: 'audio/webm' });
+          
+          transcriptionQueueRef.current = transcriptionQueueRef.current.then(async () => {
+            try {
+              setIsTranscribing(true);
+              const result = await chatApi.transcribeVoice(finalFile);
+              
+              if (result.text && result.text.trim()) {
+                // Append transcribed text to content (only new text, no accumulation)
+                const transcribedText = result.text.trim();
+                
+                setContent(prev => {
+                  const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcribedText;
+                  setIsSaved(false);
+                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+                  saveTimeoutRef.current = setTimeout(() => saveContent(newContent), 1000);
+                  return newContent;
+                });
+              }
+            } catch (error) {
+              console.error('Final transcription error:', error);
+            } finally {
+              setIsTranscribing(false);
+            }
+          });
+        }
+        
+        // Stop all tracks
+        stream.getTracks().forEach(track => track.stop());
+        audioStreamRef.current = null;
+        setIsRecording(false);
+      };
+
+      // Start recording with timeslices for chunked transcription
+      mediaRecorder.start(CHUNK_INTERVAL_MS);
+      setIsRecording(true);
+      
+    } catch (error) {
+      console.error('Error accessing microphone:', error);
+      alert('Could not access microphone. Please check permissions.');
+      setIsRecording(false);
+    }
+  };
+
+  const stopVoiceTranscription = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const toggleVoiceTranscription = () => {
+    if (isRecording) {
+      stopVoiceTranscription();
+    } else {
+      startVoiceTranscription();
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
   const handleToggleComplete = async () => {
     if (!currentTopic || !courseId || !moduleId || isCompleting) return;
 
@@ -443,6 +582,32 @@ export const TopicPage = () => {
             <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
                 <List className="w-4 h-4" />
             </button>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <button 
+              onClick={toggleVoiceTranscription}
+              className={cn(
+                "p-1.5 rounded transition-colors relative",
+                isRecording 
+                  ? "text-red-600 hover:bg-red-50 bg-red-50" 
+                  : "text-gray-600 hover:bg-gray-200"
+              )}
+              title={isRecording ? "Stop voice transcription" : "Start voice transcription"}
+            >
+              {isRecording ? (
+                <MicOff className="w-4 h-4" />
+              ) : (
+                <Mic className="w-4 h-4" />
+              )}
+              {isRecording && (
+                <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              )}
+            </button>
+            {isTranscribing && (
+              <div className="flex items-center gap-1 text-xs text-gray-500 px-2">
+                <Loader className="w-3 h-3 animate-spin" />
+                <span>Transcribing...</span>
+              </div>
+            )}
         </div>
 
         <button 
