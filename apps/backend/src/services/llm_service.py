@@ -161,7 +161,7 @@ class GeminiService:
         Generate a summary of the provided content.
         """
         try:
-            summary_prompt = f"""Please provide a concise summary of the following content. 
+            summary_prompt = f"""Please provide a concise summary of the following content.
 Focus on the key points and main ideas. Keep it brief but comprehensive.
 
 Content:
