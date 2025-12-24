@@ -93,8 +93,14 @@ class ActionService:
             # Validate topicId if provided
             topic_id = data.get("topicId")
             if topic_id:
+                print(f"🔍 Looking up topic with ID: {topic_id}")
                 topic = await db.topic.find_unique(where={"id": topic_id})
                 if not topic:
+                    # Try to find any topic to see if it's a database issue
+                    all_topics = await db.topic.find_many(take=1)
+                    print(f"🔍 Database has {len(all_topics)} topics (showing first as sample)")
+                    if all_topics:
+                        print(f"🔍 Sample topic ID format: {all_topics[0].id}")
                     return {"status": "error", "message": f"Topic with ID {topic_id} not found"}
 
                 # Check if note already exists for this topic

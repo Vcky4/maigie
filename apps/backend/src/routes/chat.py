@@ -149,8 +149,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                 # Fetch topic details if topicId is provided (and not already fetched from note)
                 elif context.get("topicId") and not enriched_context.get("topicTitle"):
+                    topic_id = context["topicId"]
+                    # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
+                    enriched_context["topicId"] = topic_id
                     topic = await db.topic.find_unique(
-                        where={"id": context["topicId"]},
+                        where={"id": topic_id},
                         include={"module": {"include": {"course": True}}},
                     )
                     if topic:
@@ -164,6 +167,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 enriched_context["courseDescription"] = (
                                     topic.module.course.description or ""
                                 )
+                    else:
+                        # Topic not found - log for debugging but keep topicId in context
+                        print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
+                        print(
+                            f"⚠️ This topicId will still be passed to action service for validation"
+                        )
 
                 # Fetch course details if courseId is provided (and not already fetched)
                 elif context.get("courseId") and not enriched_context.get("courseTitle"):
@@ -238,22 +247,42 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                     # 2. Enrich action data with context if missing (e.g., topicId)
                     if action_payload.get("type") == "create_note":
-                        # If topicId is missing from action but present in context, add it
-                        if (
-                            not action_data.get("topicId")
-                            and enriched_context
-                            and enriched_context.get("topicId")
-                        ):
-                            action_data["topicId"] = enriched_context["topicId"]
-                            print(f"📝 Added topicId from context: {enriched_context['topicId']}")
+                        # Debug: Log what we have
+                        print(f"🔍 Action data topicId: {action_data.get('topicId')}")
+                        print(
+                            f"🔍 Enriched context topicId: {enriched_context.get('topicId') if enriched_context else None}"
+                        )
+                        print(
+                            f"🔍 Original context topicId: {context.get('topicId') if context else None}"
+                        )
+
+                        # If topicId is missing from action but present in enriched context, add it
+                        if not action_data.get("topicId"):
+                            if enriched_context and enriched_context.get("topicId"):
+                                action_data["topicId"] = enriched_context["topicId"]
+                                print(
+                                    f"📝 Added topicId from enriched_context: {enriched_context['topicId']}"
+                                )
+                            elif context and context.get("topicId"):
+                                action_data["topicId"] = context["topicId"]
+                                print(
+                                    f"📝 Added topicId from original context: {context['topicId']}"
+                                )
+
                         # Same for courseId
-                        if (
-                            not action_data.get("courseId")
-                            and enriched_context
-                            and enriched_context.get("courseId")
-                        ):
-                            action_data["courseId"] = enriched_context["courseId"]
-                            print(f"📝 Added courseId from context: {enriched_context['courseId']}")
+                        if not action_data.get("courseId"):
+                            if enriched_context and enriched_context.get("courseId"):
+                                action_data["courseId"] = enriched_context["courseId"]
+                                print(
+                                    f"📝 Added courseId from enriched_context: {enriched_context['courseId']}"
+                                )
+                            elif context and context.get("courseId"):
+                                action_data["courseId"] = context["courseId"]
+                                print(
+                                    f"📝 Added courseId from original context: {context['courseId']}"
+                                )
+
+                        print(f"🔍 Final action_data before execution: {action_data}")
 
                     # 3. Execute Action
                     action_result = await action_service.execute_action(
