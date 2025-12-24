@@ -14,7 +14,7 @@ import {
   Hash,
   RotateCcw
 } from 'lucide-react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
 import { ChatWebSocketClient, chatApi } from '../services/chatApi';
 import { useAuthStore } from '../../../features/auth/store/authStore';
@@ -52,6 +52,7 @@ export const AIChatWidget = () => {
   const streamingMessageIdRef = useRef<string | null>(null);
   const isStoppedRef = useRef<boolean>(false);
   const location = useLocation();
+  const params = useParams<{ id?: string; courseId?: string; topicId?: string; noteId?: string }>();
   const { isAuthenticated } = useAuthStore();
 
   const [messages, setMessages] = useState<Message[]>([
@@ -86,6 +87,31 @@ export const AIChatWidget = () => {
     return pageName.charAt(0).toUpperCase() + pageName.slice(1);
   };
 
+  const getContextForMessage = () => {
+    const context: Record<string, any> = {
+      pageContext: getPageContext()
+    };
+
+    // Extract course, topic, and note IDs from URL params
+    const courseId = params.id || params.courseId;
+    const topicId = params.topicId;
+    const noteId = params.noteId;
+
+    if (courseId) {
+      context.courseId = courseId;
+    }
+
+    if (topicId) {
+      context.topicId = topicId;
+    }
+
+    if (noteId) {
+      context.noteId = noteId;
+    }
+
+    return Object.keys(context).length > 1 ? context : null; // Only return if we have more than just pageContext
+  };
+
   const handleSendMessage = () => {
     if (!inputValue.trim() || !wsClientRef.current?.isConnected()) return;
 
@@ -106,8 +132,9 @@ export const AIChatWidget = () => {
       setIsExpanded(true);
     }
 
-    // Send message via WebSocket
-    wsClientRef.current?.send(userMessageContent);
+    // Get context and send message via WebSocket
+    const context = getContextForMessage();
+    wsClientRef.current?.send(userMessageContent, context || undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

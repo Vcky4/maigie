@@ -23,6 +23,8 @@ class ActionService:
 
         if action_type == "create_course":
             return await self.create_course(action_data, user_id)
+        elif action_type == "create_note":
+            return await self.create_note(action_data, user_id)
 
         # Add more actions here later (create_goal, create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
@@ -76,9 +78,59 @@ class ActionService:
             }
 
         except Exception as e:
-            print(f" Action Failed: {e}")
+            print(f"❌ Action Failed: {e}")
+            return {"status": "error", "message": str(e)}
+
+    async def create_note(self, data: dict, user_id: str):
+        """
+        Creates a note for a topic.
+        Expected data: { "title": "...", "content": "...", "topicId": "...", "summary": "..." (optional) }
+        """
+        try:
+            from src.services import note_service
+            from src.models.notes import NoteCreate
+
+            # Validate topicId if provided
+            topic_id = data.get("topicId")
+            if topic_id:
+                topic = await db.topic.find_unique(where={"id": topic_id})
+                if not topic:
+                    return {"status": "error", "message": f"Topic with ID {topic_id} not found"}
+
+                # Check if note already exists for this topic
+                existing_note = await db.note.find_first(where={"topicId": topic_id})
+                if existing_note:
+                    return {
+                        "status": "error",
+                        "message": f"A note already exists for topic: {topic.title}",
+                    }
+
+            # Create note data
+            note_data = NoteCreate(
+                title=data.get("title", "Untitled Note"),
+                content=data.get("content", ""),
+                summary=data.get("summary"),
+                topicId=topic_id,
+                courseId=data.get("courseId"),
+            )
+
+            # Create the note
+            note = await note_service.create_note(db, user_id, note_data)
+
+            return {
+                "status": "success",
+                "action": "create_note",
+                "note_id": note.id,
+                "message": f"Successfully created note: {note.title}",
+            }
+
+        except ValueError as e:
+            print(f"❌ Note Creation Failed: {e}")
+            return {"status": "error", "message": str(e)}
+        except Exception as e:
+            print(f"❌ Note Creation Error: {e}")
             return {"status": "error", "message": str(e)}
 
 
-# Global Instance yes
+# Global Instance
 action_service = ActionService()

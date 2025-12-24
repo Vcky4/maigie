@@ -167,9 +167,18 @@ export class ChatWebSocketClient {
     }, this.reconnectDelay * this.reconnectAttempts);
   }
 
-  send(message: string): void {
+  send(message: string, context?: Record<string, any>): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(message);
+      // If context is provided, send as JSON, otherwise send plain text
+      if (context) {
+        const messageData = {
+          message: message,
+          context: context
+        };
+        this.ws.send(JSON.stringify(messageData));
+      } else {
+        this.ws.send(message);
+      }
     } else {
       this.onError?.(new Error('WebSocket is not connected'));
     }

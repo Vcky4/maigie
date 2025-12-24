@@ -71,8 +71,22 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
     try:
         while True:
-            # 3. Receive Message (Text)
-            user_text = await websocket.receive_text()
+            # 3. Receive Message (Text or JSON with context)
+            raw_message = await websocket.receive_text()
+
+            # Parse message - can be plain text or JSON with context
+            user_text = raw_message
+            context = None
+
+            try:
+                # Try to parse as JSON
+                message_data = json.loads(raw_message)
+                if isinstance(message_data, dict):
+                    user_text = message_data.get("message", raw_message)
+                    context = message_data.get("context")
+            except (json.JSONDecodeError, AttributeError):
+                # If not JSON, treat as plain text
+                pass
 
             # 4. Save User Message to DB
             await db.chatmessage.create(
@@ -96,10 +110,113 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 role = "user" if msg.role == "USER" else "model"
                 formatted_history.append({"role": role, "parts": [msg.content]})
 
-            # 6. Get AI Response
-            ai_response_text = await llm_service.get_chat_response(
-                history=formatted_history, user_message=user_text
+            # 5.5. Enrich context with topic/course/note details if IDs are provided
+            enriched_context = None
+            if context:
+                enriched_context = context.copy()
+
+                # Fetch note details if noteId is provided
+                if context.get("noteId"):
+                    note = await db.note.find_unique(
+                        where={"id": context["noteId"]},
+                        include={
+                            "topic": {"include": {"module": {"include": {"course": True}}}},
+                            "course": True,
+                        },
+                    )
+                    if note:
+                        enriched_context["noteTitle"] = note.title
+                        enriched_context["noteContent"] = note.content or ""
+                        enriched_context["noteSummary"] = note.summary or ""
+                        # If note is linked to a topic, include topic details
+                        if note.topic:
+                            enriched_context["topicId"] = note.topic.id
+                            enriched_context["topicTitle"] = note.topic.title
+                            enriched_context["topicContent"] = note.topic.content or ""
+                            if note.topic.module:
+                                enriched_context["moduleTitle"] = note.topic.module.title
+                                if note.topic.module.course:
+                                    enriched_context["courseId"] = note.topic.module.course.id
+                                    enriched_context["courseTitle"] = note.topic.module.course.title
+                                    enriched_context["courseDescription"] = (
+                                        note.topic.module.course.description or ""
+                                    )
+                        # If note is linked to a course (but not via topic)
+                        elif note.course:
+                            enriched_context["courseId"] = note.course.id
+                            enriched_context["courseTitle"] = note.course.title
+                            enriched_context["courseDescription"] = note.course.description or ""
+
+                # Fetch topic details if topicId is provided (and not already fetched from note)
+                elif context.get("topicId") and not enriched_context.get("topicTitle"):
+                    topic = await db.topic.find_unique(
+                        where={"id": context["topicId"]},
+                        include={"module": {"include": {"course": True}}},
+                    )
+                    if topic:
+                        enriched_context["topicTitle"] = topic.title
+                        enriched_context["topicContent"] = topic.content or ""
+                        if topic.module:
+                            enriched_context["moduleTitle"] = topic.module.title
+                            if topic.module.course:
+                                enriched_context["courseId"] = topic.module.course.id
+                                enriched_context["courseTitle"] = topic.module.course.title
+                                enriched_context["courseDescription"] = (
+                                    topic.module.course.description or ""
+                                )
+
+                # Fetch course details if courseId is provided (and not already fetched)
+                elif context.get("courseId") and not enriched_context.get("courseTitle"):
+                    course = await db.course.find_unique(where={"id": context["courseId"]})
+                    if course:
+                        enriched_context["courseTitle"] = course.title
+                        enriched_context["courseDescription"] = course.description or ""
+
+                # Include direct content if provided (for summaries, etc.)
+                if context.get("content"):
+                    enriched_context["content"] = context["content"]
+
+                # Include note content if provided directly (not via noteId)
+                if context.get("noteContent") and not enriched_context.get("noteContent"):
+                    enriched_context["noteContent"] = context["noteContent"]
+
+            # 6. Check if user is asking for a summary
+            # Simple detection: check if message contains "summary" or "summarize"
+            is_summary_request = (
+                "summary" in user_text.lower()
+                or "summarize" in user_text.lower()
+                or "summarise" in user_text.lower()
             )
+
+            # If summary requested and we have context with content, generate summary
+            if is_summary_request:
+                # Check for content in enriched context or original context
+                # Priority: direct content > noteContent > topicContent
+                content_to_summarize = None
+                if enriched_context and enriched_context.get("content"):
+                    content_to_summarize = enriched_context["content"]
+                elif enriched_context and enriched_context.get("noteContent"):
+                    content_to_summarize = enriched_context["noteContent"]
+                elif enriched_context and enriched_context.get("topicContent"):
+                    content_to_summarize = enriched_context["topicContent"]
+                elif context and context.get("content"):
+                    content_to_summarize = context["content"]
+                elif context and context.get("noteContent"):
+                    content_to_summarize = context["noteContent"]
+
+                if content_to_summarize:
+                    summary = await llm_service.generate_summary(content_to_summarize)
+                    ai_response_text = f"I've generated a summary for you:\n\n{summary}"
+                else:
+                    # No content to summarize, ask user or provide general response
+                    ai_response_text = await llm_service.get_chat_response(
+                        history=formatted_history, user_message=user_text, context=enriched_context
+                    )
+            else:
+                # 6. Get AI Response (with optional enriched context)
+                ai_response_text = await llm_service.get_chat_response(
+                    history=formatted_history, user_message=user_text, context=enriched_context
+                )
 
             # --- NEW: Action Detection Logic ---
             # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
