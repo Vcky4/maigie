@@ -136,6 +136,19 @@ export function NoteDetailPage() {
     }
   }, [content]);
 
+  // Adjust textarea height when switching back to edit mode
+  useEffect(() => {
+    if (!isPreviewMode && textareaRef.current) {
+      // Use setTimeout to ensure the textarea is rendered before calculating height
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+          textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+      }, 0);
+    }
+  }, [isPreviewMode]);
+
   // Fetch course structure when selectedCourseId changes
   useEffect(() => {
     if (selectedCourseId) {
