@@ -11,7 +11,8 @@ import {
   AtSign,
   FileText,
   Layout,
-  Hash
+  Hash,
+  RotateCcw
 } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
@@ -49,6 +50,7 @@ export const AIChatWidget = () => {
   const audioChunksRef = useRef<Blob[]>([]);
   const streamingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
+  const isStoppedRef = useRef<boolean>(false);
   const location = useLocation();
   const { isAuthenticated } = useAuthStore();
 
@@ -185,8 +187,23 @@ export const AIChatWidget = () => {
   const streamText = (fullText: string, messageId: string) => {
     let currentIndex = 0;
     const streamingSpeed = 15; // milliseconds per character (adjust for speed)
+    const isStoppedRef = { current: false };
 
     const stream = () => {
+      if (isStoppedRef.current) {
+        // Streaming was stopped
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.id === messageId 
+              ? { ...msg, isStreaming: false }
+              : msg
+          )
+        );
+        setIsTyping(false);
+        streamingMessageIdRef.current = null;
+        return;
+      }
+
       if (currentIndex < fullText.length) {
         const partialText = fullText.substring(0, currentIndex + 1);
         
@@ -221,16 +238,92 @@ export const AIChatWidget = () => {
       }
     };
 
+    // Store stop function in a way we can access it
+    (streamingTimeoutRef as any).stop = () => {
+      isStoppedRef.current = true;
+      if (streamingTimeoutRef.current) {
+        clearTimeout(streamingTimeoutRef.current);
+        streamingTimeoutRef.current = null;
+      }
+    };
+
     stream();
   };
+
+  const handleStopGeneration = () => {
+    // Mark as stopped
+    isStoppedRef.current = true;
+    
+    // Stop the streaming animation
+    if (streamingTimeoutRef.current) {
+      clearTimeout(streamingTimeoutRef.current);
+      streamingTimeoutRef.current = null;
+    }
+    
+    // Stop the streaming state
+    if (streamingMessageIdRef.current) {
+      setMessages(prev => 
+        prev.map(msg => 
+          msg.id === streamingMessageIdRef.current 
+            ? { ...msg, isStreaming: false }
+            : msg
+        )
+      );
+      streamingMessageIdRef.current = null;
+    }
+    
+    setIsTyping(false);
+  };
+
+  const handleUndo = () => {
+    // Remove the last user message and its corresponding assistant response
+    setMessages(prev => {
+      if (prev.length <= 1) {
+        // Keep at least the initial welcome message
+        return prev;
+      }
+      
+      const newMessages = [...prev];
+      
+      // Find the last user message index
+      let lastUserIndex = -1;
+      for (let i = newMessages.length - 1; i >= 0; i--) {
+        if (newMessages[i].role === 'user') {
+          lastUserIndex = i;
+          break;
+        }
+      }
+      
+      if (lastUserIndex !== -1) {
+        // Remove from the last user message to the end
+        // This removes the user message and any assistant response after it
+        newMessages.splice(lastUserIndex);
+      }
+      
+      return newMessages;
+    });
+    
+    // Stop any ongoing streaming
+    handleStopGeneration();
+  };
+
+  // Check if undo is available (more than just the welcome message)
+  const canUndo = messages.length > 1 && messages.some(msg => msg.role === 'user');
 
   // Initialize WebSocket connection
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const handleMessage = (message: string) => {
+      // If generation was stopped, ignore this message
+      if (isStoppedRef.current) {
+        isStoppedRef.current = false; // Reset for next message
+        return;
+      }
+      
       setIsTyping(false); // Hide typing indicator, streaming will show the text
       const messageId = Date.now().toString();
+      
       const aiResponse: Message = {
         id: messageId,
         role: 'assistant',
@@ -501,8 +594,8 @@ export const AIChatWidget = () => {
 
         {/* Floating Input Bar (Light Theme) */}
         <div className="w-full relative group">
-           {/* Generating Status Bar (simulated) */}
-           {isTyping && (
+           {/* Generating Status Bar */}
+           {(isTyping || streamingMessageIdRef.current) && (
              <motion.div 
                initial={{ opacity: 0, y: 10 }}
                animate={{ opacity: 1, y: 0 }}
@@ -513,7 +606,12 @@ export const AIChatWidget = () => {
                    <span>Generating...</span>
                 </div>
                 <div className="flex gap-2">
-                   <button className="hover:text-gray-900">Stop</button>
+                   <button 
+                     onClick={handleStopGeneration}
+                     className="hover:text-gray-900 transition-colors"
+                   >
+                     Stop
+                   </button>
                 </div>
              </motion.div>
            )}
@@ -565,6 +663,16 @@ export const AIChatWidget = () => {
                {/* Right Controls (Actions) */}
                <div className="flex items-center gap-1">
                   <div className="h-4 w-[1px] bg-gray-200 mx-1 hidden sm:block" />
+                  
+                  {canUndo && (
+                    <button 
+                      onClick={handleUndo}
+                      className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors hidden sm:block"
+                      title="Undo last message"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                  )}
                   
                   <button 
                     onClick={handleMentionClick}
