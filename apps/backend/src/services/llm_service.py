@@ -225,7 +225,7 @@ Summary:"""
 
             title_info = f"Note Title: {title}\n\n" if title else ""
 
-            rewrite_prompt = f"""Please rewrite and improve the following note content. 
+            rewrite_prompt = f"""Please rewrite and improve the following note content.
 Make it more comprehensive, well-structured, and educational with proper markdown formatting.
 Use headings, lists, code blocks, and other markdown elements appropriately.
 Return ONLY the improved note content in markdown format without any additional commentary or explanation.
