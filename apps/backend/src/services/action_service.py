@@ -4,6 +4,7 @@ Executes structured actions triggered by the AI (e.g., creating courses).
 """
 
 import json
+import re
 
 from prisma import Prisma
 from prisma.models import User
@@ -178,11 +179,30 @@ class ActionService:
                         context["moduleTitle"] = topic.module.title
                         if topic.module.course:
                             context["courseTitle"] = topic.module.course.title
+                            context["courseId"] = (
+                                topic.module.course.id
+                            )  # Include courseId from module->course
+
+            # Strip any action blocks from the original content before rewriting
+            cleaned_content = re.sub(
+                r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+                "",
+                note.content,
+                flags=re.DOTALL,
+            ).strip()
 
             # Use AI to rewrite the content
             rewritten_content = await llm_service.rewrite_note_content(
-                content=note.content, title=note.title, context=context
+                content=cleaned_content, title=note.title, context=context
             )
+
+            # Strip any action blocks from the rewritten content (in case AI includes them)
+            rewritten_content = re.sub(
+                r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+                "",
+                rewritten_content,
+                flags=re.DOTALL,
+            ).strip()
 
             # Update the note
             updated_note = await db.note.update(
@@ -227,17 +247,19 @@ class ActionService:
             if not note.content:
                 return {"status": "error", "message": "Note has no content to summarize"}
 
+            # Strip any action blocks from content before summarizing
+            cleaned_content = re.sub(
+                r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+                "",
+                note.content,
+                flags=re.DOTALL,
+            ).strip()
+
             # Generate summary using AI
-            summary = await llm_service.generate_summary(note.content)
+            summary = await llm_service.generate_summary(cleaned_content)
 
-            # Append summary to content
-            summary_section = "\n\n---\n\n## Summary\n\n" + summary
-            updated_content = note.content + summary_section
-
-            # Update the note
-            updated_note = await db.note.update(
-                where={"id": note_id}, data={"content": updated_content}
-            )
+            # Update the note with summary in the summary field
+            updated_note = await db.note.update(where={"id": note_id}, data={"summary": summary})
 
             return {
                 "status": "success",

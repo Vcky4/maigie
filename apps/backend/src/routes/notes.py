@@ -2,6 +2,7 @@
 API routes for Notes management.
 """
 
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -264,11 +265,30 @@ async def retake_note(
                     context["moduleTitle"] = topic.module.title
                     if topic.module.course:
                         context["courseTitle"] = topic.module.course.title
+                        context["courseId"] = (
+                            topic.module.course.id
+                        )  # Include courseId from module->course
+
+        # Strip any action blocks from the original content before rewriting
+        cleaned_content = re.sub(
+            r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+            "",
+            note.content,
+            flags=re.DOTALL,
+        ).strip()
 
         # Use AI to rewrite the content
         rewritten_content = await llm_service.rewrite_note_content(
-            content=note.content, title=note.title, context=context
+            content=cleaned_content, title=note.title, context=context
         )
+
+        # Strip any action blocks from the rewritten content (in case AI includes them)
+        rewritten_content = re.sub(
+            r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+            "",
+            rewritten_content,
+            flags=re.DOTALL,
+        ).strip()
 
         # Update the note with rewritten content
         updated_note = await note_service.update_note(
@@ -317,16 +337,20 @@ async def add_summary_to_note(
         )
 
     try:
+        # Strip any action blocks from content before summarizing
+        cleaned_content = re.sub(
+            r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+            "",
+            note.content,
+            flags=re.DOTALL,
+        ).strip()
+
         # Generate summary using AI
-        summary = await llm_service.generate_summary(note.content)
+        summary = await llm_service.generate_summary(cleaned_content)
 
-        # Append summary to content
-        summary_section = "\n\n---\n\n## Summary\n\n" + summary
-        updated_content = note.content + summary_section
-
-        # Update the note
+        # Update the note with summary in the summary field
         updated_note = await note_service.update_note(
-            db, note_id, current_user.id, NoteUpdate(content=updated_content)
+            db, note_id, current_user.id, NoteUpdate(summary=summary)
         )
 
         return updated_note

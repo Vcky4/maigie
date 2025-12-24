@@ -304,18 +304,32 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 f"⚠️ AI provided topicId that looks like a title: {action_topic_id}, but no context available"
                             )
 
-                        # Same for courseId
-                        if not action_data.get("courseId"):
+                        # Same for courseId - check if AI provided a title instead of ID
+                        action_course_id = action_data.get("courseId")
+                        is_course_likely_title = action_course_id and (
+                            len(action_course_id) > 30  # CUIDs are ~25 chars
+                            or " " in action_course_id  # Titles have spaces, IDs don't
+                            or not action_course_id.startswith("c")  # CUIDs start with 'c'
+                        )
+
+                        # ALWAYS override courseId if it looks like a title or if missing
+                        if is_course_likely_title or not action_course_id:
                             if enriched_context and enriched_context.get("courseId"):
                                 action_data["courseId"] = enriched_context["courseId"]
                                 print(
-                                    f"📝 Added courseId from enriched_context: {enriched_context['courseId']}"
+                                    f"📝 Set courseId from enriched_context: {enriched_context['courseId']} (was: {action_course_id})"
                                 )
                             elif context and context.get("courseId"):
                                 action_data["courseId"] = context["courseId"]
                                 print(
-                                    f"📝 Added courseId from original context: {context['courseId']}"
+                                    f"📝 Set courseId from original context: {context['courseId']} (was: {action_course_id})"
                                 )
+                            elif is_course_likely_title:
+                                # If AI provided a title but we don't have context, remove it (courseId is optional)
+                                print(
+                                    f"⚠️ AI provided courseId that looks like a title: {action_course_id}, removing it (courseId is optional)"
+                                )
+                                action_data.pop("courseId", None)
 
                         print(f"🔍 Final action_data before execution: {action_data}")
 
