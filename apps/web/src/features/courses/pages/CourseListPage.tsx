@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { coursesApi } from '../services/coursesApi';
 import type { CourseListItem, Difficulty } from '../types/courses.types';
@@ -18,11 +18,7 @@ export const CourseListPage = () => {
   const [archived, setArchived] = useState<boolean | undefined>(false);
   const [showFilters, setShowFilters] = useState(false);
 
-  useEffect(() => {
-    fetchCourses();
-  }, [difficulty, isAIGenerated, archived]);
-
-  const fetchCourses = async () => {
+  const fetchCourses = useCallback(async () => {
     try {
       setIsLoading(true);
       const response = await coursesApi.listCourses({ 
@@ -38,7 +34,30 @@ export const CourseListPage = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [search, difficulty, isAIGenerated, archived]);
+
+  useEffect(() => {
+    fetchCourses();
+  }, [fetchCourses]);
+
+  // Listen for AI action events to refetch courses
+  useEffect(() => {
+    const handleActionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { action, status } = customEvent.detail;
+
+      // If a course was created, refetch the courses list
+      if (action === 'create_course' && status === 'success') {
+        fetchCourses();
+      }
+    };
+
+    window.addEventListener('aiActionCompleted', handleActionEvent);
+    return () => {
+      window.removeEventListener('aiActionCompleted', handleActionEvent);
+    };
+  }, [fetchCourses]);
+
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
