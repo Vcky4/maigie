@@ -10,6 +10,7 @@ import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, Save, Check,
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
+import { usePageContext } from '../contexts/PageContext';
 
 // Workaround for React 18 type definition mismatch with react-router-dom and react-markdown
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,6 +73,7 @@ declare global {
 
 export const TopicPage = () => {
   const { courseId, moduleId, topicId } = useParams<{ courseId: string; moduleId: string; topicId: string }>();
+  const { setContext, clearContext } = usePageContext();
 
   const [course, setCourse] = useState<Course | null>(null);
   const [currentTopic, setCurrentTopic] = useState<Topic | null>(null);
@@ -167,6 +169,20 @@ export const TopicPage = () => {
       }
     }
   }, [course, moduleId, topicId]);
+
+  // Update page context when courseId, topicId, or currentNote changes
+  useEffect(() => {
+    if (courseId && topicId) {
+      setContext({
+        courseId,
+        topicId,
+        noteId: currentNote?.id,
+      });
+    }
+    return () => {
+      clearContext();
+    };
+  }, [courseId, topicId, currentNote?.id, setContext, clearContext]);
 
   // Adjust textarea height on content change
   useEffect(() => {

@@ -18,6 +18,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { cn } from '../../../lib/utils';
 import { ChatWebSocketClient, chatApi } from '../services/chatApi';
 import { useAuthStore } from '../../../features/auth/store/authStore';
+import { usePageContext } from '../contexts/PageContext';
 import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -54,6 +55,7 @@ export const AIChatWidget = () => {
   const location = useLocation();
   const params = useParams<{ id?: string; courseId?: string; topicId?: string; noteId?: string }>();
   const { isAuthenticated } = useAuthStore();
+  const pageContext = usePageContext();
 
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -92,11 +94,13 @@ export const AIChatWidget = () => {
       pageContext: getPageContext()
     };
 
-    // Extract course, topic, and note IDs from URL params
-    const courseId = params.id || params.courseId;
-    const topicId = params.topicId;
-    const noteId = params.noteId;
+    // Prioritize PageContext (set by pages like TopicPage) over URL params
+    // This ensures we get the actual noteId when on a topic page with a note
+    const courseId = pageContext.courseId || params.id || params.courseId;
+    const topicId = pageContext.topicId || params.topicId;
+    const noteId = pageContext.noteId || params.noteId;
 
+    // Only include IDs that are explicitly set (not undefined)
     if (courseId) {
       context.courseId = courseId;
     }
@@ -109,7 +113,8 @@ export const AIChatWidget = () => {
       context.noteId = noteId;
     }
 
-    return Object.keys(context).length > 1 ? context : null; // Only return if we have more than just pageContext
+    // Return context only if we have at least one ID (besides pageContext)
+    return Object.keys(context).length > 1 ? context : null;
   };
 
   const handleSendMessage = () => {

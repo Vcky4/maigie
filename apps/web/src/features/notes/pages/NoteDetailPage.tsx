@@ -10,6 +10,7 @@ import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, H
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
+import { usePageContext } from '../../courses/contexts/PageContext';
 
 // Workaround for React 18 type definition mismatch
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,6 +82,7 @@ export function NoteDetailPage() {
   const { noteId } = useParams<{ noteId: string }>();
   const navigate = useNavigate();
   const isNew = !noteId || noteId === 'new';
+  const { setContext, clearContext } = usePageContext();
 
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState('');
@@ -121,6 +123,7 @@ export function NoteDetailPage() {
   const [isRetaking, setIsRetaking] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [isCopying, setIsCopying] = useState(false);
+  const [copyButtonText, setCopyButtonText] = useState('Copy');
 
   useEffect(() => {
     fetchCourses();
@@ -128,6 +131,23 @@ export function NoteDetailPage() {
       fetchNote(noteId);
     }
   }, [noteId, isNew]);
+
+  // Update page context when note changes
+  useEffect(() => {
+    if (note) {
+      setContext({
+        noteId: note.id,
+        courseId: note.courseId || undefined,
+        topicId: note.topicId || undefined,
+      });
+    } else if (noteId && !isNew) {
+      // Set noteId even if note hasn't loaded yet
+      setContext({ noteId });
+    }
+    return () => {
+      clearContext();
+    };
+  }, [note?.id, note?.courseId, note?.topicId, noteId, isNew, setContext, clearContext]);
 
   // Adjust textarea height
   useEffect(() => {
@@ -467,23 +487,17 @@ export function NoteDetailPage() {
     }
 
     setIsCopying(true);
-    
+
     try {
       // Copy content to clipboard
       await navigator.clipboard.writeText(content);
       setIsCopying(false);
-      
+
       // Show temporary success feedback
-      const copyButton = document.querySelector('[data-copy-button]') as HTMLElement;
-      if (copyButton) {
-        const originalText = copyButton.textContent;
-        copyButton.textContent = 'Copied!';
-        setTimeout(() => {
-          if (copyButton) {
-            copyButton.textContent = originalText || 'Copy';
-          }
-        }, 2000);
-      }
+      setCopyButtonText('Copied!');
+      setTimeout(() => {
+        setCopyButtonText('Copy');
+      }, 2000);
     } catch (error) {
       console.error('Error copying to clipboard:', error);
       setIsCopying(false);
@@ -641,18 +655,6 @@ export function NoteDetailPage() {
                 ) : null}
                 </div>
 
-                {!isNew && (
-                    <button
-                    onClick={handleCopyContent}
-                    disabled={isCopying}
-                    data-copy-button
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                    >
-                    <Copy className="w-4 h-4" />
-                    <span className="hidden sm:inline">Copy Content</span>
-                    <span className="sm:hidden">Copy</span>
-                    </button>
-                )}
 
                 {isNew && (
                     <button
@@ -860,14 +862,37 @@ export function NoteDetailPage() {
               <span className="text-xs hidden sm:inline">Summarize</span>
             </button>
         </div>
-
-        <button 
-            onClick={() => setIsPreviewMode(!isPreviewMode)} 
-            className="p-1.5 text-gray-600 hover:bg-gray-200 rounded"
-            title={isPreviewMode ? "Edit Mode" : "Preview Mode"}
-        >
-            {isPreviewMode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCopyContent}
+            disabled={isCopying}
+            className="p-1.5 rounded transition-colors flex items-center gap-1 font-medium whitespace-nowrap text-gray-600 hover:bg-gray-200"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-xs">{copyButtonText}</span>
+          </button>
+          <button
+            onClick={() => setIsPreviewMode(!isPreviewMode)}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap self-start sm:self-auto",
+              isPreviewMode
+                ? "bg-indigo-100 text-indigo-700"
+                : "text-gray-600 hover:bg-gray-200"
+            )}
+          >
+            {isPreviewMode ? (
+              <>
+                <EyeOff className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </>
+            ) : (
+              <>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Preview</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Editor */}
