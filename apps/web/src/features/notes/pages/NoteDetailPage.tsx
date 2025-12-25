@@ -6,7 +6,7 @@ import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Note, NoteAttachment } from '../types/notes.types';
 import type { CourseListItem, Course } from '../../courses/types/courses.types';
-import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, Eye, EyeOff, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, Eye, EyeOff, Mic, MicOff, RefreshCw, Sparkles, Copy } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
@@ -120,6 +120,7 @@ export function NoteDetailPage() {
   // AI actions state
   const [isRetaking, setIsRetaking] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
 
   useEffect(() => {
     fetchCourses();
@@ -459,6 +460,37 @@ export function NoteDetailPage() {
     }
   };
 
+  const handleCopyContent = async () => {
+    if (!content.trim()) {
+      alert('No content to copy.');
+      return;
+    }
+
+    setIsCopying(true);
+    
+    try {
+      // Copy content to clipboard
+      await navigator.clipboard.writeText(content);
+      setIsCopying(false);
+      
+      // Show temporary success feedback
+      const copyButton = document.querySelector('[data-copy-button]') as HTMLElement;
+      if (copyButton) {
+        const originalText = copyButton.textContent;
+        copyButton.textContent = 'Copied!';
+        setTimeout(() => {
+          if (copyButton) {
+            copyButton.textContent = originalText || 'Copy';
+          }
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Error copying to clipboard:', error);
+      setIsCopying(false);
+      alert('Failed to copy content. Please try again.');
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     
@@ -594,8 +626,8 @@ export function NoteDetailPage() {
             Back to Notes
             </Link>
             
-            <div className="flex items-center gap-3">
-                <div className="h-6 flex items-center mr-2">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <div className="h-6 flex items-center">
                 {isSaving ? (
                     <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
                     <Save className="w-4 h-4" />
@@ -609,6 +641,19 @@ export function NoteDetailPage() {
                 ) : null}
                 </div>
 
+                {!isNew && (
+                    <button
+                    onClick={handleCopyContent}
+                    disabled={isCopying}
+                    data-copy-button
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                    <Copy className="w-4 h-4" />
+                    <span className="hidden sm:inline">Copy Content</span>
+                    <span className="sm:hidden">Copy</span>
+                    </button>
+                )}
+
                 {isNew && (
                     <button
                     onClick={() => handleSave(true)}
@@ -616,7 +661,8 @@ export function NoteDetailPage() {
                     className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
                     >
                     <Save className="w-4 h-4" />
-                    Create Note
+                    <span className="hidden sm:inline">Create Note</span>
+                    <span className="sm:hidden">Create</span>
                     </button>
                 )}
 

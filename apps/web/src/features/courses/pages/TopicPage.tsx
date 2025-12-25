@@ -6,7 +6,7 @@ import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Course, Topic } from '../types/courses.types';
 import type { Note, NoteAttachment } from '../../notes/types/notes.types';
-import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye, EyeOff, Mic, MicOff, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, ChevronRight, ChevronLeft, Save, Check, Brain, FileText, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, X, Eye, EyeOff, Mic, MicOff, RefreshCw, Sparkles, Copy } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
@@ -106,6 +106,7 @@ export const TopicPage = () => {
   // AI actions state
   const [isRetaking, setIsRetaking] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isCopyingToNote, setIsCopyingToNote] = useState(false);
 
   useEffect(() => {
     if (courseId) {
@@ -523,6 +524,37 @@ export const TopicPage = () => {
     }
   };
 
+  const handleCopyToNote = async () => {
+    if (!content.trim()) {
+      alert('No content to copy.');
+      return;
+    }
+
+    setIsCopyingToNote(true);
+    
+    try {
+      // Copy content to clipboard
+      await navigator.clipboard.writeText(content);
+      setIsCopyingToNote(false);
+      
+      // Show temporary success feedback
+      const originalText = document.querySelector('[data-copy-button]')?.textContent;
+      const copyButton = document.querySelector('[data-copy-button]') as HTMLElement;
+      if (copyButton) {
+        copyButton.textContent = 'Copied!';
+        setTimeout(() => {
+          if (copyButton) {
+            copyButton.textContent = originalText || 'Copy';
+          }
+        }, 2000);
+      }
+    } catch (error) {
+      console.error('Error copying to clipboard:', error);
+      setIsCopyingToNote(false);
+      alert('Failed to copy content. Please try again.');
+    }
+  };
+
   const handleToggleComplete = async () => {
     if (!currentTopic || !courseId || !moduleId || isCompleting) return;
 
@@ -604,19 +636,19 @@ export const TopicPage = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto flex flex-col min-h-[calc(100vh-8rem)]">
+    <div className="max-w-4xl mx-auto flex flex-col min-h-[calc(100vh-8rem)] px-4 sm:px-0">
       {/* Header */}
-      <div className="mb-6">
-        <Link to={`/courses/${courseId}`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-4">
+      <div className="mb-4 sm:mb-6">
+        <Link to={`/courses/${courseId}`} className="text-sm text-gray-500 hover:text-gray-900 flex items-center gap-1 mb-3 sm:mb-4">
           <ArrowLeft className="w-4 h-4" />
           Back to Course
         </Link>
         
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-          <h1 className="text-2xl font-bold text-gray-900">{currentTopic.title}</h1>
+          <h1 className="text-2xl font-bold text-gray-900 break-words">{currentTopic.title}</h1>
           
-          <div className="flex items-center gap-3">
-            <div className="h-6 flex items-center mr-2">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <div className="h-6 flex items-center">
               {isSaving ? (
                 <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
                   <Save className="w-4 h-4" />
@@ -631,11 +663,22 @@ export const TopicPage = () => {
             </div>
 
             <button
+              onClick={handleCopyToNote}
+              disabled={isCopyingToNote}
+              data-copy-button
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              <Copy className="w-4 h-4" />
+              <span className="hidden sm:inline">Copy Content</span>
+              <span className="sm:hidden">Copy</span>
+            </button>
+
+            <button
               onClick={handleResources}
               className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
             >
               <FileText className="w-4 h-4" />
-              Resources
+              <span className="hidden sm:inline">Resources</span>
             </button>
 
             <button
@@ -643,7 +686,7 @@ export const TopicPage = () => {
               className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors shadow-sm"
             >
               <Brain className="w-4 h-4" />
-              Study
+              <span className="hidden sm:inline">Study</span>
             </button>
           </div>
         </div>
@@ -651,14 +694,14 @@ export const TopicPage = () => {
 
       {/* Summary Section */}
       {currentNote?.summary && (
-        <div className="mb-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 shadow-sm p-6">
+        <div className="mb-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 shadow-sm p-4 sm:p-6">
           <div className="flex items-start gap-3">
             <Sparkles className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <h3 className="text-sm font-semibold text-indigo-900 uppercase tracking-wider mb-2">
                 Summary
               </h3>
-              <div className="prose prose-sm prose-indigo max-w-none">
+              <div className="prose prose-sm prose-indigo max-w-none break-words">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {currentNote.summary}
                 </ReactMarkdown>
@@ -669,8 +712,8 @@ export const TopicPage = () => {
       )}
 
       {/* Content Editor */}
-      <div className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
-        <div className="flex items-center gap-1">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto gap-2">
+        <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
             <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
                 <Bold className="w-4 h-4" />
             </button>
@@ -709,17 +752,17 @@ export const TopicPage = () => {
               )}
             </button>
             {isRecording && (
-              <div className="flex items-center gap-1 text-xs text-gray-500 px-2">
+              <div className="flex items-center gap-1 text-xs text-gray-500 px-2 whitespace-nowrap">
                 <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
                 <span>Listening...</span>
               </div>
             )}
-            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <div className="w-px h-4 bg-gray-300 mx-1 hidden sm:block" />
             <button 
               onClick={handleRetakeNote}
               disabled={isRetaking || isSummarizing}
               className={cn(
-                "p-1.5 rounded transition-colors flex items-center gap-1",
+                "p-1.5 rounded transition-colors flex items-center gap-1 whitespace-nowrap",
                 isRetaking 
                   ? "text-indigo-600 bg-indigo-50" 
                   : "text-gray-600 hover:bg-gray-200"
@@ -733,7 +776,7 @@ export const TopicPage = () => {
               onClick={handleSummarize}
               disabled={isRetaking || isSummarizing}
               className={cn(
-                "p-1.5 rounded transition-colors flex items-center gap-1",
+                "p-1.5 rounded transition-colors flex items-center gap-1 whitespace-nowrap",
                 isSummarizing 
                   ? "text-indigo-600 bg-indigo-50" 
                   : "text-gray-600 hover:bg-gray-200"
@@ -748,7 +791,7 @@ export const TopicPage = () => {
         <button 
             onClick={() => setIsPreviewMode(!isPreviewMode)} 
             className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
+                "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap self-start sm:self-auto",
                 isPreviewMode 
                     ? "bg-indigo-100 text-indigo-700" 
                     : "text-gray-600 hover:bg-gray-200"
@@ -757,12 +800,12 @@ export const TopicPage = () => {
             {isPreviewMode ? (
                 <>
                     <EyeOff className="w-3.5 h-3.5" />
-                    Edit
+                    <span>Edit</span>
                 </>
             ) : (
                 <>
                     <Eye className="w-3.5 h-3.5" />
-                    Preview
+                    <span>Preview</span>
                 </>
             )}
         </button>
@@ -770,7 +813,7 @@ export const TopicPage = () => {
 
       <div className="flex-1 bg-white rounded-b-xl border border-gray-200 shadow-sm mb-8 relative min-h-[400px]">
         {isPreviewMode ? (
-            <div className="w-full h-full p-8 prose prose-indigo max-w-none overflow-y-auto prose-p:my-1 prose-headings:my-2 prose-ul:my-2 prose-li:my-0">
+            <div className="w-full h-full p-4 sm:p-8 prose prose-indigo max-w-none overflow-y-auto prose-p:my-1 prose-headings:my-2 prose-ul:my-2 prose-li:my-0">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {content || '*No content*'}
                 </ReactMarkdown>
@@ -781,15 +824,15 @@ export const TopicPage = () => {
                 value={content}
                 onChange={handleContentChange}
                 placeholder="Start typing your notes here... (Markdown supported)"
-                className="w-full h-full p-8 resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
+                className="w-full h-full p-4 sm:p-8 resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
                 spellCheck={false}
             />
         )}
       </div>
 
       {/* Attachments Section */}
-      <div className="mb-8 bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-        <div className="flex items-center justify-between mb-4">
+      <div className="mb-8 bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
             <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
                 <Paperclip className="w-5 h-5" />
                 Attachments
@@ -805,17 +848,17 @@ export const TopicPage = () => {
                 <button
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isUploading || isSaving}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50 w-full sm:w-auto justify-center"
                 >
                     {isUploading ? (
                         <>
                             <Loader className="w-4 h-4 animate-spin" />
-                            Uploading...
+                            <span>Uploading...</span>
                         </>
                     ) : (
                         <>
                             <Paperclip className="w-4 h-4" />
-                            Add Attachment
+                            <span>Add Attachment</span>
                         </>
                     )}
                 </button>
@@ -823,17 +866,17 @@ export const TopicPage = () => {
         </div>
 
         {attachments.length === 0 ? (
-            <div className="bg-gray-50 border border-gray-200 border-dashed rounded-xl p-8 text-center">
+            <div className="bg-gray-50 border border-gray-200 border-dashed rounded-xl p-6 sm:p-8 text-center">
                 <p className="text-gray-500 text-sm">No attachments yet. Upload files related to this topic.</p>
             </div>
         ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 {attachments.map(attachment => {
                     const fileType = getFileType(attachment.filename);
                     const FileIcon = getFileIcon(fileType);
                     return (
                     <div key={attachment.id} className="flex items-center p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 transition-colors group">
-                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg mr-3">
+                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg mr-3 flex-shrink-0">
                             <FileIcon className="w-5 h-5" />
                         </div>
                         <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}>
@@ -844,7 +887,7 @@ export const TopicPage = () => {
                                 {attachment.size ? `${(attachment.size / 1024).toFixed(1)} KB` : 'Unknown size'} • {new Date(attachment.createdAt).toLocaleDateString()}
                             </span>
                         </div>
-                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-all">
+                        <div className="flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0 ml-2">
                             <button
                                 onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}
                                 className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
