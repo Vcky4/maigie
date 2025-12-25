@@ -275,7 +275,14 @@ Summary:"""
             rewrite_prompt = f"""Please rewrite and improve the following note content.
 Make it more comprehensive, well-structured, and educational with proper markdown formatting.
 Use headings, lists, code blocks, and other markdown elements appropriately.
-Return ONLY the improved note content in markdown format without any additional commentary or explanation.
+
+CRITICAL: Return ONLY the improved note content in markdown format. Do not include any:
+- Introductory phrases like "That is an excellent topic" or "I have rewritten"
+- Conversational text or commentary
+- Explanations about what you did
+- Concluding remarks
+
+Just provide the rewritten content directly, starting with the first heading or paragraph.
 
 {title_info}{context_info}Original Content:
 {content}
@@ -286,7 +293,60 @@ Rewritten Content:"""
                 rewrite_prompt, safety_settings=self.safety_settings
             )
 
-            return response.text.strip()
+            rewritten_text = response.text.strip()
+
+            # Clean up any conversational text that might have been added
+            # Remove common AI introductory phrases if they appear
+            intro_phrases = [
+                "That is an excellent",
+                "That's an excellent",
+                "That is a great",
+                "That's a great",
+                "I have rewritten",
+                "I've rewritten",
+                "Here is the",
+                "Here's the",
+                "Below is the",
+                "The following is",
+                "I have improved",
+                "I've improved",
+                "Organizing this material",
+            ]
+
+            for phrase in intro_phrases:
+                if rewritten_text.lower().startswith(phrase.lower()):
+                    # Find the first sentence end after the intro
+                    sentences = rewritten_text.split(".")
+                    if len(sentences) > 1:
+                        # Skip the first sentence if it's an intro phrase
+                        rewritten_text = ".".join(sentences[1:]).strip()
+                        if rewritten_text.startswith(" "):
+                            rewritten_text = rewritten_text[1:]
+                    break
+
+            # Remove outro phrases at the end
+            outro_phrases = [
+                "keep up the excellent work",
+                "great work",
+                "excellent work",
+                "well done",
+                "set you up well",
+            ]
+
+            rewritten_lower = rewritten_text.lower()
+            for phrase in outro_phrases:
+                if phrase in rewritten_lower:
+                    # Try to remove sentences containing the outro phrase
+                    sentences = rewritten_text.split(".")
+                    # Remove sentences that contain the outro phrase
+                    cleaned_sentences = [s for s in sentences if phrase not in s.lower()]
+                    if len(cleaned_sentences) < len(sentences):
+                        rewritten_text = ".".join(cleaned_sentences).strip()
+                        if rewritten_text and not rewritten_text.endswith("."):
+                            rewritten_text += "."
+                    break
+
+            return rewritten_text
 
         except Exception as e:
             print(f"Gemini Rewrite Error: {e}")
