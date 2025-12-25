@@ -273,16 +273,31 @@ Summary:"""
             title_info = f"Note Title: {title}\n\n" if title else ""
 
             rewrite_prompt = f"""Please rewrite and improve the following note content.
-Make it more comprehensive, well-structured, and educational with proper markdown formatting.
-Use headings, lists, code blocks, and other markdown elements appropriately.
 
-CRITICAL: Return ONLY the improved note content in markdown format. Do not include any:
-- Introductory phrases like "That is an excellent topic" or "I have rewritten"
-- Conversational text or commentary
-- Explanations about what you did
-- Concluding remarks
+IMPORTANT STYLE CONSTRAINTS:
+- Maintain the ORIGINAL TONE and VOICE of the raw note.
+- Do NOT make the writing sound overly academic, robotic, or textbook-like.
+- Keep the language natural, relatable, and close to how a human would explain it.
+- Do NOT replace simple explanations with heavy formal jargon unless the idea already exists in the raw note.
+- Any added details must EXTEND the original ideas, not introduce new perspectives or frameworks.
 
-Just provide the rewritten content directly, starting with the first heading or paragraph.
+STRUCTURE REQUIREMENTS:
+- Improve clarity using headings, lists, and tables where helpful.
+- Add light technical terms ONLY to clarify what is already being said.
+- Preserve the original flow of ideas and emphasis.
+
+FORMATTING:
+- Use proper Markdown (headings, lists, tables, equations if already implied).
+- Do not over-format or over-organize to the point of losing the raw feel.
+
+CRITICAL OUTPUT RULES:
+Return ONLY the rewritten note content in Markdown format.
+Do NOT include:
+- Introductory phrases (e.g., “Here is the rewritten version”)
+- Explanations of changes
+- Commentary or conclusions
+
+Begin directly with the first heading or paragraph.
 
 {title_info}{context_info}Original Content:
 {content}

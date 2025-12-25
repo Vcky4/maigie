@@ -157,8 +157,21 @@ class ActionService:
 
             # Get the note
             note = await db.note.find_unique(where={"id": note_id})
+
+            # If note not found, check if noteId is actually a topicId
             if not note:
-                return {"status": "error", "message": f"Note with ID {note_id} not found"}
+                print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
+                topic = await db.topic.find_unique(
+                    where={"id": note_id},
+                    include={"note": True},
+                )
+                if topic and topic.note:
+                    # It's a topicId, use the topic's note
+                    print(f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}")
+                    note = topic.note
+                    note_id = note.id  # Update note_id to the actual note ID
+                else:
+                    return {"status": "error", "message": f"Note with ID {note_id} not found"}
 
             # Verify ownership
             if note.userId != user_id:
@@ -237,8 +250,21 @@ class ActionService:
 
             # Get the note
             note = await db.note.find_unique(where={"id": note_id})
+
+            # If note not found, check if noteId is actually a topicId
             if not note:
-                return {"status": "error", "message": f"Note with ID {note_id} not found"}
+                print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
+                topic = await db.topic.find_unique(
+                    where={"id": note_id},
+                    include={"note": True},
+                )
+                if topic and topic.note:
+                    # It's a topicId, use the topic's note
+                    print(f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}")
+                    note = topic.note
+                    note_id = note.id  # Update note_id to the actual note ID
+                else:
+                    return {"status": "error", "message": f"Note with ID {note_id} not found"}
 
             # Verify ownership
             if note.userId != user_id:

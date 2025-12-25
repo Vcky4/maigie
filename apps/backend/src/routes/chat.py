@@ -117,13 +117,43 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                 # Fetch note details if noteId is provided
                 if context.get("noteId"):
+                    note_id = context["noteId"]
                     note = await db.note.find_unique(
-                        where={"id": context["noteId"]},
+                        where={"id": note_id},
                         include={
                             "topic": {"include": {"module": {"include": {"course": True}}}},
                             "course": True,
                         },
                     )
+
+                    # If note not found, check if noteId is actually a topicId
+                    if not note:
+                        print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
+                        topic = await db.topic.find_unique(
+                            where={"id": note_id},
+                            include={"note": True, "module": {"include": {"course": True}}},
+                        )
+                        if topic and topic.note:
+                            # It's a topicId, use the topic's note
+                            print(
+                                f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                            )
+                            note = topic.note
+                            # Also include topic details
+                            enriched_context["topicId"] = topic.id
+                            enriched_context["topicTitle"] = topic.title
+                            enriched_context["topicContent"] = topic.content or ""
+                            if topic.module:
+                                enriched_context["moduleTitle"] = topic.module.title
+                                if topic.module.course:
+                                    enriched_context["courseId"] = topic.module.course.id
+                                    enriched_context["courseTitle"] = topic.module.course.title
+                                    enriched_context["courseDescription"] = (
+                                        topic.module.course.description or ""
+                                    )
+                            # Update noteId in enriched_context to the actual note ID
+                            enriched_context["noteId"] = note.id
+
                     if note:
                         enriched_context["noteTitle"] = note.title
                         enriched_context["noteContent"] = note.content or ""
@@ -250,19 +280,60 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                     # For retake_note and add_summary, ensure noteId is populated from context
                     if action_type in ["retake_note", "add_summary"]:
-                        if not action_data.get("noteId"):
+                        note_id = action_data.get("noteId")
+
+                        # If noteId is missing, try to get it from context
+                        if not note_id:
                             if enriched_context and enriched_context.get("noteId"):
-                                action_data["noteId"] = enriched_context["noteId"]
-                                print(
-                                    f"📝 Set noteId from enriched_context: {enriched_context['noteId']}"
-                                )
+                                note_id = enriched_context["noteId"]
+                                print(f"📝 Set noteId from enriched_context: {note_id}")
                             elif context and context.get("noteId"):
-                                action_data["noteId"] = context["noteId"]
-                                print(f"📝 Set noteId from original context: {context['noteId']}")
-                            else:
-                                print(
-                                    "⚠️ No noteId found in context for retake_note/add_summary action"
+                                note_id = context["noteId"]
+                                print(f"📝 Set noteId from original context: {note_id}")
+                            elif enriched_context and enriched_context.get("topicId"):
+                                # If we have topicId but no noteId, try to get note from topic
+                                topic_id = enriched_context["topicId"]
+                                print(f"🔍 No noteId found, checking topicId: {topic_id}")
+                                topic = await db.topic.find_unique(
+                                    where={"id": topic_id},
+                                    include={"note": True},
                                 )
+                                if topic and topic.note:
+                                    note_id = topic.note.id
+                                    print(f"✅ Found note from topic: {note_id}")
+                            elif context and context.get("topicId"):
+                                # Try original context topicId
+                                topic_id = context["topicId"]
+                                print(
+                                    f"🔍 No noteId found, checking topicId from context: {topic_id}"
+                                )
+                                topic = await db.topic.find_unique(
+                                    where={"id": topic_id},
+                                    include={"note": True},
+                                )
+                                if topic and topic.note:
+                                    note_id = topic.note.id
+                                    print(f"✅ Found note from topic: {note_id}")
+
+                        # If we still have a noteId, check if it's actually a topicId
+                        if note_id:
+                            note = await db.note.find_unique(where={"id": note_id})
+                            if not note:
+                                print(
+                                    f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
+                                )
+                                topic = await db.topic.find_unique(
+                                    where={"id": note_id},
+                                    include={"note": True},
+                                )
+                                if topic and topic.note:
+                                    note_id = topic.note.id
+                                    print(f"✅ Resolved topicId to noteId: {note_id}")
+
+                        if note_id:
+                            action_data["noteId"] = note_id
+                        else:
+                            print("⚠️ No noteId found in context for retake_note/add_summary action")
 
                     if action_type == "create_note":
                         # Debug: Log what we have
