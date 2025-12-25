@@ -62,24 +62,24 @@ interface SpeechRecognitionAlternative {
 declare global {
   interface Window {
     SpeechRecognition: {
-      new (): SpeechRecognition;
+      new(): SpeechRecognition;
     };
     webkitSpeechRecognition: {
-      new (): SpeechRecognition;
+      new(): SpeechRecognition;
     };
   }
 }
 
 export const TopicPage = () => {
   const { courseId, moduleId, topicId } = useParams<{ courseId: string; moduleId: string; topicId: string }>();
-  
+
   const [course, setCourse] = useState<Course | null>(null);
   const [currentTopic, setCurrentTopic] = useState<Topic | null>(null);
   const [currentNote, setCurrentNote] = useState<Note | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
-  
+
   // Note content state
   const [content, setContent] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -87,15 +87,15 @@ export const TopicPage = () => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const savedIndicatorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   // Attachments state
   const [attachments, setAttachments] = useState<NoteAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Editor State
   const [isPreviewMode, setIsPreviewMode] = useState(false);
-  
+
   // Preview Modal State
   const [previewFile, setPreviewFile] = useState<{ url: string; name: string } | null>(null);
 
@@ -107,6 +107,7 @@ export const TopicPage = () => {
   const [isRetaking, setIsRetaking] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [isCopyingToNote, setIsCopyingToNote] = useState(false);
+  const [copyButtonText, setCopyButtonText] = useState('Copy');
 
   useEffect(() => {
     if (courseId) {
@@ -117,11 +118,11 @@ export const TopicPage = () => {
   // Listen for AI action events to refetch data
   useEffect(() => {
     if (!courseId) return;
-    
+
     const handleActionEvent = (event: Event) => {
       const customEvent = event as CustomEvent;
       const { action, status, payload } = customEvent.detail;
-      
+
       // If a note was created for this topic, refetch the course
       if (action === 'create_note' && status === 'success') {
         if (payload?.note_id) {
@@ -143,23 +144,23 @@ export const TopicPage = () => {
     if (course && moduleId && topicId) {
       const module = course.modules.find(m => m.id === moduleId);
       const topic = module?.topics.find(t => t.id === topicId);
-      
+
       if (topic) {
         setCurrentTopic(topic);
-        
+
         // Use note content if available, fallback to topic content (migration support), or empty
         // Initially set content from the topic's embedded note or topic content
         const initialContent = topic.note?.content || topic.content || '';
         setContent(initialContent);
-        
+
         if (topic.note) {
-            // Fetch fresh note data to ensure we have latest attachments
-            // The course object might be stale or missing nested relations if not requested
-            setCurrentNote(topic.note); // Set initial state from course
-            fetchNoteDetails(topic.note.id);
+          // Fetch fresh note data to ensure we have latest attachments
+          // The course object might be stale or missing nested relations if not requested
+          setCurrentNote(topic.note); // Set initial state from course
+          fetchNoteDetails(topic.note.id);
         } else {
-            setCurrentNote(null);
-            setAttachments([]);
+          setCurrentNote(null);
+          setAttachments([]);
         }
       } else {
         setError('Topic not found');
@@ -203,16 +204,16 @@ export const TopicPage = () => {
 
   const fetchNoteDetails = async (noteId: string) => {
     try {
-        const freshNote = await notesApi.getNote(noteId);
-        setCurrentNote(freshNote);
-        setAttachments(freshNote.attachments || []);
-        // Also update content if it's different (optional, but good for sync)
-        if (freshNote.content) {
-            setContent(freshNote.content);
-        }
+      const freshNote = await notesApi.getNote(noteId);
+      setCurrentNote(freshNote);
+      setAttachments(freshNote.attachments || []);
+      // Also update content if it's different (optional, but good for sync)
+      if (freshNote.content) {
+        setContent(freshNote.content);
+      }
     } catch (err) {
-        console.error('Failed to fetch fresh note details', err);
-        // Fallback to what we have is already set in the useEffect
+      console.error('Failed to fetch fresh note details', err);
+      // Fallback to what we have is already set in the useEffect
     }
   };
 
@@ -222,7 +223,7 @@ export const TopicPage = () => {
       try {
         if (currentNote) {
           // Update existing note
-          const updatedNote = await notesApi.updateNote(currentNote.id, { 
+          const updatedNote = await notesApi.updateNote(currentNote.id, {
             content: newContent,
             title: currentTopic.title // Keep title in sync if needed
           });
@@ -237,10 +238,10 @@ export const TopicPage = () => {
           });
           setCurrentNote(newNote);
         }
-        
+
         setIsSaving(false);
         setIsSaved(true);
-        
+
         // Hide saved indicator after 2 seconds
         if (savedIndicatorTimeoutRef.current) {
           clearTimeout(savedIndicatorTimeoutRef.current);
@@ -248,7 +249,7 @@ export const TopicPage = () => {
         savedIndicatorTimeoutRef.current = setTimeout(() => {
           setIsSaved(false);
         }, 2000);
-        
+
       } catch (err) {
         console.error('Failed to save content', err);
         setIsSaving(false);
@@ -260,7 +261,7 @@ export const TopicPage = () => {
     const newContent = e.target.value;
     setContent(newContent);
     setIsSaved(false); // Reset saved state immediately on change
-    
+
     // Clear existing timeout
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -272,72 +273,72 @@ export const TopicPage = () => {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0 || !courseId || !topicId || !currentTopic) return;
-    
+
     // Auto-save the note if it's new before uploading attachment
     if (!currentNote) {
-        setIsSaving(true);
-        try {
-            // Create new note
-            const newNote = await notesApi.createNote({
-                title: currentTopic.title,
-                content: content, // Use current content
-                courseId: courseId,
-                topicId: topicId,
-            });
-            setCurrentNote(newNote);
-            
-            // Continue with upload using the new note ID
-            await uploadAttachment(newNote.id, e.target.files[0]);
-        } catch (err) {
-            console.error('Failed to create note for upload', err);
-            alert('Failed to save note before upload.');
-        } finally {
-            setIsSaving(false);
-        }
+      setIsSaving(true);
+      try {
+        // Create new note
+        const newNote = await notesApi.createNote({
+          title: currentTopic.title,
+          content: content, // Use current content
+          courseId: courseId,
+          topicId: topicId,
+        });
+        setCurrentNote(newNote);
+
+        // Continue with upload using the new note ID
+        await uploadAttachment(newNote.id, e.target.files[0]);
+      } catch (err) {
+        console.error('Failed to create note for upload', err);
+        alert('Failed to save note before upload.');
+      } finally {
+        setIsSaving(false);
+      }
     } else {
-        await uploadAttachment(currentNote.id, e.target.files[0]);
+      await uploadAttachment(currentNote.id, e.target.files[0]);
     }
   };
 
   const uploadAttachment = async (noteId: string, file: File) => {
     setIsUploading(true);
     try {
-        // 1. Upload file to CDN
-        const uploadResult = await notesApi.uploadFile(file);
-        
-        // 2. Link attachment to note
-        const newAttachment = await notesApi.addAttachment(noteId, {
-            filename: uploadResult.filename,
-            url: uploadResult.url,
-            size: uploadResult.size
-        });
+      // 1. Upload file to CDN
+      const uploadResult = await notesApi.uploadFile(file);
 
-        setAttachments(prev => [...prev, newAttachment]);
+      // 2. Link attachment to note
+      const newAttachment = await notesApi.addAttachment(noteId, {
+        filename: uploadResult.filename,
+        url: uploadResult.url,
+        size: uploadResult.size
+      });
+
+      setAttachments(prev => [...prev, newAttachment]);
     } catch (err) {
-        console.error('Failed to upload attachment', err);
-        alert('Failed to upload attachment');
+      console.error('Failed to upload attachment', err);
+      alert('Failed to upload attachment');
     } finally {
-        setIsUploading(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
   const handleDeleteAttachment = async (attachmentId: string) => {
     if (!currentNote || !window.confirm('Are you sure you want to delete this attachment?')) return;
-    
+
     try {
-        await notesApi.deleteAttachment(currentNote.id, attachmentId);
-        setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+      await notesApi.deleteAttachment(currentNote.id, attachmentId);
+      setAttachments(prev => prev.filter(a => a.id !== attachmentId));
     } catch (err) {
-        console.error('Failed to delete attachment', err);
-        alert('Failed to delete attachment');
+      console.error('Failed to delete attachment', err);
+      alert('Failed to delete attachment');
     }
   };
 
   // Toolbar Actions
   const insertFormat = (prefix: string, suffix = '') => {
     if (!textareaRef.current) return;
-    
+
     const start = textareaRef.current.selectionStart;
     const end = textareaRef.current.selectionEnd;
     const text = content;
@@ -347,13 +348,13 @@ export const TopicPage = () => {
 
     const newContent = before + prefix + selection + suffix + after;
     setContent(newContent);
-    
+
     // Restore selection / focus
     setTimeout(() => {
-        if (textareaRef.current) {
-            textareaRef.current.focus();
-            textareaRef.current.setSelectionRange(start + prefix.length, end + prefix.length);
-        }
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(start + prefix.length, end + prefix.length);
+      }
     }, 0);
 
     // Trigger save
@@ -377,7 +378,7 @@ export const TopicPage = () => {
     // Check if browser supports Speech Recognition
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    
+
     if (!SpeechRecognition) {
       alert('Your browser does not support speech recognition. Please use Chrome, Edge, or Safari.');
       return;
@@ -397,7 +398,7 @@ export const TopicPage = () => {
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) {
             const transcript = event.results[i][0].transcript;
-            
+
             // Update content with final transcript (raw speech-to-text)
             setContent(prev => {
               const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcript;
@@ -430,7 +431,7 @@ export const TopicPage = () => {
 
       // Start recognition
       recognition.start();
-      
+
     } catch (error) {
       console.error('Error starting speech recognition:', error);
       alert('Could not start speech recognition. Please check permissions.');
@@ -476,13 +477,13 @@ export const TopicPage = () => {
     }
 
     setIsRetaking(true);
-    
+
     try {
       const updatedNote = await notesApi.retakeNote(currentNote.id);
       setContent(updatedNote.content || '');
       setCurrentNote(updatedNote);
       setIsRetaking(false);
-      
+
       // Trigger save indicator
       setIsSaved(true);
       if (savedIndicatorTimeoutRef.current) clearTimeout(savedIndicatorTimeoutRef.current);
@@ -506,13 +507,13 @@ export const TopicPage = () => {
     }
 
     setIsSummarizing(true);
-    
+
     try {
       const updatedNote = await notesApi.addSummaryToNote(currentNote.id);
       setContent(updatedNote.content || '');
       setCurrentNote(updatedNote);
       setIsSummarizing(false);
-      
+
       // Trigger save indicator
       setIsSaved(true);
       if (savedIndicatorTimeoutRef.current) clearTimeout(savedIndicatorTimeoutRef.current);
@@ -531,23 +532,17 @@ export const TopicPage = () => {
     }
 
     setIsCopyingToNote(true);
-    
+
     try {
       // Copy content to clipboard
       await navigator.clipboard.writeText(content);
       setIsCopyingToNote(false);
-      
+
       // Show temporary success feedback
-      const originalText = document.querySelector('[data-copy-button]')?.textContent;
-      const copyButton = document.querySelector('[data-copy-button]') as HTMLElement;
-      if (copyButton) {
-        copyButton.textContent = 'Copied!';
-        setTimeout(() => {
-          if (copyButton) {
-            copyButton.textContent = originalText || 'Copy';
-          }
-        }, 2000);
-      }
+      setCopyButtonText('Copied!');
+      setTimeout(() => {
+        setCopyButtonText('Copy');
+      }, 2000);
     } catch (error) {
       console.error('Error copying to clipboard:', error);
       setIsCopyingToNote(false);
@@ -562,10 +557,10 @@ export const TopicPage = () => {
       setIsCompleting(true);
       const newStatus = !currentTopic.completed;
       await coursesApi.toggleTopicCompletion(courseId, moduleId, currentTopic.id, newStatus);
-      
+
       // Optimistic update
       setCurrentTopic(prev => prev ? ({ ...prev, completed: newStatus }) : null);
-      
+
       // Update course state locally to reflect progress
       setCourse(prev => {
         if (!prev) return null;
@@ -590,11 +585,11 @@ export const TopicPage = () => {
 
   const findNextTopic = () => {
     if (!course || !currentTopic) return null;
-    
+
     // Flatten all topics
     const allTopics = course.modules.flatMap(m => m.topics.map(t => ({ ...t, moduleId: m.id })));
     const currentIndex = allTopics.findIndex(t => t.id === currentTopic.id);
-    
+
     if (currentIndex < allTopics.length - 1) {
       return allTopics[currentIndex + 1];
     }
@@ -603,10 +598,10 @@ export const TopicPage = () => {
 
   const findPrevTopic = () => {
     if (!course || !currentTopic) return null;
-    
+
     const allTopics = course.modules.flatMap(m => m.topics.map(t => ({ ...t, moduleId: m.id })));
     const currentIndex = allTopics.findIndex(t => t.id === currentTopic.id);
-    
+
     if (currentIndex > 0) {
       return allTopics[currentIndex - 1];
     }
@@ -643,11 +638,11 @@ export const TopicPage = () => {
           <ArrowLeft className="w-4 h-4" />
           Back to Course
         </Link>
-        
+
         <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
           <h1 className="text-2xl font-bold text-gray-900 break-words">{currentTopic.title}</h1>
-          
-          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap md:w-3/5 justify-end">
             <div className="h-6 flex items-center">
               {isSaving ? (
                 <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
@@ -661,17 +656,6 @@ export const TopicPage = () => {
                 </div>
               ) : null}
             </div>
-
-            <button
-              onClick={handleCopyToNote}
-              disabled={isCopyingToNote}
-              data-copy-button
-              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-            >
-              <Copy className="w-4 h-4" />
-              <span className="hidden sm:inline">Copy Content</span>
-              <span className="sm:hidden">Copy</span>
-            </button>
 
             <button
               onClick={handleResources}
@@ -714,202 +698,212 @@ export const TopicPage = () => {
       {/* Content Editor */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto gap-2">
         <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
-            <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
-                <Bold className="w-4 h-4" />
-            </button>
-            <button onClick={() => insertFormat('*', '*')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Italic">
-                <Italic className="w-4 h-4" />
-            </button>
-            <div className="w-px h-4 bg-gray-300 mx-1" />
-            <button onClick={() => insertFormat('# ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 1">
-                <Heading1 className="w-4 h-4" />
-            </button>
-            <button onClick={() => insertFormat('## ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 2">
-                <Heading2 className="w-4 h-4" />
-            </button>
-            <div className="w-px h-4 bg-gray-300 mx-1" />
-            <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
-                <List className="w-4 h-4" />
-            </button>
-            <div className="w-px h-4 bg-gray-300 mx-1" />
-            <button 
-              onClick={toggleVoiceTranscription}
-              className={cn(
-                "p-1.5 rounded transition-colors relative",
-                isRecording 
-                  ? "text-red-600 hover:bg-red-50 bg-red-50" 
-                  : "text-gray-600 hover:bg-gray-200"
-              )}
-              title={isRecording ? "Stop voice transcription" : "Start voice transcription"}
-            >
-              {isRecording ? (
-                <MicOff className="w-4 h-4" />
-              ) : (
-                <Mic className="w-4 h-4" />
-              )}
-              {isRecording && (
-                <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              )}
-            </button>
-            {isRecording && (
-              <div className="flex items-center gap-1 text-xs text-gray-500 px-2 whitespace-nowrap">
-                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-                <span>Listening...</span>
-              </div>
-            )}
-            <div className="w-px h-4 bg-gray-300 mx-1 hidden sm:block" />
-            <button 
-              onClick={handleRetakeNote}
-              disabled={isRetaking || isSummarizing}
-              className={cn(
-                "p-1.5 rounded transition-colors flex items-center gap-1 whitespace-nowrap",
-                isRetaking 
-                  ? "text-indigo-600 bg-indigo-50" 
-                  : "text-gray-600 hover:bg-gray-200"
-              )}
-              title="Retake Note (AI will regenerate content)"
-            >
-              <RefreshCw className={cn("w-4 h-4", isRetaking && "animate-spin")} />
-              <span className="text-xs hidden sm:inline">Retake</span>
-            </button>
-            <button 
-              onClick={handleSummarize}
-              disabled={isRetaking || isSummarizing}
-              className={cn(
-                "p-1.5 rounded transition-colors flex items-center gap-1 whitespace-nowrap",
-                isSummarizing 
-                  ? "text-indigo-600 bg-indigo-50" 
-                  : "text-gray-600 hover:bg-gray-200"
-              )}
-              title="Generate Summary"
-            >
-              <Sparkles className={cn("w-4 h-4", isSummarizing && "animate-pulse")} />
-              <span className="text-xs hidden sm:inline">Summarize</span>
-            </button>
-        </div>
-
-        <button 
-            onClick={() => setIsPreviewMode(!isPreviewMode)} 
+          <button onClick={() => insertFormat('**', '**')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bold">
+            <Bold className="w-4 h-4" />
+          </button>
+          <button onClick={() => insertFormat('*', '*')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Italic">
+            <Italic className="w-4 h-4" />
+          </button>
+          <div className="w-px h-4 bg-gray-300 mx-1" />
+          <button onClick={() => insertFormat('# ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 1">
+            <Heading1 className="w-4 h-4" />
+          </button>
+          <button onClick={() => insertFormat('## ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Heading 2">
+            <Heading2 className="w-4 h-4" />
+          </button>
+          <div className="w-px h-4 bg-gray-300 mx-1" />
+          <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
+            <List className="w-4 h-4" />
+          </button>
+          <div className="w-px h-4 bg-gray-300 mx-1" />
+          <button
+            onClick={toggleVoiceTranscription}
             className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap self-start sm:self-auto",
-                isPreviewMode 
-                    ? "bg-indigo-100 text-indigo-700" 
-                    : "text-gray-600 hover:bg-gray-200"
+              "p-1.5 rounded transition-colors relative",
+              isRecording
+                ? "text-red-600 hover:bg-red-50 bg-red-50"
+                : "text-gray-600 hover:bg-gray-200"
             )}
-        >
-            {isPreviewMode ? (
-                <>
-                    <EyeOff className="w-3.5 h-3.5" />
-                    <span>Edit</span>
-                </>
+            title={isRecording ? "Stop voice transcription" : "Start voice transcription"}
+          >
+            {isRecording ? (
+              <MicOff className="w-4 h-4" />
             ) : (
-                <>
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Preview</span>
-                </>
+              <Mic className="w-4 h-4" />
             )}
-        </button>
+            {isRecording && (
+              <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+            )}
+          </button>
+          {isRecording && (
+            <div className="flex items-center gap-1 text-xs text-gray-500 px-2 whitespace-nowrap">
+              <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              <span>Listening...</span>
+            </div>
+          )}
+          <div className="w-px h-4 bg-gray-300 mx-1 hidden sm:block" />
+          <button
+            onClick={handleRetakeNote}
+            disabled={isRetaking || isSummarizing}
+            className={cn(
+              "p-1.5 rounded transition-colors flex items-center gap-1 whitespace-nowrap",
+              isRetaking
+                ? "text-indigo-600 bg-indigo-50"
+                : "text-gray-600 hover:bg-gray-200"
+            )}
+            title="Retake Note (AI will regenerate content)"
+          >
+            <RefreshCw className={cn("w-4 h-4", isRetaking && "animate-spin")} />
+            <span className="text-xs hidden sm:inline">Retake</span>
+          </button>
+          <button
+            onClick={handleSummarize}
+            disabled={isRetaking || isSummarizing}
+            className={cn(
+              "p-1.5 rounded transition-colors flex items-center gap-1 whitespace-nowrap",
+              isSummarizing
+                ? "text-indigo-600 bg-indigo-50"
+                : "text-gray-600 hover:bg-gray-200"
+            )}
+            title="Generate Summary"
+          >
+            <Sparkles className={cn("w-4 h-4", isSummarizing && "animate-pulse")} />
+            <span className="text-xs hidden sm:inline">Summarize</span>
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCopyToNote}
+            disabled={isCopyingToNote}
+            className="p-1.5 rounded transition-colors flex items-center gap-1 font-medium whitespace-nowrap text-gray-600 hover:bg-gray-200"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-xs">{copyButtonText}</span>
+          </button>
+          <button
+            onClick={() => setIsPreviewMode(!isPreviewMode)}
+            className={cn(
+              "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap self-start sm:self-auto",
+              isPreviewMode
+                ? "bg-indigo-100 text-indigo-700"
+                : "text-gray-600 hover:bg-gray-200"
+            )}
+          >
+            {isPreviewMode ? (
+              <>
+                <EyeOff className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </>
+            ) : (
+              <>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Preview</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 bg-white rounded-b-xl border border-gray-200 shadow-sm mb-8 relative min-h-[400px]">
         {isPreviewMode ? (
-            <div className="w-full h-full p-4 sm:p-8 prose prose-indigo max-w-none overflow-y-auto prose-p:my-1 prose-headings:my-2 prose-ul:my-2 prose-li:my-0">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {content || '*No content*'}
-                </ReactMarkdown>
-            </div>
+          <div className="w-full h-full p-4 sm:p-8 prose prose-indigo max-w-none overflow-y-auto prose-p:my-1 prose-headings:my-2 prose-ul:my-2 prose-li:my-0">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {content || '*No content*'}
+            </ReactMarkdown>
+          </div>
         ) : (
-            <textarea
-                ref={textareaRef}
-                value={content}
-                onChange={handleContentChange}
-                placeholder="Start typing your notes here... (Markdown supported)"
-                className="w-full h-full p-4 sm:p-8 resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
-                spellCheck={false}
-            />
+          <textarea
+            ref={textareaRef}
+            value={content}
+            onChange={handleContentChange}
+            placeholder="Start typing your notes here... (Markdown supported)"
+            className="w-full h-full p-4 sm:p-8 resize-none border-none outline-none text-base sm:text-lg text-gray-800 leading-relaxed font-sans bg-transparent placeholder-gray-300 font-mono"
+            spellCheck={false}
+          />
         )}
       </div>
 
       {/* Attachments Section */}
       <div className="mb-8 bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
-            <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-                <Paperclip className="w-5 h-5" />
-                Attachments
-            </h3>
-            <div className="relative">
-                <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileUpload}
-                    className="hidden"
-                    disabled={isUploading || isSaving}
-                />
-                <button
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isUploading || isSaving}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50 w-full sm:w-auto justify-center"
-                >
-                    {isUploading ? (
-                        <>
-                            <Loader className="w-4 h-4 animate-spin" />
-                            <span>Uploading...</span>
-                        </>
-                    ) : (
-                        <>
-                            <Paperclip className="w-4 h-4" />
-                            <span>Add Attachment</span>
-                        </>
-                    )}
-                </button>
-            </div>
+          <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+            <Paperclip className="w-5 h-5" />
+            Attachments
+          </h3>
+          <div className="relative">
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileUpload}
+              className="hidden"
+              disabled={isUploading || isSaving}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading || isSaving}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-indigo-600 bg-indigo-50 rounded-lg hover:bg-indigo-100 transition-colors disabled:opacity-50 w-full sm:w-auto justify-center"
+            >
+              {isUploading ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  <span>Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <Paperclip className="w-4 h-4" />
+                  <span>Add Attachment</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {attachments.length === 0 ? (
-            <div className="bg-gray-50 border border-gray-200 border-dashed rounded-xl p-6 sm:p-8 text-center">
-                <p className="text-gray-500 text-sm">No attachments yet. Upload files related to this topic.</p>
-            </div>
+          <div className="bg-gray-50 border border-gray-200 border-dashed rounded-xl p-6 sm:p-8 text-center">
+            <p className="text-gray-500 text-sm">No attachments yet. Upload files related to this topic.</p>
+          </div>
         ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                {attachments.map(attachment => {
-                    const fileType = getFileType(attachment.filename);
-                    const FileIcon = getFileIcon(fileType);
-                    return (
-                    <div key={attachment.id} className="flex items-center p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 transition-colors group">
-                        <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg mr-3 flex-shrink-0">
-                            <FileIcon className="w-5 h-5" />
-                        </div>
-                        <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}>
-                            <p className="block text-sm font-medium text-gray-900 truncate hover:text-indigo-600">
-                                {attachment.filename}
-                            </p>
-                            <span className="text-xs text-gray-500">
-                                {attachment.size ? `${(attachment.size / 1024).toFixed(1)} KB` : 'Unknown size'} • {new Date(attachment.createdAt).toLocaleDateString()}
-                            </span>
-                        </div>
-                        <div className="flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0 ml-2">
-                            <button
-                                onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}
-                                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
-                                title="Preview"
-                            >
-                                <Eye className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => handleDeleteAttachment(attachment.id)}
-                                className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
-                                title="Delete Attachment"
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
-                        </div>
-                    </div>
-                )})}
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+            {attachments.map(attachment => {
+              const fileType = getFileType(attachment.filename);
+              const FileIcon = getFileIcon(fileType);
+              return (
+                <div key={attachment.id} className="flex items-center p-3 bg-white border border-gray-200 rounded-xl hover:border-indigo-300 transition-colors group">
+                  <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg mr-3 flex-shrink-0">
+                    <FileIcon className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}>
+                    <p className="block text-sm font-medium text-gray-900 truncate hover:text-indigo-600">
+                      {attachment.filename}
+                    </p>
+                    <span className="text-xs text-gray-500">
+                      {attachment.size ? `${(attachment.size / 1024).toFixed(1)} KB` : 'Unknown size'} • {new Date(attachment.createdAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all flex-shrink-0 ml-2">
+                    <button
+                      onClick={() => setPreviewFile({ url: attachment.url, name: attachment.filename })}
+                      className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"
+                      title="Preview"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteAttachment(attachment.id)}
+                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg"
+                      title="Delete Attachment"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
 
-      <FilePreviewModal 
+      <FilePreviewModal
         isOpen={!!previewFile}
         onClose={() => setPreviewFile(null)}
         fileUrl={previewFile?.url || ''}
@@ -920,7 +914,7 @@ export const TopicPage = () => {
       <div className="border-t border-gray-200 pt-6 flex flex-col-reverse sm:flex-row justify-between items-center gap-4 sm:gap-0">
         <div className="w-full sm:w-1/3 flex justify-start">
           {prevTopic && (
-            <Link 
+            <Link
               to={`/courses/${courseId}/modules/${prevTopic.moduleId}/topics/${prevTopic.id}`}
               className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium truncate max-w-full"
             >
@@ -931,13 +925,13 @@ export const TopicPage = () => {
         </div>
 
         <div className="flex justify-center w-full sm:w-1/3">
-          <button 
+          <button
             onClick={handleToggleComplete}
             disabled={isCompleting}
             className={cn(
               "w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-medium transition-all",
-              currentTopic.completed 
-                ? "bg-green-100 text-green-700 hover:bg-green-200" 
+              currentTopic.completed
+                ? "bg-green-100 text-green-700 hover:bg-green-200"
                 : "bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm hover:shadow"
             )}
           >
@@ -954,7 +948,7 @@ export const TopicPage = () => {
 
         <div className="w-full sm:w-1/3 flex justify-end">
           {nextTopic && (
-            <Link 
+            <Link
               to={`/courses/${courseId}/modules/${nextTopic.moduleId}/topics/${nextTopic.id}`}
               className="flex items-center gap-2 text-gray-600 hover:text-indigo-600 font-medium truncate max-w-full"
             >
