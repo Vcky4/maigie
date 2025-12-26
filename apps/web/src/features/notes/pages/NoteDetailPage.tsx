@@ -132,6 +132,32 @@ export function NoteDetailPage() {
     }
   }, [noteId, isNew]);
 
+  // Listen for AI action events to refetch note data
+  useEffect(() => {
+    if (isNew || !noteId) return;
+
+    const handleActionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { action, status, payload } = customEvent.detail;
+
+      // Refetch on any note-related action that affects the current note
+      if (status === 'success') {
+        const actionNoteId = payload?.note_id || payload?.noteId;
+        
+        // Check if this action affects the current note
+        if (actionNoteId === noteId) {
+          console.log(`🔄 Refetching note after ${action} action`);
+          fetchNote(noteId);
+        }
+      }
+    };
+
+    window.addEventListener('aiActionCompleted', handleActionEvent);
+    return () => {
+      window.removeEventListener('aiActionCompleted', handleActionEvent);
+    };
+  }, [noteId, isNew]);
+
   // Update page context when note changes
   useEffect(() => {
     if (note) {

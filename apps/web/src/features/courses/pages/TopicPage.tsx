@@ -119,19 +119,33 @@ export const TopicPage = () => {
 
   // Listen for AI action events to refetch data
   useEffect(() => {
-    if (!courseId) return;
+    if (!courseId || !topicId) return;
 
     const handleActionEvent = (event: Event) => {
       const customEvent = event as CustomEvent;
       const { action, status, payload } = customEvent.detail;
 
-      // If a note was created for this topic, refetch the course
-      if (action === 'create_note' && status === 'success') {
-        if (payload?.note_id) {
+      // Refetch on any note-related action that affects the current note
+      if (status === 'success') {
+        const noteId = payload?.note_id || payload?.noteId;
+        
+        // Check if this action affects the current note or topic
+        const affectsCurrentNote = noteId && currentNote?.id === noteId;
+        const affectsCurrentTopic = action === 'create_note' && payload?.topicId === topicId;
+        
+        if (affectsCurrentNote || affectsCurrentTopic) {
+          console.log(`🔄 Refetching data after ${action} action`);
+          
           // Refetch course to get updated note data
           fetchCourse(courseId);
-          // Also fetch note details if we have the note ID
-          fetchNoteDetails(payload.note_id);
+          
+          // If we have a specific note ID, fetch its details
+          if (noteId) {
+            fetchNoteDetails(noteId);
+          } else if (currentNote?.id) {
+            // Fallback: refetch current note
+            fetchNoteDetails(currentNote.id);
+          }
         }
       }
     };
@@ -140,7 +154,7 @@ export const TopicPage = () => {
     return () => {
       window.removeEventListener('aiActionCompleted', handleActionEvent);
     };
-  }, [courseId]);
+  }, [courseId, topicId, currentNote?.id]);
 
   useEffect(() => {
     if (course && moduleId && topicId) {
