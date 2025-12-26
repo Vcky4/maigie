@@ -295,7 +295,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             # If AI's noteId matches topicId, use the actual noteId from context
                             if ai_note_id == enriched_topic_id:
                                 print(
-                                    f"⚠️ AI confused topicId with noteId. Using actual noteId from context."
+                                    "⚠️ AI confused topicId with noteId. Using actual noteId from context."
                                 )
                                 note_id = enriched_note_id
                             elif ai_note_id != enriched_note_id:
