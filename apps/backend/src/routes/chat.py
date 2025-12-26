@@ -282,17 +282,38 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # For retake_note and add_summary, ensure noteId is populated from context
                     if action_type in ["retake_note", "add_summary"]:
                         note_id = action_data.get("noteId")
+                        print(f"🔍 AI provided noteId: {note_id}")
 
-                        # If noteId is missing, try to get it from context
-                        if not note_id:
-                            if enriched_context and enriched_context.get("noteId"):
-                                note_id = enriched_context["noteId"]
-                                print(f"📝 Set noteId from enriched_context: {note_id}")
-                            elif context and context.get("noteId"):
-                                note_id = context["noteId"]
-                                print(f"📝 Set noteId from original context: {note_id}")
-                            elif enriched_context and enriched_context.get("topicId"):
-                                # If we have topicId but no noteId, try to get note from topic
+                        # ALWAYS prioritize noteId from enriched_context or original context over AI's noteId
+                        # The AI might confuse topicId with noteId
+                        if enriched_context and enriched_context.get("noteId"):
+                            # Check if AI's noteId matches topicId (common mistake)
+                            ai_note_id = action_data.get("noteId")
+                            enriched_topic_id = enriched_context.get("topicId")
+                            enriched_note_id = enriched_context.get("noteId")
+
+                            # If AI's noteId matches topicId, use the actual noteId from context
+                            if ai_note_id == enriched_topic_id:
+                                print(
+                                    f"⚠️ AI confused topicId with noteId. Using actual noteId from context."
+                                )
+                                note_id = enriched_note_id
+                            elif ai_note_id != enriched_note_id:
+                                # AI provided a different noteId, but we have one in context - use context one
+                                print(
+                                    f"⚠️ AI provided noteId '{ai_note_id}' but context has '{enriched_note_id}'. Using context noteId."
+                                )
+                                note_id = enriched_note_id
+                            else:
+                                # They match, use it
+                                note_id = enriched_note_id
+                            print(f"📝 Using noteId from enriched_context: {note_id}")
+                        elif context and context.get("noteId"):
+                            note_id = context["noteId"]
+                            print(f"📝 Using noteId from original context: {note_id}")
+                        elif not note_id:
+                            # If noteId is missing, try to get it from topicId
+                            if enriched_context and enriched_context.get("topicId"):
                                 topic_id = enriched_context["topicId"]
                                 print(f"🔍 No noteId found, checking topicId: {topic_id}")
                                 topic = await db.topic.find_unique(
@@ -303,7 +324,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     note_id = topic.note.id
                                     print(f"✅ Found note from topic: {note_id}")
                             elif context and context.get("topicId"):
-                                # Try original context topicId
                                 topic_id = context["topicId"]
                                 print(
                                     f"🔍 No noteId found, checking topicId from context: {topic_id}"
@@ -316,7 +336,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     note_id = topic.note.id
                                     print(f"✅ Found note from topic: {note_id}")
 
-                        # If we still have a noteId, check if it's actually a topicId
+                        # If we still have a noteId, verify it exists
                         if note_id:
                             print(f"🔍 Verifying noteId: {note_id}")
                             note = await db.note.find_unique(where={"id": note_id})
