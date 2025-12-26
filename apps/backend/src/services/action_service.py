@@ -30,6 +30,8 @@ class ActionService:
             return await self.retake_note(action_data, user_id)
         elif action_type == "add_summary":
             return await self.add_summary(action_data, user_id)
+        elif action_type == "add_tags":
+            return await self.add_tags(action_data, user_id)
 
         # Add more actions here later (create_goal, create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
@@ -314,6 +316,130 @@ class ActionService:
 
         except Exception as e:
             print(f"❌ Add Summary Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+    async def add_tags(self, data: dict, user_id: str):
+        """
+        Add tags to a note using AI.
+        Expected data: { "noteId": "...", "tags": ["Tag1", "Tag2"] } (tags optional, will be generated if not provided)
+        """
+        try:
+            from src.services.llm_service import llm_service
+            from src.models.notes import NoteUpdate
+
+            note_id = data.get("noteId")
+            print(f"📥 Received action_data for add_tags: {data}")
+            print(f"🔍 Extracted noteId: {note_id}")
+            print(f"👤 User ID: {user_id}")
+
+            if not note_id:
+                return {"status": "error", "message": "noteId is required"}
+
+            print(f"🔍 Looking up note with ID: {note_id}")
+            # Get the note
+            note = await db.note.find_unique(
+                where={"id": note_id},
+                include={
+                    "tags": True,
+                    "topic": {"include": {"module": {"include": {"course": True}}}},
+                },
+            )
+
+            # If note not found, check if noteId is actually a topicId
+            if not note:
+                print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
+                topic = await db.topic.find_unique(
+                    where={"id": note_id},
+                    include={"note": True},
+                )
+                if topic:
+                    if topic.note:
+                        print(
+                            f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                        )
+                        note = await db.note.find_unique(
+                            where={"id": topic.note.id},
+                            include={
+                                "tags": True,
+                                "topic": {"include": {"module": {"include": {"course": True}}}},
+                            },
+                        )
+                        note_id = note.id if note else None
+                    else:
+                        return {
+                            "status": "error",
+                            "message": f"Topic '{topic.title}' exists but has no note. Please create a note first.",
+                        }
+                else:
+                    return {"status": "error", "message": f"Note with ID {note_id} not found"}
+
+            if not note:
+                return {"status": "error", "message": f"Note with ID {note_id} not found"}
+
+            # Verify ownership
+            if note.userId != user_id:
+                return {"status": "error", "message": "Note not found or access denied"}
+
+            # Get existing tags
+            existing_tags = [tag.tag for tag in note.tags] if note.tags else []
+            print(f"📋 Existing tags: {existing_tags}")
+
+            # Get tags from action data or generate them
+            new_tags = data.get("tags")
+            if not new_tags:
+                # Generate tags using AI
+                print("🤖 Generating tags using AI...")
+                topic_title = None
+                if note.topic:
+                    topic_title = note.topic.title
+
+                new_tags = await llm_service.generate_tags(
+                    content=note.content or "",
+                    title=note.title,
+                    topic_title=topic_title,
+                )
+                print(f"✨ AI generated tags: {new_tags}")
+
+            # Merge tags (avoid duplicates, case-insensitive)
+            existing_lower = [t.lower() for t in existing_tags]
+            merged_tags = existing_tags.copy()
+            for tag in new_tags:
+                if tag.lower() not in existing_lower:
+                    merged_tags.append(tag)
+
+            print(f"📝 Merged tags: {merged_tags}")
+
+            # Update the note with merged tags
+            # Remove existing tags
+            await db.notetag.delete_many(where={"noteId": note_id})
+
+            # Add merged tags
+            for tag in merged_tags:
+                await db.notetag.create(
+                    data={
+                        "noteId": note_id,
+                        "tag": tag,
+                    }
+                )
+
+            # Fetch updated note
+            from src.services import note_service
+
+            updated_note = await note_service.get_note(db, note_id, user_id)
+
+            return {
+                "status": "success",
+                "action": "add_tags",
+                "note_id": updated_note.id,
+                "tags": merged_tags,
+                "message": f"Successfully added tags to note: {updated_note.title}",
+            }
+
+        except Exception as e:
+            print(f"❌ Add Tags Error: {e}")
             import traceback
 
             traceback.print_exc()

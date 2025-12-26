@@ -279,8 +279,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # 2. Enrich action data with context if missing (e.g., topicId, noteId)
                     action_type = action_payload.get("type")
 
-                    # For retake_note and add_summary, ensure noteId is populated from context
-                    if action_type in ["retake_note", "add_summary"]:
+                    # For retake_note, add_summary, and add_tags, ensure noteId is populated from context
+                    if action_type in ["retake_note", "add_summary", "add_tags"]:
                         note_id = action_data.get("noteId")
                         print(f"🔍 AI provided noteId: {note_id}")
 

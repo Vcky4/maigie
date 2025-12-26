@@ -80,8 +80,19 @@ AVAILABLE ACTIONS:
 }
 <<<ACTION_END>>>
 
+5. ADD TAGS TO NOTE:
+<<<ACTION_START>>>
+{
+  "type": "add_tags",
+  "data": {
+    "noteId": "note_id_from_context",
+    "tags": ["Tag1", "Tag2", "Tag3"]
+  }
+}
+<<<ACTION_END>>>
+
 RULES:
-1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, or *summarize* something.
+1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, or *add tags* to something.
 2. For note creation:
    - Use the topicId from the context if available
    - Use the courseId from the context if available (optional)
@@ -94,9 +105,15 @@ RULES:
    - Use when user asks to "add summary", "summarize this note", or "create summary"
    - Use noteId from context (current note being viewed)
    - The AI will add a summary section to the note
-5. The JSON must be valid.
-6. Keep the conversational part of your response encouraging and brief.
-7. When creating notes, use the topic/course information from context to make the note relevant and contextual.
+5. For add_tags action:
+   - Use when user asks to "add tags", "tag this note", "suggest tags", or "add tags to note"
+   - Use noteId from context (current note being viewed)
+   - Generate 3-8 relevant tags based on note content, title, and topic
+   - Tags should be concise, relevant, and use PascalCase or camelCase (e.g., "CommunityHealthNursing", "PublicHealth")
+   - Include tags in the "tags" array in the action data
+6. The JSON must be valid.
+7. Keep the conversational part of your response encouraging and brief.
+8. When creating notes, use the topic/course information from context to make the note relevant and contextual.
 """
 
 
@@ -366,6 +383,64 @@ Rewritten Content:"""
         except Exception as e:
             print(f"Gemini Rewrite Error: {e}")
             raise HTTPException(status_code=500, detail="Note rewrite failed")
+
+    async def generate_tags(
+        self, content: str, title: str = None, topic_title: str = None
+    ) -> list[str]:
+        """
+        Generate relevant tags for a note based on its content.
+        """
+        try:
+            title_info = f"Note Title: {title}\n\n" if title else ""
+            topic_info = f"Topic: {topic_title}\n\n" if topic_title else ""
+
+            tag_prompt = f"""Please generate 3-8 relevant tags for the following note content.
+Tags should be:
+- Concise and descriptive (1-3 words each)
+- Use PascalCase or camelCase format (e.g., "CommunityHealthNursing", "PublicHealth")
+- Relevant to the main topics, concepts, or subject areas covered
+- Useful for filtering and organizing notes
+
+IMPORTANT: Return ONLY a JSON array of tag strings. Do not include any introductory text, explanations, or commentary.
+Just return the array, for example: ["Tag1", "Tag2", "Tag3"]
+
+{title_info}{topic_info}Note Content:
+{content}
+
+Tags (JSON array):"""
+
+            response = await self.model.generate_content_async(
+                tag_prompt, safety_settings=self.safety_settings
+            )
+
+            tags_text = response.text.strip()
+
+            # Try to extract JSON array from the response
+            import json
+            import re
+
+            # Look for JSON array pattern
+            json_match = re.search(r"\[.*?\]", tags_text, re.DOTALL)
+            if json_match:
+                tags = json.loads(json_match.group(0))
+            else:
+                # Fallback: try to parse the entire response as JSON
+                tags = json.loads(tags_text)
+
+            # Ensure it's a list of strings
+            if isinstance(tags, list):
+                # Filter out empty strings and normalize
+                tags = [str(tag).strip() for tag in tags if tag and str(tag).strip()]
+                return tags[:8]  # Limit to 8 tags max
+            else:
+                return []
+
+        except Exception as e:
+            print(f"Gemini Tag Generation Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail="Tag generation failed")
 
 
 # Global instance

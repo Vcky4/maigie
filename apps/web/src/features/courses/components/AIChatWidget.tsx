@@ -61,7 +61,7 @@ export const AIChatWidget = () => {
     {
       id: '1',
       role: 'assistant',
-      content: "Hi! I'm Maigie. I can help you with whatever you're looking at right now. Ask me anything!",
+      content: "Hi Maigie! I can help you with whatever you're looking at right now. Ask me anything!",
       timestamp: new Date()
     }
   ]);
@@ -455,7 +455,7 @@ export const AIChatWidget = () => {
               <div className="bg-gray-50 border-b border-gray-100 px-4 py-3 flex items-center justify-between text-gray-500">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <img src="/assets/logo-s.png" alt="Maigie" className="w-5 h-5 object-contain" />
-                  <span className="text-gray-900">Maigie Chat</span>
+                  <span className="text-gray-900">Maigie</span>
                 </div>
                 <button
                   onClick={() => setIsExpanded(false)}
