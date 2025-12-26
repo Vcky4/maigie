@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Send, 
-  Mic, 
-  Sparkles, 
-  StopCircle, 
-  ChevronDown, 
+import {
+  Send,
+  Mic,
+  Sparkles,
+  StopCircle,
+  ChevronDown,
   ChevronUp,
   Image,
   AtSign,
@@ -39,11 +39,11 @@ export const AIChatWidget = () => {
   const [inputValue, setInputValue] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  
+
   // New states for popovers
   const [isMentionMenuOpen, setIsMentionMenuOpen] = useState(false);
   const [isContextPickerOpen, setIsContextPickerOpen] = useState(false);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const wsClientRef = useRef<ChatWebSocketClient | null>(null);
@@ -84,7 +84,7 @@ export const AIChatWidget = () => {
   }, [messages.find(msg => msg.id === streamingMessageIdRef.current)?.content, isExpanded]);
 
   const getPageContext = () => {
-    const pageName = location.pathname === '/dashboard' ? 'Dashboard' : 
+    const pageName = location.pathname === '/dashboard' ? 'Dashboard' :
       location.pathname.split('/').filter(Boolean).pop()?.replace(/-/g, ' ') || 'Page';
     return pageName.charAt(0).toUpperCase() + pageName.slice(1);
   };
@@ -132,13 +132,14 @@ export const AIChatWidget = () => {
     setMessages(prev => [...prev, newMessage]);
     setInputValue('');
     setIsTyping(true);
-    
+
     if (!isExpanded) {
       setIsExpanded(true);
     }
 
     // Get context and send message via WebSocket
     const context = getContextForMessage();
+    console.log('📤 Sending context to backend:', context);
     wsClientRef.current?.send(userMessageContent, context || undefined);
   };
 
@@ -167,7 +168,7 @@ export const AIChatWidget = () => {
         mediaRecorder.onstop = async () => {
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           const audioFile = new File([audioBlob], 'recording.webm', { type: 'audio/webm' });
-          
+
           try {
             setIsTyping(true);
             const result = await chatApi.transcribeVoice(audioFile);
@@ -224,9 +225,9 @@ export const AIChatWidget = () => {
     const stream = () => {
       if (isStoppedRef.current) {
         // Streaming was stopped
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === messageId 
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === messageId
               ? { ...msg, isStreaming: false }
               : msg
           )
@@ -238,10 +239,10 @@ export const AIChatWidget = () => {
 
       if (currentIndex < fullText.length) {
         const partialText = fullText.substring(0, currentIndex + 1);
-        
+
         setMessages(prev => {
-          const updated = prev.map(msg => 
-            msg.id === messageId 
+          const updated = prev.map(msg =>
+            msg.id === messageId
               ? { ...msg, content: partialText, isStreaming: true }
               : msg
           );
@@ -250,16 +251,16 @@ export const AIChatWidget = () => {
 
         currentIndex++;
         streamingTimeoutRef.current = setTimeout(stream, streamingSpeed);
-        
+
         // Auto-scroll during streaming
         if (isExpanded) {
           setTimeout(() => scrollToBottom(), 0);
         }
       } else {
         // Streaming complete
-        setMessages(prev => 
-          prev.map(msg => 
-            msg.id === messageId 
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === messageId
               ? { ...msg, isStreaming: false }
               : msg
           )
@@ -285,25 +286,25 @@ export const AIChatWidget = () => {
   const handleStopGeneration = () => {
     // Mark as stopped
     isStoppedRef.current = true;
-    
+
     // Stop the streaming animation
     if (streamingTimeoutRef.current) {
       clearTimeout(streamingTimeoutRef.current);
       streamingTimeoutRef.current = null;
     }
-    
+
     // Stop the streaming state
     if (streamingMessageIdRef.current) {
-      setMessages(prev => 
-        prev.map(msg => 
-          msg.id === streamingMessageIdRef.current 
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === streamingMessageIdRef.current
             ? { ...msg, isStreaming: false }
             : msg
         )
       );
       streamingMessageIdRef.current = null;
     }
-    
+
     setIsTyping(false);
   };
 
@@ -314,9 +315,9 @@ export const AIChatWidget = () => {
         // Keep at least the initial welcome message
         return prev;
       }
-      
+
       const newMessages = [...prev];
-      
+
       // Find the last user message index
       let lastUserIndex = -1;
       for (let i = newMessages.length - 1; i >= 0; i--) {
@@ -325,16 +326,16 @@ export const AIChatWidget = () => {
           break;
         }
       }
-      
+
       if (lastUserIndex !== -1) {
         // Remove from the last user message to the end
         // This removes the user message and any assistant response after it
         newMessages.splice(lastUserIndex);
       }
-      
+
       return newMessages;
     });
-    
+
     // Stop any ongoing streaming
     handleStopGeneration();
   };
@@ -352,10 +353,10 @@ export const AIChatWidget = () => {
         isStoppedRef.current = false; // Reset for next message
         return;
       }
-      
+
       setIsTyping(false); // Hide typing indicator, streaming will show the text
       const messageId = Date.now().toString();
-      
+
       const aiResponse: Message = {
         id: messageId,
         role: 'assistant',
@@ -363,10 +364,10 @@ export const AIChatWidget = () => {
         timestamp: new Date(),
         isStreaming: true
       };
-      
+
       setMessages(prev => [...prev, aiResponse]);
       streamingMessageIdRef.current = messageId;
-      
+
       // Start streaming the text
       streamText(message, messageId);
     };
@@ -396,7 +397,7 @@ export const AIChatWidget = () => {
     // Handle action events (e.g., course created, note created)
     wsClientRef.current.on('event', (data: any) => {
       console.log('Action event:', data);
-      
+
       // Dispatch a custom event that pages can listen to for refetching
       const event = new CustomEvent('aiActionCompleted', {
         detail: {
@@ -438,7 +439,7 @@ export const AIChatWidget = () => {
     <div className="fixed bottom-0 left-0 right-0 z-50 flex flex-col items-center pointer-events-none pb-24 lg:pb-8 lg:pl-64">
       {/* Container for Chat and Input */}
       <div className="w-full max-w-2xl px-4 flex flex-col items-center pointer-events-auto relative">
-        
+
         {/* Chat Conversation Area (Collapsible) */}
         <AnimatePresence>
           {isExpanded && (
@@ -456,7 +457,7 @@ export const AIChatWidget = () => {
                   <img src="/assets/logo-s.png" alt="Maigie" className="w-5 h-5 object-contain" />
                   <span className="text-gray-900">Maigie Chat</span>
                 </div>
-                <button 
+                <button
                   onClick={() => setIsExpanded(false)}
                   className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-900 transition-colors"
                 >
@@ -476,8 +477,8 @@ export const AIChatWidget = () => {
                   >
                     <div className={cn(
                       "w-8 h-8 rounded-full flex items-center justify-center shrink-0 border overflow-hidden",
-                      msg.role === 'user' 
-                        ? "bg-indigo-50 border-indigo-100 text-indigo-600" 
+                      msg.role === 'user'
+                        ? "bg-indigo-50 border-indigo-100 text-indigo-600"
                         : "bg-white border-gray-200"
                     )}>
                       {msg.role === 'user' ? (
@@ -492,13 +493,13 @@ export const AIChatWidget = () => {
                     )}>
                       {msg.role === 'assistant' ? (
                         <>
-                          <ReactMarkdown 
+                          <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{
                               p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
                               strong: ({ children }: any) => <strong className="font-semibold text-gray-900">{children}</strong>,
                               em: ({ children }: any) => <em className="italic">{children}</em>,
-                              code: ({ inline, children }: any) => 
+                              code: ({ inline, children }: any) =>
                                 inline ? (
                                   <code className="bg-gray-100 text-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>
                                 ) : (
@@ -519,7 +520,7 @@ export const AIChatWidget = () => {
                             {msg.content}
                           </ReactMarkdown>
                           {msg.isStreaming && (
-                            <span 
+                            <span
                               className="inline-block w-0.5 h-4 bg-indigo-500 ml-0.5 align-middle"
                               style={{
                                 animation: 'blink 1s ease-in-out infinite'
@@ -535,17 +536,17 @@ export const AIChatWidget = () => {
                     </div>
                   </div>
                 ))}
-                
+
                 {isTyping && (
                   <div className="flex gap-4 max-w-[95%]">
-                     <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 overflow-hidden">
-                        <img src="/assets/logo-s.png" alt="Thinking" className="w-5 h-5 object-contain opacity-50" />
-                     </div>
-                     <div className="flex gap-1 items-center pt-3 pl-1">
-                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                        <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
-                     </div>
+                    <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center shrink-0 overflow-hidden">
+                      <img src="/assets/logo-s.png" alt="Thinking" className="w-5 h-5 object-contain opacity-50" />
+                    </div>
+                    <div className="flex gap-1 items-center pt-3 pl-1">
+                      <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                      <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                      <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
+                    </div>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -556,22 +557,22 @@ export const AIChatWidget = () => {
 
         {/* Collapsed Chat Handle */}
         {!isExpanded && !isTyping && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             onClick={() => setIsExpanded(true)}
             className="absolute -top-10 left-0 right-0 h-9 bg-white rounded-t-lg border border-gray-200 border-b-0 flex items-center justify-between px-3 text-xs text-gray-500 z-0 mx-4 cursor-pointer hover:bg-gray-50 transition-colors shadow-sm"
           >
-             <div className="flex items-center gap-2">
-                <img src="/assets/logo-s.png" alt="Maigie" className="w-4 h-4 object-contain opacity-70" />
-                <span className="font-medium">Maigie Chat</span>
-             </div>
-             <div className="flex gap-2">
-                <ChevronUp className="w-3 h-3" />
-             </div>
+            <div className="flex items-center gap-2">
+              <img src="/assets/logo-s.png" alt="Maigie" className="w-4 h-4 object-contain opacity-70" />
+              <span className="font-medium">Maigie Chat</span>
+            </div>
+            <div className="flex gap-2">
+              <ChevronUp className="w-3 h-3" />
+            </div>
           </motion.div>
         )}
-        
+
         {/* Context Picker Popover */}
         <AnimatePresence>
           {isContextPickerOpen && (
@@ -591,8 +592,8 @@ export const AIChatWidget = () => {
                       setIsContextPickerOpen(false);
                     }}
                     className={cn(
-                       "w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-100 transition-colors flex items-center gap-2",
-                       currentContext === ctx ? "bg-indigo-50 text-indigo-600" : "text-gray-700"
+                      "w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-100 transition-colors flex items-center gap-2",
+                      currentContext === ctx ? "bg-indigo-50 text-indigo-600" : "text-gray-700"
                     )}
                   >
                     <Layout className="w-3.5 h-3.5" />
@@ -635,29 +636,29 @@ export const AIChatWidget = () => {
 
         {/* Floating Input Bar (Light Theme) */}
         <div className="w-full relative group">
-           {/* Generating Status Bar */}
-           {(isTyping || streamingMessageIdRef.current) && (
-             <motion.div 
-               initial={{ opacity: 0, y: 10 }}
-               animate={{ opacity: 1, y: 0 }}
-               className="absolute -top-10 left-0 right-0 h-9 bg-gray-50 rounded-t-lg border border-gray-200 border-b-0 flex items-center justify-between px-3 text-xs text-gray-500 z-0 mx-4"
-             >
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
-                   <span>Generating...</span>
-                </div>
-                <div className="flex gap-2">
-                   <button 
-                     onClick={handleStopGeneration}
-                     className="hover:text-gray-900 transition-colors"
-                   >
-                     Stop
-                   </button>
-                </div>
-             </motion.div>
-           )}
+          {/* Generating Status Bar */}
+          {(isTyping || streamingMessageIdRef.current) && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="absolute -top-10 left-0 right-0 h-9 bg-gray-50 rounded-t-lg border border-gray-200 border-b-0 flex items-center justify-between px-3 text-xs text-gray-500 z-0 mx-4"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                <span>Generating...</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleStopGeneration}
+                  className="hover:text-gray-900 transition-colors"
+                >
+                  Stop
+                </button>
+              </div>
+            </motion.div>
+          )}
 
-          <motion.div 
+          <motion.div
             layout
             className={cn(
               "w-full bg-white rounded-xl shadow-2xl border border-gray-200 flex flex-col transition-all duration-300 relative z-10",
@@ -666,102 +667,102 @@ export const AIChatWidget = () => {
           >
             {/* Input Area */}
             <div className="relative w-full p-3">
-               <textarea
-                  ref={inputRef}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={placeholderText}
-                  className="w-full bg-transparent border-0 focus:ring-0 focus:outline-none p-0 min-h-[24px] max-h-32 resize-none text-sm text-gray-900 placeholder:text-gray-400 outline-none leading-relaxed"
-                  rows={1}
-                  style={{
-                    height: 'auto',
-                    minHeight: '24px'
-                  }} 
-                />
+              <textarea
+                ref={inputRef}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholderText}
+                className="w-full bg-transparent border-0 focus:ring-0 focus:outline-none p-0 min-h-[24px] max-h-32 resize-none text-sm text-gray-900 placeholder:text-gray-400 outline-none leading-relaxed"
+                rows={1}
+                style={{
+                  height: 'auto',
+                  minHeight: '24px'
+                }}
+              />
             </div>
 
             {/* Toolbar */}
             <div className="flex items-center justify-between px-2 pb-2">
-               {/* Left Controls (Context/Model) */}
-               <div className="flex items-center gap-2">
-                  <div 
-                    onClick={handleContextClick}
-                    className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer transition-colors border border-transparent hover:border-gray-200 group/pill"
-                  >
-                     <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-                     <span className="text-xs font-medium text-gray-500 group-hover/pill:text-gray-700 hidden sm:inline">Context: {currentContext}</span>
-                     <span className="text-xs font-medium text-gray-500 group-hover/pill:text-gray-700 sm:hidden">{currentContext}</span>
-                     <ChevronDown className="w-3 h-3 text-gray-400" />
-                  </div>
-                  
-                  <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer transition-colors border border-transparent hover:border-gray-200 group/pill">
-                     <span className="text-xs font-medium text-gray-500 group-hover/pill:text-gray-700">Gemini 3 Pro</span>
-                     <ChevronDown className="w-3 h-3 text-gray-400" />
-                  </div>
-               </div>
+              {/* Left Controls (Context/Model) */}
+              <div className="flex items-center gap-2">
+                <div
+                  onClick={handleContextClick}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer transition-colors border border-transparent hover:border-gray-200 group/pill"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                  <span className="text-xs font-medium text-gray-500 group-hover/pill:text-gray-700 hidden sm:inline">Context: {currentContext}</span>
+                  <span className="text-xs font-medium text-gray-500 group-hover/pill:text-gray-700 sm:hidden">{currentContext}</span>
+                  <ChevronDown className="w-3 h-3 text-gray-400" />
+                </div>
 
-               {/* Right Controls (Actions) */}
-               <div className="flex items-center gap-1">
-                  <div className="h-4 w-[1px] bg-gray-200 mx-1 hidden sm:block" />
-                  
-                  {canUndo && (
-                    <button 
-                      onClick={handleUndo}
-                      className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors hidden sm:block"
-                      title="Undo last message"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </button>
-                  )}
-                  
-                  <button 
-                    onClick={handleMentionClick}
-                    className={cn(
-                      "p-1.5 rounded hover:bg-gray-100 transition-colors hidden sm:block",
-                      isMentionMenuOpen ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:text-gray-600"
-                    )} 
-                    title="Mention"
-                  >
-                     <AtSign className="w-4 h-4" />
-                  </button>
-                  
-                  <button className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" title="Add Image">
-                     <Image className="w-4 h-4" />
-                  </button>
-                  
-                  <button 
-                     onClick={toggleVoice}
-                     className={cn(
-                        "p-1.5 rounded hover:bg-gray-100 transition-colors ml-1",
-                        isListening ? "text-red-500 animate-pulse" : "text-gray-400 hover:text-gray-600"
-                     )}
-                  >
-                     <Mic className="w-4 h-4" />
-                  </button>
+                <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-100 cursor-pointer transition-colors border border-transparent hover:border-gray-200 group/pill">
+                  <span className="text-xs font-medium text-gray-500 group-hover/pill:text-gray-700">Gemini 3 Pro</span>
+                  <ChevronDown className="w-3 h-3 text-gray-400" />
+                </div>
+              </div>
 
+              {/* Right Controls (Actions) */}
+              <div className="flex items-center gap-1">
+                <div className="h-4 w-[1px] bg-gray-200 mx-1 hidden sm:block" />
+
+                {canUndo && (
                   <button
-                    onClick={handleSendMessage}
-                    disabled={!inputValue.trim() && !isListening}
-                    className={cn(
-                      "ml-1 p-1.5 rounded-lg flex items-center justify-center transition-all duration-200",
-                      inputValue.trim()
-                        ? "bg-indigo-600 text-white hover:bg-indigo-700"
-                        : "bg-gray-100 text-gray-400 cursor-not-allowed"
-                    )}
+                    onClick={handleUndo}
+                    className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors hidden sm:block"
+                    title="Undo last message"
                   >
-                     {isListening ? <StopCircle className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                    <RotateCcw className="w-4 h-4" />
                   </button>
+                )}
 
-                  {!isExpanded && messages.length > 1 && (
-                     <button 
-                        onClick={() => setIsExpanded(true)}
-                        className="ml-1 p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 hidden sm:block"
-                     >
-                        <ChevronUp className="w-4 h-4" />
-                     </button>
+                <button
+                  onClick={handleMentionClick}
+                  className={cn(
+                    "p-1.5 rounded hover:bg-gray-100 transition-colors hidden sm:block",
+                    isMentionMenuOpen ? "text-indigo-600 bg-indigo-50" : "text-gray-400 hover:text-gray-600"
                   )}
-               </div>
+                  title="Mention"
+                >
+                  <AtSign className="w-4 h-4" />
+                </button>
+
+                <button className="p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors" title="Add Image">
+                  <Image className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={toggleVoice}
+                  className={cn(
+                    "p-1.5 rounded hover:bg-gray-100 transition-colors ml-1",
+                    isListening ? "text-red-500 animate-pulse" : "text-gray-400 hover:text-gray-600"
+                  )}
+                >
+                  <Mic className="w-4 h-4" />
+                </button>
+
+                <button
+                  onClick={handleSendMessage}
+                  disabled={!inputValue.trim() && !isListening}
+                  className={cn(
+                    "ml-1 p-1.5 rounded-lg flex items-center justify-center transition-all duration-200",
+                    inputValue.trim()
+                      ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                      : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                  )}
+                >
+                  {isListening ? <StopCircle className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+                </button>
+
+                {!isExpanded && messages.length > 1 && (
+                  <button
+                    onClick={() => setIsExpanded(true)}
+                    className="ml-1 p-1.5 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 hidden sm:block"
+                  >
+                    <ChevronUp className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         </div>

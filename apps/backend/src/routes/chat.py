@@ -84,6 +84,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if isinstance(message_data, dict):
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
+                    print(f"📥 Received context from frontend: {context}")
             except (json.JSONDecodeError, AttributeError):
                 # If not JSON, treat as plain text
                 pass
@@ -317,6 +318,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                         # If we still have a noteId, check if it's actually a topicId
                         if note_id:
+                            print(f"🔍 Verifying noteId: {note_id}")
                             note = await db.note.find_unique(where={"id": note_id})
                             if not note:
                                 print(
@@ -326,14 +328,26 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     where={"id": note_id},
                                     include={"note": True},
                                 )
-                                if topic and topic.note:
-                                    note_id = topic.note.id
-                                    print(f"✅ Resolved topicId to noteId: {note_id}")
+                                if topic:
+                                    if topic.note:
+                                        note_id = topic.note.id
+                                        print(f"✅ Resolved topicId to noteId: {note_id}")
+                                    else:
+                                        print(
+                                            f"⚠️ Topic '{topic.title}' exists but has no note. Cannot retake/summarize."
+                                        )
+                                        note_id = None  # Clear note_id so error is returned
+                                else:
+                                    print(f"⚠️ ID {note_id} is neither a note nor a topic")
+                                    note_id = None  # Clear note_id so error is returned
 
                         if note_id:
                             action_data["noteId"] = note_id
+                            print(f"✅ Final noteId set in action_data: {note_id}")
                         else:
                             print("⚠️ No noteId found in context for retake_note/add_summary action")
+                            print(f"   enriched_context: {enriched_context}")
+                            print(f"   original context: {context}")
 
                     if action_type == "create_note":
                         # Debug: Log what we have
@@ -405,11 +419,13 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         print(f"🔍 Final action_data before execution: {action_data}")
 
                     # 3. Execute Action
+                    print(f"🚀 Executing {action_type} with action_data: {action_data}")
                     action_result = await action_service.execute_action(
                         action_type=action_payload.get("type"),
                         action_data=action_data,
                         user_id=user.id,
                     )
+                    print(f"📤 Action result: {action_result}")
 
                     # 4. Clean the response (remove ALL instances of action markers and content)
                     # Remove the entire action block including any surrounding whitespace/newlines

@@ -152,11 +152,20 @@ class ActionService:
             from src.models.notes import NoteUpdate
 
             note_id = data.get("noteId")
+            print(f"📥 Received action_data: {data}")
+            print(f"🔍 Extracted noteId: {note_id}")
+            print(f"👤 User ID: {user_id}")
+
             if not note_id:
                 return {"status": "error", "message": "noteId is required"}
 
+            print(f"🔍 Looking up note with ID: {note_id}")
             # Get the note
             note = await db.note.find_unique(where={"id": note_id})
+            if note:
+                print(f"✅ Note found: {note.id} (title: {note.title}, userId: {note.userId})")
+            else:
+                print(f"❌ Note NOT FOUND with ID: {note_id}")
 
             # If note not found, check if noteId is actually a topicId
             if not note:
@@ -165,11 +174,20 @@ class ActionService:
                     where={"id": note_id},
                     include={"note": True},
                 )
-                if topic and topic.note:
-                    # It's a topicId, use the topic's note
-                    print(f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}")
-                    note = topic.note
-                    note_id = note.id  # Update note_id to the actual note ID
+                if topic:
+                    if topic.note:
+                        # It's a topicId, use the topic's note
+                        print(
+                            f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                        )
+                        note = topic.note
+                        note_id = note.id  # Update note_id to the actual note ID
+                    else:
+                        # Topic exists but has no note
+                        return {
+                            "status": "error",
+                            "message": f"Topic '{topic.title}' exists but has no note. Please create a note first.",
+                        }
                 else:
                     return {"status": "error", "message": f"Note with ID {note_id} not found"}
 

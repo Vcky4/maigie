@@ -173,11 +173,16 @@ export const TopicPage = () => {
   // Update page context when courseId, topicId, or currentNote changes
   useEffect(() => {
     if (courseId && topicId) {
-      setContext({
+      const contextToSet: { courseId: string; topicId: string; noteId?: string } = {
         courseId,
         topicId,
-        noteId: currentNote?.id,
-      });
+      };
+      // Only include noteId if note actually exists
+      if (currentNote?.id) {
+        contextToSet.noteId = currentNote.id;
+      }
+      console.log('📝 Setting page context:', contextToSet);
+      setContext(contextToSet);
     }
     return () => {
       clearContext();

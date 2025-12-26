@@ -135,13 +135,16 @@ export function NoteDetailPage() {
   // Update page context when note changes
   useEffect(() => {
     if (note) {
-      setContext({
+      const contextToSet = {
         noteId: note.id,
         courseId: note.courseId || undefined,
         topicId: note.topicId || undefined,
-      });
+      };
+      console.log('📝 NoteDetailPage: Setting context with note:', contextToSet);
+      setContext(contextToSet);
     } else if (noteId && !isNew) {
       // Set noteId even if note hasn't loaded yet
+      console.log('📝 NoteDetailPage: Setting context with noteId from URL:', { noteId });
       setContext({ noteId });
     }
     return () => {
