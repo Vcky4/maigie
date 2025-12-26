@@ -29,6 +29,24 @@ export function NotesPage() {
     fetchNotes();
   }, [page, debouncedSearch]);
 
+  // Listen for AI action events to refetch notes
+  useEffect(() => {
+    const handleActionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { action, status } = customEvent.detail;
+      
+      // If a note was created, refetch the notes list
+      if (action === 'create_note' && status === 'success') {
+        fetchNotes();
+      }
+    };
+
+    window.addEventListener('aiActionCompleted', handleActionEvent);
+    return () => {
+      window.removeEventListener('aiActionCompleted', handleActionEvent);
+    };
+  }, []);
+
   const fetchNotes = async () => {
     try {
       setIsLoading(true);

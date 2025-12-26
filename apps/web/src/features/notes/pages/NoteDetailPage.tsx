@@ -5,17 +5,71 @@ import { coursesApi } from '../../courses/services/coursesApi';
 import ReactMarkdownOriginal from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Note, NoteAttachment } from '../types/notes.types';
-import type { CourseListItem, Course, Module, Topic } from '../../courses/types/courses.types';
-import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, Eye, EyeOff } from 'lucide-react';
+import type { CourseListItem, Course } from '../../courses/types/courses.types';
+import { ArrowLeft, Save, Check, Trash2, Calendar, Tag, X, Bold, Italic, List, Heading1, Heading2, Paperclip, Loader, Eye, EyeOff, Mic, MicOff, RefreshCw, Sparkles, Copy } from 'lucide-react';
 import { cn } from '../../../lib/utils';
 import { getFileIcon, getFileType } from '../../../lib/fileUtils';
 import { FilePreviewModal } from '../../../components/common/FilePreviewModal';
+import { usePageContext } from '../../courses/contexts/PageContext';
 
 // Workaround for React 18 type definition mismatch
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ReactMarkdown = ReactMarkdownOriginal as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const Link = RouterLink as any;
+
+// Web Speech Recognition API types
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onresult: ((event: SpeechRecognitionEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+  onstart: (() => void) | null;
+}
+
+interface SpeechRecognitionEvent extends Event {
+  resultIndex: number;
+  results: SpeechRecognitionResultList;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message: string;
+}
+
+interface SpeechRecognitionResultList {
+  length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+  isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition: {
+      new (): SpeechRecognition;
+    };
+    webkitSpeechRecognition: {
+      new (): SpeechRecognition;
+    };
+  }
+}
 
 // Helper for select arrow
 const ChevronDownIcon = () => (
@@ -28,6 +82,7 @@ export function NoteDetailPage() {
   const { noteId } = useParams<{ noteId: string }>();
   const navigate = useNavigate();
   const isNew = !noteId || noteId === 'new';
+  const { setContext, clearContext } = usePageContext();
 
   const [note, setNote] = useState<Note | null>(null);
   const [title, setTitle] = useState('');
@@ -60,12 +115,68 @@ export function NoteDetailPage() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const savedIndicatorTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Voice transcription state (using Web Speech Recognition API)
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+
+  // AI actions state
+  const [isRetaking, setIsRetaking] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [isCopying, setIsCopying] = useState(false);
+  const [copyButtonText, setCopyButtonText] = useState('Copy');
+
   useEffect(() => {
     fetchCourses();
     if (!isNew && noteId) {
       fetchNote(noteId);
     }
   }, [noteId, isNew]);
+
+  // Listen for AI action events to refetch note data
+  useEffect(() => {
+    if (isNew || !noteId) return;
+
+    const handleActionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { action, status, payload } = customEvent.detail;
+
+      // Refetch on any note-related action that affects the current note
+      if (status === 'success') {
+        const actionNoteId = payload?.note_id || payload?.noteId;
+        
+        // Check if this action affects the current note
+        if (actionNoteId === noteId) {
+          console.log(`🔄 Refetching note after ${action} action`);
+          fetchNote(noteId);
+        }
+      }
+    };
+
+    window.addEventListener('aiActionCompleted', handleActionEvent);
+    return () => {
+      window.removeEventListener('aiActionCompleted', handleActionEvent);
+    };
+  }, [noteId, isNew]);
+
+  // Update page context when note changes
+  useEffect(() => {
+    if (note) {
+      const contextToSet = {
+        noteId: note.id,
+        courseId: note.courseId || undefined,
+        topicId: note.topicId || undefined,
+      };
+      console.log('📝 NoteDetailPage: Setting context with note:', contextToSet);
+      setContext(contextToSet);
+    } else if (noteId && !isNew) {
+      // Set noteId even if note hasn't loaded yet
+      console.log('📝 NoteDetailPage: Setting context with noteId from URL:', { noteId });
+      setContext({ noteId });
+    }
+    return () => {
+      clearContext();
+    };
+  }, [note?.id, note?.courseId, note?.topicId, noteId, isNew, setContext, clearContext]);
 
   // Adjust textarea height
   useEffect(() => {
@@ -74,6 +185,19 @@ export function NoteDetailPage() {
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [content]);
+
+  // Adjust textarea height when switching back to edit mode
+  useEffect(() => {
+    if (!isPreviewMode && textareaRef.current) {
+      // Use setTimeout to ensure the textarea is rendered before calculating height
+      setTimeout(() => {
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+          textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+      }, 0);
+    }
+  }, [isPreviewMode]);
 
   // Fetch course structure when selectedCourseId changes
   useEffect(() => {
@@ -233,6 +357,183 @@ export function NoteDetailPage() {
     }
   };
 
+  // Real-time voice transcription using Web Speech Recognition API
+  const startVoiceTranscription = () => {
+    // Check if browser supports Speech Recognition
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    if (!SpeechRecognition) {
+      alert('Your browser does not support speech recognition. Please use Chrome, Edge, or Safari.');
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+
+      // Configure recognition
+      recognition.continuous = true; // Keep listening
+      recognition.interimResults = false; // Only final results (raw speech-to-text)
+      recognition.lang = 'en-US'; // Language
+
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
+        // Process all results - only final transcripts
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            const transcript = event.results[i][0].transcript;
+            
+            // Update content with final transcript (raw speech-to-text)
+            setContent(prev => {
+              const newContent = prev + (prev && !prev.endsWith('\n') && !prev.endsWith(' ') ? ' ' : '') + transcript;
+              setIsSaved(false);
+              if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = setTimeout(() => handleSave(), 1000);
+              return newContent;
+            });
+          }
+        }
+      };
+
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'no-speech') {
+          // This is normal, just means no speech detected
+          return;
+        }
+        setIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        setIsRecording(false);
+        recognitionRef.current = null;
+      };
+
+      recognition.onstart = () => {
+        setIsRecording(true);
+      };
+
+      // Start recognition
+      recognition.start();
+      
+    } catch (error) {
+      console.error('Error starting speech recognition:', error);
+      alert('Could not start speech recognition. Please check permissions.');
+      setIsRecording(false);
+    }
+  };
+
+  const stopVoiceTranscription = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+    setIsRecording(false);
+  };
+
+  const toggleVoiceTranscription = () => {
+    if (isRecording) {
+      stopVoiceTranscription();
+    } else {
+      startVoiceTranscription();
+    }
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, []);
+
+  // AI action handlers
+  const handleRetakeNote = async () => {
+    if (!note?.id) {
+      alert('Please save the note first before retaking it.');
+      return;
+    }
+
+    if (!content.trim() && !title.trim()) {
+      alert('Please add some content or title before retaking the note.');
+      return;
+    }
+
+    setIsRetaking(true);
+    
+    try {
+      const updatedNote = await notesApi.retakeNote(note.id);
+      setContent(updatedNote.content || '');
+      setNote(updatedNote);
+      setIsRetaking(false);
+      
+      // Trigger save indicator
+      setIsSaved(true);
+      if (savedIndicatorTimeoutRef.current) clearTimeout(savedIndicatorTimeoutRef.current);
+      savedIndicatorTimeoutRef.current = setTimeout(() => setIsSaved(false), 2000);
+    } catch (error) {
+      console.error('Error retaking note:', error);
+      setIsRetaking(false);
+      alert('Failed to retake note. Please try again.');
+    }
+  };
+
+  const handleSummarize = async () => {
+    if (!note?.id) {
+      alert('Please save the note first before adding a summary.');
+      return;
+    }
+
+    if (!content.trim()) {
+      alert('Please add some content before summarizing.');
+      return;
+    }
+
+    setIsSummarizing(true);
+    
+    try {
+      const updatedNote = await notesApi.addSummaryToNote(note.id);
+      setContent(updatedNote.content || '');
+      setNote(updatedNote);
+      setIsSummarizing(false);
+      
+      // Trigger save indicator
+      setIsSaved(true);
+      if (savedIndicatorTimeoutRef.current) clearTimeout(savedIndicatorTimeoutRef.current);
+      savedIndicatorTimeoutRef.current = setTimeout(() => setIsSaved(false), 2000);
+    } catch (error) {
+      console.error('Error generating summary:', error);
+      setIsSummarizing(false);
+      alert('Failed to generate summary. Please try again.');
+    }
+  };
+
+  const handleCopyContent = async () => {
+    if (!content.trim()) {
+      alert('No content to copy.');
+      return;
+    }
+
+    setIsCopying(true);
+
+    try {
+      // Copy content to clipboard
+      await navigator.clipboard.writeText(content);
+      setIsCopying(false);
+
+      // Show temporary success feedback
+      setCopyButtonText('Copied!');
+      setTimeout(() => {
+        setCopyButtonText('Copy');
+      }, 2000);
+    } catch (error) {
+      console.error('Error copying to clipboard:', error);
+      setIsCopying(false);
+      alert('Failed to copy content. Please try again.');
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     
@@ -306,7 +607,7 @@ export function NoteDetailPage() {
   };
 
   // Toolbar Actions
-  const insertFormat = (prefix: string, suffix: string = '') => {
+  const insertFormat = (prefix: string, suffix = '') => {
     if (!textareaRef.current) return;
     
     const start = textareaRef.current.selectionStart;
@@ -368,8 +669,8 @@ export function NoteDetailPage() {
             Back to Notes
             </Link>
             
-            <div className="flex items-center gap-3">
-                <div className="h-6 flex items-center mr-2">
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                <div className="h-6 flex items-center">
                 {isSaving ? (
                     <div className="text-sm text-gray-400 flex items-center gap-2 animate-pulse">
                     <Save className="w-4 h-4" />
@@ -383,6 +684,7 @@ export function NoteDetailPage() {
                 ) : null}
                 </div>
 
+
                 {isNew && (
                     <button
                     onClick={() => handleSave(true)}
@@ -390,7 +692,8 @@ export function NoteDetailPage() {
                     className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
                     >
                     <Save className="w-4 h-4" />
-                    Create Note
+                    <span className="hidden sm:inline">Create Note</span>
+                    <span className="sm:hidden">Create</span>
                     </button>
                 )}
 
@@ -493,6 +796,25 @@ export function NoteDetailPage() {
         </div>
       </div>
 
+      {/* Summary Section */}
+      {note?.summary && (
+        <div className="mb-6 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 shadow-sm p-6">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-indigo-600 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-indigo-900 uppercase tracking-wider mb-2">
+                Summary
+              </h3>
+              <div className="prose prose-sm prose-indigo max-w-none">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {note.summary}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Editor Toolbar */}
       <div className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 border-b-0 rounded-t-xl overflow-x-auto">
         <div className="flex items-center gap-1">
@@ -513,29 +835,93 @@ export function NoteDetailPage() {
             <button onClick={() => insertFormat('- ', '')} className="p-1.5 text-gray-600 hover:bg-gray-200 rounded" title="Bullet List">
                 <List className="w-4 h-4" />
             </button>
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <button 
+              onClick={toggleVoiceTranscription}
+              className={cn(
+                "p-1.5 rounded transition-colors relative",
+                isRecording 
+                  ? "text-red-600 hover:bg-red-50 bg-red-50" 
+                  : "text-gray-600 hover:bg-gray-200"
+              )}
+              title={isRecording ? "Stop voice transcription" : "Start voice transcription"}
+            >
+              {isRecording ? (
+                <MicOff className="w-4 h-4" />
+              ) : (
+                <Mic className="w-4 h-4" />
+              )}
+              {isRecording && (
+                <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+              )}
+            </button>
+            {isRecording && (
+              <div className="flex items-center gap-1 text-xs text-gray-500 px-2">
+                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                <span>Listening...</span>
+              </div>
+            )}
+            <div className="w-px h-4 bg-gray-300 mx-1" />
+            <button 
+              onClick={handleRetakeNote}
+              disabled={isRetaking || isSummarizing}
+              className={cn(
+                "p-1.5 rounded transition-colors flex items-center gap-1",
+                isRetaking 
+                  ? "text-indigo-600 bg-indigo-50" 
+                  : "text-gray-600 hover:bg-gray-200"
+              )}
+              title="Retake Note (AI will regenerate content)"
+            >
+              <RefreshCw className={cn("w-4 h-4", isRetaking && "animate-spin")} />
+              <span className="text-xs hidden sm:inline">Retake</span>
+            </button>
+            <button 
+              onClick={handleSummarize}
+              disabled={isRetaking || isSummarizing}
+              className={cn(
+                "p-1.5 rounded transition-colors flex items-center gap-1",
+                isSummarizing 
+                  ? "text-indigo-600 bg-indigo-50" 
+                  : "text-gray-600 hover:bg-gray-200"
+              )}
+              title="Generate Summary"
+            >
+              <Sparkles className={cn("w-4 h-4", isSummarizing && "animate-pulse")} />
+              <span className="text-xs hidden sm:inline">Summarize</span>
+            </button>
         </div>
-        
-        <button 
-            onClick={() => setIsPreviewMode(!isPreviewMode)} 
+        <div className="flex items-center gap-1">
+          <button
+            onClick={handleCopyContent}
+            disabled={isCopying}
+            className="p-1.5 rounded transition-colors flex items-center gap-1 font-medium whitespace-nowrap text-gray-600 hover:bg-gray-200"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline text-xs">{copyButtonText}</span>
+          </button>
+          <button
+            onClick={() => setIsPreviewMode(!isPreviewMode)}
             className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors",
-                isPreviewMode 
-                    ? "bg-indigo-100 text-indigo-700" 
-                    : "text-gray-600 hover:bg-gray-200"
+              "flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap self-start sm:self-auto",
+              isPreviewMode
+                ? "bg-indigo-100 text-indigo-700"
+                : "text-gray-600 hover:bg-gray-200"
             )}
-        >
+          >
             {isPreviewMode ? (
-                <>
-                    <EyeOff className="w-3.5 h-3.5" />
-                    Edit
-                </>
+              <>
+                <EyeOff className="w-3.5 h-3.5" />
+                <span>Edit</span>
+              </>
             ) : (
-                <>
-                    <Eye className="w-3.5 h-3.5" />
-                    Preview
-                </>
+              <>
+                <Eye className="w-3.5 h-3.5" />
+                <span>Preview</span>
+              </>
             )}
-        </button>
+          </button>
+        </div>
       </div>
 
       {/* Editor */}

@@ -7,7 +7,7 @@ Copyright (C) 2025 Maigie
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field, ConfigDict  # <--- Added ConfigDict here
+from pydantic import BaseModel, ConfigDict, Field  # <--- Added ConfigDict here
 
 from ..models.notes import NoteResponse  # Import NoteResponse
 

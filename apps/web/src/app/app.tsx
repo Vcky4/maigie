@@ -17,7 +17,13 @@
  */
 
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes as RouterRoutes, Route as RouterRoute } from 'react-router-dom';
+
+// Workaround for React 18 type definition mismatch with react-router-dom
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Routes = RouterRoutes as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Route = RouterRoute as any;
 import { LandingPage } from '../pages/LandingPage';
 import { WaitlistPage } from '../pages/WaitlistPage';
 import { AboutPage } from '../pages/AboutPage';
@@ -45,12 +51,14 @@ import { NoteDetailPage } from '../features/notes/pages/NoteDetailPage';
 import { DashboardLayout } from '../components/layout/DashboardLayout';
 import { RedirectIfAuthenticated } from '../components/auth/RedirectIfAuthenticated';
 import { ProtectedRoute } from '../components/auth/ProtectedRoute';
+import { PageContextProvider } from '../features/courses/contexts/PageContext';
 import '../styles.css';
 
 export function App() {
   return (
-    <Router>
-      <Routes>
+    <PageContextProvider>
+      <Router>
+        <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/waitlist" element={<WaitlistPage />} />
         <Route path="/about" element={<AboutPage />} />
@@ -86,6 +94,7 @@ export function App() {
       </Routes>
       <CookieNotice />
     </Router>
+    </PageContextProvider>
   );
 }
 

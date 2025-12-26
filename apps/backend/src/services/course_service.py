@@ -1,6 +1,8 @@
-from typing import List, Any
-from prisma import Prisma
+from typing import Any, List
+
 from fastapi import HTTPException
+
+from prisma import Prisma
 from src.models.courses import CourseCreate
 
 

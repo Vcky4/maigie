@@ -10,6 +10,7 @@ This script:
 """
 
 import sys
+
 from prisma import Prisma
 
 

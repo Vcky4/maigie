@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../features/auth/store/authStore';
 import {
   LayoutDashboard,
@@ -12,6 +12,11 @@ import {
   FileText
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { AIChatWidget } from '../../features/courses/components/AIChatWidget';
+
+// Workaround for React 18 type definition mismatch with react-router-dom
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Link = RouterLink as any;
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -105,7 +110,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0 lg:ml-64 pb-16 lg:pb-0">
+      <div className="flex-1 flex flex-col min-w-0 lg:ml-64 pb-24 lg:pb-32">
         {/* Mobile Header */}
         <header className="h-16 bg-white border-b border-gray-200 lg:hidden flex items-center px-4 sticky top-0 z-30">
           <img src="/assets/logo-s.png" alt="Maigie Logo" className="h-8 w-auto mr-2" />
@@ -121,7 +126,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8">
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 pb-32">
           {children}
         </main>
 
@@ -151,6 +156,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
         </nav>
       </div>
+      
+      {/* Global AI Chat Widget */}
+      <AIChatWidget />
     </div>
   );
 }

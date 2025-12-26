@@ -20,6 +20,8 @@ from ..dependencies import CurrentUser
 from ..services.subscription_service import (
     cancel_subscription,
     create_checkout_session,
+)
+from ..services.subscription_service import (
     create_portal_session as create_stripe_portal_session,
 )
 

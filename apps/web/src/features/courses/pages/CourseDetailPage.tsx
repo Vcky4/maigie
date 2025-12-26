@@ -147,6 +147,26 @@ export const CourseDetailPage = () => {
     }
   }, [id]);
 
+  // Listen for AI action events to refetch data
+  useEffect(() => {
+    if (!id) return;
+    
+    const handleActionEvent = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      const { action, status } = customEvent.detail;
+      
+      // If a course or note was created/updated, refetch the course
+      if ((action === 'create_course' || action === 'create_note') && status === 'success') {
+        fetchCourse(id);
+      }
+    };
+
+    window.addEventListener('aiActionCompleted', handleActionEvent);
+    return () => {
+      window.removeEventListener('aiActionCompleted', handleActionEvent);
+    };
+  }, [id]);
+
   const fetchCourse = async (courseId: string) => {
     try {
       setIsLoading(true);

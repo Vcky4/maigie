@@ -25,6 +25,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 # --- Import the database helper functions ---
 from src.core.database import check_db_health, connect_db, disconnect_db
+from src.routes import auth, chat, courses
 
 from .config import get_settings
 from .core.cache import cache
@@ -40,20 +41,20 @@ from .models.error_response import ErrorResponse
 
 # --- Route Imports ---
 from .routes.ai import router as ai_router
-from .routes.websockets import router as websockets_router
 from .routes.auth import router as auth_router
-from .routes.users import router as users_router
 from .routes.courses import router as courses_router
 from .routes.examples import router as examples_router
 from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
-from .routes.subscriptions import router as subscriptions_router
 from .routes.stripe_webhook import router as stripe_webhook_router
+from .routes.subscriptions import router as subscriptions_router
+from .routes.users import router as users_router
+from src.routes.notes import router as notes_router
+from src.routes.upload import router as upload_router
 from .routes.waitlist import router as waitlist_router
-from .routes.notes import router as notes_router
-from .routes.upload import router as upload_router
+from .routes.websockets import router as websockets_router
 from .utils.dependencies import (
     cleanup_db_client,
     close_redis_client,
@@ -351,6 +352,7 @@ def create_app() -> FastAPI:
 
     # --- REGISTER ROUTERS ---
     app.include_router(auth_router, prefix=f"{settings.API_V1_STR}/auth")
+    app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
 

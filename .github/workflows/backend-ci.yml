@@ -157,6 +157,7 @@ jobs:
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -293,6 +294,7 @@ jobs:
             export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
+            export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
             
             cd /opt/maigie/previews
             
@@ -789,6 +791,7 @@ jobs:
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1029,6 +1032,7 @@ jobs:
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1142,6 +1146,7 @@ jobs:
             export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
+            export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
             
             cd /opt/maigie/staging
             

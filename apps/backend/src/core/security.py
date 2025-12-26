@@ -17,16 +17,18 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-import hashlib
 import base64
-import bcrypt
-from datetime import datetime, timedelta, timezone
-from typing import Any, Union
-from jose import jwt, JWTError
-from passlib.context import CryptContext
-from src.config import settings
+import hashlib
 import secrets
 import string
+from datetime import UTC, datetime, timedelta, timezone
+from typing import Any, Union
+
+import bcrypt
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+
+from src.config import settings
 
 # --- FIX START: Monkey patch for bcrypt 4.1.0+ compatibility ---
 # Passlib relies on an __about__ attribute that was removed in newer bcrypt versions.
@@ -76,11 +78,9 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     to_encode = data.copy()
 
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        )
+        expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     # Standard JWT claims
     to_encode.update({"exp": expire, "type": "access"})
@@ -92,7 +92,7 @@ def create_verification_token(email: str) -> str:
     """
     Generate a short-lived token for email verification.
     """
-    expire = datetime.now(timezone.utc) + timedelta(hours=24)
+    expire = datetime.now(UTC) + timedelta(hours=24)
     # We use the same secret key but a specific 'type' claim to differentiate it from login tokens
     to_encode = {"exp": expire, "sub": email, "type": "verification"}
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)

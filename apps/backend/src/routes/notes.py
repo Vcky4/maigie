@@ -2,6 +2,7 @@
 API routes for Notes management.
 """
 
+import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +17,7 @@ from src.models.notes import (
     NoteUpdate,
 )
 from src.services import note_service
+from src.services.llm_service import llm_service
 
 router = APIRouter(tags=["notes"])
 
@@ -219,3 +221,145 @@ async def delete_note_attachment(
             detail="Attachment not found or access denied",
         )
     return None
+
+
+@router.post("/{note_id}/retake", response_model=NoteResponse)
+async def retake_note(
+    note_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Retake/rewrite a note using AI to improve content and markdown formatting.
+    """
+    # Get the note
+    note = await note_service.get_note(db, note_id, current_user.id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or access denied",
+        )
+
+    if note.userId != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or access denied",
+        )
+
+    if not note.content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Note has no content to retake",
+        )
+
+    try:
+        # Build context for AI
+        context = {}
+        if note.topicId:
+            topic = await db.topic.find_unique(
+                where={"id": note.topicId}, include={"module": {"include": {"course": True}}}
+            )
+            if topic:
+                context["topicTitle"] = topic.title
+                if topic.module:
+                    context["moduleTitle"] = topic.module.title
+                    if topic.module.course:
+                        context["courseTitle"] = topic.module.course.title
+                        context["courseId"] = (
+                            topic.module.course.id
+                        )  # Include courseId from module->course
+
+        # Strip any action blocks from the original content before rewriting
+        cleaned_content = re.sub(
+            r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+            "",
+            note.content,
+            flags=re.DOTALL,
+        ).strip()
+
+        # Use AI to rewrite the content
+        rewritten_content = await llm_service.rewrite_note_content(
+            content=cleaned_content, title=note.title, context=context
+        )
+
+        # Strip any action blocks from the rewritten content (in case AI includes them)
+        rewritten_content = re.sub(
+            r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+            "",
+            rewritten_content,
+            flags=re.DOTALL,
+        ).strip()
+
+        # Update the note with rewritten content
+        updated_note = await note_service.update_note(
+            db, note_id, current_user.id, NoteUpdate(content=rewritten_content)
+        )
+
+        return updated_note
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error retaking note: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retake note",
+        )
+
+
+@router.post("/{note_id}/add-summary", response_model=NoteResponse)
+async def add_summary_to_note(
+    note_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Add a summary to a note using AI.
+    """
+    # Get the note
+    note = await note_service.get_note(db, note_id, current_user.id)
+    if not note:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or access denied",
+        )
+
+    if note.userId != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Note not found or access denied",
+        )
+
+    if not note.content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Note has no content to summarize",
+        )
+
+    try:
+        # Strip any action blocks from content before summarizing
+        cleaned_content = re.sub(
+            r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
+            "",
+            note.content,
+            flags=re.DOTALL,
+        ).strip()
+
+        # Generate summary using AI
+        summary = await llm_service.generate_summary(cleaned_content)
+
+        # Update the note with summary in the summary field
+        updated_note = await note_service.update_note(
+            db, note_id, current_user.id, NoteUpdate(summary=summary)
+        )
+
+        return updated_note
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error adding summary to note: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to add summary to note",
+        )
