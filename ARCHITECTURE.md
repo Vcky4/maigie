@@ -9,8 +9,6 @@
 - [Backend](./docs/architecture/backend.md) - FastAPI backend and API endpoints
 - [Database](./docs/architecture/database.md) - Data models and schema
 - [AI System](./docs/architecture/ai.md) - AI integration, prompts, and intent mapping
-- [Frontend](./docs/architecture/frontend.md) - Dashboard and UI organization
-- [Mobile](./docs/architecture/mobile.md) - Offline-first and sync
 - [Realtime](./docs/architecture/realtime.md) - WebSocket and voice
 - [Infrastructure](./docs/architecture/infrastructure.md) - Deployment and operations
 - [Example Flows](./docs/architecture/flows.md) - User interaction flows

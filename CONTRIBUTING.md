@@ -42,15 +42,14 @@ Maigie is a **monorepo** managed with **Nx**, containing:
 
 ```
 / apps
-   / web        → Vite + shadcn-ui frontend
-   / mobile     → Expo React Native app
-   / api        → FastAPI backend
-   / ai         → LLM agents, prompts, orchestration
+   / backend    → FastAPI backend
 
-/ packages
+/ libs
    / ui         → Shared components
-   / utils      → Shared logic
+   / auth       → Shared auth helpers
    / types      → Shared TypeScript types
+   / ai         → Shared prompts, schema for AI interactions
+   / db         → Prisma schema + migrations
 ```
 
 ---
@@ -72,14 +71,12 @@ pm install
 
 ### 3. Setup Local Environment
 
-Create a `.env` file in `/apps/api` and `/apps/web` using the provided `.env.example` files.
+Create a `.env` file in `/apps/backend` using the provided `.env.example` file.
 
 ### 4. Start Development
 
 ```
-npx nx serve web
-npx nx serve mobile
-npx nx serve api
+npx nx serve backend
 ```
 
 ---
@@ -162,16 +159,13 @@ npm run test
 
 We use:
 
-* **Vitest** for frontend & shared packages
-* **Pytest** for FastAPI
-* **React Native Testing Library** for mobile
+* **Pytest** for FastAPI backend
 
 Write tests for:
 
 * Core logic
 * AI intent routing
 * API endpoints
-* UI components
 
 ---
 
@@ -191,10 +185,9 @@ When modifying the AI:
 All documentation lives in the `/docs` folder.
 When changing:
 
-* API → update `/docs/api`
-* Frontend → update `/docs/frontend`
-* AI → update `/docs/ai`
-* Architecture → update `/docs/architecture`
+* API → update `/docs/architecture/backend.md`
+* AI → update `/docs/architecture/ai.md`
+* Architecture → update `/docs/architecture/`
 
 ---
 

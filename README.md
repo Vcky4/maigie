@@ -7,13 +7,11 @@ AI-powered student companion that helps learners manage courses, set goals, disc
 This is an Nx monorepo containing:
 
 - **Backend** (`apps/backend`) - FastAPI application
-- **Web** (`apps/web`) - Vite + React + shadcn-ui application
-- **Mobile** (`apps/mobile`) - Expo (React Native) application
 
 ### Shared Libraries
 
 - `libs/types` - Shared TypeScript types & API client
-- `libs/ui` - Shared UI components (web & mobile where possible)
+- `libs/ui` - Shared UI components
 - `libs/auth` - Shared auth helpers (token helpers)
 - `libs/ai` - Shared prompts, schema for AI interactions
 - `libs/db` - Prisma schema + migrations
@@ -40,12 +38,6 @@ poetry install
 ### Development
 
 ```bash
-# Run web app
-nx serve web
-
-# Run mobile app
-nx serve mobile
-
 # Run backend
 nx serve backend
 ```
@@ -55,9 +47,7 @@ nx serve backend
 ```
 Maigie/
   ├─ apps/
-  │   ├─ backend/                # FastAPI app (Python)
-  │   ├─ web/                    # Vite + React (shadcn-ui)
-  │   └─ mobile/                 # Expo (React Native)
+  │   └─ backend/                # FastAPI app (Python)
   ├─ libs/
   │   ├─ types/                  # shared TypeScript types & API client
   │   ├─ ui/                     # shared UI components
@@ -73,14 +63,7 @@ Maigie/
 
 ## Deployment
 
-### Web App (Cloudflare Pages)
-
-The web application is configured for deployment to Cloudflare Pages. See [docs/deployment/cloudflare-pages.md](./docs/deployment/cloudflare-pages.md) for detailed deployment instructions.
-
-**Quick Setup:**
-- Build command: `npm install && nx build web`
-- Output directory: `dist/apps/web`
-- Node version: 20 (see `.nvmrc`)
+See [docs/deployment/](./docs/deployment/) for deployment guides.
 
 ## Documentation
 
