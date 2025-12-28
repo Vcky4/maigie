@@ -1,0 +1,70 @@
+Business Source License 1.1
+
+Copyright (c) 2025 Maigie Team
+
+Licensor: Maigie Team
+
+Licensed Work: The Maigie backend repository, except where otherwise noted
+
+Additional Use Grant: None
+
+Change Date: 2029-12-28
+
+Change License: Apache License, Version 2.0
+
+---
+
+Business Source License 1.1
+
+Terms
+
+The Licensor hereby grants you the right to copy, modify, create derivative works,
+redistribute, and make non-production use of the Licensed Work.
+The Licensor may make an Additional Use Grant, above, permitting limited production use.
+
+Effective on the Change Date, or the fourth anniversary of the first publicly available
+distribution of a specific version of the Licensed Work under this License,
+whichever comes first, the Licensor hereby grants you rights under the terms
+of the Change License, and the rights granted in the paragraph above terminate.
+
+If your use of the Licensed Work does not comply with the requirements currently
+in effect as described in this License, you must not use the Licensed Work
+and you must destroy all copies of the Licensed Work that you have control over.
+
+If the Change Date has not passed, you may not use the Licensed Work for production
+purposes, or for any other use that is not allowed under this License.
+
+If the Change Date has passed, then the Licensor hereby grants you additional
+rights under the terms of the Change License.
+
+Notwithstanding the above, the Licensor reserves the right to release the Licensed
+Work under different license terms or to stop distributing the Licensed Work at any time;
+provided, however, that any such election will not serve to withdraw this License
+(or any other license that has been, or is required to be, granted under the terms
+of this License).
+
+---
+
+Definitions
+
+"Additional Use Grant" means any use of the Licensed Work that is not included
+in the non-production use grant above.
+
+"Change Date" means 2029-12-28.
+
+"Change License" means the Apache License, Version 2.0.
+
+"Licensed Work" means the Maigie backend repository, except where otherwise noted.
+
+"Licensor" means the Maigie Team.
+
+"Production Use" means any use of the Licensed Work, in whole or in part,
+for production purposes, including but not limited to:
+- Making the Licensed Work available to third parties as a service
+- Using the Licensed Work in a commercial context
+- Using the Licensed Work to generate revenue
+
+---
+
+For the full text of the Apache License, Version 2.0,
+see LICENSE-APACHE-2.0.md.
