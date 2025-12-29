@@ -7,6 +7,9 @@ This module handles subscription-related endpoints including:
 - Canceling subscriptions
 
 Copyright (C) 2025 Maigie
+
+Licensed under the Business Source License 1.1 (BUSL-1.1).
+See LICENSE file in the repository root for details.
 """
 
 import logging

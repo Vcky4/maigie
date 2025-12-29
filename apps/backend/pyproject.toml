@@ -5,6 +5,7 @@ description = "Maigie FastAPI backend"
 authors = [
     {name = "Maigie Team"}
 ]
+license = {text = "BUSL-1.1"}
 requires-python = ">=3.11,<4.0"
 dynamic = ["dependencies"]
 

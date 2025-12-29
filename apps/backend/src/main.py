@@ -1,11 +1,10 @@
-# apps/backend/src/main.py
-# apps/backend/src/main.py
-# Maigie - AI-powered student companion
-# Copyright (C) 2025 Maigie
-
 """
 FastAPI application entry point.
+
 Copyright (C) 2025 Maigie
+
+Licensed under the Business Source License 1.1 (BUSL-1.1).
+See LICENSE file in the repository root for details.
 """
 
 import logging

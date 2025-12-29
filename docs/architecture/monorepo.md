@@ -3,12 +3,10 @@
 ```
 Maigie/
   ├─ apps/
-  │   ├─ backend/                # FastAPI app (Python)
-  │   ├─ web/                    # Vite + React (shadcn-ui)
-  │   └─ mobile/                 # Expo (React Native)
+  │   └─ backend/                # FastAPI app (Python)
   ├─ libs/
   │   ├─ types/                  # shared TypeScript types & API client
-  │   ├─ ui/                     # shared UI components (web & mobile where possible)
+  │   ├─ ui/                     # shared UI components
   │   ├─ auth/                   # shared auth helpers (token helpers)
   │   ├─ ai/                     # shared prompts, schema for AI interactions
   │   └─ db/                     # Prisma schema + migrations (or SQLModel models)
@@ -21,6 +19,6 @@ Maigie/
 
 ## Notes
 
-* Keep a small, well-documented `types` lib so web & mobile share DTOs and reduce drift.
+* Keep a small, well-documented `types` lib for shared DTOs.
 * Use Nx tasks to run lint/test/build for affected projects.
 

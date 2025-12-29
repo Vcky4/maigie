@@ -1,6 +1,6 @@
 # Overview
 
-Maigie is an AI-powered student companion that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with an intelligent assistant (text + voice). The codebase is a monorepo managed with **Nx**. The frontend stack uses **Vite + shadcn-ui** for web and **Expo** for mobile (React Native). The backend is **FastAPI** with clear service separation and AI integrations (vector DB, embeddings, LLMs).
+Maigie is an AI-powered student companion that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with an intelligent assistant (text + voice). The codebase is a monorepo managed with **Nx**. The backend is **FastAPI** with clear service separation and AI integrations (vector DB, embeddings, LLMs).
 
 # Maigie Architecture Overview
 
@@ -9,8 +9,6 @@ Maigie is an AI-powered student companion that helps learners manage courses, se
 Maigie is an AI-powered learning companion built on a distributed, scalable architecture using:
 
 * **FastAPI** for backend logic
-* **Vite + shadcn-ui** for the web frontend
-* **Expo** for mobile
 * **Nx** as the monorepo orchestrator
 * **LLM-powered services** for intent detection, content generation, and recommendation
 * **PostgreSQL + Prisma** as the database layer
@@ -20,12 +18,6 @@ Maigie is an AI-powered learning companion built on a distributed, scalable arch
 ## 2. High-Level Architecture
 
 ```
-                 ┌──────────────────────────┐
-                 │        Frontend          │
-                 │ Web (Vite) / Mobile App │
-                 └─────────────┬────────────┘
-                               │
-                               ▼
                   ┌────────────────────────┐
                   │      API Gateway       │
                   │     (FastAPI Root)     │
@@ -76,23 +68,6 @@ Events include:
 * `ai.schedule.generated`
 * `ai.recommendation.created`
 * `ai.voice.transcript`
-
----
-
-## 4. Frontend Architecture
-
-### Web (Vite + shadcn)
-
-* Modular UI components
-* Dashboard widgets for Courses, Goals, Schedules, Resources
-* Real-time AI chat interface
-* Subscription billing screens
-
-### Mobile (Expo)
-
-* Offline-first design
-* Same structure as web via shared logic
-* Push notifications for schedules and reminders
 
 ---
 
@@ -162,8 +137,6 @@ Includes: users, subscriptions, courses, goals, schedules, voice logs, intents, 
 * AI Assistant (chat + voice): ask about courses, get study plans, request resources, ask clarifying questions
 
 * Dashboard organization: courses, goals, resources, daily schedule, forecast, reminders
-
-* Offline-first support on mobile (Expo + local DB like WatermelonDB / SQLite sync)
 
 * Analytics, usage metrics, privacy and consent controls
 
