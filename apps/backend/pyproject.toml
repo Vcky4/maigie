@@ -5,6 +5,7 @@ description = "Maigie FastAPI backend"
 authors = [
     {name = "Maigie Team"}
 ]
+license = {text = "BUSL-1.1"}
 requires-python = ">=3.11,<4.0"
 dynamic = ["dependencies"]
 
@@ -30,12 +31,17 @@ python-json-logger = "^2.0.7"
 sentry-sdk = {extras = ["fastapi"], version = "^2.0.0"}
 prometheus-client = "^0.21.0"
 httpx = "^0.28.1"
+itsdangerous = "^2.2.0"
+fastapi-mail = "^1.5.8"
+bcrypt = "4.0.1"
+stripe = "^10.0.0"
+google-generativeai = "^0.8.6"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
 pytest-asyncio = "^0.24.0"
 ruff = "^0.6.0"
-black = "^24.8.0"
+black = "^25.12.0"
 mypy = "^1.11.0"
 coverage = "^7.12.0"
 flake8 = "^7.3.0"
@@ -44,6 +50,8 @@ isort = "^7.0.0"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+# --- Tool Configurations ---
 
 # --- Tool Configurations ---
 
@@ -57,12 +65,12 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # F841 = Unused local variables
 # N818 = Exception naming
 # E501 = Line length
-ignore = ["E501", "N818", "F401", "F841"] 
+ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"] 
 
 [tool.black]
 line-length = 100
 target-version = ["py312"]
-
+#NEW
 [tool.mypy]
 python_version = "3.12"
 warn_return_any = true
@@ -71,9 +79,14 @@ disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["tests"]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
+asyncio_default_fixture_loop_scope = "function"  
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning:httplib2.*",
+    "ignore::FutureWarning:google.generativeai.*"
+]
+
 
 
 [tool.isort]

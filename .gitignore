@@ -9,6 +9,7 @@ node_modules
 venv/
 env/
 .env
+.env.local
 *.pyc
 __pycache__/
 *.py[cod]
@@ -31,6 +32,8 @@ npm-debug.*
 *.orig.*
 web-build/
 cache/
+android/
+ios/
 
 
 vitest.config.*.timestamp*

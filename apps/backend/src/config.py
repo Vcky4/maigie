@@ -1,20 +1,5 @@
 """
 Application configuration management.
-
-Copyright (C) 2024 Maigie Team
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published
-by the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.
-
-You should have received a copy of the GNU Affero General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import json
@@ -34,7 +19,6 @@ def parse_list_value(value: Any) -> list[str]:
         value = value.strip()
         if not value:
             return []
-        # Try JSON array format first
         if value.startswith("[") and value.endswith("]"):
             try:
                 parsed = json.loads(value)
@@ -42,84 +26,103 @@ def parse_list_value(value: Any) -> list[str]:
                     return parsed
             except (json.JSONDecodeError, TypeError):
                 pass
-        # Fall back to comma-separated format
         return [item.strip() for item in value.split(",") if item.strip()]
     return []
 
 
-# Custom type that handles both JSON arrays and comma-separated strings
 ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    # ... existing settings ...
 
-    # Application
+    # --- Email ---
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int | None = None
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: str | None = None
+    EMAILS_FROM_EMAIL: str | None = None
+    EMAILS_FROM_NAME: str | None = None
+    EMAIL_LOGO_URL: str = ""  # URL to logo image for email templates
+
+    # --- Application Info ---
     APP_NAME: str = "Maigie API"
     APP_VERSION: str = "0.1.0"
-    APP_DESCRIPTION: str = "AI-powered student companion API"
+    APP_DESCRIPTION: str = "AI-powered student companion API"  # <--- THIS WAS MISSING
     DEBUG: bool = False
     ENVIRONMENT: str = "development"
 
-    # API
-    API_V1_PREFIX: str = "/api/v1"
+    # --- API & URLs ---
+    API_V1_STR: str = "/api/v1"  # Renamed from API_V1_PREFIX to match auth.py
     ALLOWED_HOSTS: ListStr = ["localhost", "127.0.0.1"]
+    FRONTEND_BASE_URL: str = ""  # For OAuth redirects
 
-    # CORS
+    # --- CORS ---
     CORS_ORIGINS: ListStr = [
         "http://localhost:4200",
         "http://localhost:5173",
         "http://localhost:3000",
+        "https://maigie.com",
+        "https://www.maigie.com",
     ]
     CORS_ALLOW_CREDENTIALS: bool = True
     CORS_ALLOW_METHODS: ListStr = ["*"]
     CORS_ALLOW_HEADERS: ListStr = ["*"]
 
-    # Security
+    # --- Security & Auth ---
     SECRET_KEY: str = "dev-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    # OAuth Providers
-    OAUTH_GOOGLE_CLIENT_ID: str = ""
-    OAUTH_GOOGLE_CLIENT_SECRET: str = ""
-    OAUTH_GITHUB_CLIENT_ID: str = ""
-    OAUTH_GITHUB_CLIENT_SECRET: str = ""
-    OAUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/oauth/callback"
+    # --- Database ---
+    DATABASE_URL: str = ""  # Loaded from .env
 
-    # Database
-    DATABASE_URL: str = ""
-
-    # Redis Cache
+    # --- Redis Cache ---
     REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_KEY_PREFIX: str = "maigie:"
-    REDIS_SOCKET_TIMEOUT: int = 5  # seconds
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5  # seconds
 
-    # Celery (Background Workers)
-    CELERY_BROKER_URL: str = ""  # Auto-generated from REDIS_URL with DB 1
-    CELERY_RESULT_BACKEND: str = ""  # Auto-generated from REDIS_URL with DB 2
+    REDIS_KEY_PREFIX: str = "maigie:"
+    REDIS_SOCKET_TIMEOUT: int = 5
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = 5
+
+    # --- WebSocket ---
+    WEBSOCKET_HEARTBEAT_INTERVAL: int = 30
+    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60
+    WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
+
+    # --- OAuth Providers (Placeholders) ---
+    OAUTH_GOOGLE_CLIENT_ID: str | None = None
+    OAUTH_GOOGLE_CLIENT_SECRET: str | None = None
+    # TODO: Enable GitHub OAuth provider in the future
+    # OAUTH_GITHUB_CLIENT_ID: str | None = None
+    # OAUTH_GITHUB_CLIENT_SECRET: str | None = None
+    # OAuth base URL for redirect URI (use deployed domain for both local and production)
+    # If set, this will override the dynamically constructed base URL from request
+    # Example: https://api.maigie.com or https://pr-51-api-preview.maigie.com
+    # If not set, will fall back to get_base_url_from_request()
+    OAUTH_BASE_URL: str | None = None
+
+    # --- Celery (Background Workers) ---
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
     CELERY_ACCEPT_CONTENT: ListStr = ["json"]
     CELERY_TIMEZONE: str = "UTC"
     CELERY_ENABLE_UTC: bool = True
-    CELERY_TASK_ALWAYS_EAGER: bool = False  # Set to True for testing (synchronous execution)
+    CELERY_TASK_ALWAYS_EAGER: bool = False
     CELERY_TASK_ACKS_LATE: bool = True
     CELERY_TASK_REJECT_ON_WORKER_LOST: bool = True
     CELERY_WORKER_PREFETCH_MULTIPLIER: int = 1
     CELERY_TASK_DEFAULT_QUEUE: str = "default"
     CELERY_TASK_DEFAULT_EXCHANGE: str = "tasks"
     CELERY_TASK_DEFAULT_ROUTING_KEY: str = "default"
-    CELERY_RESULT_EXPIRES: int = 3600  # seconds (1 hour)
+    CELERY_RESULT_EXPIRES: int = 3600
 
-    # Logging
+    # --- Logging & Sentry ---
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: str = "json"
-
-    # Error Tracking (Sentry)
-    SENTRY_DSN: str = ""
+    SENTRY_DSN: str | None = None
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
     # WebSocket
@@ -131,11 +134,22 @@ class Settings(BaseSettings):
     BREVO_API_KEY: str = ""
     BREVO_ENABLED: bool = True
 
+    # --- Stripe Subscription ---
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""  # Webhook signing secret (whsec_...) from webhook destination
+    STRIPE_WEBHOOK_DESTINATION_ID: str = (
+        ""  # Webhook destination ID (required when using destinations)
+    )
+    STRIPE_PRICE_ID_MONTHLY: str = ""
+    STRIPE_PRICE_ID_YEARLY: str = ""
+    FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
+    # --- BunnyCDN Storage ---
+    BUNNY_CDN_API_KEY: str | None = None
+    BUNNY_STORAGE_ZONE: str | None = None
+    BUNNY_CDN_HOSTNAME: str = "cdn.maigie.com"
+
     model_config = SettingsConfigDict(
-        # Look for .env file in the backend directory
-        # __file__ is apps/backend/src/config.py
-        # parent = apps/backend/src/
-        # parent.parent = apps/backend/
         env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
@@ -144,16 +158,6 @@ class Settings(BaseSettings):
 
 
 def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
-    """Extract base Redis URL and change database number.
-
-    Args:
-        redis_url: Full Redis URL (e.g., "redis://localhost:6379/0")
-        db_number: Target database number
-
-    Returns:
-        Redis URL with updated database number
-    """
-    # Parse redis://host:port/db or redis://host:port
     if "/" in redis_url:
         base_url = redis_url.rsplit("/", 1)[0]
         return f"{base_url}/{db_number}"
@@ -162,17 +166,29 @@ def _get_redis_url_with_db(redis_url: str, db_number: int) -> str:
 
 @lru_cache
 def get_settings() -> Settings:
-    """Get cached settings instance."""
     settings = Settings()
 
-    # Auto-generate Celery broker and result backend URLs from REDIS_URL
-    # Use separate Redis databases to avoid conflicts:
-    # - DB 0: Cache (existing)
-    # - DB 1: Celery broker
-    # - DB 2: Celery results
+    # Auto-generate Celery URLs
     if not settings.CELERY_BROKER_URL:
         settings.CELERY_BROKER_URL = _get_redis_url_with_db(settings.REDIS_URL, 1)
     if not settings.CELERY_RESULT_BACKEND:
         settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
 
+    # Ensure production domains are always included in CORS origins
+    # This prevents CORS issues when environment variables override defaults
+    required_production_origins = [
+        "https://maigie.com",
+        "https://www.maigie.com",
+    ]
+
+    # Merge environment-provided origins with required production origins
+    # Use a set to avoid duplicates, then convert back to list
+    all_origins = set(settings.CORS_ORIGINS)
+    all_origins.update(required_production_origins)
+    settings.CORS_ORIGINS = list(all_origins)
+
     return settings
+
+
+# Create the instance
+settings = get_settings()

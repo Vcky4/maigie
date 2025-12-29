@@ -22,6 +22,7 @@ It should be safe to run multiple times (idempotent).
 
 import asyncio
 import os
+
 from prisma import Prisma
 
 
