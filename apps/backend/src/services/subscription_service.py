@@ -23,6 +23,7 @@ from prisma.models import User
 from ..config import Settings, get_settings
 from ..core.database import db
 from ..services.email import send_subscription_success_email
+from ..services.credit_service import reset_credits_for_period_start
 
 logger = logging.getLogger(__name__)
 
@@ -524,6 +525,21 @@ async def update_user_subscription_from_stripe(
             else subscription.get("current_period_end")
         )
 
+        # Convert timestamps to datetime objects
+        period_start_dt = datetime.fromtimestamp(sub_period_start) if sub_period_start else None
+        period_end_dt = datetime.fromtimestamp(sub_period_end) if sub_period_end else None
+
+        # Check if this is a new billing period (period start changed)
+        # This happens when a new subscription starts or renews
+        is_new_period = False
+        if period_start_dt and user.subscriptionCurrentPeriodStart:
+            # Period start changed, meaning new billing cycle
+            if period_start_dt != user.subscriptionCurrentPeriodStart:
+                is_new_period = True
+        elif period_start_dt and not user.subscriptionCurrentPeriodStart:
+            # First time setting period start
+            is_new_period = True
+
         # Update user subscription data
         updated_user = await db_client.user.update(
             where={"id": user.id},
@@ -532,14 +548,21 @@ async def update_user_subscription_from_stripe(
                 "stripeSubscriptionStatus": sub_status,
                 "stripePriceId": price_id,
                 "tier": tier,
-                "subscriptionCurrentPeriodStart": (
-                    datetime.fromtimestamp(sub_period_start) if sub_period_start else None
-                ),
-                "subscriptionCurrentPeriodEnd": (
-                    datetime.fromtimestamp(sub_period_end) if sub_period_end else None
-                ),
+                "subscriptionCurrentPeriodStart": period_start_dt,
+                "subscriptionCurrentPeriodEnd": period_end_dt,
             },
         )
+
+        # Reset credits if this is a new billing period
+        if is_new_period and period_start_dt and period_end_dt:
+            try:
+                updated_user = await reset_credits_for_period_start(
+                    updated_user, period_start_dt, period_end_dt, db_client
+                )
+                logger.info(f"Reset credits for user {user.id} due to new subscription period")
+            except Exception as e:
+                logger.error(f"Failed to reset credits for user {user.id}: {e}")
+                # Don't fail the subscription update if credit reset fails
 
         # Send email if upgraded from FREE to Premium
         # Convert enum to string for comparison just in case

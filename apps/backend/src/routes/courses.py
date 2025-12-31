@@ -33,6 +33,11 @@ from ..models.courses import (
     TopicResponse,
     TopicUpdate,
 )
+from ..services.credit_service import (
+    CREDIT_COSTS,
+    consume_credits,
+    get_credit_usage,
+)
 from ..utils.dependencies import get_db_client
 from ..utils.exceptions import (
     ForbiddenError,
@@ -204,7 +209,25 @@ async def generate_ai_course(
                 detail="Upgrade to Premium for unlimited AI courses.",
             )
 
-    # 2. Create "Placeholder" Course
+    # 2. Check and consume credits for AI course generation
+    credits_needed = CREDIT_COSTS["ai_course_generation"]
+    try:
+        await consume_credits(
+            current_user, credits_needed, operation="ai_course_generation", db_client=db
+        )
+    except SubscriptionLimitError as e:
+        # Re-raise with more context
+        credit_usage = await get_credit_usage(current_user, db_client=db)
+        raise SubscriptionLimitError(
+            message=e.message,
+            detail=(
+                f"{e.detail} "
+                f"Current usage: {credit_usage['credits_used']:,}/{credit_usage['hard_cap']:,} credits. "
+                f"Period resets: {credit_usage['period_end']}"
+            ),
+        )
+
+    # 3. Create "Placeholder" Course
     # Note: We force the difficulty to uppercase to match the Prisma Enum
     placeholder_course = await db.course.create(
         data={
@@ -217,7 +240,7 @@ async def generate_ai_course(
         }
     )
 
-    # 3. Hand off to Background Worker
+    # 4. Hand off to Background Worker
     background_tasks.add_task(
         generate_course_content_task,
         course_id=placeholder_course.id,
