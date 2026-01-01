@@ -63,10 +63,26 @@ class UserResponse(BaseModel):
     email: EmailStr
     name: str | None = None
     tier: str
+    role: str
     isActive: bool  # noqa: N815
     preferences: UserPreferencesResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("role")
+    def serialize_role(self, v, _info):
+        """Serialize UserRole enum to string."""
+        if v is None:
+            return "USER"
+        if isinstance(v, str):
+            return v
+        # Handle Prisma enum objects - they might have .value or be directly string-like
+        if hasattr(v, "value"):
+            return str(v.value)
+        if hasattr(v, "name"):
+            return str(v.name)
+        # Fallback: convert to string
+        return str(v)
 
     @field_serializer("tier")
     def serialize_tier(self, v, _info):
