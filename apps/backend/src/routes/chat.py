@@ -105,41 +105,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 4.5. Check credits before processing AI response
-            # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
-            estimated_input_tokens = (
-                len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
-            ) // 4
-            # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 2000  # Conservative estimate for response
-            estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
-
-            # Get user object for credit check
-            user_obj = await db.user.find_unique(where={"id": user.id})
-            if not user_obj:
-                await websocket.close()
-                return
-
-            try:
-                # Check if credits are available (will raise if hard cap reached)
-                is_available, warning_message = await check_credit_availability(
-                    user_obj, estimated_total_tokens
-                )
-                if not is_available:
-                    credit_usage = await get_credit_usage(user_obj)
-                    error_message = (
-                        f"Credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-                        f"of {credit_usage['hard_cap']:,} credits. "
-                        f"Period resets: {credit_usage['period_end']}"
-                    )
-                    await manager.send_personal_message(f"⚠️ **System:** {error_message}", user.id)
-                    await websocket.close()
-                    return
-            except SubscriptionLimitError as e:
-                await manager.send_personal_message(f"⚠️ **System:** {e.message}", user.id)
-                await websocket.close()
-                return
-
             # 5. Build History for Context (Last 10 messages)
             history_records = await db.chatmessage.find_many(
                 where={"sessionId": session.id}, order={"createdAt": "asc"}, take=10
@@ -260,6 +225,41 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Include note content if provided directly (not via noteId)
                 if context.get("noteContent") and not enriched_context.get("noteContent"):
                     enriched_context["noteContent"] = context["noteContent"]
+
+            # 4.5. Check credits before processing AI response (after context/history are built)
+            # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
+            estimated_input_tokens = (
+                len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
+            ) // 4
+            # Reserve credits for response (estimate max response size)
+            estimated_output_tokens = 2000  # Conservative estimate for response
+            estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
+
+            # Get user object for credit check
+            user_obj = await db.user.find_unique(where={"id": user.id})
+            if not user_obj:
+                await websocket.close()
+                return
+
+            try:
+                # Check if credits are available (will raise if hard cap reached)
+                is_available, warning_message = await check_credit_availability(
+                    user_obj, estimated_total_tokens
+                )
+                if not is_available:
+                    credit_usage = await get_credit_usage(user_obj)
+                    error_message = (
+                        f"Credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+                        f"of {credit_usage['hard_cap']:,} credits. "
+                        f"Period resets: {credit_usage['period_end']}"
+                    )
+                    await manager.send_personal_message(f"⚠️ **System:** {error_message}", user.id)
+                    await websocket.close()
+                    return
+            except SubscriptionLimitError as e:
+                await manager.send_personal_message(f"⚠️ **System:** {e.message}", user.id)
+                await websocket.close()
+                return
 
             # 6. Check if user is asking for a summary
             # Simple detection: check if message contains "summary" or "summarize"

@@ -28,10 +28,10 @@ from pathlib import Path
 # Add src directory to path so we can import from src
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta  # noqa: E402
 
-from prisma import Prisma
-from src.core.security import get_password_hash
+from prisma import Prisma  # noqa: E402
+from src.core.security import get_password_hash  # noqa: E402
 
 # Credit limits per tier (matching credit_service.py)
 CREDIT_LIMITS = {
