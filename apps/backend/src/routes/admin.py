@@ -25,6 +25,8 @@ from prisma.models import User
 
 from ..dependencies import AdminUser, DBDep
 from ..utils.exceptions import ResourceNotFoundError
+from ..core.security import get_password_hash
+from ..services.credit_service import initialize_user_credits
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,20 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 # ==========================================
 #  REQUEST/RESPONSE MODELS
 # ==========================================
+
+
+class UserCreateRequest(BaseModel):
+    """Request model for creating a new user."""
+
+    email: EmailStr
+    name: Optional[str] = None
+    password: Optional[str] = Field(
+        None, min_length=8, description="Password (optional, min 8 characters)"
+    )
+    tier: str = Field("FREE", description="User tier")
+    role: str = Field("USER", description="User role")
+    isActive: bool = Field(True, description="Whether user is active")
+    isOnboarded: bool = Field(False, description="Whether user has completed onboarding")
 
 
 class UserUpdateRequest(BaseModel):
@@ -81,6 +97,95 @@ class UserDetailResponse(BaseModel):
 # ==========================================
 #  USER MANAGEMENT ENDPOINTS
 # ==========================================
+
+
+@router.post("/users", response_model=UserDetailResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: UserCreateRequest,
+    admin_user: AdminUser,
+    db: DBDep,
+):
+    """
+    Create a new user account.
+
+    Only accessible by admin users.
+    """
+    # Check if email already exists
+    existing_user = await db.user.find_unique(where={"email": user_data.email})
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
+
+    # Validate tier
+    valid_tiers = ["FREE", "PREMIUM_MONTHLY", "PREMIUM_YEARLY"]
+    tier_upper = user_data.tier.upper()
+    if tier_upper not in valid_tiers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid tier. Must be one of: {', '.join(valid_tiers)}",
+        )
+
+    # Validate role
+    valid_roles = ["USER", "ADMIN"]
+    role_upper = user_data.role.upper()
+    if role_upper not in valid_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}",
+        )
+
+    # Hash password if provided
+    password_hash = None
+    if user_data.password:
+        password_hash = get_password_hash(user_data.password)
+
+    # Create user
+    new_user = await db.user.create(
+        data={
+            "email": user_data.email,
+            "name": user_data.name,
+            "passwordHash": password_hash,
+            "provider": "email" if password_hash else None,
+            "tier": tier_upper,
+            "role": role_upper,
+            "isActive": user_data.isActive,
+            "isOnboarded": user_data.isOnboarded,
+            "preferences": {
+                "create": {
+                    "theme": "light",
+                    "language": "en",
+                    "notifications": True,
+                }
+            },
+        },
+        include={"preferences": True},
+    )
+
+    # Initialize credits for the user
+    new_user = await initialize_user_credits(new_user)
+
+    logger.info(f"Admin {admin_user.email} created user {new_user.id} ({new_user.email})")
+
+    return {
+        "id": new_user.id,
+        "email": new_user.email,
+        "name": new_user.name,
+        "tier": str(new_user.tier),
+        "role": str(new_user.role),
+        "isActive": new_user.isActive,
+        "isOnboarded": new_user.isOnboarded,
+        "provider": new_user.provider,
+        "stripeCustomerId": new_user.stripeCustomerId,
+        "stripeSubscriptionStatus": new_user.stripeSubscriptionStatus,
+        "creditsUsed": new_user.creditsUsed or 0,
+        "creditsHardCap": new_user.creditsHardCap,
+        "creditsUsedToday": new_user.creditsUsedToday,
+        "creditsDailyLimit": new_user.creditsDailyLimit,
+        "createdAt": new_user.createdAt.isoformat(),
+        "updatedAt": new_user.updatedAt.isoformat(),
+    }
 
 
 @router.get("/users", response_model=UserListResponse)
