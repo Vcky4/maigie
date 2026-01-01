@@ -61,7 +61,6 @@ class Settings(BaseSettings):
     CORS_ORIGINS: ListStr = [
         "http://localhost:4200",
         "http://localhost:5173",
-        "http://localhost:3000",
         "https://maigie.com",
         "https://www.maigie.com",
         "https://admin.maigie.com",
