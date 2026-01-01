@@ -21,17 +21,39 @@ It should be safe to run multiple times (idempotent).
 """
 
 import asyncio
+import base64
+import hashlib
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add src directory to path so we can import from src
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+import bcrypt
+from passlib.context import CryptContext
+from prisma import Prisma
 
-from datetime import datetime, timedelta  # noqa: E402
+# Setup password hashing (same as src.core.security)
+# Monkey patch for bcrypt compatibility
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = type("about", (object,), {"__version__": bcrypt.__version__})
 
-from prisma import Prisma  # noqa: E402
-from src.core.security import get_password_hash  # noqa: E402
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _get_safe_password(password: str) -> str:
+    """Pre-hash password to ensure it never exceeds bcrypt 72-byte limit."""
+    if not password:
+        raise ValueError("Password cannot be empty")
+    password_bytes = password.encode("utf-8")
+    digest = hashlib.sha256(password_bytes).digest()
+    return base64.b64encode(digest).decode("utf-8")
+
+
+def get_password_hash(password: str) -> str:
+    """Hash a password before saving to the database."""
+    safe_password = _get_safe_password(password)
+    return pwd_context.hash(safe_password)
+
 
 # Credit limits per tier (matching credit_service.py)
 CREDIT_LIMITS = {
