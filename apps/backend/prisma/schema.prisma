@@ -40,6 +40,11 @@ enum ActionStatus {
   FAILED
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
 // ==========================================
 //  USER & AUTH
 // ==========================================
@@ -51,9 +56,10 @@ model User {
   name         String?
   provider     String? // "google", "email"
   providerId   String?
-  tier         Tier    @default(FREE)
-  isActive     Boolean @default(true)
-  isOnboarded  Boolean @default(false)
+  tier         Tier      @default(FREE)
+  role         UserRole  @default(USER)
+  isActive     Boolean   @default(true)
+  isOnboarded  Boolean   @default(false)
 
   verificationCode          String? // Stores the 6-digit OTP
   verificationCodeExpiresAt DateTime? // Stores when it expires

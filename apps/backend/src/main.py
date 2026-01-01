@@ -39,6 +39,7 @@ from .middleware import LoggingMiddleware, SecurityHeadersMiddleware
 from .models.error_response import ErrorResponse
 
 # --- Route Imports ---
+from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
 from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
@@ -354,6 +355,9 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
+
+    # Admin routes (admin-only access)
+    app.include_router(admin_router)
 
     app.include_router(ai_router)
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")

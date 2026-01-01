@@ -94,3 +94,20 @@ async def get_current_user(
 
 # Create a reusable type shortcut
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_admin_user(current_user: CurrentUser) -> User:
+    """
+    Dependency to ensure the current user is an admin.
+    Must be used after get_current_user dependency.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
+# Create a reusable type shortcut for admin users
+AdminUser = Annotated[User, Depends(get_admin_user)]
