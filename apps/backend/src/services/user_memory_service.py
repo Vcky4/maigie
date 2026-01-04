@@ -1,0 +1,278 @@
+"""
+User Memory Service for storing and retrieving user interactions.
+Enables personalized experiences by tracking important user behaviors.
+
+Copyright (C) 2025 Maigie
+
+Licensed under the Business Source License 1.1 (BUSL-1.1).
+See LICENSE file in the repository root for details.
+"""
+
+from datetime import datetime, timedelta
+from typing import Any
+
+from fastapi import HTTPException
+
+from src.core.database import db
+
+
+class UserMemoryService:
+    """Service for managing user interaction memory."""
+
+    def __init__(self):
+        """Initialize the user memory service."""
+        pass
+
+    async def record_interaction(
+        self,
+        user_id: str,
+        interaction_type: str,
+        entity_type: str,
+        entity_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        importance: float = 0.5,
+    ) -> str:
+        """
+        Record a user interaction for personalization.
+
+        Args:
+            user_id: ID of the user
+            interaction_type: Type of interaction (see InteractionType enum)
+            entity_type: Type of entity ("resource", "course", "note", "goal", "chat")
+            entity_id: Optional ID of the entity
+            metadata: Optional additional context
+            importance: Importance score (0.0 to 1.0) for this interaction
+
+        Returns:
+            ID of the created interaction record
+        """
+        try:
+            interaction = await db.userinteractionmemory.create(
+                data={
+                    "userId": user_id,
+                    "interactionType": interaction_type,
+                    "entityType": entity_type,
+                    "entityId": entity_id,
+                    "metadata": metadata,
+                    "importance": importance,
+                }
+            )
+
+            return interaction.id
+
+        except Exception as e:
+            print(f"Error recording interaction: {e}")
+            raise HTTPException(status_code=500, detail="Failed to record interaction")
+
+    async def get_user_preferences(self, user_id: str, limit: int = 50) -> dict[str, Any]:
+        """
+        Get user preferences based on interaction history.
+
+        Args:
+            user_id: ID of the user
+            limit: Maximum number of interactions to analyze
+
+        Returns:
+            Dictionary with user preferences and patterns
+        """
+        try:
+            # Get recent important interactions
+            recent_interactions = await db.userinteractionmemory.find_many(
+                where={"userId": user_id},
+                order={"createdAt": "desc"},
+                take=limit,
+            )
+
+            preferences = {
+                "preferredResourceTypes": [],
+                "activeCourses": [],
+                "recentTopics": [],
+                "interactionPatterns": {},
+                "learningGoals": [],
+            }
+
+            # Analyze interactions to extract preferences
+            resource_type_counts = {}
+            course_ids = set()
+            topic_ids = set()
+            interaction_counts = {}
+
+            for interaction in recent_interactions:
+                # Count interaction types
+                interaction_type = interaction.interactionType
+                interaction_counts[interaction_type] = (
+                    interaction_counts.get(interaction_type, 0) + 1
+                )
+
+                # Extract entity information
+                entity_type = interaction.entityType
+                entity_id = interaction.entityId
+                metadata = interaction.metadata or {}
+
+                if entity_type == "resource" and entity_id:
+                    # Try to get resource type
+                    resource = await db.resource.find_unique(where={"id": entity_id})
+                    if resource:
+                        resource_type = resource.type
+                        resource_type_counts[resource_type] = (
+                            resource_type_counts.get(resource_type, 0) + 1
+                        )
+
+                elif entity_type == "course" and entity_id:
+                    course_ids.add(entity_id)
+
+                elif entity_type == "topic" and entity_id:
+                    topic_ids.add(entity_id)
+
+            # Build preferences
+            if resource_type_counts:
+                # Sort by frequency
+                sorted_types = sorted(
+                    resource_type_counts.items(), key=lambda x: x[1], reverse=True
+                )
+                preferences["preferredResourceTypes"] = [rtype for rtype, _ in sorted_types[:5]]
+
+            preferences["activeCourses"] = list(course_ids)[:10]
+            preferences["recentTopics"] = list(topic_ids)[:10]
+            preferences["interactionPatterns"] = interaction_counts
+
+            return preferences
+
+        except Exception as e:
+            print(f"Error getting user preferences: {e}")
+            return {
+                "preferredResourceTypes": [],
+                "activeCourses": [],
+                "recentTopics": [],
+                "interactionPatterns": {},
+                "learningGoals": [],
+            }
+
+    async def get_recent_interactions(
+        self,
+        user_id: str,
+        interaction_type: str | None = None,
+        entity_type: str | None = None,
+        days: int = 30,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Get recent user interactions.
+
+        Args:
+            user_id: ID of the user
+            interaction_type: Optional filter by interaction type
+            entity_type: Optional filter by entity type
+            days: Number of days to look back
+            limit: Maximum number of results
+
+        Returns:
+            List of interaction records
+        """
+        try:
+            where_clause = {"userId": user_id}
+
+            if interaction_type:
+                where_clause["interactionType"] = interaction_type
+
+            if entity_type:
+                where_clause["entityType"] = entity_type
+
+            # Calculate date threshold
+            threshold_date = datetime.utcnow() - timedelta(days=days)
+
+            interactions = await db.userinteractionmemory.find_many(
+                where=where_clause,
+                order={"createdAt": "desc"},
+                take=limit,
+            )
+
+            # Filter by date (Prisma doesn't support date comparison in where clause easily)
+            filtered = [i for i in interactions if i.createdAt >= threshold_date]
+
+            return [
+                {
+                    "id": i.id,
+                    "interactionType": i.interactionType,
+                    "entityType": i.entityType,
+                    "entityId": i.entityId,
+                    "metadata": i.metadata,
+                    "importance": i.importance,
+                    "createdAt": i.createdAt.isoformat(),
+                }
+                for i in filtered
+            ]
+
+        except Exception as e:
+            print(f"Error getting recent interactions: {e}")
+            return []
+
+    async def get_user_context(self, user_id: str) -> dict[str, Any]:
+        """
+        Get comprehensive user context for personalization.
+
+        Args:
+            user_id: ID of the user
+
+        Returns:
+            Dictionary with user context including courses, goals, recent activity
+        """
+        try:
+            # Get user's courses
+            courses = await db.course.find_many(
+                where={"userId": user_id, "archived": False},
+                take=10,
+                order={"updatedAt": "desc"},
+            )
+
+            # Get user's notes
+            recent_notes = await db.note.find_many(
+                where={"userId": user_id, "archived": False},
+                take=10,
+                order={"updatedAt": "desc"},
+            )
+
+            # Get recent interactions
+            recent_interactions = await self.get_recent_interactions(
+                user_id=user_id, days=7, limit=20
+            )
+
+            # Get user preferences
+            preferences = await self.get_user_preferences(user_id=user_id)
+
+            return {
+                "courses": [
+                    {
+                        "id": c.id,
+                        "title": c.title,
+                        "description": c.description,
+                        "difficulty": c.difficulty,
+                        "progress": c.progress,
+                    }
+                    for c in courses
+                ],
+                "recentNotes": [
+                    {
+                        "id": n.id,
+                        "title": n.title,
+                        "summary": n.summary,
+                        "courseId": n.courseId,
+                    }
+                    for n in recent_notes
+                ],
+                "recentActivity": recent_interactions,
+                "preferences": preferences,
+            }
+
+        except Exception as e:
+            print(f"Error getting user context: {e}")
+            return {
+                "courses": [],
+                "recentNotes": [],
+                "recentActivity": [],
+                "preferences": {},
+            }
+
+
+# Global instance
+user_memory_service = UserMemoryService()

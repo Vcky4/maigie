@@ -32,6 +32,8 @@ class ActionService:
             return await self.add_summary(action_data, user_id)
         elif action_type == "add_tags":
             return await self.add_tags(action_data, user_id)
+        elif action_type == "recommend_resources":
+            return await self.recommend_resources(action_data, user_id)
 
         # Add more actions here later (create_goal, create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
@@ -440,6 +442,138 @@ class ActionService:
 
         except Exception as e:
             print(f"❌ Add Tags Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+    async def recommend_resources(self, data: dict, user_id: str):
+        """
+        Generate and store resource recommendations using RAG.
+        Expected data: { "query": "...", "topicId": "..." (optional), "courseId": "..." (optional), "limit": 10 }
+        """
+        try:
+            from src.services.rag_service import rag_service
+            from src.services.user_memory_service import user_memory_service
+
+            query = data.get("query", "")
+            topic_id = data.get("topicId")
+            course_id = data.get("courseId")
+            limit = data.get("limit", 10)
+
+            if not query:
+                return {
+                    "status": "error",
+                    "message": "Query is required for resource recommendations",
+                }
+
+            # Get user context
+            user_context = await user_memory_service.get_user_context(user_id)
+
+            # Add topic/course context if provided
+            if topic_id:
+                topic = await db.topic.find_unique(
+                    where={"id": topic_id}, include={"module": {"include": {"course": True}}}
+                )
+                if topic:
+                    user_context["currentTopic"] = {
+                        "id": topic.id,
+                        "title": topic.title,
+                        "content": topic.content,
+                    }
+                    if topic.module and topic.module.course:
+                        course_id = topic.module.course.id
+                        user_context["currentCourse"] = {
+                            "id": topic.module.course.id,
+                            "title": topic.module.course.title,
+                        }
+
+            if course_id and "currentCourse" not in user_context:
+                course = await db.course.find_unique(where={"id": course_id})
+                if course:
+                    user_context["currentCourse"] = {
+                        "id": course.id,
+                        "title": course.title,
+                    }
+
+            # Generate recommendations using RAG
+            recommendations = await rag_service.generate_recommendations(
+                query=query,
+                user_id=user_id,
+                user_context=user_context,
+                limit=limit,
+            )
+
+            # Store recommendations as resources
+            stored_resources = []
+            for rec in recommendations:
+                # Build recommendation reason
+                reason_parts = []
+                if topic_id:
+                    topic_title = user_context.get("currentTopic", {}).get("title", "this topic")
+                    reason_parts.append(f"for {topic_title}")
+                elif course_id:
+                    course_title = user_context.get("currentCourse", {}).get("title", "this course")
+                    reason_parts.append(f"related to {course_title}")
+                reason = " ".join(reason_parts) if reason_parts else None
+
+                resource = await db.resource.create(
+                    data={
+                        "userId": user_id,
+                        "title": rec.get("title", "Untitled"),
+                        "url": rec.get("url", ""),
+                        "description": rec.get("description"),
+                        "type": rec.get("type", "OTHER"),
+                        "isRecommended": True,
+                        "recommendationScore": rec.get("score", 0.5),
+                        "recommendationSource": "ai",
+                        "recommendationReason": reason,
+                        "courseId": course_id,
+                        "topicId": topic_id,
+                        "metadata": {"relevance": rec.get("relevance")},
+                    }
+                )
+
+                stored_resources.append(
+                    {
+                        "id": resource.id,
+                        "title": resource.title,
+                        "url": resource.url,
+                        "description": resource.description,
+                        "type": resource.type,
+                        "score": rec.get("score", 0.5),
+                    }
+                )
+
+                # Index the resource in the background
+                from src.services.indexing_service import indexing_service
+
+                await indexing_service.index_resource(resource.id)
+
+            # Record interaction
+            await user_memory_service.record_interaction(
+                user_id=user_id,
+                interaction_type="RECOMMENDATION_REQUESTED",
+                entity_type="chat",
+                metadata={
+                    "query": query,
+                    "recommendationCount": len(stored_resources),
+                    "topicId": topic_id,
+                    "courseId": course_id,
+                },
+                importance=0.7,
+            )
+
+            return {
+                "status": "success",
+                "action": "recommend_resources",
+                "resources": stored_resources,
+                "count": len(stored_resources),
+                "message": f"Successfully generated {len(stored_resources)} resource recommendations",
+            }
+
+        except Exception as e:
+            print(f"❌ Recommend Resources Error: {e}")
             import traceback
 
             traceback.print_exc()
