@@ -271,9 +271,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             f"Period resets: {credit_usage['period_end']}"
                         )
 
-                    await manager.send_personal_message(
-                        f"⚠️ **System:** {error_message}", user.id
-                    )
+                    await manager.send_personal_message(f"⚠️ **System:** {error_message}", user.id)
                     await websocket.close()
                     return
             except SubscriptionLimitError as e:
