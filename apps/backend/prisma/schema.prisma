@@ -116,6 +116,8 @@ model User {
   preferences UserPreferences?
   courses     Course[]
   notes       Note[]
+  resources   Resource[]
+  userInteractionMemories UserInteractionMemory[]
 
   // NEW: Chat Relations
   chatSessions ChatSession[]
