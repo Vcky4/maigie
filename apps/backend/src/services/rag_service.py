@@ -8,13 +8,19 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import json
+import os
+import re
 from typing import Any
 
+import google.generativeai as genai
 from fastapi import HTTPException
 
 from src.core.database import db
 from src.services.embedding_service import embedding_service
-from src.services.llm_service import llm_service
+
+# Configure API
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 class RAGService:
