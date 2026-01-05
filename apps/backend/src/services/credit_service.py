@@ -36,7 +36,7 @@ CREDIT_LIMITS = {
     "FREE": {
         "hard_cap": 10000,  # 10k tokens/month
         "soft_cap": 8000,  # 80% warning threshold
-        "daily_limit": 1500,  # 1500 tokens/day (resets daily)
+        "daily_limit": 5000,  # 5000 tokens/day (resets daily)
     },
     "PREMIUM_MONTHLY": {
         "hard_cap": 100000,  # 100k tokens/month

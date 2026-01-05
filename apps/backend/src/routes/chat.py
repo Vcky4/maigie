@@ -232,7 +232,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
             ) // 4
             # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 2000  # Conservative estimate for response
+            estimated_output_tokens = 1000  # Conservative estimate for response
             estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
 
             # Get user object for credit check
@@ -248,11 +248,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 )
                 if not is_available:
                     credit_usage = await get_credit_usage(user_obj)
-                    error_message = (
-                        f"Credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-                        f"of {credit_usage['hard_cap']:,} credits. "
-                        f"Period resets: {credit_usage['period_end']}"
-                    )
+                    
+                    # Determine if it's daily or monthly limit
+                    tier = str(user_obj.tier) if user_obj.tier else "FREE"
+                    daily_limit = credit_usage.get("daily_limit", 0)
+                    used_today = credit_usage.get("credits_used_today", 0)
+                    
+                    if tier == "FREE" and daily_limit > 0 and (used_today + estimated_total_tokens > daily_limit):
+                        error_message = (
+                            f"Daily credit limit exceeded. You've used {used_today:,} "
+                            f"of {daily_limit:,} daily credits. "
+                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
+                        )
+                    else:
+                        error_message = (
+                            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+                            f"of {credit_usage['hard_cap']:,} credits. "
+                            f"Period resets: {credit_usage['period_end']}"
+                        )
+                        
                     await manager.send_personal_message(f"⚠️ **System:** {error_message}", user.id)
                     await websocket.close()
                     return
