@@ -152,9 +152,14 @@ async def reset_daily_credits_if_needed(user: User, db_client: Optional[Prisma] 
 
     # Check if daily reset is needed
     needs_daily_reset = False
-    if user.lastDailyReset is None:
+
+    last_reset = user.lastDailyReset
+    if last_reset and last_reset.tzinfo:
+        last_reset = last_reset.replace(tzinfo=None)
+
+    if last_reset is None:
         needs_daily_reset = True
-    elif user.lastDailyReset < today_midnight:
+    elif last_reset < today_midnight:
         # A new day has started since last reset
         needs_daily_reset = True
         logger.info(
@@ -211,6 +216,11 @@ async def ensure_credit_period(user: User, db_client: Optional[Prisma] = None) -
         period_end = user.subscriptionCurrentPeriodEnd
 
         # If subscription period is not available or expired, use current time
+        # Ensure we are comparing offset-naive datetimes (utcnow is naive)
+        # If period_end is timezone-aware, convert to naive UTC
+        if period_end and period_end.tzinfo:
+            period_end = period_end.replace(tzinfo=None)
+
         if period_start is None or period_end is None or period_end <= now:
             period_start = now
             # Set period end based on tier
