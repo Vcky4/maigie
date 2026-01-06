@@ -200,9 +200,14 @@ async def ensure_credit_period(user: User, db_client: Optional[Prisma] = None) -
 
     # Check if period needs to be initialized or reset
     needs_reset = False
-    if user.creditsPeriodEnd is None or user.creditsPeriodStart is None:
+
+    current_period_end = user.creditsPeriodEnd
+    if current_period_end and current_period_end.tzinfo:
+        current_period_end = current_period_end.replace(tzinfo=None)
+
+    if current_period_end is None or user.creditsPeriodStart is None:
         needs_reset = True
-    elif user.creditsPeriodEnd <= now:
+    elif current_period_end <= now:
         # Period has expired, reset credits
         needs_reset = True
         logger.info(
@@ -215,9 +220,11 @@ async def ensure_credit_period(user: User, db_client: Optional[Prisma] = None) -
         period_start = user.subscriptionCurrentPeriodStart
         period_end = user.subscriptionCurrentPeriodEnd
 
-        # If subscription period is not available or expired, use current time
-        # Ensure we are comparing offset-naive datetimes (utcnow is naive)
-        # If period_end is timezone-aware, convert to naive UTC
+        # Handle timezone awareness for period_start
+        if period_start and period_start.tzinfo:
+            period_start = period_start.replace(tzinfo=None)
+
+        # Handle timezone awareness for period_end
         if period_end and period_end.tzinfo:
             period_end = period_end.replace(tzinfo=None)
 
