@@ -504,6 +504,13 @@ class ActionService:
                 limit=limit,
             )
 
+            # Validate user_id
+            if not user_id:
+                return {
+                    "status": "error",
+                    "message": "User ID is required for resource recommendations",
+                }
+
             # Store recommendations as resources
             stored_resources = []
             for rec in recommendations:
@@ -517,31 +524,34 @@ class ActionService:
                     reason_parts.append(f"related to {course_title}")
                 reason = " ".join(reason_parts) if reason_parts else None
 
-                # Build metadata - only include if relevance is not None
+                # Build metadata - ensure it's a valid dict or None
                 relevance = rec.get("relevance")
                 metadata = None
-                if relevance is not None:
-                    metadata = {"relevance": relevance}
+                if relevance is not None and relevance != "":
+                    # Only create metadata if relevance has a valid value
+                    metadata = {"relevance": str(relevance)}
 
                 # Prepare resource data
                 resource_data = {
                     "userId": user_id,
-                    "title": rec.get("title", "Untitled"),
-                    "url": rec.get("url", ""),
+                    "title": rec.get("title", "Untitled") or "Untitled",
+                    "url": rec.get("url", "") or "",
                     "description": rec.get("description"),
-                    "type": rec.get("type", "OTHER"),
+                    "type": rec.get("type", "OTHER") or "OTHER",
                     "isRecommended": True,
-                    "recommendationScore": rec.get("score", 0.5),
+                    "recommendationScore": float(rec.get("score", 0.5)),
                     "recommendationSource": "ai",
-                    "recommendationReason": reason,
                 }
 
                 # Add optional fields only if they have values
+                if reason:
+                    resource_data["recommendationReason"] = reason
                 if course_id:
                     resource_data["courseId"] = course_id
                 if topic_id:
                     resource_data["topicId"] = topic_id
-                if metadata:
+                # Only add metadata if it's a valid dict (not None, not empty)
+                if metadata and isinstance(metadata, dict) and len(metadata) > 0:
                     resource_data["metadata"] = metadata
 
                 resource = await db.resource.create(data=resource_data)
