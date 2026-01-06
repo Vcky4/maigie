@@ -517,22 +517,34 @@ class ActionService:
                     reason_parts.append(f"related to {course_title}")
                 reason = " ".join(reason_parts) if reason_parts else None
 
-                resource = await db.resource.create(
-                    data={
-                        "userId": user_id,
-                        "title": rec.get("title", "Untitled"),
-                        "url": rec.get("url", ""),
-                        "description": rec.get("description"),
-                        "type": rec.get("type", "OTHER"),
-                        "isRecommended": True,
-                        "recommendationScore": rec.get("score", 0.5),
-                        "recommendationSource": "ai",
-                        "recommendationReason": reason,
-                        "courseId": course_id,
-                        "topicId": topic_id,
-                        "metadata": {"relevance": rec.get("relevance")},
-                    }
-                )
+                # Build metadata - only include if relevance is not None
+                relevance = rec.get("relevance")
+                metadata = None
+                if relevance is not None:
+                    metadata = {"relevance": relevance}
+
+                # Prepare resource data
+                resource_data = {
+                    "userId": user_id,
+                    "title": rec.get("title", "Untitled"),
+                    "url": rec.get("url", ""),
+                    "description": rec.get("description"),
+                    "type": rec.get("type", "OTHER"),
+                    "isRecommended": True,
+                    "recommendationScore": rec.get("score", 0.5),
+                    "recommendationSource": "ai",
+                    "recommendationReason": reason,
+                }
+
+                # Add optional fields only if they have values
+                if course_id:
+                    resource_data["courseId"] = course_id
+                if topic_id:
+                    resource_data["topicId"] = topic_id
+                if metadata:
+                    resource_data["metadata"] = metadata
+
+                resource = await db.resource.create(data=resource_data)
 
                 stored_resources.append(
                     {
