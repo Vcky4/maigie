@@ -595,8 +595,9 @@ class ActionService:
                     resource_data["courseId"] = course_id
                 if topic_id:
                     resource_data["topicId"] = topic_id
-                # Always include metadata (can be None) - matches resources.py pattern
-                resource_data["metadata"] = metadata
+                # Only include metadata if it's not None (Prisma Python client requirement)
+                if metadata is not None:
+                    resource_data["metadata"] = metadata
 
                 try:
                     resource = await db.resource.create(data=resource_data)
