@@ -514,6 +514,13 @@ class ActionService:
                     "message": f"User with ID {user_id} not found",
                 }
 
+            # Validate recommendations
+            if not recommendations or not isinstance(recommendations, list):
+                return {
+                    "status": "error",
+                    "message": "No recommendations generated",
+                }
+
             # Store recommendations as resources
             stored_resources = []
             for rec in recommendations:
@@ -527,12 +534,17 @@ class ActionService:
                     reason_parts.append(f"related to {course_title}")
                 reason = " ".join(reason_parts) if reason_parts else None
 
-                # Build metadata - ensure it's a valid dict or None
+                # Build metadata - ensure it's a valid JSON-serializable dict or None
                 relevance = rec.get("relevance")
                 metadata = None
                 if relevance is not None and relevance != "":
                     # Only create metadata if relevance has a valid value
-                    metadata = {"relevance": str(relevance)}
+                    # Ensure it's JSON-serializable
+                    try:
+                        json.dumps({"relevance": str(relevance)})  # Validate JSON serialization
+                        metadata = {"relevance": str(relevance)}
+                    except (TypeError, ValueError):
+                        metadata = None
 
                 # Prepare resource data - ensure all required fields are set
                 title = rec.get("title", "Untitled") or "Untitled"
@@ -542,14 +554,37 @@ class ActionService:
                     print(f"⚠️ Skipping resource with empty URL: {title}")
                     continue
 
+                # Validate and normalize resource type
+                resource_type = rec.get("type", "OTHER") or "OTHER"
+                valid_types = [
+                    "VIDEO",
+                    "ARTICLE",
+                    "BOOK",
+                    "COURSE",
+                    "DOCUMENT",
+                    "WEBSITE",
+                    "PODCAST",
+                    "OTHER",
+                ]
+                if resource_type.upper() not in valid_types:
+                    resource_type = "OTHER"
+
+                # Validate and convert score to float
+                try:
+                    score = float(rec.get("score", 0.5))
+                    # Ensure score is between 0 and 1
+                    score = max(0.0, min(1.0, score))
+                except (ValueError, TypeError):
+                    score = 0.5
+
                 resource_data = {
-                    "user": {"connect": {"id": user_id}},
+                    "userId": user_id,
                     "title": title,
                     "url": url,
                     "description": rec.get("description"),
-                    "type": rec.get("type", "OTHER") or "OTHER",
+                    "type": resource_type.upper(),
                     "isRecommended": True,
-                    "recommendationScore": float(rec.get("score", 0.5)),
+                    "recommendationScore": score,
                     "recommendationSource": "ai",
                 }
 
@@ -560,40 +595,61 @@ class ActionService:
                     resource_data["courseId"] = course_id
                 if topic_id:
                     resource_data["topicId"] = topic_id
-                # Always include metadata - use None if not available
+                # Always include metadata (can be None) - matches resources.py pattern
                 resource_data["metadata"] = metadata
 
-                resource = await db.resource.create(data=resource_data)
+                try:
+                    resource = await db.resource.create(data=resource_data)
 
-                stored_resources.append(
-                    {
-                        "id": resource.id,
-                        "title": resource.title,
-                        "url": resource.url,
-                        "description": resource.description,
-                        "type": resource.type,
-                        "score": rec.get("score", 0.5),
-                    }
+                    stored_resources.append(
+                        {
+                            "id": resource.id,
+                            "title": resource.title,
+                            "url": resource.url,
+                            "description": resource.description,
+                            "type": resource.type,
+                            "score": score,
+                        }
+                    )
+
+                    # Index the resource in the background (don't fail if indexing fails)
+                    try:
+                        from src.services.indexing_service import indexing_service
+
+                        await indexing_service.index_resource(resource.id)
+                    except Exception as indexing_error:
+                        print(f"⚠️ Failed to index resource {resource.id}: {indexing_error}")
+                        # Continue processing other resources
+
+                except Exception as create_error:
+                    print(f"⚠️ Failed to create resource '{title}': {create_error}")
+                    # Continue processing other resources
+                    continue
+
+            # Record interaction (don't fail if this fails)
+            try:
+                await user_memory_service.record_interaction(
+                    user_id=user_id,
+                    interaction_type="RECOMMENDATION_REQUESTED",
+                    entity_type="chat",
+                    metadata={
+                        "query": query,
+                        "recommendationCount": len(stored_resources),
+                        "topicId": topic_id,
+                        "courseId": course_id,
+                    },
+                    importance=0.7,
                 )
+            except Exception as interaction_error:
+                print(f"⚠️ Failed to record interaction: {interaction_error}")
+                # Continue - this is not critical
 
-                # Index the resource in the background
-                from src.services.indexing_service import indexing_service
-
-                await indexing_service.index_resource(resource.id)
-
-            # Record interaction
-            await user_memory_service.record_interaction(
-                user_id=user_id,
-                interaction_type="RECOMMENDATION_REQUESTED",
-                entity_type="chat",
-                metadata={
-                    "query": query,
-                    "recommendationCount": len(stored_resources),
-                    "topicId": topic_id,
-                    "courseId": course_id,
-                },
-                importance=0.7,
-            )
+            # Return success even if some resources failed to create
+            if not stored_resources:
+                return {
+                    "status": "error",
+                    "message": "No resources could be created from recommendations",
+                }
 
             return {
                 "status": "success",
