@@ -6,10 +6,8 @@ Executes structured actions triggered by the AI (e.g., creating courses).
 import json
 import re
 
-from prisma import Prisma
 from prisma.models import User
-
-db = Prisma()
+from src.core.database import db
 
 
 class ActionService:
@@ -18,9 +16,6 @@ class ActionService:
         Route the action to the correct handler.
         """
         print(f"⚡ EXECUTING ACTION: {action_type} for User {user_id}")
-
-        if not db.is_connected():
-            await db.connect()
 
         if action_type == "create_course":
             return await self.create_course(action_data, user_id)
@@ -511,6 +506,14 @@ class ActionService:
                     "message": "User ID is required for resource recommendations",
                 }
 
+            # Verify user exists
+            user = await db.user.find_unique(where={"id": user_id})
+            if not user:
+                return {
+                    "status": "error",
+                    "message": f"User with ID {user_id} not found",
+                }
+
             # Store recommendations as resources
             stored_resources = []
             for rec in recommendations:
@@ -531,17 +534,23 @@ class ActionService:
                     # Only create metadata if relevance has a valid value
                     metadata = {"relevance": str(relevance)}
 
-                # Prepare resource data
+                # Prepare resource data - ensure all required fields are set
+                title = rec.get("title", "Untitled") or "Untitled"
+                url = rec.get("url", "") or ""
+
+                if not url:
+                    print(f"⚠️ Skipping resource with empty URL: {title}")
+                    continue
+
                 resource_data = {
                     "userId": user_id,
-                    "title": rec.get("title", "Untitled") or "Untitled",
-                    "url": rec.get("url", "") or "",
+                    "title": title,
+                    "url": url,
                     "description": rec.get("description"),
                     "type": rec.get("type", "OTHER") or "OTHER",
                     "isRecommended": True,
                     "recommendationScore": float(rec.get("score", 0.5)),
                     "recommendationSource": "ai",
-                    "metadata": metadata,  # Always include metadata, even if None
                 }
 
                 # Add optional fields only if they have values
@@ -551,6 +560,9 @@ class ActionService:
                     resource_data["courseId"] = course_id
                 if topic_id:
                     resource_data["topicId"] = topic_id
+                # Only add metadata if it has a value (exclude when None)
+                if metadata is not None:
+                    resource_data["metadata"] = metadata
 
                 resource = await db.resource.create(data=resource_data)
 
