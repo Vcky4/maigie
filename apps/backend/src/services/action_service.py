@@ -543,7 +543,7 @@ class ActionService:
                     continue
 
                 resource_data = {
-                    "userId": user_id,
+                    "user": {"connect": {"id": user_id}},
                     "title": title,
                     "url": url,
                     "description": rec.get("description"),
@@ -560,9 +560,8 @@ class ActionService:
                     resource_data["courseId"] = course_id
                 if topic_id:
                     resource_data["topicId"] = topic_id
-                # Only add metadata if it has a value (exclude when None)
-                if metadata is not None:
-                    resource_data["metadata"] = metadata
+                # Always include metadata - use None if not available
+                resource_data["metadata"] = metadata
 
                 resource = await db.resource.create(data=resource_data)
 
