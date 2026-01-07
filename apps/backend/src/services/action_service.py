@@ -465,7 +465,7 @@ class ActionService:
             )
 
             if not query:
-                print(f"❌ [recommend_resources] ERROR: Query is empty")
+                print("❌ [recommend_resources] ERROR: Query is empty")
                 return {
                     "status": "error",
                     "message": "Query is required for resource recommendations",
@@ -512,7 +512,7 @@ class ActionService:
                     print(f"⚠️ [recommend_resources] Course not found: {course_id}")
 
             # Generate recommendations using RAG
-            print(f"🔵 [recommend_resources] Generating recommendations via RAG service...")
+            print("🔵 [recommend_resources] Generating recommendations via RAG service...")
             print(
                 f"🔵 [recommend_resources] RAG params - query: '{query}', user_id: {user_id}, limit: {limit}"
             )
@@ -529,14 +529,14 @@ class ActionService:
             # Validate user_id
             print(f"🔵 [recommend_resources] Validating user_id: {user_id} (type: {type(user_id)})")
             if not user_id:
-                print(f"❌ [recommend_resources] ERROR: User ID is empty")
+                print("❌ [recommend_resources] ERROR: User ID is empty")
                 return {
                     "status": "error",
                     "message": "User ID is required for resource recommendations",
                 }
 
             # Verify user exists
-            print(f"🔵 [recommend_resources] Verifying user exists in database...")
+            print("🔵 [recommend_resources] Verifying user exists in database...")
             user = await db.user.find_unique(where={"id": user_id})
             if not user:
                 print(f"❌ [recommend_resources] ERROR: User not found: {user_id}")
@@ -598,7 +598,7 @@ class ActionService:
                         print(f"⚠️ [recommend_resources] Failed to create metadata: {e}")
                         metadata = None
                 else:
-                    print(f"🔵 [recommend_resources] No metadata (relevance is None or empty)")
+                    print("🔵 [recommend_resources] No metadata (relevance is None or empty)")
 
                 # Prepare resource data - ensure all required fields are set
                 title = rec.get("title", "Untitled") or "Untitled"
@@ -646,7 +646,7 @@ class ActionService:
                     score = 0.5
 
                 # Build resource data dictionary
-                print(f"🔵 [recommend_resources] Building resource_data dictionary...")
+                print("🔵 [recommend_resources] Building resource_data dictionary...")
                 resource_data = {
                     "userId": user_id,
                     "title": title,
@@ -694,11 +694,11 @@ class ActionService:
                 try:
                     # Ensure all required fields are present and properly typed
                     if not isinstance(user_id, str):
-                        print(f"⚠️ [recommend_resources] Converting user_id to string")
+                        print("⚠️ [recommend_resources] Converting user_id to string")
                         user_id = str(user_id)
                         resource_data["userId"] = user_id
 
-                    print(f"🔵 [recommend_resources] Attempting to create resource in database...")
+                    print("🔵 [recommend_resources] Attempting to create resource in database...")
                     print(
                         f"🔵 [recommend_resources] resource_data keys: {list(resource_data.keys())}"
                     )
@@ -732,7 +732,7 @@ class ActionService:
 
                         print(f"🔵 [recommend_resources] Indexing resource {resource.id}...")
                         await indexing_service.index_resource(resource.id)
-                        print(f"✅ [recommend_resources] Resource indexed successfully")
+                        print("✅ [recommend_resources] Resource indexed successfully")
                     except Exception as indexing_error:
                         print(
                             f"⚠️ [recommend_resources] Failed to index resource {resource.id}: {indexing_error}"
@@ -749,14 +749,14 @@ class ActionService:
                     print(f"❌ [recommend_resources] Error type: {type(create_error).__name__}")
                     import traceback
 
-                    print(f"❌ [recommend_resources] Full traceback:")
+                    print("❌ [recommend_resources] Full traceback:")
                     traceback.print_exc()
                     print(f"❌ [recommend_resources] resource_data that failed: {resource_data}")
                     # Continue processing other resources
                     continue
 
             # Record interaction (don't fail if this fails)
-            print(f"\n🔵 [recommend_resources] Recording interaction...")
+            print("\n🔵 [recommend_resources] Recording interaction...")
             print(
                 f"🔵 [recommend_resources] Interaction params - user_id: {user_id}, type: RECOMMENDATION_REQUESTED"
             )
@@ -789,7 +789,7 @@ class ActionService:
                 # Continue - this is not critical
 
             # Return success even if some resources failed to create
-            print(f"\n🔵 [recommend_resources] Final summary:")
+            print("\n🔵 [recommend_resources] Final summary:")
             print(
                 f"🔵 [recommend_resources] Total recommendations received: {len(recommendations)}"
             )
@@ -821,7 +821,7 @@ class ActionService:
             print(f"❌ [recommend_resources] Error type: {type(e).__name__}")
             import traceback
 
-            print(f"❌ [recommend_resources] Full traceback:")
+            print("❌ [recommend_resources] Full traceback:")
             traceback.print_exc()
             return {"status": "error", "message": str(e)}
 
