@@ -447,6 +447,10 @@ class ActionService:
         Generate and store resource recommendations using RAG.
         Expected data: { "query": "...", "topicId": "..." (optional), "courseId": "..." (optional), "limit": 10 }
         """
+        print(f"🔵 [recommend_resources] START - User: {user_id}")
+        print(f"🔵 [recommend_resources] Input data: {data}")
+        print(f"🔵 [recommend_resources] User ID type: {type(user_id)}, value: {user_id}")
+
         try:
             from src.services.rag_service import rag_service
             from src.services.user_memory_service import user_memory_service
@@ -456,21 +460,30 @@ class ActionService:
             course_id = data.get("courseId")
             limit = data.get("limit", 10)
 
+            print(
+                f"🔵 [recommend_resources] Extracted params - query: '{query}', topicId: {topic_id}, courseId: {course_id}, limit: {limit}"
+            )
+
             if not query:
+                print(f"❌ [recommend_resources] ERROR: Query is empty")
                 return {
                     "status": "error",
                     "message": "Query is required for resource recommendations",
                 }
 
             # Get user context
+            print(f"🔵 [recommend_resources] Fetching user context for user: {user_id}")
             user_context = await user_memory_service.get_user_context(user_id)
+            print(f"🔵 [recommend_resources] User context retrieved: {list(user_context.keys())}")
 
             # Add topic/course context if provided
             if topic_id:
+                print(f"🔵 [recommend_resources] Looking up topic: {topic_id}")
                 topic = await db.topic.find_unique(
                     where={"id": topic_id}, include={"module": {"include": {"course": True}}}
                 )
                 if topic:
+                    print(f"🔵 [recommend_resources] Topic found: {topic.title}")
                     user_context["currentTopic"] = {
                         "id": topic.id,
                         "title": topic.title,
@@ -478,48 +491,82 @@ class ActionService:
                     }
                     if topic.module and topic.module.course:
                         course_id = topic.module.course.id
+                        print(f"🔵 [recommend_resources] Course ID from topic: {course_id}")
                         user_context["currentCourse"] = {
                             "id": topic.module.course.id,
                             "title": topic.module.course.title,
                         }
+                else:
+                    print(f"⚠️ [recommend_resources] Topic not found: {topic_id}")
 
             if course_id and "currentCourse" not in user_context:
+                print(f"🔵 [recommend_resources] Looking up course: {course_id}")
                 course = await db.course.find_unique(where={"id": course_id})
                 if course:
+                    print(f"🔵 [recommend_resources] Course found: {course.title}")
                     user_context["currentCourse"] = {
                         "id": course.id,
                         "title": course.title,
                     }
+                else:
+                    print(f"⚠️ [recommend_resources] Course not found: {course_id}")
 
             # Generate recommendations using RAG
+            print(f"🔵 [recommend_resources] Generating recommendations via RAG service...")
+            print(
+                f"🔵 [recommend_resources] RAG params - query: '{query}', user_id: {user_id}, limit: {limit}"
+            )
             recommendations = await rag_service.generate_recommendations(
                 query=query,
                 user_id=user_id,
                 user_context=user_context,
                 limit=limit,
             )
+            print(
+                f"🔵 [recommend_resources] RAG returned {len(recommendations) if recommendations else 0} recommendations"
+            )
 
             # Validate user_id
+            print(f"🔵 [recommend_resources] Validating user_id: {user_id} (type: {type(user_id)})")
             if not user_id:
+                print(f"❌ [recommend_resources] ERROR: User ID is empty")
                 return {
                     "status": "error",
                     "message": "User ID is required for resource recommendations",
                 }
 
             # Verify user exists
+            print(f"🔵 [recommend_resources] Verifying user exists in database...")
             user = await db.user.find_unique(where={"id": user_id})
             if not user:
+                print(f"❌ [recommend_resources] ERROR: User not found: {user_id}")
                 return {
                     "status": "error",
                     "message": f"User with ID {user_id} not found",
                 }
+            print(f"✅ [recommend_resources] User verified: {user.email} (id: {user.id})")
+
+            # Ensure user_id is a string (Prisma requirement)
+            original_user_id = user_id
+            user_id = str(user_id)
+            if original_user_id != user_id:
+                print(
+                    f"🔵 [recommend_resources] Converted user_id from {type(original_user_id)} to string: {user_id}"
+                )
 
             # Validate recommendations
+            print(
+                f"🔵 [recommend_resources] Validating recommendations - count: {len(recommendations) if recommendations else 0}, type: {type(recommendations)}"
+            )
             if not recommendations or not isinstance(recommendations, list):
+                print(
+                    f"❌ [recommend_resources] ERROR: Invalid recommendations - {type(recommendations)}"
+                )
                 return {
                     "status": "error",
                     "message": "No recommendations generated",
                 }
+            print(f"✅ [recommend_resources] Validated {len(recommendations)} recommendations")
 
             # Store recommendations as resources
             stored_resources = []
@@ -536,6 +583,9 @@ class ActionService:
 
                 # Build metadata - ensure it's a valid JSON-serializable dict or None
                 relevance = rec.get("relevance")
+                print(
+                    f"🔵 [recommend_resources] Relevance from rec: {relevance} (type: {type(relevance)})"
+                )
                 metadata = None
                 if relevance is not None and relevance != "":
                     # Only create metadata if relevance has a valid value
@@ -543,19 +593,25 @@ class ActionService:
                     try:
                         json.dumps({"relevance": str(relevance)})  # Validate JSON serialization
                         metadata = {"relevance": str(relevance)}
-                    except (TypeError, ValueError):
+                        print(f"🔵 [recommend_resources] Created metadata: {metadata}")
+                    except (TypeError, ValueError) as e:
+                        print(f"⚠️ [recommend_resources] Failed to create metadata: {e}")
                         metadata = None
+                else:
+                    print(f"🔵 [recommend_resources] No metadata (relevance is None or empty)")
 
                 # Prepare resource data - ensure all required fields are set
                 title = rec.get("title", "Untitled") or "Untitled"
                 url = rec.get("url", "") or ""
+                print(f"🔵 [recommend_resources] Title: '{title}', URL: '{url}'")
 
                 if not url:
-                    print(f"⚠️ Skipping resource with empty URL: {title}")
+                    print(f"⚠️ [recommend_resources] Skipping resource with empty URL: {title}")
                     continue
 
                 # Validate and normalize resource type
                 resource_type = rec.get("type", "OTHER") or "OTHER"
+                print(f"🔵 [recommend_resources] Resource type from rec: {resource_type}")
                 valid_types = [
                     "VIDEO",
                     "ARTICLE",
@@ -567,40 +623,94 @@ class ActionService:
                     "OTHER",
                 ]
                 if resource_type.upper() not in valid_types:
+                    print(
+                        f"⚠️ [recommend_resources] Invalid resource type '{resource_type}', defaulting to OTHER"
+                    )
                     resource_type = "OTHER"
+                else:
+                    resource_type = resource_type.upper()
+                print(f"🔵 [recommend_resources] Final resource type: {resource_type}")
 
                 # Validate and convert score to float
+                raw_score = rec.get("score", 0.5)
+                print(f"🔵 [recommend_resources] Raw score: {raw_score} (type: {type(raw_score)})")
                 try:
-                    score = float(rec.get("score", 0.5))
+                    score = float(raw_score)
                     # Ensure score is between 0 and 1
                     score = max(0.0, min(1.0, score))
-                except (ValueError, TypeError):
+                    print(f"🔵 [recommend_resources] Validated score: {score}")
+                except (ValueError, TypeError) as e:
+                    print(
+                        f"⚠️ [recommend_resources] Score conversion failed: {e}, using default 0.5"
+                    )
                     score = 0.5
 
+                # Build resource data dictionary
+                print(f"🔵 [recommend_resources] Building resource_data dictionary...")
                 resource_data = {
                     "userId": user_id,
                     "title": title,
                     "url": url,
-                    "description": rec.get("description"),
-                    "type": resource_type.upper(),
+                    "type": resource_type,
                     "isRecommended": True,
                     "recommendationScore": score,
                     "recommendationSource": "ai",
                 }
+                print(
+                    f"🔵 [recommend_resources] Base resource_data keys: {list(resource_data.keys())}"
+                )
+                print(
+                    f"🔵 [recommend_resources] userId value: {resource_data['userId']} (type: {type(resource_data['userId'])})"
+                )
 
-                # Add optional fields only if they have values
+                # Add optional fields - include None values explicitly (matches user_memory_service pattern)
+                description = rec.get("description")
+                print(
+                    f"🔵 [recommend_resources] Description: {description} (type: {type(description)})"
+                )
+                resource_data["description"] = description
+
                 if reason:
                     resource_data["recommendationReason"] = reason
+                    print(f"🔵 [recommend_resources] Added recommendationReason: {reason}")
                 if course_id:
                     resource_data["courseId"] = course_id
+                    print(f"🔵 [recommend_resources] Added courseId: {course_id}")
                 if topic_id:
                     resource_data["topicId"] = topic_id
-                # Only include metadata if it's not None (Prisma Python client requirement)
-                if metadata is not None:
-                    resource_data["metadata"] = metadata
+                    print(f"🔵 [recommend_resources] Added topicId: {topic_id}")
+
+                # Include metadata explicitly, even if None (matches user_memory_service pattern)
+                resource_data["metadata"] = metadata
+                print(
+                    f"🔵 [recommend_resources] Added metadata: {metadata} (type: {type(metadata)})"
+                )
+
+                # Log final resource_data structure
+                print(f"🔵 [recommend_resources] Final resource_data structure:")
+                for key, value in resource_data.items():
+                    print(f"   - {key}: {value} (type: {type(value).__name__})")
 
                 try:
+                    # Ensure all required fields are present and properly typed
+                    if not isinstance(user_id, str):
+                        print(f"⚠️ [recommend_resources] Converting user_id to string")
+                        user_id = str(user_id)
+                        resource_data["userId"] = user_id
+
+                    print(f"🔵 [recommend_resources] Attempting to create resource in database...")
+                    print(
+                        f"🔵 [recommend_resources] resource_data keys: {list(resource_data.keys())}"
+                    )
+                    print(
+                        f"🔵 [recommend_resources] resource_data userId: {resource_data.get('userId')} (type: {type(resource_data.get('userId'))})"
+                    )
+
+                    # Create resource - Prisma should handle None values for optional fields
                     resource = await db.resource.create(data=resource_data)
+                    print(
+                        f"✅ [recommend_resources] Successfully created resource: {resource.id} - {resource.title}"
+                    )
 
                     stored_resources.append(
                         {
@@ -612,58 +722,106 @@ class ActionService:
                             "score": score,
                         }
                     )
+                    print(
+                        f"✅ [recommend_resources] Added to stored_resources list (total: {len(stored_resources)})"
+                    )
 
                     # Index the resource in the background (don't fail if indexing fails)
                     try:
                         from src.services.indexing_service import indexing_service
 
+                        print(f"🔵 [recommend_resources] Indexing resource {resource.id}...")
                         await indexing_service.index_resource(resource.id)
+                        print(f"✅ [recommend_resources] Resource indexed successfully")
                     except Exception as indexing_error:
-                        print(f"⚠️ Failed to index resource {resource.id}: {indexing_error}")
+                        print(
+                            f"⚠️ [recommend_resources] Failed to index resource {resource.id}: {indexing_error}"
+                        )
+                        import traceback
+
+                        traceback.print_exc()
                         # Continue processing other resources
 
                 except Exception as create_error:
-                    print(f"⚠️ Failed to create resource '{title}': {create_error}")
+                    print(
+                        f"❌ [recommend_resources] Failed to create resource '{title}': {create_error}"
+                    )
+                    print(f"❌ [recommend_resources] Error type: {type(create_error).__name__}")
+                    import traceback
+
+                    print(f"❌ [recommend_resources] Full traceback:")
+                    traceback.print_exc()
+                    print(f"❌ [recommend_resources] resource_data that failed: {resource_data}")
                     # Continue processing other resources
                     continue
 
             # Record interaction (don't fail if this fails)
+            print(f"\n🔵 [recommend_resources] Recording interaction...")
+            print(
+                f"🔵 [recommend_resources] Interaction params - user_id: {user_id}, type: RECOMMENDATION_REQUESTED"
+            )
             try:
-                await user_memory_service.record_interaction(
+                interaction_metadata = {
+                    "query": query,
+                    "recommendationCount": len(stored_resources),
+                    "topicId": topic_id,
+                    "courseId": course_id,
+                }
+                print(f"🔵 [recommend_resources] Interaction metadata: {interaction_metadata}")
+                interaction_id = await user_memory_service.record_interaction(
                     user_id=user_id,
                     interaction_type="RECOMMENDATION_REQUESTED",
                     entity_type="chat",
-                    metadata={
-                        "query": query,
-                        "recommendationCount": len(stored_resources),
-                        "topicId": topic_id,
-                        "courseId": course_id,
-                    },
+                    metadata=interaction_metadata,
                     importance=0.7,
                 )
+                print(
+                    f"✅ [recommend_resources] Interaction recorded successfully: {interaction_id}"
+                )
             except Exception as interaction_error:
-                print(f"⚠️ Failed to record interaction: {interaction_error}")
+                print(f"⚠️ [recommend_resources] Failed to record interaction: {interaction_error}")
+                print(
+                    f"⚠️ [recommend_resources] Interaction error type: {type(interaction_error).__name__}"
+                )
+                import traceback
+
+                traceback.print_exc()
                 # Continue - this is not critical
 
             # Return success even if some resources failed to create
+            print(f"\n🔵 [recommend_resources] Final summary:")
+            print(
+                f"🔵 [recommend_resources] Total recommendations received: {len(recommendations)}"
+            )
+            print(
+                f"🔵 [recommend_resources] Successfully created resources: {len(stored_resources)}"
+            )
+
             if not stored_resources:
+                print(f"❌ [recommend_resources] ERROR: No resources were created")
                 return {
                     "status": "error",
                     "message": "No resources could be created from recommendations",
                 }
 
-            return {
+            result = {
                 "status": "success",
                 "action": "recommend_resources",
                 "resources": stored_resources,
                 "count": len(stored_resources),
                 "message": f"Successfully generated {len(stored_resources)} resource recommendations",
             }
+            print(
+                f"✅ [recommend_resources] SUCCESS - Returning result with {len(stored_resources)} resources"
+            )
+            return result
 
         except Exception as e:
-            print(f"❌ Recommend Resources Error: {e}")
+            print(f"❌ [recommend_resources] FATAL ERROR: {e}")
+            print(f"❌ [recommend_resources] Error type: {type(e).__name__}")
             import traceback
 
+            print(f"❌ [recommend_resources] Full traceback:")
             traceback.print_exc()
             return {"status": "error", "message": str(e)}
 
