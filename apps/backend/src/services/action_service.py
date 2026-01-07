@@ -541,6 +541,7 @@ class ActionService:
                     "isRecommended": True,
                     "recommendationScore": float(rec.get("score", 0.5)),
                     "recommendationSource": "ai",
+                    "metadata": metadata,  # Always include metadata, even if None
                 }
 
                 # Add optional fields only if they have values
@@ -550,9 +551,6 @@ class ActionService:
                     resource_data["courseId"] = course_id
                 if topic_id:
                     resource_data["topicId"] = topic_id
-                # Only add metadata if it's a valid dict (not None, not empty)
-                if metadata and isinstance(metadata, dict) and len(metadata) > 0:
-                    resource_data["metadata"] = metadata
 
                 resource = await db.resource.create(data=resource_data)
 
