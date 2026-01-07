@@ -687,7 +687,7 @@ class ActionService:
                 )
 
                 # Log final resource_data structure
-                print(f"🔵 [recommend_resources] Final resource_data structure:")
+                print("🔵 [recommend_resources] Final resource_data structure:")
                 for key, value in resource_data.items():
                     print(f"   - {key}: {value} (type: {type(value).__name__})")
 
@@ -798,7 +798,7 @@ class ActionService:
             )
 
             if not stored_resources:
-                print(f"❌ [recommend_resources] ERROR: No resources were created")
+                print("❌ [recommend_resources] ERROR: No resources were created")
                 return {
                     "status": "error",
                     "message": "No resources could be created from recommendations",
