@@ -47,21 +47,38 @@ class UserMemoryService:
             ID of the created interaction record
         """
         try:
-            interaction = await db.userinteractionmemory.create(
-                data={
-                    "userId": user_id,
-                    "interactionType": interaction_type,
-                    "entityType": entity_type,
-                    "entityId": entity_id,
-                    "metadata": metadata,
-                    "importance": importance,
-                }
-            )
+            # Build interaction data - only include metadata if not None
+            interaction_data = {
+                "userId": str(user_id),  # Ensure it's a string
+                "interactionType": interaction_type,
+                "entityType": entity_type,
+                "importance": importance,
+            }
+
+            # Only include optional fields if they have values
+            if entity_id:
+                interaction_data["entityId"] = entity_id
+
+            # Only include metadata if it's not None (Prisma Python requirement)
+            if metadata is not None:
+                # Ensure metadata is JSON-serializable
+                try:
+                    import json
+
+                    json.dumps(metadata)  # Validate JSON serialization
+                    interaction_data["metadata"] = metadata
+                except (TypeError, ValueError) as e:
+                    print(f"Warning: Metadata not JSON-serializable, omitting: {e}")
+
+            interaction = await db.userinteractionmemory.create(data=interaction_data)
 
             return interaction.id
 
         except Exception as e:
             print(f"Error recording interaction: {e}")
+            import traceback
+
+            traceback.print_exc()
             raise HTTPException(status_code=500, detail="Failed to record interaction")
 
     async def get_user_preferences(self, user_id: str, limit: int = 50) -> dict[str, Any]:

@@ -680,11 +680,21 @@ class ActionService:
                     resource_data["topicId"] = topic_id
                     print(f"🔵 [recommend_resources] Added topicId: {topic_id}")
 
-                # Include metadata explicitly, even if None (matches user_memory_service pattern)
-                resource_data["metadata"] = metadata
-                print(
-                    f"🔵 [recommend_resources] Added metadata: {metadata} (type: {type(metadata)})"
-                )
+                # Handle metadata - only include if not None (Prisma Python requirement)
+                if metadata is not None:
+                    # Ensure metadata is JSON-serializable
+                    try:
+                        json.dumps(metadata)  # Validate JSON serialization
+                        resource_data["metadata"] = metadata
+                        print(
+                            f"🔵 [recommend_resources] Added metadata: {metadata} (type: {type(metadata)})"
+                        )
+                    except (TypeError, ValueError) as e:
+                        print(
+                            f"⚠️ [recommend_resources] Metadata not JSON-serializable: {e}, omitting"
+                        )
+                else:
+                    print("🔵 [recommend_resources] Metadata is None, omitting from resource_data")
 
                 # Log final resource_data structure
                 print("🔵 [recommend_resources] Final resource_data structure:")
@@ -705,6 +715,16 @@ class ActionService:
                     print(
                         f"🔵 [recommend_resources] resource_data userId: {resource_data.get('userId')} (type: {type(resource_data.get('userId'))})"
                     )
+                    print(
+                        f"🔵 [recommend_resources] resource_data has metadata: {'metadata' in resource_data}"
+                    )
+                    if "metadata" in resource_data:
+                        print(
+                            f"🔵 [recommend_resources] metadata value: {resource_data['metadata']} (type: {type(resource_data['metadata'])})"
+                        )
+
+                    # Ensure userId is definitely a string
+                    resource_data["userId"] = str(resource_data["userId"])
 
                     # Create resource - Prisma should handle None values for optional fields
                     resource = await db.resource.create(data=resource_data)
