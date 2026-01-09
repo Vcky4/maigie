@@ -242,10 +242,10 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
             # Call LLM with Google Search Grounding enabled
             # Google Search Grounding allows Gemini to search the web and return real URLs
             temp_model = genai.GenerativeModel("models/gemini-flash-latest")
-            # Enable Google Search Retrieval tool for web search
+            # Enable Google Search tool for web search
             response = await temp_model.generate_content_async(
                 recommendation_prompt,
-                tools=[{"google_search_retrieval": {}}],
+                tools=[{"google_search": {}}],
             )
             response_text = response
 
