@@ -11,17 +11,17 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
+from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.resources import (
     ResourceCreate,
+    ResourceRecommendationItem,
     ResourceRecommendationRequest,
     ResourceRecommendationResponse,
-    ResourceRecommendationItem,
 )
+from src.services.indexing_service import indexing_service
 from src.services.rag_service import rag_service
 from src.services.user_memory_service import user_memory_service
-from src.services.indexing_service import indexing_service
-from src.core.database import db
 
 router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 

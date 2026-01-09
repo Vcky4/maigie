@@ -25,6 +25,8 @@ from starlette.middleware.sessions import SessionMiddleware
 # --- Import the database helper functions ---
 from src.core.database import check_db_health, connect_db, disconnect_db
 from src.routes import auth, chat, courses
+from src.routes.notes import router as notes_router
+from src.routes.upload import router as upload_router
 
 from .config import get_settings
 from .core.cache import cache
@@ -51,8 +53,6 @@ from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
-from src.routes.notes import router as notes_router
-from src.routes.upload import router as upload_router
 from .routes.waitlist import router as waitlist_router
 from .routes.websockets import router as websockets_router
 from .utils.dependencies import (

@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi import UploadFile, HTTPException
+
+import pytest
+from fastapi import HTTPException, UploadFile
+
 from src.services.storage_service import StorageService
 
 

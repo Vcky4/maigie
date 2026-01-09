@@ -3,7 +3,7 @@ Pydantic models for Note management.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -19,14 +19,14 @@ class NoteTagResponse(BaseModel):
 class NoteAttachmentCreate(BaseModel):
     filename: str
     url: str
-    size: Optional[int] = None
+    size: int | None = None
 
 
 class NoteAttachmentResponse(BaseModel):
     id: str
     filename: str
     url: str
-    size: Optional[int] = None
+    size: int | None = None
     createdAt: datetime
 
     class Config:
@@ -35,34 +35,34 @@ class NoteAttachmentResponse(BaseModel):
 
 class NoteBase(BaseModel):
     title: str
-    content: Optional[str] = None
-    summary: Optional[str] = None
-    courseId: Optional[str] = None
-    topicId: Optional[str] = None
+    content: str | None = None
+    summary: str | None = None
+    courseId: str | None = None
+    topicId: str | None = None
     archived: bool = False
-    voiceRecordingUrl: Optional[str] = None
+    voiceRecordingUrl: str | None = None
 
 
 class NoteCreate(NoteBase):
-    tags: Optional[List[str]] = None
+    tags: list[str] | None = None
 
 
 class NoteUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
-    summary: Optional[str] = None
-    courseId: Optional[str] = None
-    topicId: Optional[str] = None
-    archived: Optional[bool] = None
-    voiceRecordingUrl: Optional[str] = None
-    tags: Optional[List[str]] = None
+    title: str | None = None
+    content: str | None = None
+    summary: str | None = None
+    courseId: str | None = None
+    topicId: str | None = None
+    archived: bool | None = None
+    voiceRecordingUrl: str | None = None
+    tags: list[str] | None = None
 
 
 class NoteResponse(NoteBase):
     id: str
     userId: str
-    tags: Optional[List[NoteTagResponse]] = []
-    attachments: Optional[List[NoteAttachmentResponse]] = []
+    tags: list[NoteTagResponse] | None = []
+    attachments: list[NoteAttachmentResponse] | None = []
     createdAt: datetime
     updatedAt: datetime
 
@@ -71,7 +71,7 @@ class NoteResponse(NoteBase):
 
 
 class NoteListResponse(BaseModel):
-    items: List[NoteResponse]
+    items: list[NoteResponse]
     total: int
     page: int
     size: int

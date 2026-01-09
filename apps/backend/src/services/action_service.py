@@ -91,8 +91,8 @@ class ActionService:
         Expected data: { "title": "...", "content": "...", "topicId": "...", "summary": "..." (optional) }
         """
         try:
-            from src.services import note_service
             from src.models.notes import NoteCreate
+            from src.services import note_service
 
             # Validate topicId if provided
             topic_id = data.get("topicId")
@@ -147,8 +147,8 @@ class ActionService:
         Expected data: { "noteId": "..." }
         """
         try:
-            from src.services.llm_service import llm_service
             from src.models.notes import NoteUpdate
+            from src.services.llm_service import llm_service
 
             note_id = data.get("noteId")
             print(f"📥 Received action_data: {data}")
@@ -324,8 +324,8 @@ class ActionService:
         Expected data: { "noteId": "...", "tags": ["Tag1", "Tag2"] } (tags optional, will be generated if not provided)
         """
         try:
-            from src.services.llm_service import llm_service
             from src.models.notes import NoteUpdate
+            from src.services.llm_service import llm_service
 
             note_id = data.get("noteId")
             print(f"📥 Received action_data for add_tags: {data}")

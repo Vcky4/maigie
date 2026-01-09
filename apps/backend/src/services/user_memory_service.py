@@ -8,11 +8,13 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 
+from prisma import Json
 from src.core.database import db
 
 
@@ -29,7 +31,7 @@ class UserMemoryService:
         interaction_type: str,
         entity_type: str,
         entity_id: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | Any | None = None,
         importance: float = 0.5,
     ) -> str:
         """
@@ -40,46 +42,78 @@ class UserMemoryService:
             interaction_type: Type of interaction (see InteractionType enum)
             entity_type: Type of entity ("resource", "course", "note", "goal", "chat")
             entity_id: Optional ID of the entity
-            metadata: Optional additional context
+            metadata: Optional additional context (dict or Pydantic model)
             importance: Importance score (0.0 to 1.0) for this interaction
 
         Returns:
             ID of the created interaction record
         """
         try:
-            # Build interaction data - only include metadata if not None
+            # 1. Sanitize and Wrap Metadata
+            # Prisma's Json type is strict. We must ensure:
+            # a) The data is a pure Python dictionary (no Pydantic models)
+            # b) All values are JSON primitives (no UUIDs or Datetime objects)
+            # c) It is wrapped in the explicit 'Json' type helper to satisfy the Union validator
+
+            prisma_metadata = Json({})
+
+            if metadata:
+                try:
+                    # Step A: Normalize input to a standard dict
+                    if hasattr(metadata, "model_dump"):
+                        temp = metadata.model_dump()
+                    elif hasattr(metadata, "dict"):
+                        temp = metadata.dict()
+                    elif isinstance(metadata, str):
+                        try:
+                            temp = json.loads(metadata)
+                        except Exception:  # <--- FIXED: Added specific exception
+                            temp = {"raw_content": metadata}
+                    elif isinstance(metadata, dict):
+                        temp = metadata
+                    else:
+                        temp = {"value": str(metadata)}
+
+                    # Step B: Deep Sanitize
+                    # We round-trip through json.dumps with default=str.
+                    # This converts complex types (UUID, Datetime) into strings that DB can store.
+                    clean_dict = json.loads(json.dumps(temp, default=str))
+
+                    # Step C: Wrap in Prisma Json type
+                    prisma_metadata = Json(clean_dict)
+
+                except Exception as e:
+                    print(f"Metadata sanitization warning: {e}")
+                    # Fallback to a safe error object rather than crashing
+                    prisma_metadata = Json({"error": "Invalid metadata format", "details": str(e)})
+
+            # 2. Build Data Payload
+            # We use the 'Unchecked' strategy (providing the scalar userId string).
+            # This is efficient and avoids the ambiguity of the 'user' relation object.
             interaction_data = {
-                "userId": str(user_id),  # Ensure it's a string
+                "userId": str(user_id),
                 "interactionType": interaction_type,
                 "entityType": entity_type,
-                "importance": importance,
+                "importance": float(importance),
+                "metadata": prisma_metadata,
             }
 
-            # Only include optional fields if they have values
+            # 3. Add Optional Entity ID
             if entity_id:
-                interaction_data["entityId"] = entity_id
+                interaction_data["entityId"] = str(entity_id)
 
-            # Only include metadata if it's not None (Prisma Python requirement)
-            if metadata is not None:
-                # Ensure metadata is JSON-serializable
-                try:
-                    import json
-
-                    json.dumps(metadata)  # Validate JSON serialization
-                    interaction_data["metadata"] = metadata
-                except (TypeError, ValueError) as e:
-                    print(f"Warning: Metadata not JSON-serializable, omitting: {e}")
-
+            # 4. Create Record
             interaction = await db.userinteractionmemory.create(data=interaction_data)
-
             return interaction.id
 
         except Exception as e:
+            # Log error strictly but return empty string to handle failure gracefully.
+            # This ensures the user's main action (e.g., viewing a resource) isn't blocked
+            # just because the analytics/tracking failed.
             print(f"Error recording interaction: {e}")
-            import traceback
-
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail="Failed to record interaction")
+            # import traceback
+            # traceback.print_exc()
+            return ""
 
     async def get_user_preferences(self, user_id: str, limit: int = 50) -> dict[str, Any]:
         """
@@ -124,7 +158,6 @@ class UserMemoryService:
                 # Extract entity information
                 entity_type = interaction.entityType
                 entity_id = interaction.entityId
-                metadata = interaction.metadata or {}
 
                 if entity_type == "resource" and entity_id:
                     # Try to get resource type
@@ -204,7 +237,7 @@ class UserMemoryService:
                 take=limit,
             )
 
-            # Filter by date (Prisma doesn't support date comparison in where clause easily)
+            # Filter by date in Python (Prisma doesn't support easy complex date filtering in where clause)
             filtered = [i for i in interactions if i.createdAt >= threshold_date]
 
             return [

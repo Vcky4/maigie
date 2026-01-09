@@ -71,7 +71,7 @@ async def get_credit_limits(tier: str) -> dict[str, int]:
 
 
 async def initialize_user_credits(
-    user: User, period_start: Optional[datetime] = None, period_end: Optional[datetime] = None
+    user: User, period_start: datetime | None = None, period_end: datetime | None = None
 ) -> User:
     """
     Initialize or reset user credits for a new billing period.
@@ -128,7 +128,7 @@ async def initialize_user_credits(
     return updated_user
 
 
-async def reset_daily_credits_if_needed(user: User, db_client: Optional[Prisma] = None) -> User:
+async def reset_daily_credits_if_needed(user: User, db_client: Prisma | None = None) -> User:
     """
     Reset daily credits if a new day has started (for FREE tier users).
 
@@ -181,7 +181,7 @@ async def reset_daily_credits_if_needed(user: User, db_client: Optional[Prisma] 
     return user
 
 
-async def ensure_credit_period(user: User, db_client: Optional[Prisma] = None) -> User:
+async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> User:
     """
     Ensure user has an active credit period. If period has expired or doesn't exist,
     initialize a new one.
@@ -243,8 +243,8 @@ async def ensure_credit_period(user: User, db_client: Optional[Prisma] = None) -
 
 
 async def check_credit_availability(
-    user: User, credits_needed: int, db_client: Optional[Prisma] = None
-) -> tuple[bool, Optional[str]]:
+    user: User, credits_needed: int, db_client: Prisma | None = None
+) -> tuple[bool, str | None]:
     """
     Check if user has enough credits available.
 
@@ -303,7 +303,7 @@ async def check_credit_availability(
 
 
 async def consume_credits(
-    user: User, credits: int, operation: str = "unknown", db_client: Optional[Prisma] = None
+    user: User, credits: int, operation: str = "unknown", db_client: Prisma | None = None
 ) -> User:
     """
     Consume credits for a user operation.
@@ -388,7 +388,7 @@ async def consume_credits(
     return updated_user
 
 
-async def get_credit_usage(user: User, db_client: Optional[Prisma] = None) -> dict:
+async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
     """
     Get current credit usage information for a user.
 
@@ -458,7 +458,7 @@ async def get_credit_usage(user: User, db_client: Optional[Prisma] = None) -> di
 
 
 async def reset_credits_for_period_start(
-    user: User, period_start: datetime, period_end: datetime, db_client: Optional[Prisma] = None
+    user: User, period_start: datetime, period_end: datetime, db_client: Prisma | None = None
 ) -> User:
     """
     Reset credits when a new subscription period starts.
