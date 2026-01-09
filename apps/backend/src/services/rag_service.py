@@ -204,21 +204,7 @@ class RAGService:
                 "\n".join(context_parts) if context_parts else "No specific context available."
             )
 
-            # 3. Perform actual web search to get real resources
-            search_results = await web_search_service.search(query=query, max_results=limit * 2)
-
-            if not search_results:
-                # If no search results, return empty list
-                return []
-
-            # 4. Use LLM to format, filter, and rank the real search results
-            search_results_str = "\n".join(
-                [
-                    f"{idx + 1}. Title: {r['title']}\n   URL: {r['url']}\n   Description: {r['description'][:300]}"
-                    for idx, r in enumerate(search_results[: limit * 2])
-                ]
-            )
-
+            # 3. Use Gemini with Google Search Grounding to find real resources
             recommendation_prompt = f"""You are an AI assistant helping a student find educational resources.
 
 User Query: {query}
@@ -226,38 +212,41 @@ User Query: {query}
 Context about the user:
 {context_str}
 
-Below are real web search results. Your task is to:
-1. Select the most relevant resources from the search results
-2. Format them properly with accurate information
-3. Infer the resource type (VIDEO, ARTICLE, BOOK, COURSE, DOCUMENT, WEBSITE, PODCAST, or OTHER)
-4. Provide a clear explanation of why each resource is relevant
-
-Search Results:
-{search_results_str}
+Based on the user's query and context, search the web and generate a list of educational resource recommendations.
+For each recommendation, provide:
+- Title (from the actual web page)
+- URL (the real URL from your web search - DO NOT make up URLs)
+- Description (summarize why this resource is useful)
+- Resource type (VIDEO, ARTICLE, BOOK, COURSE, DOCUMENT, WEBSITE, PODCAST, or OTHER)
+- Relevance explanation (why this resource is relevant to the user)
 
 IMPORTANT RULES:
-- Use ONLY the URLs from the search results above. DO NOT make up URLs.
-- Use the exact titles and descriptions from the search results
+- Use ONLY real URLs from your web search. DO NOT use placeholder URLs like "https://example.com"
 - Infer resource type based on URL domain and content (e.g., youtube.com = VIDEO, coursera.org = COURSE)
 - Select the {limit} most relevant resources for the user's query and context
-- Provide a clear "relevance" explanation for each resource
+- Focus on high-quality educational resources that align with the user's learning goals
 
 Format your response as a JSON array with this structure:
 [
   {{
-    "title": "Exact title from search results",
-    "url": "Exact URL from search results",
-    "description": "Description from search results (can be shortened/summarized)",
+    "title": "Resource Title",
+    "url": "https://real-url.com/resource",
+    "description": "Why this resource is useful",
     "type": "VIDEO|ARTICLE|BOOK|COURSE|DOCUMENT|WEBSITE|PODCAST|OTHER",
     "relevance": "Explanation of why this resource is relevant to the user"
   }}
 ]
 
-Return exactly {limit} recommendations, selecting the most relevant ones from the search results."""
+Return exactly {limit} high-quality recommendations with real URLs from your web search."""
 
-            # Call LLM to format and rank the real search results
+            # Call LLM with Google Search Grounding enabled
+            # Google Search Grounding allows Gemini to search the web and return real URLs
             temp_model = genai.GenerativeModel("models/gemini-flash-latest")
-            response = await temp_model.generate_content_async(recommendation_prompt)
+            # Enable Google Search Retrieval tool for web search
+            response = await temp_model.generate_content_async(
+                recommendation_prompt,
+                tools=[{"google_search_retrieval": {}}],
+            )
             response_text = response
 
             # Extract JSON from response
@@ -272,53 +261,25 @@ Return exactly {limit} recommendations, selecting the most relevant ones from th
                 try:
                     recommendations = json.loads(response_text_str)
                 except json.JSONDecodeError:
-                    # If JSON parsing fails, fall back to using search results directly
+                    # If JSON parsing fails, return empty list
                     recommendations = []
-                    for result in search_results[:limit]:
-                        recommendations.append(
-                            {
-                                "title": result.get("title", "Untitled"),
-                                "url": result.get("url", ""),
-                                "description": result.get("description", "")[:300],
-                                "type": web_search_service.infer_resource_type(
-                                    result.get("url", ""),
-                                    result.get("title", ""),
-                                    result.get("description", ""),
-                                ),
-                                "relevance": f"Found via web search for: {query}",
-                            }
-                        )
 
-            # 5. Validate URLs are real (not example.com)
+            # 4. Validate URLs are real (not example.com) and infer resource types
             validated_recommendations = []
             for rec in recommendations:
                 url = rec.get("url", "")
                 # Skip if URL is fake/placeholder
                 if url and not url.startswith("https://example.com"):
+                    # Ensure resource type is set
+                    if not rec.get("type") or rec.get("type") == "OTHER":
+                        rec["type"] = web_search_service.infer_resource_type(
+                            url,
+                            rec.get("title", ""),
+                            rec.get("description", ""),
+                        )
                     validated_recommendations.append(rec)
 
-            # If we don't have enough validated recommendations, add more from search results
-            if len(validated_recommendations) < limit:
-                used_urls = {rec.get("url") for rec in validated_recommendations}
-                for result in search_results:
-                    if result.get("url") not in used_urls and result.get("url"):
-                        validated_recommendations.append(
-                            {
-                                "title": result.get("title", "Untitled"),
-                                "url": result.get("url", ""),
-                                "description": result.get("description", "")[:300],
-                                "type": web_search_service.infer_resource_type(
-                                    result.get("url", ""),
-                                    result.get("title", ""),
-                                    result.get("description", ""),
-                                ),
-                                "relevance": f"Found via web search for: {query}",
-                            }
-                        )
-                        if len(validated_recommendations) >= limit:
-                            break
-
-            # 6. Score and rank recommendations
+            # 5. Score and rank recommendations
             scored_recommendations = []
             for rec in validated_recommendations[:limit]:
                 # Calculate score based on relevance to query and user context
