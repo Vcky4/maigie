@@ -51,10 +51,10 @@ async def list_notes(
     db: DBDep,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    search: Optional[str] = None,
-    tag: Optional[str] = None,
-    course_id: Optional[str] = Query(None, alias="courseId"),
-    archived: Optional[bool] = False,
+    search: str | None = None,
+    tag: str | None = None,
+    course_id: str | None = Query(None, alias="courseId"),
+    archived: bool | None = False,
 ):
     """
     List user notes with filtering and pagination.

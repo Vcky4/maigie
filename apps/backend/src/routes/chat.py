@@ -232,7 +232,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
             ) // 4
             # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 2000  # Conservative estimate for response
+            estimated_output_tokens = 1000  # Conservative estimate for response
             estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
 
             # Get user object for credit check
@@ -248,11 +248,29 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 )
                 if not is_available:
                     credit_usage = await get_credit_usage(user_obj)
-                    error_message = (
-                        f"Credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-                        f"of {credit_usage['hard_cap']:,} credits. "
-                        f"Period resets: {credit_usage['period_end']}"
-                    )
+
+                    # Determine if it's daily or monthly limit
+                    tier = str(user_obj.tier) if user_obj.tier else "FREE"
+                    daily_limit = credit_usage.get("daily_limit", 0)
+                    used_today = credit_usage.get("credits_used_today", 0)
+
+                    if (
+                        tier == "FREE"
+                        and daily_limit > 0
+                        and (used_today + estimated_total_tokens > daily_limit)
+                    ):
+                        error_message = (
+                            f"Daily credit limit exceeded. You've used {used_today:,} "
+                            f"of {daily_limit:,} daily credits. "
+                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
+                        )
+                    else:
+                        error_message = (
+                            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+                            f"of {credit_usage['hard_cap']:,} credits. "
+                            f"Period resets: {credit_usage['period_end']}"
+                        )
+
                     await manager.send_personal_message(f"⚠️ **System:** {error_message}", user.id)
                     await websocket.close()
                     return
@@ -479,6 +497,33 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                         print(f"🔍 Final action_data before execution: {action_data}")
 
+                    # Handle recommend_resources action - enrich with context
+                    if action_type == "recommend_resources":
+                        # Ensure topicId and courseId come from context if available
+                        if enriched_context and enriched_context.get("topicId"):
+                            action_data["topicId"] = enriched_context["topicId"]
+                            print(
+                                f"📝 Set topicId from enriched_context for resource recommendation: {enriched_context['topicId']}"
+                            )
+                        elif context and context.get("topicId"):
+                            action_data["topicId"] = context["topicId"]
+                            print(
+                                f"📝 Set topicId from original context for resource recommendation: {context['topicId']}"
+                            )
+
+                        if enriched_context and enriched_context.get("courseId"):
+                            action_data["courseId"] = enriched_context["courseId"]
+                            print(
+                                f"📝 Set courseId from enriched_context for resource recommendation: {enriched_context['courseId']}"
+                            )
+                        elif context and context.get("courseId"):
+                            action_data["courseId"] = context["courseId"]
+                            print(
+                                f"📝 Set courseId from original context for resource recommendation: {context['courseId']}"
+                            )
+
+                        print(f"🔍 Final action_data for recommend_resources: {action_data}")
+
                     # 3. Execute Action
                     print(f"🚀 Executing {action_type} with action_data: {action_data}")
                     action_result = await action_service.execute_action(
@@ -498,13 +543,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         flags=re.DOTALL,
                     ).strip()
 
-                    # 5. Append a confirmation message if successful
-                    if action_result and action_result.get("status") == "success":
-                        clean_response += f"\n\n✅ **System:** {action_result['message']}"
-                    elif action_result and action_result.get("status") == "error":
-                        clean_response += (
-                            f"\n\n⚠️ **System:** {action_result.get('message', 'Action failed')}"
-                        )
+                    # For resource recommendations, add a helpful message
+                    if (
+                        action_type == "recommend_resources"
+                        and action_result.get("status") == "success"
+                    ):
+                        resources_count = action_result.get("count", 0)
+                        if resources_count > 0:
+                            clean_response += f"\n\n✅ I've found {resources_count} resource{'s' if resources_count > 1 else ''} for you! They've been saved to your resources."
+
+                    # 5. Append a confirmation message if successful (skip for recommend_resources as we already added a message)
+                    if action_type != "recommend_resources":
+                        if action_result and action_result.get("status") == "success":
+                            clean_response += f"\n\n✅ **System:** {action_result['message']}"
+                        elif action_result and action_result.get("status") == "error":
+                            clean_response += (
+                                f"\n\n⚠️ **System:** {action_result.get('message', 'Action failed')}"
+                            )
 
                 except json.JSONDecodeError as e:
                     print(f"❌ Action JSON Parse Error: {e}")

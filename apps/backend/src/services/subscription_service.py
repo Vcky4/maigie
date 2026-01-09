@@ -22,8 +22,8 @@ from prisma.models import User
 
 from ..config import Settings, get_settings
 from ..core.database import db
-from ..services.email import send_subscription_success_email
 from ..services.credit_service import reset_credits_for_period_start
+from ..services.email import send_subscription_success_email
 
 logger = logging.getLogger(__name__)
 

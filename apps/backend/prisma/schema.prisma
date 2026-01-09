@@ -45,6 +45,33 @@ enum UserRole {
   ADMIN
 }
 
+enum ResourceType {
+  VIDEO
+  ARTICLE
+  BOOK
+  COURSE
+  DOCUMENT
+  WEBSITE
+  PODCAST
+  OTHER
+}
+
+enum InteractionType {
+  RESOURCE_CLICK
+  RESOURCE_VIEW
+  RESOURCE_BOOKMARK
+  RESOURCE_FEEDBACK
+  COURSE_VIEW
+  NOTE_CREATE
+  NOTE_UPDATE
+  GOAL_CREATE
+  GOAL_UPDATE
+  CHAT_MESSAGE
+  RECOMMENDATION_REQUESTED
+  RECOMMENDATION_ACCEPTED
+  RECOMMENDATION_REJECTED
+}
+
 // ==========================================
 //  USER & AUTH
 // ==========================================
@@ -90,6 +117,8 @@ model User {
   preferences UserPreferences?
   courses     Course[]
   notes       Note[]
+  resources   Resource[]
+  userInteractionMemories UserInteractionMemory[]
 
   // NEW: Chat Relations
   chatSessions ChatSession[]
@@ -134,6 +163,7 @@ model Course {
 
   modules Module[]
   notes   Note[]
+  resources Resource[] // Resources linked to this course
 
   @@index([userId])
   @@index([userId, archived])
@@ -170,6 +200,7 @@ model Topic {
   estimatedHours Float?
 
   note Note?
+  resources Resource[] // Resources linked to this topic
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -298,4 +329,105 @@ model NoteAttachment {
   createdAt DateTime @default(now())
 
   @@index([noteId])
+}
+
+// ==========================================
+//  RESOURCES MODULE
+// ==========================================
+
+model Resource {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  url         String
+  description String?
+  type        ResourceType @default(OTHER)
+  metadata    Json? // Additional metadata (author, duration, etc.)
+
+  // Recommendation fields
+  isRecommended Boolean @default(false)
+  recommendationScore Float? // Score from 0.0 to 1.0
+  recommendationSource String? // "ai", "manual", "similarity"
+  recommendationReason String? // Why this resource was recommended (e.g., "for topic X", "related to course Y")
+
+  // Optional links to courses/topics (why this resource is relevant)
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  topicId  String?
+  topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  // User interaction tracking
+  clickCount Int @default(0)
+  bookmarkCount Int @default(0)
+  lastAccessedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  embeddings Embedding[]
+
+  @@index([userId])
+  @@index([userId, isRecommended])
+  @@index([type])
+  @@index([courseId])
+  @@index([topicId])
+}
+
+// ==========================================
+//  EMBEDDINGS & VECTOR SEARCH MODULE
+// ==========================================
+
+model Embedding {
+  id String @id @default(cuid())
+
+  // Object reference (polymorphic)
+  objectType String // "resource", "note", "course", "topic"
+  objectId   String // ID of the resource/note/course/topic
+
+  // Vector embedding (stored as JSON array, will be converted to pgvector)
+  // Using String for now - will need pgvector extension for proper vector type
+  vector Json // Array of floats representing the embedding vector
+
+  // Content that was embedded (for debugging/re-indexing)
+  content String? // The text content that was embedded
+  metadata Json? // Additional metadata about the embedding
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  resourceId String?
+  resource   Resource? @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([objectType, objectId])
+  @@index([resourceId])
+}
+
+// ==========================================
+//  USER MEMORY & PERSONALIZATION MODULE
+// ==========================================
+
+model UserInteractionMemory {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  interactionType InteractionType
+  entityType String // "resource", "course", "note", "goal", "chat"
+  entityId String? // ID of the entity interacted with
+
+  // Interaction details
+  metadata Json? // Additional context (e.g., search query, time spent, feedback score)
+  importance Float @default(0.5) // 0.0 to 1.0 - how important this interaction is for personalization
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, interactionType])
+  @@index([userId, createdAt])
+  @@index([entityType, entityId])
 }

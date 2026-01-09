@@ -6,10 +6,8 @@ Executes structured actions triggered by the AI (e.g., creating courses).
 import json
 import re
 
-from prisma import Prisma
-from prisma.models import User
-
-db = Prisma()
+from prisma import Json  # <--- FIXED: Added this import
+from src.core.database import db
 
 
 class ActionService:
@@ -18,9 +16,6 @@ class ActionService:
         Route the action to the correct handler.
         """
         print(f"⚡ EXECUTING ACTION: {action_type} for User {user_id}")
-
-        if not db.is_connected():
-            await db.connect()
 
         if action_type == "create_course":
             return await self.create_course(action_data, user_id)
@@ -32,6 +27,8 @@ class ActionService:
             return await self.add_summary(action_data, user_id)
         elif action_type == "add_tags":
             return await self.add_tags(action_data, user_id)
+        elif action_type == "recommend_resources":
+            return await self.recommend_resources(action_data, user_id)
 
         # Add more actions here later (create_goal, create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
@@ -94,8 +91,8 @@ class ActionService:
         Expected data: { "title": "...", "content": "...", "topicId": "...", "summary": "..." (optional) }
         """
         try:
-            from src.services import note_service
             from src.models.notes import NoteCreate
+            from src.services import note_service
 
             # Validate topicId if provided
             topic_id = data.get("topicId")
@@ -108,7 +105,10 @@ class ActionService:
                     print(f"🔍 Database has {len(all_topics)} topics (showing first as sample)")
                     if all_topics:
                         print(f"🔍 Sample topic ID format: {all_topics[0].id}")
-                    return {"status": "error", "message": f"Topic with ID {topic_id} not found"}
+                    return {
+                        "status": "error",
+                        "message": f"Topic with ID {topic_id} not found",
+                    }
 
                 # Check if note already exists for this topic
                 existing_note = await db.note.find_first(where={"topicId": topic_id})
@@ -151,7 +151,6 @@ class ActionService:
         """
         try:
             from src.services.llm_service import llm_service
-            from src.models.notes import NoteUpdate
 
             note_id = data.get("noteId")
             print(f"📥 Received action_data: {data}")
@@ -191,7 +190,10 @@ class ActionService:
                             "message": f"Topic '{topic.title}' exists but has no note. Please create a note first.",
                         }
                 else:
-                    return {"status": "error", "message": f"Note with ID {note_id} not found"}
+                    return {
+                        "status": "error",
+                        "message": f"Note with ID {note_id} not found",
+                    }
 
             # Verify ownership
             if note.userId != user_id:
@@ -204,7 +206,8 @@ class ActionService:
             context = {}
             if note.topicId:
                 topic = await db.topic.find_unique(
-                    where={"id": note.topicId}, include={"module": {"include": {"course": True}}}
+                    where={"id": note.topicId},
+                    include={"module": {"include": {"course": True}}},
                 )
                 if topic:
                     context["topicTitle"] = topic.title
@@ -284,14 +287,20 @@ class ActionService:
                     note = topic.note
                     note_id = note.id  # Update note_id to the actual note ID
                 else:
-                    return {"status": "error", "message": f"Note with ID {note_id} not found"}
+                    return {
+                        "status": "error",
+                        "message": f"Note with ID {note_id} not found",
+                    }
 
             # Verify ownership
             if note.userId != user_id:
                 return {"status": "error", "message": "Note not found or access denied"}
 
             if not note.content:
-                return {"status": "error", "message": "Note has no content to summarize"}
+                return {
+                    "status": "error",
+                    "message": "Note has no content to summarize",
+                }
 
             # Strip any action blocks from content before summarizing
             cleaned_content = re.sub(
@@ -328,7 +337,6 @@ class ActionService:
         """
         try:
             from src.services.llm_service import llm_service
-            from src.models.notes import NoteUpdate
 
             note_id = data.get("noteId")
             print(f"📥 Received action_data for add_tags: {data}")
@@ -374,10 +382,16 @@ class ActionService:
                             "message": f"Topic '{topic.title}' exists but has no note. Please create a note first.",
                         }
                 else:
-                    return {"status": "error", "message": f"Note with ID {note_id} not found"}
+                    return {
+                        "status": "error",
+                        "message": f"Note with ID {note_id} not found",
+                    }
 
             if not note:
-                return {"status": "error", "message": f"Note with ID {note_id} not found"}
+                return {
+                    "status": "error",
+                    "message": f"Note with ID {note_id} not found",
+                }
 
             # Verify ownership
             if note.userId != user_id:
@@ -440,6 +454,203 @@ class ActionService:
 
         except Exception as e:
             print(f"❌ Add Tags Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+    async def recommend_resources(self, data: dict, user_id: str):
+        """
+        Generate and store resource recommendations using RAG.
+        Expected data: { "query": "...", "topicId": "..." (optional), "courseId": "..." (optional), "limit": 10 }
+        """
+        print(f"🔵 [recommend_resources] START - User: {user_id}")
+
+        try:
+            from src.services.rag_service import rag_service
+            from src.services.user_memory_service import user_memory_service
+
+            query = data.get("query", "")
+            topic_id = data.get("topicId")
+            course_id = data.get("courseId")
+            limit = data.get("limit", 10)
+
+            if not query:
+                return {
+                    "status": "error",
+                    "message": "Query is required for resource recommendations",
+                }
+
+            # Get user context
+            user_context = await user_memory_service.get_user_context(user_id)
+
+            # Add topic/course context if provided
+            if topic_id:
+                topic = await db.topic.find_unique(
+                    where={"id": topic_id},
+                    include={"module": {"include": {"course": True}}},
+                )
+                if topic:
+                    user_context["currentTopic"] = {
+                        "id": topic.id,
+                        "title": topic.title,
+                        "content": topic.content,
+                    }
+                    if topic.module and topic.module.course:
+                        course_id = topic.module.course.id
+                        user_context["currentCourse"] = {
+                            "id": topic.module.course.id,
+                            "title": topic.module.course.title,
+                        }
+
+            if course_id and "currentCourse" not in user_context:
+                course = await db.course.find_unique(where={"id": course_id})
+                if course:
+                    user_context["currentCourse"] = {
+                        "id": course.id,
+                        "title": course.title,
+                    }
+
+            # Generate recommendations using RAG
+            recommendations = await rag_service.generate_recommendations(
+                query=query,
+                user_id=user_id,
+                user_context=user_context,
+                limit=limit,
+            )
+
+            # Validate user_id
+            if not user_id:
+                return {
+                    "status": "error",
+                    "message": "User ID is required for resource recommendations",
+                }
+
+            # Verify user exists
+            user = await db.user.find_unique(where={"id": user_id})
+            if not user:
+                return {
+                    "status": "error",
+                    "message": f"User with ID {user_id} not found",
+                }
+
+            # Ensure user_id is a string
+            user_id = str(user_id)
+
+            if not recommendations or not isinstance(recommendations, list):
+                return {
+                    "status": "error",
+                    "message": "No recommendations generated",
+                }
+
+            # Store recommendations as resources
+            stored_resources = []
+            for rec in recommendations:
+                try:
+                    # FIX: Strict Metadata Handling
+                    # We ensure metadata is a valid Json object for Prisma
+                    prisma_metadata = Json({})
+                    relevance = rec.get("relevance")
+                    if relevance:
+                        # Create dict and wrap in Json()
+                        clean_meta = {"relevance": str(relevance)}
+                        prisma_metadata = Json(clean_meta)
+
+                    # Build Resource Data
+                    # FIX: Use 'userId' (scalar) only. Avoid 'user' relation object.
+                    resource_data = {
+                        "userId": str(user_id),
+                        "title": rec.get("title", "Untitled") or "Untitled",
+                        "url": rec.get("url", "") or "",
+                        "type": (rec.get("type") or "OTHER").upper(),
+                        "isRecommended": True,
+                        "recommendationScore": float(rec.get("score", 0.5)),
+                        "recommendationSource": "ai",
+                        "description": rec.get("description"),
+                        "metadata": prisma_metadata,  # <--- FIXED: Wrapped JSON
+                    }
+
+                    # Add optional context fields
+                    reason_parts = []
+                    if topic_id:
+                        reason_parts.append(f"for topic {topic_id}")
+                    if course_id:
+                        reason_parts.append(f"related to course {course_id}")
+
+                    if reason_parts:
+                        resource_data["recommendationReason"] = " ".join(reason_parts)
+
+                    if course_id:
+                        resource_data["courseId"] = str(course_id)
+                    if topic_id:
+                        resource_data["topicId"] = str(topic_id)
+
+                    # Skip empty URLs
+                    if not resource_data["url"]:
+                        continue
+
+                    # Create resource in DB
+                    resource = await db.resource.create(data=resource_data)
+                    print(f"✅ Created resource: {resource.title}")
+
+                    # Add to result list
+                    stored_resources.append(
+                        {
+                            "id": resource.id,
+                            "title": resource.title,
+                            "url": resource.url,
+                            "description": resource.description,
+                            "type": resource.type,
+                            "score": resource.recommendationScore,
+                        }
+                    )
+
+                    # Index in background
+                    try:
+                        from src.services.indexing_service import indexing_service
+
+                        await indexing_service.index_resource(resource.id)
+                    except Exception:
+                        pass  # Ignore indexing errors
+
+                except Exception as create_error:
+                    print(f"❌ Failed to create resource: {create_error}")
+                    continue
+
+            # Record interaction
+            try:
+                interaction_metadata = {
+                    "query": query,
+                    "recommendationCount": len(stored_resources),
+                    "topicId": topic_id,
+                    "courseId": course_id,
+                }
+                await user_memory_service.record_interaction(
+                    user_id=user_id,
+                    interaction_type="RECOMMENDATION_REQUESTED",
+                    entity_type="chat",
+                    metadata=interaction_metadata,
+                    importance=0.7,
+                )
+            except Exception as e:
+                print(f"⚠️ Failed to record interaction: {e}")
+
+            if not stored_resources:
+                return {
+                    "status": "error",
+                    "message": "No resources could be created from recommendations",
+                }
+
+            return {
+                "status": "success",
+                "action": "recommend_resources",
+                "resources": stored_resources,
+                "count": len(stored_resources),
+                "message": f"Successfully generated {len(stored_resources)} resource recommendations",
+            }
+
+        except Exception as e:
+            print(f"❌ [recommend_resources] FATAL ERROR: {e}")
             import traceback
 
             traceback.print_exc()
