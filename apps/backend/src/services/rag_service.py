@@ -13,15 +13,16 @@ import os
 import re
 from typing import Any
 
-import google.generativeai as genai
 from fastapi import HTTPException
+from google import genai
+from google.genai import types
 
 from src.core.database import db
 from src.services.embedding_service import embedding_service
 from src.services.web_search_service import web_search_service
 
 # Configure API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 class RAGService:
@@ -241,11 +242,15 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
 
             # Call LLM with Google Search Grounding enabled
             # Google Search Grounding allows Gemini to search the web and return real URLs
-            temp_model = genai.GenerativeModel("models/gemini-flash-latest")
-            # Enable Google Search tool for web search
-            response = await temp_model.generate_content_async(
-                recommendation_prompt,
-                tools=[{"google_search": {}}],
+            # Use the new SDK format for Google Search tool
+            grounding_tool = types.Tool(google_search=types.GoogleSearch())
+
+            config = types.GenerateContentConfig(tools=[grounding_tool])
+
+            response = await client.models.generate_content_async(
+                model="gemini-2.5-flash",
+                contents=recommendation_prompt,
+                config=config,
             )
             response_text = response
 
