@@ -21,8 +21,19 @@ from src.core.database import db
 from src.services.embedding_service import embedding_service
 from src.services.web_search_service import web_search_service
 
-# Configure API
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# Lazy client initialization
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """Get or create the Gemini client (lazy initialization)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 
 class RAGService:
@@ -247,6 +258,7 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
 
             config = types.GenerateContentConfig(tools=[grounding_tool])
 
+            client = _get_client()
             response = await client.models.generate_content_async(
                 model="gemini-2.5-flash",
                 contents=recommendation_prompt,
