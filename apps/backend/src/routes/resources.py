@@ -73,6 +73,10 @@ async def create_resource(
                 "description": data.description,
                 "type": data.type,
                 "metadata": data.metadata,
+                "isRecommended": data.isRecommended,
+                "recommendationScore": data.recommendationScore,
+                "courseId": data.courseId,
+                "topicId": data.topicId,
             }
         )
 
