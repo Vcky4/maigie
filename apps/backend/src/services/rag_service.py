@@ -8,6 +8,7 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -259,11 +260,17 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
             config = types.GenerateContentConfig(tools=[grounding_tool])
 
             client = _get_client()
-            response = await client.models.generate_content_async(
-                model="gemini-2.5-flash",
-                contents=recommendation_prompt,
-                config=config,
-            )
+
+            # Run synchronous generate_content in executor since new SDK doesn't have async method
+            def _generate_content():
+                return client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=recommendation_prompt,
+                    config=config,
+                )
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, _generate_content)
             response_text = response
 
             # Extract JSON from response
