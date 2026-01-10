@@ -29,8 +29,10 @@ class ActionService:
             return await self.add_tags(action_data, user_id)
         elif action_type == "recommend_resources":
             return await self.recommend_resources(action_data, user_id)
+        elif action_type == "create_goal":
+            return await self.create_goal(action_data, user_id)
 
-        # Add more actions here later (create_goal, create_schedule, etc.)
+        # Add more actions here later (create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
 
     async def create_course(self, data: dict, user_id: str):
@@ -651,6 +653,83 @@ class ActionService:
 
         except Exception as e:
             print(f"❌ [recommend_resources] FATAL ERROR: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+    async def create_goal(self, data: dict, user_id: str):
+        """
+        Creates a goal for the user.
+        Expected data: { "title": "...", "description": "..." (optional), "targetDate": "..." (optional), "courseId": "..." (optional), "topicId": "..." (optional) }
+        """
+        try:
+            from datetime import datetime
+            from src.services.user_memory_service import user_memory_service
+
+            # Parse targetDate if provided
+            target_date = None
+            if data.get("targetDate"):
+                try:
+                    if isinstance(data["targetDate"], str):
+                        target_date = datetime.fromisoformat(
+                            data["targetDate"].replace("Z", "+00:00")
+                        )
+                    else:
+                        target_date = data["targetDate"]
+                except Exception as e:
+                    print(f"Warning: Could not parse targetDate: {e}")
+
+            # Build goal data, only including courseId/topicId if they have values
+            goal_data = {
+                "userId": user_id,
+                "title": data.get("title", "AI Generated Goal"),
+                "description": data.get("description"),
+                "targetDate": target_date,
+                "status": "ACTIVE",
+            }
+
+            # Only add courseId if it exists and is not None/empty
+            course_id = data.get("courseId")
+            if course_id:
+                goal_data["courseId"] = course_id
+                print(f"✅ Including courseId in goal creation: {course_id}")
+            else:
+                print(f"⚠️ No courseId provided in data: {data.get('courseId')}")
+
+            # Only add topicId if it exists and is not None/empty
+            topic_id = data.get("topicId")
+            if topic_id:
+                goal_data["topicId"] = topic_id
+                print(f"✅ Including topicId in goal creation: {topic_id}")
+
+            print(f"📝 Creating goal with data: {goal_data}")
+
+            # Create the goal
+            goal = await db.goal.create(data=goal_data)
+
+            print(
+                f"✅ Goal created: id={goal.id}, courseId={getattr(goal, 'courseId', None)}, topicId={getattr(goal, 'topicId', None)}"
+            )
+
+            # Record interaction for user memory
+            await user_memory_service.record_interaction(
+                user_id=user_id,
+                interaction_type="GOAL_CREATE",
+                entity_type="goal",
+                entity_id=goal.id,
+                importance=0.7,
+            )
+
+            return {
+                "status": "success",
+                "action": "create_goal",
+                "goal_id": goal.id,
+                "message": f"Successfully created goal: {goal.title}",
+            }
+
+        except Exception as e:
+            print(f"❌ Goal Creation Failed: {e}")
             import traceback
 
             traceback.print_exc()

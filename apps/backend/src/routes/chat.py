@@ -27,6 +27,7 @@ from src.services.credit_service import (
     get_credit_usage,
 )
 from src.services.llm_service import llm_service
+from src.services.rag_service import rag_service
 from src.services.socket_manager import manager
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
@@ -225,6 +226,45 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Include note content if provided directly (not via noteId)
                 if context.get("noteContent") and not enriched_context.get("noteContent"):
                     enriched_context["noteContent"] = context["noteContent"]
+
+            # 5.6. Perform Semantic Search (RAG) to find relevant items
+            # This helps the LLM know about items the user might be referring to
+            if len(user_text) > 3:  # Only search for meaningful queries
+                try:
+                    # We use a broader limit to catch potential matches
+                    rag_results = await rag_service.retrieve_relevant_context(
+                        query=user_text, user_id=user.id, limit=3
+                    )
+
+                    if rag_results:
+                        retrieved_items = []
+                        for item in rag_results:
+                            # Filter by score (heuristic) - keep only reasonably relevant items
+                            # Note: exact matches usually have high scores
+                            # embedding_service uses 'similarity', rag_service might use 'score' in some contexts
+                            score = item.get("similarity") or item.get("score") or 0
+                            if score < 0.65:
+                                continue
+
+                            obj_data = item.get("data", {})
+                            obj_type = item.get("objectType", "unknown")
+                            obj_id = item.get("objectId")
+                            obj_title = obj_data.get("title", "Untitled")
+
+                            # Format for LLM context
+                            retrieved_items.append(
+                                f"- {obj_type.upper()}: {obj_title} (ID: {obj_id})"
+                            )
+
+                        if retrieved_items:
+                            if not enriched_context:
+                                enriched_context = {}
+                            enriched_context["retrieved_items"] = retrieved_items
+                            print(f"🔍 RAG found {len(retrieved_items)} relevant items for context")
+
+                except Exception as e:
+                    print(f"⚠️ RAG context retrieval failed: {e}")
+                    # Continue without RAG results
 
             # 4.5. Check credits before processing AI response (after context/history are built)
             # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
@@ -496,6 +536,60 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 action_data.pop("courseId", None)
 
                         print(f"🔍 Final action_data before execution: {action_data}")
+
+                    # Handle create_goal action - enrich with context
+                    if action_type == "create_goal":
+                        # Validate/Override courseId
+                        action_course_id = action_data.get("courseId")
+                        is_course_placeholder = action_course_id and (
+                            "placeholder" in action_course_id.lower()
+                            or len(action_course_id) > 30
+                            or " " in action_course_id
+                            or not action_course_id.startswith("c")
+                        )
+
+                        if is_course_placeholder or not action_course_id:
+                            if enriched_context and enriched_context.get("courseId"):
+                                action_data["courseId"] = enriched_context["courseId"]
+                                print(
+                                    f"📝 Set courseId from enriched_context for goal: {enriched_context['courseId']}"
+                                )
+                            elif context and context.get("courseId"):
+                                action_data["courseId"] = context["courseId"]
+                                print(
+                                    f"📝 Set courseId from original context for goal: {context['courseId']}"
+                                )
+                            elif is_course_placeholder:
+                                # Remove invalid courseId
+                                print(
+                                    f"⚠️ Removing invalid courseId placeholder: {action_course_id}"
+                                )
+                                action_data.pop("courseId", None)
+
+                        # Validate/Override topicId
+                        action_topic_id = action_data.get("topicId")
+                        is_topic_placeholder = action_topic_id and (
+                            "placeholder" in action_topic_id.lower()
+                            or len(action_topic_id) > 30
+                            or " " in action_topic_id
+                            or not action_topic_id.startswith("c")
+                        )
+
+                        if is_topic_placeholder or not action_topic_id:
+                            if enriched_context and enriched_context.get("topicId"):
+                                action_data["topicId"] = enriched_context["topicId"]
+                                print(
+                                    f"📝 Set topicId from enriched_context for goal: {enriched_context['topicId']}"
+                                )
+                            elif context and context.get("topicId"):
+                                action_data["topicId"] = context["topicId"]
+                                print(
+                                    f"📝 Set topicId from original context for goal: {context['topicId']}"
+                                )
+                            elif is_topic_placeholder:
+                                # Remove invalid topicId
+                                print(f"⚠️ Removing invalid topicId placeholder: {action_topic_id}")
+                                action_data.pop("topicId", None)
 
                     # Handle recommend_resources action - enrich with context
                     if action_type == "recommend_resources":

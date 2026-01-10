@@ -275,6 +275,13 @@ class UserMemoryService:
                 order={"updatedAt": "desc"},
             )
 
+            # Get user's goals (active goals)
+            goals = await db.goal.find_many(
+                where={"userId": user_id, "status": "ACTIVE"},
+                take=10,
+                order={"updatedAt": "desc"},
+            )
+
             # Get user's notes
             recent_notes = await db.note.find_many(
                 where={"userId": user_id, "archived": False},
@@ -301,6 +308,19 @@ class UserMemoryService:
                     }
                     for c in courses
                 ],
+                "goals": [
+                    {
+                        "id": g.id,
+                        "title": g.title,
+                        "description": g.description,
+                        "targetDate": g.targetDate.isoformat() if g.targetDate else None,
+                        "status": g.status,
+                        "progress": g.progress,
+                        "courseId": getattr(g, "courseId", None),
+                        "topicId": getattr(g, "topicId", None),
+                    }
+                    for g in goals
+                ],
                 "recentNotes": [
                     {
                         "id": n.id,
@@ -318,6 +338,7 @@ class UserMemoryService:
             print(f"Error getting user context: {e}")
             return {
                 "courses": [],
+                "goals": [],
                 "recentNotes": [],
                 "recentActivity": [],
                 "preferences": {},
