@@ -224,6 +224,7 @@ class EmbeddingService:
         object_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
+        resource_id: str | None = None,
     ) -> str:
         """
         Update an existing embedding or create a new one if it doesn't exist.
@@ -233,6 +234,7 @@ class EmbeddingService:
             object_id: ID of the object
             content: New text content to embed
             metadata: Optional metadata
+            resource_id: Optional resource ID (for linking)
 
         Returns:
             ID of the embedding record
@@ -246,18 +248,27 @@ class EmbeddingService:
             if existing:
                 # Update existing embedding
                 embedding_vector = await self.generate_embedding(content)
+
+                data_to_update = {
+                    "vector": embedding_vector,
+                    "content": content[:1000] if content else None,
+                    "metadata": metadata,
+                }
+
+                # Update resourceId if provided
+                if resource_id:
+                    data_to_update["resourceId"] = resource_id
+
                 updated = await db.embedding.update(
                     where={"id": existing.id},
-                    data={
-                        "vector": embedding_vector,
-                        "content": content[:1000] if content else None,
-                        "metadata": metadata,
-                    },
+                    data=data_to_update,
                 )
                 return updated.id
             else:
                 # Create new embedding
-                return await self.store_embedding(object_type, object_id, content, metadata)
+                return await self.store_embedding(
+                    object_type, object_id, content, metadata, resource_id
+                )
 
         except Exception as e:
             print(f"Error updating embedding: {e}")

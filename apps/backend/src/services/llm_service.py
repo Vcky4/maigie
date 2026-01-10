@@ -225,6 +225,13 @@ class GeminiService:
                 elif context.get("noteId"):
                     context_parts.append(f"Current Note ID: {context['noteId']}")
 
+                # Retrieved Items (from RAG/Database Search)
+                if context.get("retrieved_items"):
+                    context_parts.append("\nPossibly Relevant Items found in Database:")
+                    for item in context["retrieved_items"]:
+                        context_parts.append(str(item))
+                    context_parts.append("(Use these IDs if the user refers to these items)")
+
                 if context_parts:
                     context_str = "\n".join(context_parts)
                     enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
