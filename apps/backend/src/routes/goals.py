@@ -46,6 +46,8 @@ async def list_goals(
                 targetDate=goal.targetDate.isoformat() if goal.targetDate else None,
                 status=goal.status,
                 progress=goal.progress,
+                courseId=getattr(goal, "courseId", None),
+                topicId=getattr(goal, "topicId", None),
                 createdAt=goal.createdAt.isoformat(),
                 updatedAt=goal.updatedAt.isoformat(),
             )
@@ -203,6 +205,8 @@ async def update_goal(
             targetDate=updated_goal.targetDate.isoformat() if updated_goal.targetDate else None,
             status=updated_goal.status,
             progress=updated_goal.progress,
+            courseId=getattr(updated_goal, "courseId", None),
+            topicId=getattr(updated_goal, "topicId", None),
             createdAt=updated_goal.createdAt.isoformat(),
             updatedAt=updated_goal.updatedAt.isoformat(),
         )
@@ -264,6 +268,8 @@ async def record_progress(
             targetDate=updated_goal.targetDate.isoformat() if updated_goal.targetDate else None,
             status=updated_goal.status,
             progress=updated_goal.progress,
+            courseId=getattr(updated_goal, "courseId", None),
+            topicId=getattr(updated_goal, "topicId", None),
             createdAt=updated_goal.createdAt.isoformat(),
             updatedAt=updated_goal.updatedAt.isoformat(),
         )

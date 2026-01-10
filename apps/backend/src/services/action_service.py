@@ -680,17 +680,36 @@ class ActionService:
                 except Exception as e:
                     print(f"Warning: Could not parse targetDate: {e}")
 
+            # Build goal data, only including courseId/topicId if they have values
+            goal_data = {
+                "userId": user_id,
+                "title": data.get("title", "AI Generated Goal"),
+                "description": data.get("description"),
+                "targetDate": target_date,
+                "status": "ACTIVE",
+            }
+
+            # Only add courseId if it exists and is not None/empty
+            course_id = data.get("courseId")
+            if course_id:
+                goal_data["courseId"] = course_id
+                print(f"✅ Including courseId in goal creation: {course_id}")
+            else:
+                print(f"⚠️ No courseId provided in data: {data.get('courseId')}")
+
+            # Only add topicId if it exists and is not None/empty
+            topic_id = data.get("topicId")
+            if topic_id:
+                goal_data["topicId"] = topic_id
+                print(f"✅ Including topicId in goal creation: {topic_id}")
+
+            print(f"📝 Creating goal with data: {goal_data}")
+
             # Create the goal
-            goal = await db.goal.create(
-                data={
-                    "userId": user_id,
-                    "title": data.get("title", "AI Generated Goal"),
-                    "description": data.get("description"),
-                    "targetDate": target_date,
-                    "status": "ACTIVE",
-                    "courseId": data.get("courseId"),
-                    "topicId": data.get("topicId"),
-                }
+            goal = await db.goal.create(data=goal_data)
+
+            print(
+                f"✅ Goal created: id={goal.id}, courseId={getattr(goal, 'courseId', None)}, topicId={getattr(goal, 'topicId', None)}"
             )
 
             # Record interaction for user memory
