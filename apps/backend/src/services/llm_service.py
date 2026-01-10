@@ -104,8 +104,22 @@ AVAILABLE ACTIONS:
 }
 <<<ACTION_END>>>
 
+7. CREATE GOAL:
+<<<ACTION_START>>>
+{
+  "type": "create_goal",
+  "data": {
+    "title": "Goal Title",
+    "description": "Goal description (optional)",
+    "targetDate": "ISO date string (optional, e.g., '2025-12-31T00:00:00Z')",
+    "courseId": "course_id_from_context (optional)",
+    "topicId": "topic_id_from_context (optional)"
+  }
+}
+<<<ACTION_END>>>
+
 RULES:
-1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, *add tags*, or *recommend resources* for something.
+1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, *add tags*, *recommend resources*, or *set goal* for something.
 2. For note creation:
    - Use the topicId from the context if available
    - Use the courseId from the context if available (optional)
@@ -131,10 +145,18 @@ RULES:
    - Use courseId from context if user is viewing a course
    - Set limit to 5-10 resources (default 10)
    - The system will generate personalized recommendations using RAG
-7. The JSON must be valid.
-8. Keep the conversational part of your response encouraging and brief.
-9. When creating notes, use the topic/course information from context to make the note relevant and contextual.
-10. When recommending resources, explain why you're recommending them and how they relate to the user's learning goals.
+7. For create_goal action:
+   - Use when user asks to "set a goal", "create a goal", "I want to learn X", "my goal is to Y", etc.
+   - Extract a clear, actionable goal title from the user's request
+   - Use courseId from context if user is viewing a course
+   - Use topicId from context if user is viewing a topic
+   - Include targetDate if user mentions a deadline or timeframe
+   - Goals help track learning progress and personalize recommendations
+8. The JSON must be valid.
+9. Keep the conversational part of your response encouraging and brief.
+10. When creating notes, use the topic/course information from context to make the note relevant and contextual.
+11. When recommending resources, explain why you're recommending them and how they relate to the user's learning goals.
+12. When creating goals, make them specific, measurable, and aligned with the user's current learning context.
 """
 
 
