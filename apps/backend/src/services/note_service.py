@@ -120,11 +120,11 @@ async def list_notes(
     user_id: str,
     page: int = 1,
     size: int = 20,
-    search: Optional[str] = None,
-    tag: Optional[str] = None,
-    course_id: Optional[str] = None,
-    archived: Optional[bool] = False,
-) -> Tuple[List[dict], int]:
+    search: str | None = None,
+    tag: str | None = None,
+    course_id: str | None = None,
+    archived: bool | None = False,
+) -> tuple[list[dict], int]:
     """
     List notes with filtering and pagination.
     """

@@ -23,10 +23,10 @@ from pydantic import BaseModel, EmailStr, Field
 from prisma import Prisma
 from prisma.models import User
 
-from ..dependencies import AdminUser, DBDep
-from ..utils.exceptions import ResourceNotFoundError
 from ..core.security import get_password_hash
+from ..dependencies import AdminUser, DBDep
 from ..services.credit_service import initialize_user_credits
+from ..utils.exceptions import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,8 @@ class UserCreateRequest(BaseModel):
     """Request model for creating a new user."""
 
     email: EmailStr
-    name: Optional[str] = None
-    password: Optional[str] = Field(
+    name: str | None = None
+    password: str | None = Field(
         None, min_length=8, description="Password (optional, min 8 characters)"
     )
     tier: str = Field("FREE", description="User tier")
@@ -55,12 +55,12 @@ class UserCreateRequest(BaseModel):
 class UserUpdateRequest(BaseModel):
     """Request model for updating user information."""
 
-    name: Optional[str] = None
-    email: Optional[EmailStr] = None
-    tier: Optional[str] = None
-    role: Optional[str] = None
-    isActive: Optional[bool] = None
-    isOnboarded: Optional[bool] = None
+    name: str | None = None
+    email: EmailStr | None = None
+    tier: str | None = None
+    role: str | None = None
+    isActive: bool | None = None
+    isOnboarded: bool | None = None
 
 
 class UserListResponse(BaseModel):
@@ -78,18 +78,18 @@ class UserDetailResponse(BaseModel):
 
     id: str
     email: str
-    name: Optional[str]
+    name: str | None
     tier: str
     role: str
     isActive: bool
     isOnboarded: bool
-    provider: Optional[str]
-    stripeCustomerId: Optional[str]
-    stripeSubscriptionStatus: Optional[str]
+    provider: str | None
+    stripeCustomerId: str | None
+    stripeSubscriptionStatus: str | None
     creditsUsed: int
-    creditsHardCap: Optional[int]
-    creditsUsedToday: Optional[int]
-    creditsDailyLimit: Optional[int]
+    creditsHardCap: int | None
+    creditsUsedToday: int | None
+    creditsDailyLimit: int | None
     createdAt: str
     updatedAt: str
 
@@ -194,10 +194,10 @@ async def list_users(
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
-    search: Optional[str] = Query(None, description="Search by email or name"),
-    tier: Optional[str] = Query(None, description="Filter by tier"),
-    role: Optional[str] = Query(None, description="Filter by role"),
-    isActive: Optional[bool] = Query(None, description="Filter by active status"),
+    search: str | None = Query(None, description="Search by email or name"),
+    tier: str | None = Query(None, description="Filter by tier"),
+    role: str | None = Query(None, description="Filter by role"),
+    isActive: bool | None = Query(None, description="Filter by active status"),
 ):
     """
     List all users with pagination and filtering.

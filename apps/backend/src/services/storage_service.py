@@ -3,7 +3,8 @@ Storage service for handling file uploads (BunnyCDN).
 """
 
 import httpx
-from fastapi import UploadFile, HTTPException, status
+from fastapi import HTTPException, UploadFile, status
+
 from src.config import get_settings
 
 
