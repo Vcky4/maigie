@@ -16,7 +16,7 @@ from typing import Annotated
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 
@@ -571,19 +571,25 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     # Normalize provider name to lowercase (must match authorization request)
     provider = provider.lower()
 
-    # Extract redirect_uri and purpose from state if it was encoded there, otherwise construct it
+    # Extract redirect_uri, purpose, and callback info from state if it was encoded there, otherwise construct it
     redirect_uri = None
     purpose = None
     calendar_user_id = None
+    backend_callback_uri = None
+    frontend_redirect_uri = None
     try:
-        # Try to decode state to get redirect_uri and purpose
+        # Try to decode state to get redirect_uri, purpose, and callback info
         # Add padding if needed
         state_padded = state + "=" * (4 - len(state) % 4)
         state_decoded = base64.urlsafe_b64decode(state_padded).decode()
         state_data = json.loads(state_decoded)
-        redirect_uri = state_data.get("redirect_uri")
+        redirect_uri = state_data.get("redirect_uri")  # The redirect URI used for Google OAuth
         purpose = state_data.get("purpose")  # "calendar_sync" for Calendar integration
         calendar_user_id = state_data.get("user_id")  # User ID for Calendar sync
+        backend_callback_uri = state_data.get("backend_callback_uri")  # Backend callback endpoint
+        frontend_redirect_uri = state_data.get(
+            "frontend_redirect_uri"
+        )  # Frontend redirect URI (optional)
     except Exception:
         # If state doesn't contain redirect_uri, construct it the same way as authorize
         pass
@@ -660,9 +666,9 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                 extra={"user_id": calendar_user_id, "user_email": user.email},
             )
 
-            # Return success response (frontend will handle redirect)
-            from fastapi.responses import JSONResponse
-
+            # Always return JSON response (frontend will handle redirect if needed)
+            # When frontend provides redirect_uri, Google redirects to frontend first,
+            # then frontend calls this backend endpoint to get the JSON response
             return JSONResponse(
                 status_code=200,
                 content={

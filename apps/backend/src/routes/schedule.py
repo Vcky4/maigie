@@ -450,8 +450,19 @@ async def delete_schedule(
 async def connect_google_calendar(
     current_user: CurrentUser,
     request: Request,
+    redirect_uri: str | None = Query(
+        None,
+        description="Optional frontend redirect URI. If provided, Google will redirect here and frontend will call backend callback.",
+    ),
 ):
-    """Initiate Google Calendar OAuth connection."""
+    """
+    Initiate Google Calendar OAuth connection.
+    
+    Args:
+        redirect_uri: Optional frontend redirect URI. If provided, Google will redirect to this URI
+                     (frontend URL), and frontend will then call the backend callback endpoint.
+                     If not provided, Google redirects directly to backend callback.
+    """
     try:
         from src.core.oauth import OAuthProviderFactory
         import base64
@@ -460,17 +471,25 @@ async def connect_google_calendar(
 
         oauth_provider = OAuthProviderFactory.get_provider("google")
 
-        # Use the existing OAuth callback route
+        # Determine the redirect URI for Google OAuth
+        # If frontend provides redirect_uri, use it (Google will redirect to frontend)
+        # Otherwise, use backend callback URI (Google redirects directly to backend)
         from src.config import settings
         from src.routes.auth import get_base_url_from_request
 
         base_url = settings.OAUTH_BASE_URL or get_base_url_from_request(request)
-        redirect_uri = f"{base_url}/api/v1/auth/oauth/google/callback"
+        backend_callback_uri = f"{base_url}/api/v1/auth/oauth/google/callback"
 
-        # Generate state with user ID and purpose
+        # Use frontend redirect URI if provided, otherwise use backend callback
+        google_redirect_uri = redirect_uri.rstrip("/") if redirect_uri else backend_callback_uri
+        frontend_redirect_uri = redirect_uri.rstrip("/") if redirect_uri else None
+
+        # Generate state with user ID, purpose, and callback info
         state_data = {
             "user_id": current_user.id,
-            "redirect_uri": redirect_uri,
+            "redirect_uri": google_redirect_uri,  # The redirect URI used for Google OAuth
+            "backend_callback_uri": backend_callback_uri,  # Backend callback endpoint (for frontend to call)
+            "frontend_redirect_uri": frontend_redirect_uri,  # Frontend redirect URI (if provided)
             "purpose": "calendar_sync",  # Indicates this is for Calendar sync, not auth
             "random": secrets.token_urlsafe(32),
         }
@@ -478,7 +497,7 @@ async def connect_google_calendar(
 
         # Get authorization URL with Calendar scopes
         authorization_url = await oauth_provider.get_authorization_url(
-            redirect_uri=redirect_uri, state=state, include_calendar=True
+            redirect_uri=google_redirect_uri, state=state, include_calendar=True
         )
 
         return {"authorization_url": authorization_url, "state": state}
