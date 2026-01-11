@@ -460,17 +460,18 @@ async def connect_google_calendar(
 
         oauth_provider = OAuthProviderFactory.get_provider("google")
 
-        # Build redirect URI for Calendar callback
+        # Use the existing OAuth callback route
         from src.config import settings
         from src.routes.auth import get_base_url_from_request
 
         base_url = settings.OAUTH_BASE_URL or get_base_url_from_request(request)
-        redirect_uri = f"{base_url}/api/v1/schedule/google-calendar/callback"
+        redirect_uri = f"{base_url}/api/v1/auth/oauth/google/callback"
 
-        # Generate state with user ID
+        # Generate state with user ID and purpose
         state_data = {
             "user_id": current_user.id,
             "redirect_uri": redirect_uri,
+            "purpose": "calendar_sync",  # Indicates this is for Calendar sync, not auth
             "random": secrets.token_urlsafe(32),
         }
         state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode().rstrip("=")
@@ -487,81 +488,6 @@ async def connect_google_calendar(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initiate Google Calendar connection",
-        )
-
-
-@router.get("/google-calendar/callback")
-async def google_calendar_callback(
-    code: str,
-    state: str,
-    request: Request,
-):
-    """Handle Google Calendar OAuth callback."""
-    try:
-        import base64
-        import json
-        from datetime import datetime, timedelta, timezone
-
-        from src.core.oauth import OAuthProviderFactory
-        from src.config import get_settings
-
-        # Decode state
-        state_padded = state + "=" * (4 - len(state) % 4)
-        state_data = json.loads(base64.urlsafe_b64decode(state_padded).decode())
-        user_id = state_data.get("user_id")
-        redirect_uri = state_data.get("redirect_uri")
-
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid state parameter",
-            )
-
-        oauth_provider = OAuthProviderFactory.get_provider("google")
-
-        # Exchange code for tokens
-        token_response = await oauth_provider.get_access_token(code, redirect_uri)
-
-        access_token = token_response.get("access_token")
-        refresh_token = token_response.get("refresh_token")
-        expires_in = token_response.get("expires_in", 3600)
-
-        if not access_token or not refresh_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to obtain tokens from Google",
-            )
-
-        # Calculate expiration time
-        expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
-            seconds=expires_in
-        )
-
-        # Store tokens in user record
-        await db.user.update(
-            where={"id": user_id},
-            data={
-                "googleCalendarAccessToken": access_token,
-                "googleCalendarRefreshToken": refresh_token,
-                "googleCalendarTokenExpiresAt": expires_at,
-                "googleCalendarSyncEnabled": True,
-                "googleCalendarId": "primary",  # Default to primary calendar
-            },
-        )
-
-        return {
-            "status": "success",
-            "message": "Google Calendar connected successfully",
-            "sync_enabled": True,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error in Google Calendar callback: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to complete Google Calendar connection",
         )
 
 

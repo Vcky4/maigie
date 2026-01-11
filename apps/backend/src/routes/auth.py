@@ -571,15 +571,19 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     # Normalize provider name to lowercase (must match authorization request)
     provider = provider.lower()
 
-    # Extract redirect_uri from state if it was encoded there, otherwise construct it
+    # Extract redirect_uri and purpose from state if it was encoded there, otherwise construct it
     redirect_uri = None
+    purpose = None
+    calendar_user_id = None
     try:
-        # Try to decode state to get redirect_uri
+        # Try to decode state to get redirect_uri and purpose
         # Add padding if needed
         state_padded = state + "=" * (4 - len(state) % 4)
         state_decoded = base64.urlsafe_b64decode(state_padded).decode()
         state_data = json.loads(state_decoded)
         redirect_uri = state_data.get("redirect_uri")
+        purpose = state_data.get("purpose")  # "calendar_sync" for Calendar integration
+        calendar_user_id = state_data.get("user_id")  # User ID for Calendar sync
     except Exception:
         # If state doesn't contain redirect_uri, construct it the same way as authorize
         pass
@@ -615,6 +619,8 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
             )
 
         access_token = token_response.get("access_token")
+        refresh_token = token_response.get("refresh_token")
+        expires_in = token_response.get("expires_in", 3600)
 
         if not access_token:
             raise HTTPException(
@@ -622,7 +628,51 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                 detail=f"Failed to obtain access token from OAuth provider. Response keys: {list(token_response.keys())}",
             )
 
-        # Get user information from provider
+        # If this is for Calendar sync, handle it differently
+        if purpose == "calendar_sync" and calendar_user_id:
+            # Verify user exists
+            user = await db.user.find_unique(where={"id": calendar_user_id})
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found",
+                )
+
+            # Calculate expiration time
+            expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+                seconds=expires_in
+            )
+
+            # Store Calendar tokens in user record
+            await db.user.update(
+                where={"id": calendar_user_id},
+                data={
+                    "googleCalendarAccessToken": access_token,
+                    "googleCalendarRefreshToken": refresh_token,
+                    "googleCalendarTokenExpiresAt": expires_at,
+                    "googleCalendarSyncEnabled": True,
+                    "googleCalendarId": "primary",  # Default to primary calendar
+                },
+            )
+
+            logger.info(
+                "Google Calendar connected",
+                extra={"user_id": calendar_user_id, "user_email": user.email},
+            )
+
+            # Return success response (frontend will handle redirect)
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "Google Calendar connected successfully",
+                    "sync_enabled": True,
+                },
+            )
+
+        # Get user information from provider (for regular OAuth login)
         user_info = await oauth_provider.get_user_info(access_token)
         logger.info("User info retrieved from Google", extra={"user_info": user_info})
 
