@@ -31,8 +31,9 @@ class ActionService:
             return await self.recommend_resources(action_data, user_id)
         elif action_type == "create_goal":
             return await self.create_goal(action_data, user_id)
+        elif action_type == "create_schedule":
+            return await self.create_schedule(action_data, user_id)
 
-        # Add more actions here later (create_schedule, etc.)
         return {"status": "error", "message": f"Unknown action: {action_type}"}
 
     async def create_course(self, data: dict, user_id: str):
@@ -730,6 +731,131 @@ class ActionService:
 
         except Exception as e:
             print(f"❌ Goal Creation Failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return {"status": "error", "message": str(e)}
+
+    async def create_schedule(self, data: dict, user_id: str):
+        """
+        Creates a schedule block for the user.
+        Expected data: {
+            "title": "...",
+            "description": "..." (optional),
+            "startAt": "..." (ISO format),
+            "endAt": "..." (ISO format),
+            "recurringRule": "..." (optional, e.g., "DAILY", "WEEKLY", "RRULE:..."),
+            "courseId": "..." (optional),
+            "topicId": "..." (optional),
+            "goalId": "..." (optional)
+        }
+        """
+        try:
+            from datetime import datetime
+            from src.services.user_memory_service import user_memory_service
+
+            # Parse startAt and endAt
+            start_at = None
+            if data.get("startAt"):
+                try:
+                    if isinstance(data["startAt"], str):
+                        start_at = datetime.fromisoformat(data["startAt"].replace("Z", "+00:00"))
+                    else:
+                        start_at = data["startAt"]
+                except Exception as e:
+                    print(f"Warning: Could not parse startAt: {e}")
+                    return {"status": "error", "message": f"Invalid startAt format: {e}"}
+
+            end_at = None
+            if data.get("endAt"):
+                try:
+                    if isinstance(data["endAt"], str):
+                        end_at = datetime.fromisoformat(data["endAt"].replace("Z", "+00:00"))
+                    else:
+                        end_at = data["endAt"]
+                except Exception as e:
+                    print(f"Warning: Could not parse endAt: {e}")
+                    return {"status": "error", "message": f"Invalid endAt format: {e}"}
+
+            if not start_at or not end_at:
+                return {
+                    "status": "error",
+                    "message": "startAt and endAt are required",
+                }
+
+            if end_at <= start_at:
+                return {
+                    "status": "error",
+                    "message": "endAt must be after startAt",
+                }
+
+            # Build schedule data
+            schedule_data = {
+                "userId": user_id,
+                "title": data.get("title", "AI Generated Schedule Block"),
+                "description": data.get("description"),
+                "startAt": start_at,
+                "endAt": end_at,
+                "recurringRule": data.get("recurringRule"),
+            }
+
+            # Only add courseId if it exists and is not None/empty
+            course_id = data.get("courseId")
+            if course_id:
+                # Verify course exists and belongs to user
+                course = await db.course.find_first(where={"id": course_id, "userId": user_id})
+                if course:
+                    schedule_data["courseId"] = course_id
+                else:
+                    print(f"⚠️ Course not found: {course_id}")
+
+            # Only add topicId if it exists and is not None/empty
+            topic_id = data.get("topicId")
+            if topic_id:
+                topic = await db.topic.find_first(where={"id": topic_id})
+                if topic:
+                    schedule_data["topicId"] = topic_id
+                else:
+                    print(f"⚠️ Topic not found: {topic_id}")
+
+            # Only add goalId if it exists and is not None/empty
+            goal_id = data.get("goalId")
+            if goal_id:
+                goal = await db.goal.find_first(where={"id": goal_id, "userId": user_id})
+                if goal:
+                    schedule_data["goalId"] = goal_id
+                else:
+                    print(f"⚠️ Goal not found: {goal_id}")
+
+            print(f"📅 Creating schedule with data: {schedule_data}")
+
+            # Create the schedule block
+            schedule = await db.scheduleblock.create(data=schedule_data)
+
+            print(f"✅ Schedule Created: {schedule.id} - {schedule.title}")
+
+            # Record interaction for user memory
+            await user_memory_service.record_interaction(
+                user_id=user_id,
+                interaction_type="SCHEDULE_CREATE",
+                entity_type="schedule",
+                entity_id=schedule.id,
+                importance=0.7,
+            )
+
+            return {
+                "status": "success",
+                "message": "Schedule block created successfully",
+                "schedule": {
+                    "id": schedule.id,
+                    "title": schedule.title,
+                    "startAt": schedule.startAt.isoformat(),
+                    "endAt": schedule.endAt.isoformat(),
+                },
+            }
+
+        except Exception as e:
+            print(f"❌ Schedule Creation Failed: {e}")
             import traceback
 
             traceback.print_exc()

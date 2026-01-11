@@ -73,6 +73,8 @@ enum InteractionType {
   NOTE_UPDATE
   GOAL_CREATE
   GOAL_UPDATE
+  SCHEDULE_CREATE
+  SCHEDULE_UPDATE
   CHAT_MESSAGE
   RECOMMENDATION_REQUESTED
   RECOMMENDATION_ACCEPTED
@@ -126,6 +128,7 @@ model User {
   notes                   Note[]
   resources               Resource[]
   goals                   Goal[]
+  schedules               ScheduleBlock[]
   userInteractionMemories UserInteractionMemory[]
 
   // NEW: Chat Relations
@@ -173,6 +176,7 @@ model Course {
   notes     Note[]
   resources Resource[] // Resources linked to this course
   goals     Goal[] // Goals linked to this course
+  schedules ScheduleBlock[] // Schedule blocks linked to this course
 
   @@index([userId])
   @@index([userId, archived])
@@ -211,6 +215,7 @@ model Topic {
   note      Note?
   resources Resource[] // Resources linked to this topic
   goals     Goal[] // Goals linked to this topic
+  schedules ScheduleBlock[] // Schedule blocks linked to this topic
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -407,6 +412,8 @@ model Goal {
   topicId  String?
   topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
+  schedules ScheduleBlock[] // Schedule blocks linked to this goal
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -418,8 +425,38 @@ model Goal {
 }
 
 // ==========================================
-//  EMBEDDINGS & VECTOR SEARCH MODULE
+//  SCHEDULE MODULE
 // ==========================================
+
+model ScheduleBlock {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title         String
+  description   String?
+  startAt       DateTime
+  endAt         DateTime
+  recurringRule String? // e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR" or "DAILY", "WEEKLY", etc.
+
+  // Optional links to courses/topics/goals
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  topicId  String?
+  topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  goalId   String?
+  goal     Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, startAt])
+  @@index([startAt, endAt])
+  @@index([courseId])
+  @@index([topicId])
+  @@index([goalId])
+}
 
 model Embedding {
   id String @id @default(cuid())
