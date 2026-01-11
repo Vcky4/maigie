@@ -59,7 +59,7 @@ class GoogleOAuthProvider:
     ) -> str:
         """
         Get Google OAuth authorization URL.
-        
+
         Args:
             redirect_uri: OAuth redirect URI
             state: OAuth state parameter
@@ -70,14 +70,17 @@ class GoogleOAuthProvider:
             client_secret=self.client_secret,
             redirect_uri=redirect_uri,
         )
-        
+
         # Base scopes for authentication
         scope = "openid email profile"
-        
+
         # Add Calendar scopes if requested
         if include_calendar:
-            scope += " https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events"
-        
+            scope += (
+                " https://www.googleapis.com/auth/calendar "
+                "https://www.googleapis.com/auth/calendar.events"
+            )
+
         # create_authorization_url is synchronous and returns a tuple (url, state)
         authorization_url, _ = client.create_authorization_url(
             self.authorize_url,

@@ -452,16 +452,20 @@ async def connect_google_calendar(
     request: Request,
     redirect_uri: str | None = Query(
         None,
-        description="Optional frontend redirect URI. If provided, Google will redirect here and frontend will call backend callback.",
+        description=(
+            "Optional frontend redirect URI. If provided, Google will redirect "
+            "here and frontend will call backend callback."
+        ),
     ),
 ):
     """
     Initiate Google Calendar OAuth connection.
-    
+
     Args:
-        redirect_uri: Optional frontend redirect URI. If provided, Google will redirect to this URI
-                     (frontend URL), and frontend will then call the backend callback endpoint.
-                     If not provided, Google redirects directly to backend callback.
+        redirect_uri: Optional frontend redirect URI. If provided, Google will
+                     redirect to this URI (frontend URL), and frontend will
+                     then call the backend callback endpoint. If not provided,
+                     Google redirects directly to backend callback.
     """
     try:
         from src.core.oauth import OAuthProviderFactory
