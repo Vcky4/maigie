@@ -122,6 +122,13 @@ model User {
   creditsDailyLimit Int? // Daily limit (only for FREE tier)
   lastDailyReset    DateTime? // When daily credits were last reset
 
+  // Google Calendar integration
+  googleCalendarAccessToken  String? // Encrypted access token for Google Calendar API
+  googleCalendarRefreshToken String? // Encrypted refresh token for Google Calendar API
+  googleCalendarTokenExpiresAt DateTime? // When the access token expires
+  googleCalendarSyncEnabled Boolean @default(false) // Whether Calendar sync is enabled
+  googleCalendarId String? // Primary calendar ID (usually "primary")
+
   // Relations
   preferences             UserPreferences?
   courses                 Course[]
@@ -438,6 +445,10 @@ model ScheduleBlock {
   startAt       DateTime
   endAt         DateTime
   recurringRule String? // e.g., "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR" or "DAILY", "WEEKLY", etc.
+  
+  // Google Calendar sync
+  googleCalendarEventId String? // ID of the event in Google Calendar
+  googleCalendarSyncedAt DateTime? // When this was last synced to Google Calendar
 
   // Optional links to courses/topics/goals
   courseId String?

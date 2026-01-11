@@ -9,11 +9,12 @@ See LICENSE file in the repository root for details.
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.schedule import ScheduleCreate, ScheduleResponse, ScheduleUpdate
+from src.services.google_calendar_service import google_calendar_service
 from src.services.user_memory_service import user_memory_service
 
 router = APIRouter(prefix="/api/v1/schedule", tags=["schedule"])
@@ -86,6 +87,12 @@ async def list_schedules(
                 courseId=getattr(schedule, "courseId", None),
                 topicId=getattr(schedule, "topicId", None),
                 goalId=getattr(schedule, "goalId", None),
+                googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
+                googleCalendarSyncedAt=(
+                    schedule.googleCalendarSyncedAt.isoformat()
+                    if getattr(schedule, "googleCalendarSyncedAt", None)
+                    else None
+                ),
                 createdAt=schedule.createdAt.isoformat(),
                 updatedAt=schedule.updatedAt.isoformat(),
             )
@@ -163,6 +170,23 @@ async def create_schedule_block(
             importance=0.7,
         )
 
+        # Sync with Google Calendar if enabled
+        user = await db.user.find_unique(where={"id": current_user.id})
+        if user and user.googleCalendarSyncEnabled:
+            try:
+                await google_calendar_service.create_event(
+                    user_id=current_user.id,
+                    schedule_id=schedule.id,
+                    title=schedule.title,
+                    description=schedule.description,
+                    start_at=data.startAt,
+                    end_at=data.endAt,
+                    recurring_rule=data.recurringRule,
+                )
+            except Exception as e:
+                # Log error but don't fail the request
+                print(f"Warning: Failed to sync schedule to Google Calendar: {e}")
+
         return ScheduleResponse(
             id=schedule.id,
             userId=schedule.userId,
@@ -174,6 +198,12 @@ async def create_schedule_block(
             courseId=getattr(schedule, "courseId", None),
             topicId=getattr(schedule, "topicId", None),
             goalId=getattr(schedule, "goalId", None),
+            googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
+            googleCalendarSyncedAt=(
+                schedule.googleCalendarSyncedAt.isoformat()
+                if getattr(schedule, "googleCalendarSyncedAt", None)
+                else None
+            ),
             createdAt=schedule.createdAt.isoformat(),
             updatedAt=schedule.updatedAt.isoformat(),
         )
@@ -215,6 +245,12 @@ async def get_schedule(
             courseId=getattr(schedule, "courseId", None),
             topicId=getattr(schedule, "topicId", None),
             goalId=getattr(schedule, "goalId", None),
+            googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
+            googleCalendarSyncedAt=(
+                schedule.googleCalendarSyncedAt.isoformat()
+                if getattr(schedule, "googleCalendarSyncedAt", None)
+                else None
+            ),
             createdAt=schedule.createdAt.isoformat(),
             updatedAt=schedule.updatedAt.isoformat(),
         )
@@ -317,6 +353,24 @@ async def update_schedule(
             importance=0.6,
         )
 
+        # Sync with Google Calendar if enabled and event exists
+        user = await db.user.find_unique(where={"id": current_user.id})
+        if user and user.googleCalendarSyncEnabled and updated_schedule.googleCalendarEventId:
+            try:
+                await google_calendar_service.update_event(
+                    user_id=current_user.id,
+                    schedule_id=schedule_id,
+                    event_id=updated_schedule.googleCalendarEventId,
+                    title=updated_schedule.title,
+                    description=updated_schedule.description,
+                    start_at=updated_schedule.startAt,
+                    end_at=updated_schedule.endAt,
+                    recurring_rule=updated_schedule.recurringRule,
+                )
+            except Exception as e:
+                # Log error but don't fail the request
+                print(f"Warning: Failed to sync schedule update to Google Calendar: {e}")
+
         return ScheduleResponse(
             id=updated_schedule.id,
             userId=updated_schedule.userId,
@@ -328,6 +382,12 @@ async def update_schedule(
             courseId=getattr(updated_schedule, "courseId", None),
             topicId=getattr(updated_schedule, "topicId", None),
             goalId=getattr(updated_schedule, "goalId", None),
+            googleCalendarEventId=getattr(updated_schedule, "googleCalendarEventId", None),
+            googleCalendarSyncedAt=(
+                updated_schedule.googleCalendarSyncedAt.isoformat()
+                if getattr(updated_schedule, "googleCalendarSyncedAt", None)
+                else None
+            ),
             createdAt=updated_schedule.createdAt.isoformat(),
             updatedAt=updated_schedule.updatedAt.isoformat(),
         )
@@ -359,6 +419,19 @@ async def delete_schedule(
                 detail="Schedule block not found",
             )
 
+        # Delete from Google Calendar if synced
+        user = await db.user.find_unique(where={"id": current_user.id})
+        if user and user.googleCalendarSyncEnabled and schedule.googleCalendarEventId:
+            try:
+                await google_calendar_service.delete_event(
+                    user_id=current_user.id,
+                    schedule_id=schedule_id,
+                    event_id=schedule.googleCalendarEventId,
+                )
+            except Exception as e:
+                # Log error but continue with deletion
+                print(f"Warning: Failed to delete schedule from Google Calendar: {e}")
+
         # Delete the schedule
         await db.scheduleblock.delete(where={"id": schedule_id})
 
@@ -370,4 +443,181 @@ async def delete_schedule(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete schedule block",
+        )
+
+
+@router.post("/google-calendar/connect")
+async def connect_google_calendar(
+    current_user: CurrentUser,
+    request: Request,
+):
+    """Initiate Google Calendar OAuth connection."""
+    try:
+        from src.core.oauth import OAuthProviderFactory
+        import base64
+        import json
+        import secrets
+
+        oauth_provider = OAuthProviderFactory.get_provider("google")
+
+        # Build redirect URI for Calendar callback
+        from src.config import settings
+        from src.routes.auth import get_base_url_from_request
+
+        base_url = settings.OAUTH_BASE_URL or get_base_url_from_request(request)
+        redirect_uri = f"{base_url}/api/v1/schedule/google-calendar/callback"
+
+        # Generate state with user ID
+        state_data = {
+            "user_id": current_user.id,
+            "redirect_uri": redirect_uri,
+            "random": secrets.token_urlsafe(32),
+        }
+        state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode().rstrip("=")
+
+        # Get authorization URL with Calendar scopes
+        authorization_url = await oauth_provider.get_authorization_url(
+            redirect_uri=redirect_uri, state=state, include_calendar=True
+        )
+
+        return {"authorization_url": authorization_url, "state": state}
+
+    except Exception as e:
+        print(f"Error connecting Google Calendar: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initiate Google Calendar connection",
+        )
+
+
+@router.get("/google-calendar/callback")
+async def google_calendar_callback(
+    code: str,
+    state: str,
+    request: Request,
+):
+    """Handle Google Calendar OAuth callback."""
+    try:
+        import base64
+        import json
+        from datetime import datetime, timedelta, timezone
+
+        from src.core.oauth import OAuthProviderFactory
+        from src.config import get_settings
+
+        # Decode state
+        state_padded = state + "=" * (4 - len(state) % 4)
+        state_data = json.loads(base64.urlsafe_b64decode(state_padded).decode())
+        user_id = state_data.get("user_id")
+        redirect_uri = state_data.get("redirect_uri")
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid state parameter",
+            )
+
+        oauth_provider = OAuthProviderFactory.get_provider("google")
+
+        # Exchange code for tokens
+        token_response = await oauth_provider.get_access_token(code, redirect_uri)
+
+        access_token = token_response.get("access_token")
+        refresh_token = token_response.get("refresh_token")
+        expires_in = token_response.get("expires_in", 3600)
+
+        if not access_token or not refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to obtain tokens from Google",
+            )
+
+        # Calculate expiration time
+        expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+            seconds=expires_in
+        )
+
+        # Store tokens in user record
+        await db.user.update(
+            where={"id": user_id},
+            data={
+                "googleCalendarAccessToken": access_token,
+                "googleCalendarRefreshToken": refresh_token,
+                "googleCalendarTokenExpiresAt": expires_at,
+                "googleCalendarSyncEnabled": True,
+                "googleCalendarId": "primary",  # Default to primary calendar
+            },
+        )
+
+        return {
+            "status": "success",
+            "message": "Google Calendar connected successfully",
+            "sync_enabled": True,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in Google Calendar callback: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to complete Google Calendar connection",
+        )
+
+
+@router.post("/google-calendar/disconnect")
+async def disconnect_google_calendar(
+    current_user: CurrentUser,
+):
+    """Disconnect Google Calendar integration."""
+    try:
+        await db.user.update(
+            where={"id": current_user.id},
+            data={
+                "googleCalendarAccessToken": None,
+                "googleCalendarRefreshToken": None,
+                "googleCalendarTokenExpiresAt": None,
+                "googleCalendarSyncEnabled": False,
+                "googleCalendarId": None,
+            },
+        )
+
+        # Clear Google Calendar event IDs from all user's schedules
+        await db.scheduleblock.update_many(
+            where={"userId": current_user.id},
+            data={
+                "googleCalendarEventId": None,
+                "googleCalendarSyncedAt": None,
+            },
+        )
+
+        return {"status": "success", "message": "Google Calendar disconnected successfully"}
+
+    except Exception as e:
+        print(f"Error disconnecting Google Calendar: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to disconnect Google Calendar",
+        )
+
+
+@router.get("/google-calendar/status")
+async def get_google_calendar_status(
+    current_user: CurrentUser,
+):
+    """Get Google Calendar connection status."""
+    try:
+        user = await db.user.find_unique(where={"id": current_user.id})
+
+        return {
+            "connected": bool(user.googleCalendarRefreshToken),
+            "sync_enabled": user.googleCalendarSyncEnabled or False,
+            "calendar_id": user.googleCalendarId,
+        }
+
+    except Exception as e:
+        print(f"Error getting Google Calendar status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get Google Calendar status",
         )

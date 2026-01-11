@@ -54,18 +54,37 @@ class GoogleOAuthProvider:
         self.client_id = settings.OAUTH_GOOGLE_CLIENT_ID
         self.client_secret = settings.OAUTH_GOOGLE_CLIENT_SECRET
 
-    async def get_authorization_url(self, redirect_uri: str, state: str) -> str:
-        """Get Google OAuth authorization URL."""
+    async def get_authorization_url(
+        self, redirect_uri: str, state: str, include_calendar: bool = False
+    ) -> str:
+        """
+        Get Google OAuth authorization URL.
+        
+        Args:
+            redirect_uri: OAuth redirect URI
+            state: OAuth state parameter
+            include_calendar: If True, include Google Calendar scopes
+        """
         client = AsyncOAuth2Client(
             client_id=self.client_id,
             client_secret=self.client_secret,
             redirect_uri=redirect_uri,
         )
+        
+        # Base scopes for authentication
+        scope = "openid email profile"
+        
+        # Add Calendar scopes if requested
+        if include_calendar:
+            scope += " https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events"
+        
         # create_authorization_url is synchronous and returns a tuple (url, state)
         authorization_url, _ = client.create_authorization_url(
             self.authorize_url,
             state=state,
-            scope="openid email profile",
+            scope=scope,
+            access_type="offline",  # Required to get refresh token
+            prompt="consent",  # Force consent screen to get refresh token
         )
         return authorization_url
 
