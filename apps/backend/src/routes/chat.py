@@ -799,13 +799,13 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     result = action_result_item.get("result")
                     if result:
                         # Include the action type in the payload for frontend processing
-                        await manager.send_json({
-                            "type": "event",
-                            "payload": {
-                                **result,
-                                "action": action_result_item.get("type")
-                            }
-                        }, user.id)
+                        await manager.send_json(
+                            {
+                                "type": "event",
+                                "payload": {**result, "action": action_result_item.get("type")},
+                            },
+                            user.id,
+                        )
 
     except WebSocketDisconnect:
         manager.disconnect(user.id)
