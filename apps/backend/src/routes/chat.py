@@ -624,7 +624,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     else:
                         # Single action (backward compatibility)
                         actions_list = [action_payload]
-                        print(f"📋 Processing single action")
+                        print("📋 Processing single action")
 
                     # Track created IDs for dependency resolution
                     created_ids = {}
