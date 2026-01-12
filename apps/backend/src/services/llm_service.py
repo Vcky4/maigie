@@ -22,6 +22,13 @@ SYSTEM_INSTRUCTION = """
 You are Maigie, an intelligent study companion.
 Your goal is to help students organize learning, generate courses, manage schedules, create notes, and summarize content.
 
+IMPORTANT DATE CONTEXT:
+- The user's current date and time will be provided in the context of each conversation
+- When creating schedules, goals, or any date-related actions, ALWAYS use dates relative to the CURRENT DATE provided in the context
+- NEVER use hardcoded years like 2025 or 2024 - always calculate dates based on the current date provided
+- For example, if current date is January 12, 2026 and user asks for "tomorrow", use January 13, 2026
+- If user asks for "next week", calculate based on the current date, not a hardcoded date
+
 CRITICAL INSTRUCTION FOR ACTIONS:
 If the user asks to generate a course, study plan, schedule, or create a note, you must NOT just describe it.
 You MUST output a strict JSON block at the very end of your response inside specific tags.
@@ -47,7 +54,7 @@ you can include MULTIPLE actions in a single response. Use an array format:
       "type": "create_goal",
       "data": {
         "title": "Complete Course by End of Month",
-        "targetDate": "2025-01-31T00:00:00Z",
+        "targetDate": "2026-01-31T00:00:00Z",
         "courseId": "$courseId"  // Use $courseId to reference the course created in the previous action
       }
     },
@@ -55,8 +62,8 @@ you can include MULTIPLE actions in a single response. Use an array format:
       "type": "create_schedule",
       "data": {
         "title": "Study Session",
-        "startAt": "2025-01-15T10:00:00Z",
-        "endAt": "2025-01-15T12:00:00Z",
+        "startAt": "2026-01-15T10:00:00Z",
+        "endAt": "2026-01-15T12:00:00Z",
         "courseId": "$courseId",  // Reference the course from first action
         "goalId": "$goalId"        // Reference the goal from second action
       }
@@ -76,8 +83,8 @@ If user asks: "Schedule cooking practice for tomorrow evening and exam study for
       "data": {
         "title": "Cooking Practice - Essential Kitchen Tools",
         "description": "Review Essential Kitchen Tools note and goal setting",
-        "startAt": "2025-01-16T18:00:00Z",
-        "endAt": "2025-01-16T18:30:00Z",
+        "startAt": "2026-01-16T18:00:00Z",
+        "endAt": "2026-01-16T18:30:00Z",
         "courseId": "$courseId",
         "goalId": "$goalId"
       }
@@ -86,24 +93,24 @@ If user asks: "Schedule cooking practice for tomorrow evening and exam study for
       "type": "create_schedule",
       "data": {
         "title": "Exam Study Session - Day 1",
-        "startAt": "2025-01-17T09:00:00Z",
-        "endAt": "2025-01-17T10:00:00Z"
+        "startAt": "2026-01-17T09:00:00Z",
+        "endAt": "2026-01-17T10:00:00Z"
       }
     },
     {
       "type": "create_schedule",
       "data": {
         "title": "Exam Study Session - Day 2",
-        "startAt": "2025-01-18T09:00:00Z",
-        "endAt": "2025-01-18T10:00:00Z"
+        "startAt": "2026-01-18T09:00:00Z",
+        "endAt": "2026-01-18T10:00:00Z"
       }
     },
     {
       "type": "create_schedule",
       "data": {
         "title": "Exam Study Session - Day 3",
-        "startAt": "2025-01-19T09:00:00Z",
-        "endAt": "2025-01-19T10:00:00Z"
+        "startAt": "2026-01-19T09:00:00Z",
+        "endAt": "2026-01-19T10:00:00Z"
       }
     }
   ]
@@ -211,7 +218,7 @@ AVAILABLE ACTIONS:
   "data": {
     "title": "Goal Title",
     "description": "Goal description (optional)",
-    "targetDate": "ISO date string (optional, e.g., '2025-12-31T00:00:00Z')",
+    "targetDate": "ISO date string (optional, e.g., '2026-12-31T00:00:00Z')",
     "courseId": "course_id_from_context (optional)",
     "topicId": "topic_id_from_context (optional)"
   }
@@ -225,8 +232,8 @@ AVAILABLE ACTIONS:
   "data": {
     "title": "Schedule Title",
     "description": "Schedule description (optional)",
-    "startAt": "ISO date string (e.g., '2025-01-15T10:00:00Z')",
-    "endAt": "ISO date string (e.g., '2025-01-15T12:00:00Z')",
+    "startAt": "ISO date string (e.g., '2026-01-15T10:00:00Z')",
+    "endAt": "ISO date string (e.g., '2026-01-15T12:00:00Z')",
     "recurringRule": "DAILY, WEEKLY, or RRULE format (optional)",
     "courseId": "course_id_from_context (optional)",
     "topicId": "topic_id_from_context (optional)",
@@ -315,8 +322,14 @@ class GeminiService:
             # Build enhanced message with context if provided
             enhanced_message = user_message
 
+            # Always add current date/time context
+            from datetime import datetime, timezone
+            current_datetime = datetime.now(timezone.utc)
+            current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
+            
+            context_parts = [f"Current Date & Time: {current_date_str}"]
+            
             if context:
-                context_parts = []
                 if context.get("pageContext"):
                     context_parts.append(f"Current Page Context: {context['pageContext']}")
 
@@ -363,9 +376,10 @@ class GeminiService:
                         context_parts.append(str(item))
                     context_parts.append("(Use these IDs if the user refers to these items)")
 
-                if context_parts:
-                    context_str = "\n".join(context_parts)
-                    enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
+            # Always include context_parts (at minimum current date/time)
+            if context_parts:
+                context_str = "\n".join(context_parts)
+                enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
 
             # Start a chat session with history
             chat = self.model.start_chat(history=history)
