@@ -324,11 +324,12 @@ class GeminiService:
 
             # Always add current date/time context
             from datetime import datetime, timezone
+
             current_datetime = datetime.now(timezone.utc)
             current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
-            
+
             context_parts = [f"Current Date & Time: {current_date_str}"]
-            
+
             if context:
                 if context.get("pageContext"):
                     context_parts.append(f"Current Page Context: {context['pageContext']}")
