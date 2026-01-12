@@ -36,6 +36,248 @@ router = APIRouter()
 db = Prisma()
 
 
+async def enrich_action_data(
+    action_type: str,
+    action_data: dict,
+    enriched_context: dict = None,
+    context: dict = None,
+    created_ids: dict = None,
+):
+    """
+    Enrich action data with context and resolve dependencies from previous actions.
+
+    Args:
+        action_type: Type of action (e.g., "create_course", "create_goal")
+        action_data: The action data dictionary
+        enriched_context: Enriched context from current page/view
+        context: Original context from frontend
+        created_ids: Dictionary of IDs created by previous actions in the batch
+                     (e.g., {"courseId": "c123", "goalId": "c456"})
+
+    Returns:
+        Enriched action_data dictionary
+    """
+    # Resolve dependency placeholders ($courseId, $goalId, etc.)
+    if created_ids:
+        for key, value in action_data.items():
+            if isinstance(value, str) and value.startswith("$"):
+                placeholder = value[1:]  # Remove the $
+                if placeholder in created_ids:
+                    action_data[key] = created_ids[placeholder]
+                    print(f"🔄 Resolved {value} to {created_ids[placeholder]}")
+
+    # Handle note-related actions
+    if action_type in ["retake_note", "add_summary", "add_tags"]:
+        note_id = action_data.get("noteId")
+        print(f"🔍 AI provided noteId: {note_id}")
+
+        if enriched_context and enriched_context.get("noteId"):
+            ai_note_id = action_data.get("noteId")
+            enriched_topic_id = enriched_context.get("topicId")
+            enriched_note_id = enriched_context.get("noteId")
+
+            if ai_note_id == enriched_topic_id:
+                print("⚠️ AI confused topicId with noteId. Using actual noteId from context.")
+                note_id = enriched_note_id
+            elif ai_note_id != enriched_note_id:
+                print(
+                    f"⚠️ AI provided noteId '{ai_note_id}' but context has '{enriched_note_id}'. Using context noteId."
+                )
+                note_id = enriched_note_id
+            else:
+                note_id = enriched_note_id
+            print(f"📝 Using noteId from enriched_context: {note_id}")
+        elif context and context.get("noteId"):
+            note_id = context["noteId"]
+            print(f"📝 Using noteId from original context: {note_id}")
+        elif not note_id:
+            if enriched_context and enriched_context.get("topicId"):
+                topic_id = enriched_context["topicId"]
+                print(f"🔍 No noteId found, checking topicId: {topic_id}")
+                topic = await db.topic.find_unique(
+                    where={"id": topic_id},
+                    include={"note": True},
+                )
+                if topic and topic.note:
+                    note_id = topic.note.id
+                    print(f"✅ Found note from topic: {note_id}")
+            elif context and context.get("topicId"):
+                topic_id = context["topicId"]
+                print(f"🔍 No noteId found, checking topicId from context: {topic_id}")
+                topic = await db.topic.find_unique(
+                    where={"id": topic_id},
+                    include={"note": True},
+                )
+                if topic and topic.note:
+                    note_id = topic.note.id
+                    print(f"✅ Found note from topic: {note_id}")
+
+        if note_id:
+            print(f"🔍 Verifying noteId: {note_id}")
+            note = await db.note.find_unique(where={"id": note_id})
+            if not note:
+                print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
+                topic = await db.topic.find_unique(
+                    where={"id": note_id},
+                    include={"note": True},
+                )
+                if topic:
+                    if topic.note:
+                        note_id = topic.note.id
+                        print(f"✅ Resolved topicId to noteId: {note_id}")
+                    else:
+                        print(
+                            f"⚠️ Topic '{topic.title}' exists but has no note. Cannot retake/summarize."
+                        )
+                        note_id = None
+                else:
+                    print(f"⚠️ ID {note_id} is neither a note nor a topic")
+                    note_id = None
+
+        if note_id:
+            action_data["noteId"] = note_id
+            print(f"✅ Final noteId set in action_data: {note_id}")
+        else:
+            print("⚠️ No noteId found in context for retake_note/add_summary action")
+
+    # Handle create_note action
+    if action_type == "create_note":
+        action_topic_id = action_data.get("topicId")
+        is_likely_title = action_topic_id and (
+            len(action_topic_id) > 30
+            or " " in action_topic_id
+            or not action_topic_id.startswith("c")
+        )
+
+        if enriched_context and enriched_context.get("topicId"):
+            action_data["topicId"] = enriched_context["topicId"]
+            print(f"📝 Set topicId from enriched_context: {enriched_context['topicId']}")
+        elif context and context.get("topicId"):
+            action_data["topicId"] = context["topicId"]
+            print(f"📝 Set topicId from original context: {context['topicId']}")
+        elif is_likely_title:
+            print(
+                f"⚠️ AI provided topicId that looks like a title: {action_topic_id}, but no context available"
+            )
+
+        action_course_id = action_data.get("courseId")
+        is_course_likely_title = action_course_id and (
+            len(action_course_id) > 30
+            or " " in action_course_id
+            or not action_course_id.startswith("c")
+        )
+
+        if is_course_likely_title or not action_course_id:
+            if enriched_context and enriched_context.get("courseId"):
+                action_data["courseId"] = enriched_context["courseId"]
+                print(f"📝 Set courseId from enriched_context: {enriched_context['courseId']}")
+            elif context and context.get("courseId"):
+                action_data["courseId"] = context["courseId"]
+                print(f"📝 Set courseId from original context: {context['courseId']}")
+            elif is_course_likely_title:
+                print(
+                    f"⚠️ AI provided courseId that looks like a title: {action_course_id}, removing it"
+                )
+                action_data.pop("courseId", None)
+
+    # Handle create_goal action
+    if action_type == "create_goal":
+        action_course_id = action_data.get("courseId")
+        is_course_placeholder = action_course_id and (
+            "placeholder" in action_course_id.lower()
+            or len(action_course_id) > 30
+            or " " in action_course_id
+            or not action_course_id.startswith("c")
+        )
+
+        if is_course_placeholder or not action_course_id:
+            if enriched_context and enriched_context.get("courseId"):
+                action_data["courseId"] = enriched_context["courseId"]
+                print(
+                    f"📝 Set courseId from enriched_context for goal: {enriched_context['courseId']}"
+                )
+            elif context and context.get("courseId"):
+                action_data["courseId"] = context["courseId"]
+                print(f"📝 Set courseId from original context for goal: {context['courseId']}")
+            elif is_course_placeholder:
+                print(f"⚠️ Removing invalid courseId placeholder: {action_course_id}")
+                action_data.pop("courseId", None)
+
+        action_topic_id = action_data.get("topicId")
+        is_topic_placeholder = action_topic_id and (
+            "placeholder" in action_topic_id.lower()
+            or len(action_topic_id) > 30
+            or " " in action_topic_id
+            or not action_topic_id.startswith("c")
+        )
+
+        if is_topic_placeholder or not action_topic_id:
+            if enriched_context and enriched_context.get("topicId"):
+                action_data["topicId"] = enriched_context["topicId"]
+                print(
+                    f"📝 Set topicId from enriched_context for goal: {enriched_context['topicId']}"
+                )
+            elif context and context.get("topicId"):
+                action_data["topicId"] = context["topicId"]
+                print(f"📝 Set topicId from original context for goal: {context['topicId']}")
+            elif is_topic_placeholder:
+                print(f"⚠️ Removing invalid topicId placeholder: {action_topic_id}")
+                action_data.pop("topicId", None)
+
+    # Handle recommend_resources action
+    if action_type == "recommend_resources":
+        if enriched_context and enriched_context.get("topicId"):
+            action_data["topicId"] = enriched_context["topicId"]
+            print(
+                f"📝 Set topicId from enriched_context for resource recommendation: {enriched_context['topicId']}"
+            )
+        elif context and context.get("topicId"):
+            action_data["topicId"] = context["topicId"]
+            print(
+                f"📝 Set topicId from original context for resource recommendation: {context['topicId']}"
+            )
+
+        if enriched_context and enriched_context.get("courseId"):
+            action_data["courseId"] = enriched_context["courseId"]
+            print(
+                f"📝 Set courseId from enriched_context for resource recommendation: {enriched_context['courseId']}"
+            )
+        elif context and context.get("courseId"):
+            action_data["courseId"] = context["courseId"]
+            print(
+                f"📝 Set courseId from original context for resource recommendation: {context['courseId']}"
+            )
+
+    # Handle create_schedule action
+    if action_type == "create_schedule":
+        # Similar to create_goal, enrich courseId, topicId, goalId from context
+        for id_field in ["courseId", "topicId", "goalId"]:
+            action_id = action_data.get(id_field)
+            is_placeholder = action_id and (
+                "placeholder" in action_id.lower()
+                or len(action_id) > 30
+                or " " in action_id
+                or (not action_id.startswith("c") and not action_id.startswith("$"))
+            )
+
+            if (is_placeholder or not action_id) and not (action_id and action_id.startswith("$")):
+                if enriched_context and enriched_context.get(id_field):
+                    action_data[id_field] = enriched_context[id_field]
+                    print(
+                        f"📝 Set {id_field} from enriched_context for schedule: {enriched_context[id_field]}"
+                    )
+                elif context and context.get(id_field):
+                    action_data[id_field] = context[id_field]
+                    print(
+                        f"📝 Set {id_field} from original context for schedule: {context[id_field]}"
+                    )
+                elif is_placeholder:
+                    print(f"⚠️ Removing invalid {id_field} placeholder: {action_id}")
+                    action_data.pop(id_field, None)
+
+    return action_data
+
+
 async def get_current_user_ws(token: str = Query(...)):
     """
     Authenticate WebSocket connection via query param.
@@ -365,7 +607,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             )
 
             clean_response = ai_response_text  # Default to full text
-            action_result = None
+            action_results = []
 
             if action_match:
                 try:
@@ -373,263 +615,89 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # 1. Extract and Parse JSON
                     json_str = action_match.group(1).strip()
                     action_payload = json.loads(json_str)
-                    action_data = action_payload.get("data", {})
 
-                    # 2. Enrich action data with context if missing (e.g., topicId, noteId)
-                    action_type = action_payload.get("type")
+                    # Check if this is a single action or multiple actions
+                    if "actions" in action_payload:
+                        # Multiple actions
+                        actions_list = action_payload.get("actions", [])
+                        print(f"📋 Processing {len(actions_list)} actions in batch")
+                    else:
+                        # Single action (backward compatibility)
+                        actions_list = [action_payload]
+                        print(f"📋 Processing single action")
 
-                    # For retake_note, add_summary, and add_tags, ensure noteId is populated from context
-                    if action_type in ["retake_note", "add_summary", "add_tags"]:
-                        note_id = action_data.get("noteId")
-                        print(f"🔍 AI provided noteId: {note_id}")
+                    # Track created IDs for dependency resolution
+                    created_ids = {}
 
-                        # ALWAYS prioritize noteId from enriched_context or original context over AI's noteId
-                        # The AI might confuse topicId with noteId
-                        if enriched_context and enriched_context.get("noteId"):
-                            # Check if AI's noteId matches topicId (common mistake)
-                            ai_note_id = action_data.get("noteId")
-                            enriched_topic_id = enriched_context.get("topicId")
-                            enriched_note_id = enriched_context.get("noteId")
+                    # Execute each action sequentially
+                    for idx, action_payload_item in enumerate(actions_list):
+                        action_type = action_payload_item.get("type")
+                        action_data = action_payload_item.get("data", {}).copy()
 
-                            # If AI's noteId matches topicId, use the actual noteId from context
-                            if ai_note_id == enriched_topic_id:
-                                print(
-                                    "⚠️ AI confused topicId with noteId. Using actual noteId from context."
-                                )
-                                note_id = enriched_note_id
-                            elif ai_note_id != enriched_note_id:
-                                # AI provided a different noteId, but we have one in context - use context one
-                                print(
-                                    f"⚠️ AI provided noteId '{ai_note_id}' but context has '{enriched_note_id}'. Using context noteId."
-                                )
-                                note_id = enriched_note_id
-                            else:
-                                # They match, use it
-                                note_id = enriched_note_id
-                            print(f"📝 Using noteId from enriched_context: {note_id}")
-                        elif context and context.get("noteId"):
-                            note_id = context["noteId"]
-                            print(f"📝 Using noteId from original context: {note_id}")
-                        elif not note_id:
-                            # If noteId is missing, try to get it from topicId
-                            if enriched_context and enriched_context.get("topicId"):
-                                topic_id = enriched_context["topicId"]
-                                print(f"🔍 No noteId found, checking topicId: {topic_id}")
-                                topic = await db.topic.find_unique(
-                                    where={"id": topic_id},
-                                    include={"note": True},
-                                )
-                                if topic and topic.note:
-                                    note_id = topic.note.id
-                                    print(f"✅ Found note from topic: {note_id}")
-                            elif context and context.get("topicId"):
-                                topic_id = context["topicId"]
-                                print(
-                                    f"🔍 No noteId found, checking topicId from context: {topic_id}"
-                                )
-                                topic = await db.topic.find_unique(
-                                    where={"id": topic_id},
-                                    include={"note": True},
-                                )
-                                if topic and topic.note:
-                                    note_id = topic.note.id
-                                    print(f"✅ Found note from topic: {note_id}")
-
-                        # If we still have a noteId, verify it exists
-                        if note_id:
-                            print(f"🔍 Verifying noteId: {note_id}")
-                            note = await db.note.find_unique(where={"id": note_id})
-                            if not note:
-                                print(
-                                    f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
-                                )
-                                topic = await db.topic.find_unique(
-                                    where={"id": note_id},
-                                    include={"note": True},
-                                )
-                                if topic:
-                                    if topic.note:
-                                        note_id = topic.note.id
-                                        print(f"✅ Resolved topicId to noteId: {note_id}")
-                                    else:
-                                        print(
-                                            f"⚠️ Topic '{topic.title}' exists but has no note. Cannot retake/summarize."
-                                        )
-                                        note_id = None  # Clear note_id so error is returned
-                                else:
-                                    print(f"⚠️ ID {note_id} is neither a note nor a topic")
-                                    note_id = None  # Clear note_id so error is returned
-
-                        if note_id:
-                            action_data["noteId"] = note_id
-                            print(f"✅ Final noteId set in action_data: {note_id}")
-                        else:
-                            print("⚠️ No noteId found in context for retake_note/add_summary action")
-                            print(f"   enriched_context: {enriched_context}")
-                            print(f"   original context: {context}")
-
-                    if action_type == "create_note":
-                        # Debug: Log what we have
-                        print(f"🔍 Action data topicId: {action_data.get('topicId')}")
                         print(
-                            f"🔍 Enriched context topicId: {enriched_context.get('topicId') if enriched_context else None}"
-                        )
-                        print(
-                            f"🔍 Original context topicId: {context.get('topicId') if context else None}"
+                            f"\n🔄 Processing action {idx + 1}/{len(actions_list)}: {action_type}"
                         )
 
-                        # ALWAYS override topicId from context if available (AI might use title instead of ID)
-                        # Check if action_data has a topicId that looks like a title (not an ID format)
-                        action_topic_id = action_data.get("topicId")
-                        is_likely_title = action_topic_id and (
-                            len(action_topic_id)
-                            > 30  # IDs are typically shorter (CUID format ~25 chars)
-                            or " " in action_topic_id  # Titles have spaces, IDs don't
-                            or not action_topic_id.startswith("c")  # CUIDs start with 'c'
+                        # 2. Enrich action data with context and resolve dependencies
+                        action_data = await enrich_action_data(
+                            action_type=action_type,
+                            action_data=action_data,
+                            enriched_context=enriched_context,
+                            context=context,
+                            created_ids=created_ids,
                         )
 
-                        # ALWAYS override topicId with actual ID from context (AI might use title)
-                        # Priority: enriched_context > original context > action_data (only if valid ID)
-                        if enriched_context and enriched_context.get("topicId"):
-                            # Always use enriched context topicId (it's the real ID from DB)
-                            action_data["topicId"] = enriched_context["topicId"]
-                            print(
-                                f"📝 Set topicId from enriched_context: {enriched_context['topicId']} (was: {action_topic_id})"
-                            )
-                        elif context and context.get("topicId"):
-                            # Fallback to original context topicId
-                            action_data["topicId"] = context["topicId"]
-                            print(
-                                f"📝 Set topicId from original context: {context['topicId']} (was: {action_topic_id})"
-                            )
-                        elif is_likely_title:
-                            # If AI provided a title but we don't have context, that's an error
-                            print(
-                                f"⚠️ AI provided topicId that looks like a title: {action_topic_id}, but no context available"
-                            )
+                        # 3. Execute Action
+                        print(f"🚀 Executing {action_type} with action_data: {action_data}")
+                        action_result = await action_service.execute_action(
+                            action_type=action_type,
+                            action_data=action_data,
+                            user_id=user.id,
+                        )
+                        print(f"📤 Action result: {action_result}")
 
-                        # Same for courseId - check if AI provided a title instead of ID
-                        action_course_id = action_data.get("courseId")
-                        is_course_likely_title = action_course_id and (
-                            len(action_course_id) > 30  # CUIDs are ~25 chars
-                            or " " in action_course_id  # Titles have spaces, IDs don't
-                            or not action_course_id.startswith("c")  # CUIDs start with 'c'
+                        # Store result
+                        action_results.append(
+                            {
+                                "type": action_type,
+                                "result": action_result,
+                            }
                         )
 
-                        # ALWAYS override courseId if it looks like a title or if missing
-                        if is_course_likely_title or not action_course_id:
-                            if enriched_context and enriched_context.get("courseId"):
-                                action_data["courseId"] = enriched_context["courseId"]
-                                print(
-                                    f"📝 Set courseId from enriched_context: {enriched_context['courseId']} (was: {action_course_id})"
+                        # Extract created IDs for dependency resolution
+                        if action_result and action_result.get("status") == "success":
+                            # Extract IDs from result based on action type
+                            # Handle both camelCase and snake_case formats
+                            if action_type == "create_course":
+                                course_id = action_result.get("courseId") or action_result.get(
+                                    "course_id"
                                 )
-                            elif context and context.get("courseId"):
-                                action_data["courseId"] = context["courseId"]
-                                print(
-                                    f"📝 Set courseId from original context: {context['courseId']} (was: {action_course_id})"
+                                if course_id:
+                                    created_ids["courseId"] = course_id
+                                    print(f"💾 Stored courseId: {course_id}")
+                            elif action_type == "create_goal":
+                                goal_id = action_result.get("goalId") or action_result.get(
+                                    "goal_id"
                                 )
-                            elif is_course_likely_title:
-                                # If AI provided a title but we don't have context, remove it (courseId is optional)
-                                print(
-                                    f"⚠️ AI provided courseId that looks like a title: {action_course_id}, removing it (courseId is optional)"
+                                if goal_id:
+                                    created_ids["goalId"] = goal_id
+                                    print(f"💾 Stored goalId: {goal_id}")
+                            elif action_type == "create_schedule":
+                                schedule_id = action_result.get("scheduleId") or (
+                                    action_result.get("schedule", {}) or {}
+                                ).get("id")
+                                if schedule_id:
+                                    created_ids["scheduleId"] = schedule_id
+                                    print(f"💾 Stored scheduleId: {schedule_id}")
+                            elif action_type == "create_note":
+                                note_id = action_result.get("noteId") or action_result.get(
+                                    "note_id"
                                 )
-                                action_data.pop("courseId", None)
-
-                        print(f"🔍 Final action_data before execution: {action_data}")
-
-                    # Handle create_goal action - enrich with context
-                    if action_type == "create_goal":
-                        # Validate/Override courseId
-                        action_course_id = action_data.get("courseId")
-                        is_course_placeholder = action_course_id and (
-                            "placeholder" in action_course_id.lower()
-                            or len(action_course_id) > 30
-                            or " " in action_course_id
-                            or not action_course_id.startswith("c")
-                        )
-
-                        if is_course_placeholder or not action_course_id:
-                            if enriched_context and enriched_context.get("courseId"):
-                                action_data["courseId"] = enriched_context["courseId"]
-                                print(
-                                    f"📝 Set courseId from enriched_context for goal: {enriched_context['courseId']}"
-                                )
-                            elif context and context.get("courseId"):
-                                action_data["courseId"] = context["courseId"]
-                                print(
-                                    f"📝 Set courseId from original context for goal: {context['courseId']}"
-                                )
-                            elif is_course_placeholder:
-                                # Remove invalid courseId
-                                print(
-                                    f"⚠️ Removing invalid courseId placeholder: {action_course_id}"
-                                )
-                                action_data.pop("courseId", None)
-
-                        # Validate/Override topicId
-                        action_topic_id = action_data.get("topicId")
-                        is_topic_placeholder = action_topic_id and (
-                            "placeholder" in action_topic_id.lower()
-                            or len(action_topic_id) > 30
-                            or " " in action_topic_id
-                            or not action_topic_id.startswith("c")
-                        )
-
-                        if is_topic_placeholder or not action_topic_id:
-                            if enriched_context and enriched_context.get("topicId"):
-                                action_data["topicId"] = enriched_context["topicId"]
-                                print(
-                                    f"📝 Set topicId from enriched_context for goal: {enriched_context['topicId']}"
-                                )
-                            elif context and context.get("topicId"):
-                                action_data["topicId"] = context["topicId"]
-                                print(
-                                    f"📝 Set topicId from original context for goal: {context['topicId']}"
-                                )
-                            elif is_topic_placeholder:
-                                # Remove invalid topicId
-                                print(f"⚠️ Removing invalid topicId placeholder: {action_topic_id}")
-                                action_data.pop("topicId", None)
-
-                    # Handle recommend_resources action - enrich with context
-                    if action_type == "recommend_resources":
-                        # Ensure topicId and courseId come from context if available
-                        if enriched_context and enriched_context.get("topicId"):
-                            action_data["topicId"] = enriched_context["topicId"]
-                            print(
-                                f"📝 Set topicId from enriched_context for resource recommendation: {enriched_context['topicId']}"
-                            )
-                        elif context and context.get("topicId"):
-                            action_data["topicId"] = context["topicId"]
-                            print(
-                                f"📝 Set topicId from original context for resource recommendation: {context['topicId']}"
-                            )
-
-                        if enriched_context and enriched_context.get("courseId"):
-                            action_data["courseId"] = enriched_context["courseId"]
-                            print(
-                                f"📝 Set courseId from enriched_context for resource recommendation: {enriched_context['courseId']}"
-                            )
-                        elif context and context.get("courseId"):
-                            action_data["courseId"] = context["courseId"]
-                            print(
-                                f"📝 Set courseId from original context for resource recommendation: {context['courseId']}"
-                            )
-
-                        print(f"🔍 Final action_data for recommend_resources: {action_data}")
-
-                    # 3. Execute Action
-                    print(f"🚀 Executing {action_type} with action_data: {action_data}")
-                    action_result = await action_service.execute_action(
-                        action_type=action_payload.get("type"),
-                        action_data=action_data,
-                        user_id=user.id,
-                    )
-                    print(f"📤 Action result: {action_result}")
+                                if note_id:
+                                    created_ids["noteId"] = note_id
+                                    print(f"💾 Stored noteId: {note_id}")
 
                     # 4. Clean the response (remove ALL instances of action markers and content)
-                    # Remove the entire action block including any surrounding whitespace/newlines
-                    action_block = action_match.group(0)
                     clean_response = re.sub(
                         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
                         "",
@@ -637,23 +705,35 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         flags=re.DOTALL,
                     ).strip()
 
-                    # For resource recommendations, add a helpful message
-                    if (
-                        action_type == "recommend_resources"
-                        and action_result.get("status") == "success"
-                    ):
-                        resources_count = action_result.get("count", 0)
-                        if resources_count > 0:
-                            clean_response += f"\n\n✅ I've found {resources_count} resource{'s' if resources_count > 1 else ''} for you! They've been saved to your resources."
+                    # 5. Append confirmation messages for all actions
+                    success_messages = []
+                    error_messages = []
 
-                    # 5. Append a confirmation message if successful (skip for recommend_resources as we already added a message)
-                    if action_type != "recommend_resources":
-                        if action_result and action_result.get("status") == "success":
-                            clean_response += f"\n\n✅ **System:** {action_result['message']}"
-                        elif action_result and action_result.get("status") == "error":
-                            clean_response += (
-                                f"\n\n⚠️ **System:** {action_result.get('message', 'Action failed')}"
+                    for action_result_item in action_results:
+                        action_type_item = action_result_item["type"]
+                        result = action_result_item["result"]
+
+                        if result and result.get("status") == "success":
+                            if action_type_item == "recommend_resources":
+                                resources_count = result.get("count", 0)
+                                if resources_count > 0:
+                                    success_messages.append(
+                                        f"✅ I've found {resources_count} resource{'s' if resources_count > 1 else ''} for you! They've been saved to your resources."
+                                    )
+                            else:
+                                success_messages.append(
+                                    f"✅ **System:** {result.get('message', 'Action completed successfully')}"
+                                )
+                        elif result and result.get("status") == "error":
+                            error_messages.append(
+                                f"⚠️ **System:** {result.get('message', 'Action failed')}"
                             )
+
+                    # Append all messages
+                    if success_messages:
+                        clean_response += "\n\n" + "\n".join(success_messages)
+                    if error_messages:
+                        clean_response += "\n\n" + "\n".join(error_messages)
 
                 except json.JSONDecodeError as e:
                     print(f"❌ Action JSON Parse Error: {e}")
