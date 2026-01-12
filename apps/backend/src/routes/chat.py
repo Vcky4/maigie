@@ -792,9 +792,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # 9. Send text back to Client
             await manager.send_personal_message(clean_response, user.id)
 
-            # 10. (Optional) If an action happened, send a separate event to refresh the Frontend
-            if action_result:
-                await manager.send_json({"type": "event", "payload": action_result}, user.id)
+            # 10. (Optional) If actions happened, send separate events to refresh the Frontend
+            # Send each action result separately so frontend can add buttons for each
+            if action_results:
+                for action_result_item in action_results:
+                    result = action_result_item.get("result")
+                    if result:
+                        # Include the action type in the payload for frontend processing
+                        await manager.send_json({
+                            "type": "event",
+                            "payload": {
+                                **result,
+                                "action": action_result_item.get("type")
+                            }
+                        }, user.id)
 
     except WebSocketDisconnect:
         manager.disconnect(user.id)
