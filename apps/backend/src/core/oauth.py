@@ -76,9 +76,13 @@ class GoogleOAuthProvider:
 
         # Add Calendar scopes if requested
         if include_calendar:
+            # Using minimal required scopes for calendar integration:
+            # - calendar.app.created: Create Maigie calendar and ONLY manage events in calendars we create
+            #   (more restrictive than calendar.events - doesn't access user's existing calendars)
+            # - calendar.freebusy: Check availability across all user's calendars
             scope += (
-                " https://www.googleapis.com/auth/calendar "
-                "https://www.googleapis.com/auth/calendar.events"
+                " https://www.googleapis.com/auth/calendar.app.created"
+                " https://www.googleapis.com/auth/calendar.freebusy"
             )
 
         # create_authorization_url is synchronous and returns a tuple (url, state)

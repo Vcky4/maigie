@@ -649,7 +649,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                 seconds=expires_in
             )
 
-            # Store Calendar tokens in user record
+            # Store Calendar tokens in user record (without calendar ID yet)
             await db.user.update(
                 where={"id": calendar_user_id},
                 data={
@@ -657,13 +657,31 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                     "googleCalendarRefreshToken": refresh_token,
                     "googleCalendarTokenExpiresAt": expires_at,
                     "googleCalendarSyncEnabled": True,
-                    "googleCalendarId": "primary",  # Default to primary calendar
                 },
             )
 
+            # Create dedicated Maigie calendar
+            from src.services.google_calendar_service import google_calendar_service
+
+            calendar_id = await google_calendar_service.create_maigie_calendar(calendar_user_id)
+            if not calendar_id:
+                logger.error(f"Failed to create Maigie calendar for user {calendar_user_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create Maigie calendar",
+                )
+
+            # Sync existing schedules to the new calendar
+            sync_results = await google_calendar_service.sync_existing_schedules(calendar_user_id)
+
             logger.info(
-                "Google Calendar connected",
-                extra={"user_id": calendar_user_id, "user_email": user.email},
+                "Google Calendar connected and synced",
+                extra={
+                    "user_id": calendar_user_id,
+                    "user_email": user.email,
+                    "calendar_id": calendar_id,
+                    "synced_schedules": sync_results.get("success_count", 0),
+                },
             )
 
             # Always return JSON response (frontend will handle redirect if needed)
@@ -675,6 +693,9 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                     "status": "success",
                     "message": "Google Calendar connected successfully",
                     "sync_enabled": True,
+                    "calendar_id": calendar_id,
+                    "synced_schedules": sync_results.get("success_count", 0),
+                    "total_schedules": sync_results.get("total", 0),
                 },
             )
 

@@ -570,3 +570,48 @@ async def get_google_calendar_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get Google Calendar status",
         )
+
+
+@router.get("/google-calendar/freebusy")
+async def check_google_calendar_freebusy(
+    current_user: CurrentUser,
+    time_min: str = Query(..., description="Start time in ISO format"),
+    time_max: str = Query(..., description="End time in ISO format"),
+):
+    """Check free/busy information across user's calendars."""
+    try:
+        from datetime import datetime
+
+        from src.services.google_calendar_service import google_calendar_service
+
+        # Parse time parameters
+        time_min_dt = datetime.fromisoformat(time_min.replace("Z", "+00:00"))
+        time_max_dt = datetime.fromisoformat(time_max.replace("Z", "+00:00"))
+
+        # Check free/busy across all user's calendars
+        freebusy_data = await google_calendar_service.check_freebusy(
+            user_id=current_user.id,
+            time_min=time_min_dt,
+            time_max=time_max_dt,
+            calendar_ids=["primary"],  # Check primary calendar
+        )
+
+        if not freebusy_data:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to retrieve free/busy information",
+            )
+
+        return freebusy_data
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid time format: {e}",
+        )
+    except Exception as e:
+        print(f"Error checking free/busy: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check free/busy information",
+        )

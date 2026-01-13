@@ -26,6 +26,174 @@ GOOGLE_TOKEN_REFRESH_URL = "https://oauth2.googleapis.com/token"
 class GoogleCalendarService:
     """Service for syncing schedules with Google Calendar."""
 
+    async def create_maigie_calendar(self, user_id: str) -> str | None:
+        """
+        Create a dedicated Maigie calendar for the user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Calendar ID of the created Maigie calendar, or None if creation failed
+        """
+        try:
+            access_token = await self.get_valid_access_token(user_id)
+            if not access_token:
+                logger.warning(f"No valid access token for user {user_id}")
+                return None
+
+            # Create calendar
+            calendar_data = {
+                "summary": "Maigie Schedule",
+                "description": "Automated schedule management by Maigie",
+                "timeZone": "UTC",
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{GOOGLE_CALENDAR_API_BASE}/calendars",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=calendar_data,
+                )
+
+                if response.status_code != 200:
+                    logger.error(
+                        f"Failed to create Maigie calendar: {response.status_code} - {response.text}"
+                    )
+                    return None
+
+                calendar = response.json()
+                calendar_id = calendar.get("id")
+
+                # Update user with the calendar ID
+                await db.user.update(
+                    where={"id": user_id},
+                    data={"googleCalendarId": calendar_id},
+                )
+
+                logger.info(f"Created Maigie calendar {calendar_id} for user {user_id}")
+                return calendar_id
+
+        except Exception as e:
+            logger.error(f"Error creating Maigie calendar for user {user_id}: {e}")
+            return None
+
+    async def check_freebusy(
+        self,
+        user_id: str,
+        time_min: datetime,
+        time_max: datetime,
+        calendar_ids: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Check free/busy information for calendars.
+
+        Args:
+            user_id: User ID
+            time_min: Start of time range
+            time_max: End of time range
+            calendar_ids: List of calendar IDs to check (defaults to primary)
+
+        Returns:
+            Free/busy information or None if check failed
+        """
+        try:
+            access_token = await self.get_valid_access_token(user_id)
+            if not access_token:
+                logger.warning(f"No valid access token for user {user_id}")
+                return None
+
+            if not calendar_ids:
+                calendar_ids = ["primary"]
+
+            # Build request body
+            request_body = {
+                "timeMin": time_min.isoformat(),
+                "timeMax": time_max.isoformat(),
+                "items": [{"id": cal_id} for cal_id in calendar_ids],
+            }
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{GOOGLE_CALENDAR_API_BASE}/freeBusy",
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=request_body,
+                )
+
+                if response.status_code != 200:
+                    logger.error(
+                        f"Failed to check free/busy: {response.status_code} - {response.text}"
+                    )
+                    return None
+
+                return response.json()
+
+        except Exception as e:
+            logger.error(f"Error checking free/busy for user {user_id}: {e}")
+            return None
+
+    async def sync_existing_schedules(self, user_id: str) -> dict[str, Any]:
+        """
+        Sync all existing schedule blocks to Google Calendar.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Dictionary with sync results (success_count, error_count)
+        """
+        try:
+            # Get all schedules for the user that haven't been synced yet
+            schedules = await db.scheduleblock.find_many(
+                where={
+                    "userId": user_id,
+                    "googleCalendarEventId": None,  # Not yet synced
+                }
+            )
+
+            success_count = 0
+            error_count = 0
+
+            for schedule in schedules:
+                try:
+                    event_id = await self.create_event(
+                        user_id=user_id,
+                        schedule_id=schedule.id,
+                        title=schedule.title,
+                        description=schedule.description,
+                        start_at=schedule.startAt,
+                        end_at=schedule.endAt,
+                        recurring_rule=schedule.recurringRule,
+                    )
+                    if event_id:
+                        success_count += 1
+                    else:
+                        error_count += 1
+                except Exception as e:
+                    logger.error(f"Error syncing schedule {schedule.id}: {e}")
+                    error_count += 1
+
+            logger.info(
+                f"Synced schedules for user {user_id}: "
+                f"{success_count} successful, {error_count} errors"
+            )
+
+            return {
+                "success_count": success_count,
+                "error_count": error_count,
+                "total": len(schedules),
+            }
+
+        except Exception as e:
+            logger.error(f"Error syncing schedules for user {user_id}: {e}")
+            return {"success_count": 0, "error_count": 0, "total": 0}
+
     async def get_valid_access_token(self, user_id: str) -> str | None:
         """
         Get a valid access token for the user, refreshing if necessary.
