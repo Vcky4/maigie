@@ -25,6 +25,8 @@ from src.core.database import db
 from src.core.oauth import OAuthProviderFactory
 from src.core.security import (
     create_access_token,
+    create_refresh_token,
+    decode_access_token,
     generate_otp,
     get_password_hash,
     verify_password,
@@ -33,6 +35,7 @@ from src.dependencies import CurrentUser, DBDep
 from src.exceptions import AuthenticationError
 from src.models.auth import (
     OAuthAuthorizeResponse,
+    RefreshTokenRequest,
     Token,
     UserLogin,
     UserResponse,
@@ -293,11 +296,16 @@ async def login_for_access_token(
             detail="Account inactive. Please verify your email.",
         )
 
-    # 4. Generate Token
+    # 4. Generate Tokens
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
+    refresh_token = create_refresh_token(data={"sub": user.email})
 
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/login/json", response_model=Token)
@@ -327,11 +335,71 @@ async def login_json(user_data: UserLogin):
             detail="Account inactive. Please verify your email.",
         )
 
-    # 4. Generate Token
+    # 4. Generate Tokens
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
+    refresh_token = create_refresh_token(data={"sub": user.email})
 
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(token_request: RefreshTokenRequest):
+    """
+    Refresh access token using a valid refresh token.
+    """
+    try:
+        # Decode the refresh token
+        payload = decode_access_token(token_request.refresh_token)
+
+        # Verify it's a refresh token
+        if payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type",
+            )
+
+        # Get the user email
+        email: str = payload.get("sub")
+        if email is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+            )
+
+        # Verify user still exists and is active
+        user = await db.user.find_unique(where={"email": email})
+        if not user or not user.isActive:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive",
+            )
+
+        # Generate new tokens
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        new_access_token = create_access_token(
+            data={"sub": user.email}, expires_delta=access_token_expires
+        )
+        new_refresh_token = create_refresh_token(data={"sub": user.email})
+
+        return {
+            "access_token": new_access_token,
+            "refresh_token": new_refresh_token,
+            "token_type": "bearer",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error refreshing token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate refresh token",
+        )
 
 
 @router.get("/me", response_model=UserResponse)
@@ -739,11 +807,16 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
             "is_onboarded": getattr(user, "isOnboarded", False),
         }
 
-        # Generate JWT token
+        # Generate JWT tokens
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         jwt_token = create_access_token(data=token_data, expires_delta=access_token_expires)
+        refresh_token = create_refresh_token(data={"sub": user.email})
 
-        return {"access_token": jwt_token, "token_type": "bearer"}
+        return {
+            "access_token": jwt_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+        }
 
     except HTTPException:
         raise
