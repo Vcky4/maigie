@@ -147,6 +147,26 @@ async def create_schedule_block(
                     detail="Topic not found",
                 )
 
+        # Check for calendar conflicts if user has calendar connected
+        user = await db.user.find_unique(where={"id": current_user.id})
+        conflict_info = None
+        if user and user.googleCalendarSyncEnabled:
+            conflict_check = await google_calendar_service.has_conflict(
+                user_id=current_user.id,
+                start_time=data.startAt,
+                end_time=data.endAt,
+            )
+            if conflict_check.get("has_conflict"):
+                conflict_info = {
+                    "warning": "This time slot conflicts with existing calendar events",
+                    "busy_periods": conflict_check.get("busy_periods", []),
+                }
+                # Log the conflict but don't block creation
+                print(
+                    f"⚠️ Schedule conflict detected for user {current_user.id}: "
+                    f"{data.startAt} - {data.endAt}"
+                )
+
         schedule = await db.scheduleblock.create(
             data={
                 "userId": current_user.id,
@@ -170,8 +190,7 @@ async def create_schedule_block(
             importance=0.7,
         )
 
-        # Sync with Google Calendar if enabled
-        user = await db.user.find_unique(where={"id": current_user.id})
+        # Sync with Google Calendar if enabled (user already fetched above for conflict check)
         if user and user.googleCalendarSyncEnabled:
             try:
                 await google_calendar_service.create_event(

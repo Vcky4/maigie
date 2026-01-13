@@ -283,7 +283,8 @@ RULES:
    - Use courseId, topicId, or goalId from context or from previous actions in the batch (use $courseId, $goalId placeholders if created in same batch)
    - Include recurringRule if user mentions recurring schedules (e.g., "daily", "weekly", "every Monday")
    - For multi-day schedules, create separate schedule blocks for each day with appropriate startAt/endAt times
-   - Schedules help organize study time and sync with Google Calendar if connected
+   - IMPORTANT: If the user has Google Calendar connected, the system will automatically check for conflicts with existing calendar events. If a conflict is detected, the system will create the schedule but warn the user about the overlap. Be aware that schedules might conflict with existing commitments.
+   - Schedules automatically sync with Google Calendar if the user has connected their calendar
    - Example: If user says "schedule cooking practice for tomorrow evening and exam study for the next 3 days", create 4 schedule blocks (1 for cooking, 3 for exam study)
 9. When handling multiple actions:
    - If user asks for multiple things (e.g., "create a course and set a goal"), include ALL actions in one batch

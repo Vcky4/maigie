@@ -829,10 +829,45 @@ class ActionService:
 
             print(f"📅 Creating schedule with data: {schedule_data}")
 
+            # Check for calendar conflicts if user has calendar connected
+            from src.services.google_calendar_service import google_calendar_service
+
+            conflict_warning = None
+            user = await db.user.find_unique(where={"id": user_id})
+            if user and user.googleCalendarSyncEnabled:
+                conflict_check = await google_calendar_service.has_conflict(
+                    user_id=user_id,
+                    start_time=start_at,
+                    end_time=end_at,
+                )
+                if conflict_check.get("has_conflict"):
+                    busy_periods = conflict_check.get("busy_periods", [])
+                    conflict_warning = (
+                        f"⚠️ Note: This time slot ({start_at.strftime('%I:%M %p')} - "
+                        f"{end_at.strftime('%I:%M %p')}) conflicts with existing calendar events. "
+                        f"Found {len(busy_periods)} conflicting event(s)."
+                    )
+                    print(f"⚠️ Schedule conflict detected: {conflict_warning}")
+
             # Create the schedule block
             schedule = await db.scheduleblock.create(data=schedule_data)
 
             print(f"✅ Schedule Created: {schedule.id} - {schedule.title}")
+
+            # Sync with Google Calendar if enabled
+            if user and user.googleCalendarSyncEnabled:
+                try:
+                    await google_calendar_service.create_event(
+                        user_id=user_id,
+                        schedule_id=schedule.id,
+                        title=schedule.title,
+                        description=schedule.description,
+                        start_at=start_at,
+                        end_at=end_at,
+                        recurring_rule=data.get("recurringRule"),
+                    )
+                except Exception as e:
+                    print(f"⚠️ Failed to sync schedule to Google Calendar: {e}")
 
             # Record interaction for user memory
             await user_memory_service.record_interaction(
@@ -843,7 +878,7 @@ class ActionService:
                 importance=0.7,
             )
 
-            return {
+            response = {
                 "status": "success",
                 "message": "Schedule block created successfully",
                 "schedule": {
@@ -853,6 +888,12 @@ class ActionService:
                     "endAt": schedule.endAt.isoformat(),
                 },
             }
+
+            # Add conflict warning if present
+            if conflict_warning:
+                response["warning"] = conflict_warning
+
+            return response
 
         except Exception as e:
             print(f"❌ Schedule Creation Failed: {e}")

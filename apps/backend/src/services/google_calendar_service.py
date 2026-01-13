@@ -138,6 +138,71 @@ class GoogleCalendarService:
             logger.error(f"Error checking free/busy for user {user_id}: {e}")
             return None
 
+    async def has_conflict(
+        self,
+        user_id: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> dict[str, Any]:
+        """
+        Check if a time slot conflicts with existing calendar events.
+
+        Args:
+            user_id: User ID
+            start_time: Proposed start time
+            end_time: Proposed end time
+
+        Returns:
+            Dictionary with 'has_conflict' boolean and 'busy_periods' list
+        """
+        try:
+            # Check if user has calendar sync enabled
+            user = await db.user.find_unique(where={"id": user_id})
+            if not user or not user.googleCalendarSyncEnabled:
+                # No calendar connected, no conflict
+                return {"has_conflict": False, "busy_periods": []}
+
+            # Check free/busy for the primary calendar
+            freebusy_data = await self.check_freebusy(
+                user_id=user_id,
+                time_min=start_time,
+                time_max=end_time,
+                calendar_ids=["primary"],
+            )
+
+            if not freebusy_data:
+                # Failed to check, assume no conflict (fail open)
+                logger.warning(
+                    f"Failed to check free/busy for user {user_id}, assuming no conflict"
+                )
+                return {"has_conflict": False, "busy_periods": []}
+
+            # Extract busy periods from the response
+            calendars = freebusy_data.get("calendars", {})
+            primary_calendar = calendars.get("primary", {})
+            busy_periods = primary_calendar.get("busy", [])
+
+            # Check if any busy period overlaps with our proposed time
+            has_conflict = False
+            for busy_period in busy_periods:
+                busy_start = datetime.fromisoformat(busy_period["start"].replace("Z", "+00:00"))
+                busy_end = datetime.fromisoformat(busy_period["end"].replace("Z", "+00:00"))
+
+                # Check for overlap: (start_time < busy_end) and (end_time > busy_start)
+                if start_time < busy_end and end_time > busy_start:
+                    has_conflict = True
+                    break
+
+            return {
+                "has_conflict": has_conflict,
+                "busy_periods": busy_periods,
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking for conflicts for user {user_id}: {e}")
+            # Fail open - don't block schedule creation on errors
+            return {"has_conflict": False, "busy_periods": []}
+
     async def sync_existing_schedules(self, user_id: str) -> dict[str, Any]:
         """
         Sync all existing schedule blocks to Google Calendar.
