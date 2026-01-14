@@ -106,6 +106,70 @@ async def calculate_course_progress(db: PrismaClient, course_id: str) -> tuple[f
     return progress, total_topics, completed_topics
 
 
+async def update_goal_progress_for_course(
+    db: PrismaClient, course_id: str, user_id: str
+) -> None:
+    """
+    Update progress for all goals linked to a course.
+    """
+    # Find all goals linked to this course
+    goals = await db.goal.find_many(
+        where={"courseId": course_id, "userId": user_id, "status": "ACTIVE"}
+    )
+
+    if not goals:
+        return
+
+    # Calculate course progress
+    course_progress, _, _ = await calculate_course_progress(db, course_id)
+
+    # Update each goal
+    for goal in goals:
+        await db.goal.update(
+            where={"id": goal.id},
+            data={"progress": course_progress},
+        )
+
+        # Auto-complete goal if progress reaches 100%
+        if course_progress >= 100.0:
+            await db.goal.update(
+                where={"id": goal.id},
+                data={"status": "COMPLETED"},
+            )
+
+
+async def update_goal_progress_for_topic(
+    db: PrismaClient, topic_id: str, user_id: str, completed: bool
+) -> None:
+    """
+    Update progress for all goals linked to a specific topic.
+    """
+    # Find all goals linked to this topic
+    goals = await db.goal.find_many(
+        where={"topicId": topic_id, "userId": user_id, "status": "ACTIVE"}
+    )
+
+    if not goals:
+        return
+
+    # Topic-based goals: 100% if completed, 0% if not
+    progress = 100.0 if completed else 0.0
+
+    # Update each goal
+    for goal in goals:
+        await db.goal.update(
+            where={"id": goal.id},
+            data={"progress": progress},
+        )
+
+        # Auto-complete goal if topic is completed
+        if completed:
+            await db.goal.update(
+                where={"id": goal.id},
+                data={"status": "COMPLETED"},
+            )
+
+
 async def enrich_module_with_progress(
     db: PrismaClient, module: Any, include_topics: bool = True
 ) -> dict[str, Any]:
@@ -843,6 +907,11 @@ async def update_topic(
         where={"id": topic_id}, data=update_data, include={"note": True}
     )
 
+    # Update goal progress if completion status changed
+    if topic_data.completed is not None:
+        await update_goal_progress_for_topic(db, topic_id, user_id, topic_data.completed)
+        await update_goal_progress_for_course(db, course_id, user_id)
+
     return TopicResponse(**updated_topic.model_dump())
 
 
@@ -901,6 +970,12 @@ async def toggle_topic_completion(
     updated_topic = await db.topic.update(
         where={"id": topic_id}, data={"completed": completed}, include={"note": True}
     )
+
+    # Update goal progress for goals linked to this topic
+    await update_goal_progress_for_topic(db, topic_id, user_id, completed)
+
+    # Update goal progress for goals linked to this course
+    await update_goal_progress_for_course(db, course_id, user_id)
 
     return TopicResponse(**updated_topic.model_dump())
 
