@@ -704,68 +704,92 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
 
         # If this is for Calendar sync, handle it differently
         if purpose == "calendar_sync" and calendar_user_id:
-            # Verify user exists
-            user = await db.user.find_unique(where={"id": calendar_user_id})
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found",
+            try:
+                # Verify user exists
+                user = await db.user.find_unique(where={"id": calendar_user_id})
+                if not user:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="User not found",
+                    )
+
+                # Calculate expiration time
+                expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+                    seconds=expires_in
                 )
 
-            # Calculate expiration time
-            expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
-                seconds=expires_in
-            )
+                # Store Calendar tokens in user record (without calendar ID yet)
+                await db.user.update(
+                    where={"id": calendar_user_id},
+                    data={
+                        "googleCalendarAccessToken": access_token,
+                        "googleCalendarRefreshToken": refresh_token,
+                        "googleCalendarTokenExpiresAt": expires_at,
+                        "googleCalendarSyncEnabled": True,
+                    },
+                )
 
-            # Store Calendar tokens in user record (without calendar ID yet)
-            await db.user.update(
-                where={"id": calendar_user_id},
-                data={
-                    "googleCalendarAccessToken": access_token,
-                    "googleCalendarRefreshToken": refresh_token,
-                    "googleCalendarTokenExpiresAt": expires_at,
-                    "googleCalendarSyncEnabled": True,
-                },
-            )
+                # Create dedicated Maigie calendar
+                from src.services.google_calendar_service import google_calendar_service
 
-            # Create dedicated Maigie calendar
-            from src.services.google_calendar_service import google_calendar_service
+                calendar_id = await google_calendar_service.create_maigie_calendar(calendar_user_id)
+                if not calendar_id:
+                    logger.error(f"Failed to create Maigie calendar for user {calendar_user_id}")
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to create Maigie calendar",
+                    )
 
-            calendar_id = await google_calendar_service.create_maigie_calendar(calendar_user_id)
-            if not calendar_id:
-                logger.error(f"Failed to create Maigie calendar for user {calendar_user_id}")
+                # Sync existing schedules to the new calendar (don't fail connection if sync fails)
+                sync_results = {"success_count": 0, "error_count": 0, "total": 0}
+                try:
+                    sync_results = await google_calendar_service.sync_existing_schedules(
+                        calendar_user_id
+                    )
+                except Exception as sync_error:
+                    # Log sync errors but don't fail the connection
+                    logger.warning(
+                        f"Failed to sync existing schedules for user {calendar_user_id}: {sync_error}",
+                        exc_info=True,
+                    )
+
+                logger.info(
+                    "Google Calendar connected and synced",
+                    extra={
+                        "user_id": calendar_user_id,
+                        "user_email": user.email,
+                        "calendar_id": calendar_id,
+                        "synced_schedules": sync_results.get("success_count", 0),
+                    },
+                )
+
+                # Always return JSON response (frontend will handle redirect if needed)
+                # When frontend provides redirect_uri, Google redirects to frontend first,
+                # then frontend calls this backend endpoint to get the JSON response
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "status": "success",
+                        "message": "Google Calendar connected successfully",
+                        "sync_enabled": True,
+                        "calendar_id": calendar_id,
+                        "synced_schedules": sync_results.get("success_count", 0),
+                        "total_schedules": sync_results.get("total", 0),
+                    },
+                )
+            except HTTPException:
+                # Re-raise HTTP exceptions
+                raise
+            except Exception as e:
+                # Catch any other exceptions and log them properly
+                logger.error(
+                    f"Unexpected error during calendar sync for user {calendar_user_id}: {e}",
+                    exc_info=True,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to create Maigie calendar",
+                    detail=f"Failed to complete calendar connection: {str(e)}",
                 )
-
-            # Sync existing schedules to the new calendar
-            sync_results = await google_calendar_service.sync_existing_schedules(calendar_user_id)
-
-            logger.info(
-                "Google Calendar connected and synced",
-                extra={
-                    "user_id": calendar_user_id,
-                    "user_email": user.email,
-                    "calendar_id": calendar_id,
-                    "synced_schedules": sync_results.get("success_count", 0),
-                },
-            )
-
-            # Always return JSON response (frontend will handle redirect if needed)
-            # When frontend provides redirect_uri, Google redirects to frontend first,
-            # then frontend calls this backend endpoint to get the JSON response
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "status": "success",
-                    "message": "Google Calendar connected successfully",
-                    "sync_enabled": True,
-                    "calendar_id": calendar_id,
-                    "synced_schedules": sync_results.get("success_count", 0),
-                    "total_schedules": sync_results.get("total", 0),
-                },
-            )
 
         # Get user information from provider (for regular OAuth login)
         user_info = await oauth_provider.get_user_info(access_token)
