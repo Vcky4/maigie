@@ -397,6 +397,33 @@ class GoogleCalendarService:
             logger.error(f"Error refreshing access token for user {user_id}: {e}")
             return None
 
+    def _build_schedule_link(
+        self, schedule_id: str, course_id: str | None = None, goal_id: str | None = None
+    ) -> str:
+        """
+        Build a link to the schedule item in the frontend.
+
+        Args:
+            schedule_id: Schedule block ID
+            course_id: Optional course ID (takes priority)
+            goal_id: Optional goal ID (fallback if no course)
+
+        Returns:
+            Full URL to the schedule item or related resource
+        """
+        from src.config import get_settings
+
+        settings = get_settings()
+        frontend_url = settings.FRONTEND_URL.rstrip("/")
+
+        # Prioritize course link, then goal, then schedule page
+        if course_id:
+            return f"{frontend_url}/courses/{course_id}"
+        elif goal_id:
+            return f"{frontend_url}/goals"
+        else:
+            return f"{frontend_url}/schedule"
+
     async def create_event(
         self,
         user_id: str,
@@ -440,13 +467,27 @@ class GoogleCalendarService:
                 )
                 return None
 
+            # Fetch schedule to get courseId/goalId for link generation
+            schedule = await db.scheduleblock.find_unique(where={"id": schedule_id})
+            course_id = getattr(schedule, "courseId", None) if schedule else None
+            goal_id = getattr(schedule, "goalId", None) if schedule else None
+
+            # Build link to schedule item
+            schedule_link = self._build_schedule_link(schedule_id, course_id, goal_id)
+
+            # Build description with link
+            description_parts = []
+            if description:
+                description_parts.append(description)
+            description_parts.append(f"\n\nView in Maigie: {schedule_link}")
+
             # Log which calendar we're using for debugging
             logger.debug(f"Creating event in calendar {calendar_id} for user {user_id}")
 
             # Build event data
             event_data: dict[str, Any] = {
                 "summary": title,
-                "description": description or "",
+                "description": "\n".join(description_parts),
                 "start": {
                     "dateTime": start_at.isoformat(),
                     "timeZone": "UTC",
@@ -454,6 +495,10 @@ class GoogleCalendarService:
                 "end": {
                     "dateTime": end_at.isoformat(),
                     "timeZone": "UTC",
+                },
+                "source": {
+                    "title": "Maigie",
+                    "url": schedule_link,
                 },
             }
 
@@ -541,10 +586,24 @@ class GoogleCalendarService:
             user = await db.user.find_unique(where={"id": user_id})
             calendar_id = user.googleCalendarId or "primary"
 
+            # Fetch schedule to get courseId/goalId for link generation
+            schedule = await db.scheduleblock.find_unique(where={"id": schedule_id})
+            course_id = getattr(schedule, "courseId", None) if schedule else None
+            goal_id = getattr(schedule, "goalId", None) if schedule else None
+
+            # Build link to schedule item
+            schedule_link = self._build_schedule_link(schedule_id, course_id, goal_id)
+
+            # Build description with link
+            description_parts = []
+            if description:
+                description_parts.append(description)
+            description_parts.append(f"\n\nView in Maigie: {schedule_link}")
+
             # Build event data
             event_data: dict[str, Any] = {
                 "summary": title,
-                "description": description or "",
+                "description": "\n".join(description_parts),
                 "start": {
                     "dateTime": start_at.isoformat(),
                     "timeZone": "UTC",
@@ -552,6 +611,10 @@ class GoogleCalendarService:
                 "end": {
                     "dateTime": end_at.isoformat(),
                     "timeZone": "UTC",
+                },
+                "source": {
+                    "title": "Maigie",
+                    "url": schedule_link,
                 },
             }
 
