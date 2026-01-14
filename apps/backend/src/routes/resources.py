@@ -7,6 +7,7 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
@@ -22,6 +23,8 @@ from src.models.resources import (
 from src.services.indexing_service import indexing_service
 from src.services.rag_service import rag_service
 from src.services.user_memory_service import user_memory_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 
@@ -50,7 +53,15 @@ async def list_resources(current_user: CurrentUser):
             for r in resources
         ]
     except Exception as e:
-        print(f"Error listing resources: {e}")
+        logger.error(
+            "Error listing resources",
+            extra={
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list resources",
@@ -65,20 +76,72 @@ async def create_resource(
 ):
     """Create a new resource."""
     try:
-        resource = await db.resource.create(
-            data={
-                "userId": current_user.id,
-                "title": data.title,
-                "url": data.url,
-                "description": data.description,
-                "type": data.type,
-                "metadata": data.metadata,
-                "isRecommended": data.isRecommended,
-                "recommendationScore": data.recommendationScore,
-                "courseId": data.courseId,
-                "topicId": data.topicId,
-            }
-        )
+        # Validate courseId if provided
+        if data.courseId:
+            course = await db.course.find_first(
+                where={"id": data.courseId, "userId": current_user.id}
+            )
+            if not course:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Course not found: {data.courseId}",
+                )
+
+        # Validate topicId if provided
+        if data.topicId:
+            topic = await db.topic.find_unique(where={"id": data.topicId})
+            if not topic:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Topic not found: {data.topicId}",
+                )
+            # If courseId is also provided, verify topic belongs to that course
+            if data.courseId:
+                topic_with_module = await db.topic.find_unique(
+                    where={"id": data.topicId},
+                    include={"module": {"include": {"course": True}}},
+                )
+                if (
+                    topic_with_module
+                    and topic_with_module.module
+                    and topic_with_module.module.course
+                    and topic_with_module.module.course.id != data.courseId
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Topic does not belong to the specified course",
+                    )
+
+        # Build resource data, only including fields that are set
+        resource_data = {
+            "userId": current_user.id,
+            "title": data.title,
+            "url": data.url,
+            "type": data.type,
+            "isRecommended": data.isRecommended,
+        }
+
+        # Add optional fields only if they are provided
+        if data.description is not None:
+            resource_data["description"] = data.description
+
+        # Handle metadata - Prisma Json fields need explicit None or Json object
+        if data.metadata is not None:
+            from prisma import Json
+
+            resource_data["metadata"] = Json(data.metadata)
+        # If metadata is None, don't include it (Prisma will use default)
+
+        if data.recommendationScore is not None:
+            resource_data["recommendationScore"] = data.recommendationScore
+
+        if data.courseId is not None:
+            resource_data["courseId"] = data.courseId
+
+        if data.topicId is not None:
+            resource_data["topicId"] = data.topicId
+
+        resource = await db.resource.create(data=resource_data)
 
         # Index the resource in the background
         background_tasks.add_task(indexing_service.index_resource, resource.id)
@@ -101,11 +164,25 @@ async def create_resource(
             "createdAt": resource.createdAt.isoformat(),
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error creating resource: {e}")
+        logger.error(
+            "Error creating resource",
+            extra={
+                "user_id": current_user.id,
+                "title": data.title,
+                "url": data.url,
+                "course_id": data.courseId,
+                "topic_id": data.topicId,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create resource",
+            detail=f"Failed to create resource: {str(e)}",
         )
 
 
@@ -171,10 +248,17 @@ async def recommend_resources(
         )
 
     except Exception as e:
-        print(f"Error generating recommendations: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(
+            "Error generating recommendations",
+            extra={
+                "user_id": current_user.id,
+                "query": request.query,
+                "limit": request.limit,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate recommendations",
@@ -229,7 +313,17 @@ async def record_resource_interaction(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error recording interaction: {e}")
+        logger.error(
+            "Error recording interaction",
+            extra={
+                "user_id": current_user.id,
+                "resource_id": resource_id,
+                "interaction_type": interaction_type,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to record interaction",
