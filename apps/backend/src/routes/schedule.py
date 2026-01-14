@@ -7,6 +7,7 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -16,6 +17,8 @@ from src.dependencies import CurrentUser
 from src.models.schedule import ScheduleCreate, ScheduleResponse, ScheduleUpdate
 from src.services.google_calendar_service import google_calendar_service
 from src.services.user_memory_service import user_memory_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/schedule", tags=["schedule"])
 
@@ -99,7 +102,15 @@ async def list_schedules(
             for schedule in schedules
         ]
     except Exception as e:
-        print(f"Error listing schedules: {e}")
+        logger.error(
+            "Error listing schedules",
+            extra={
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list schedules",
@@ -204,7 +215,16 @@ async def create_schedule_block(
                 )
             except Exception as e:
                 # Log error but don't fail the request
-                print(f"Warning: Failed to sync schedule to Google Calendar: {e}")
+                logger.warning(
+                    "Failed to sync schedule to Google Calendar",
+                    extra={
+                        "user_id": current_user.id,
+                        "schedule_id": schedule.id,
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
 
         return ScheduleResponse(
             id=schedule.id,
@@ -229,7 +249,15 @@ async def create_schedule_block(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error creating schedule block: {e}")
+        logger.error(
+            "Error creating schedule block",
+            extra={
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create schedule block",
@@ -276,7 +304,16 @@ async def get_schedule(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error getting schedule block: {e}")
+        logger.error(
+            "Error getting schedule block",
+            extra={
+                "user_id": current_user.id,
+                "schedule_id": schedule_id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get schedule block",
@@ -388,7 +425,16 @@ async def update_schedule(
                 )
             except Exception as e:
                 # Log error but don't fail the request
-                print(f"Warning: Failed to sync schedule update to Google Calendar: {e}")
+                logger.warning(
+                    "Failed to sync schedule update to Google Calendar",
+                    extra={
+                        "user_id": current_user.id,
+                        "schedule_id": schedule_id,
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
 
         return ScheduleResponse(
             id=updated_schedule.id,
@@ -413,7 +459,16 @@ async def update_schedule(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error updating schedule block: {e}")
+        logger.error(
+            "Error updating schedule block",
+            extra={
+                "user_id": current_user.id,
+                "schedule_id": schedule_id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update schedule block",
@@ -449,7 +504,17 @@ async def delete_schedule(
                 )
             except Exception as e:
                 # Log error but continue with deletion
-                print(f"Warning: Failed to delete schedule from Google Calendar: {e}")
+                logger.warning(
+                    "Failed to delete schedule from Google Calendar",
+                    extra={
+                        "user_id": current_user.id,
+                        "schedule_id": schedule_id,
+                        "event_id": schedule.googleCalendarEventId,
+                        "error_type": type(e).__name__,
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
 
         # Delete the schedule
         await db.scheduleblock.delete(where={"id": schedule_id})
@@ -458,7 +523,16 @@ async def delete_schedule(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error deleting schedule block: {e}")
+        logger.error(
+            "Error deleting schedule block",
+            extra={
+                "user_id": current_user.id,
+                "schedule_id": schedule_id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete schedule block",
@@ -526,7 +600,15 @@ async def connect_google_calendar(
         return {"authorization_url": authorization_url, "state": state}
 
     except Exception as e:
-        print(f"Error connecting Google Calendar: {e}")
+        logger.error(
+            "Error initiating Google Calendar connection",
+            extra={
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initiate Google Calendar connection",
@@ -562,7 +644,15 @@ async def disconnect_google_calendar(
         return {"status": "success", "message": "Google Calendar disconnected successfully"}
 
     except Exception as e:
-        print(f"Error disconnecting Google Calendar: {e}")
+        logger.error(
+            "Error disconnecting Google Calendar",
+            extra={
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to disconnect Google Calendar",
@@ -584,7 +674,15 @@ async def get_google_calendar_status(
         }
 
     except Exception as e:
-        print(f"Error getting Google Calendar status: {e}")
+        logger.error(
+            "Error getting Google Calendar status",
+            extra={
+                "user_id": current_user.id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get Google Calendar status",
@@ -629,7 +727,17 @@ async def check_google_calendar_freebusy(
             detail=f"Invalid time format: {e}",
         )
     except Exception as e:
-        print(f"Error checking free/busy: {e}")
+        logger.error(
+            "Error checking free/busy",
+            extra={
+                "user_id": current_user.id,
+                "time_min": time_min,
+                "time_max": time_max,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to check free/busy information",

@@ -819,7 +819,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                 user = await db.user.find_unique(where={"id": calendar_user_id})
                 if not user:
                     logger.error(
-                        f"User not found for calendar sync",
+                        "User not found for calendar sync",
                         extra={"user_id": calendar_user_id},
                     )
                     raise HTTPException(
