@@ -17,6 +17,13 @@ class Token(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str | None = None
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request schema for token refresh."""
+
+    refresh_token: str
 
 
 class TokenData(BaseModel):

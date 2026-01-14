@@ -78,6 +78,19 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     return encoded_jwt
 
 
+def create_refresh_token(data: dict[str, Any]) -> str:
+    """
+    Generate a JWT refresh token (longer expiration).
+    """
+    to_encode = data.copy()
+    expire = datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+
+    # Mark as refresh token type
+    to_encode.update({"exp": expire, "type": "refresh"})
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
+
+
 def create_verification_token(email: str) -> str:
     """
     Generate a short-lived token for email verification.
