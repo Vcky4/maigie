@@ -861,7 +861,7 @@ async def get_user_analytics(
 ):
     """
     Get comprehensive analytics for the current user across all courses.
-    
+
     Returns overall progress summary and detailed progress for each course.
     """
     user_id = current_user.id
@@ -877,27 +877,20 @@ async def get_user_analytics(
     total_courses = len(courses)
     active_courses = sum(1 for c in courses if not c.archived)
     archived_courses = sum(1 for c in courses if c.archived)
-    
+
     total_modules = sum(len(c.modules) for c in courses)
-    total_topics = sum(
-        len(module.topics)
-        for c in courses 
-        for module in c.modules
-    )
+    total_topics = sum(len(module.topics) for c in courses for module in c.modules)
     completed_topics = sum(
-        1 for c in courses 
-        for module in c.modules 
-        for topic in module.topics 
-        if topic.completed
+        1 for c in courses for module in c.modules for topic in module.topics if topic.completed
     )
-    
+
     # Calculate completed modules (all topics in module are completed)
     completed_modules = 0
     for course in courses:
         for module in course.modules:
             if len(module.topics) > 0 and all(topic.completed for topic in module.topics):
                 completed_modules += 1
-    
+
     # Calculate completed courses (all topics in course are completed)
     completed_courses = 0
     for course in courses:
@@ -918,7 +911,7 @@ async def get_user_analytics(
 
     # Calculate overall progress (weighted by topics)
     overall_progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
-    
+
     # Calculate average course progress
     course_progresses = []
     for course in courses:
@@ -927,10 +920,9 @@ async def get_user_analytics(
             completed = sum(1 for t in course_topics if t.completed)
             progress = (completed / len(course_topics)) * 100
             course_progresses.append(progress)
-    
+
     average_course_progress = (
-        sum(course_progresses) / len(course_progresses) 
-        if course_progresses else 0.0
+        sum(course_progresses) / len(course_progresses) if course_progresses else 0.0
     )
 
     # Build summary
@@ -957,13 +949,15 @@ async def get_user_analytics(
         course_completed_topics = sum(1 for t in course_topics if t.completed)
         course_total_topics = len(course_topics)
         course_progress = (
-            (course_completed_topics / course_total_topics * 100) 
-            if course_total_topics > 0 else 0.0
+            (course_completed_topics / course_total_topics * 100)
+            if course_total_topics > 0
+            else 0.0
         )
-        
+
         # Count completed modules
         course_completed_modules = sum(
-            1 for module in course.modules
+            1
+            for module in course.modules
             if len(module.topics) > 0 and all(topic.completed for topic in module.topics)
         )
 
