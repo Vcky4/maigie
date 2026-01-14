@@ -57,33 +57,80 @@ class GoogleCalendarService:
                         "Content-Type": "application/json",
                     },
                     json=calendar_data,
+                    timeout=30.0,  # Add timeout to prevent hanging
                 )
 
                 # Google Calendar API returns 201 Created for successful calendar creation
                 if response.status_code not in (200, 201):
                     logger.error(
-                        f"Failed to create Maigie calendar: {response.status_code} - {response.text}"
+                        f"Failed to create Maigie calendar: {response.status_code} - {response.text}",
+                        extra={
+                            "user_id": user_id,
+                            "status_code": response.status_code,
+                            "response_text": response.text[:500],  # Limit response text length
+                        },
                     )
                     return None
 
-                calendar = response.json()
+                try:
+                    calendar = response.json()
+                except Exception as json_error:
+                    logger.error(
+                        f"Failed to parse calendar creation response as JSON: {json_error}",
+                        extra={
+                            "user_id": user_id,
+                            "response_text": response.text[:500],
+                            "status_code": response.status_code,
+                        },
+                        exc_info=True,
+                    )
+                    return None
+
                 calendar_id = calendar.get("id")
 
                 if not calendar_id:
-                    logger.error(f"Calendar created but no ID returned: {response.text}")
+                    logger.error(
+                        f"Calendar created but no ID returned: {response.text}",
+                        extra={
+                            "user_id": user_id,
+                            "response_data": calendar,
+                        },
+                    )
                     return None
 
                 # Update user with the calendar ID
-                await db.user.update(
-                    where={"id": user_id},
-                    data={"googleCalendarId": calendar_id},
-                )
+                try:
+                    await db.user.update(
+                        where={"id": user_id},
+                        data={"googleCalendarId": calendar_id},
+                    )
+                except Exception as db_error:
+                    logger.error(
+                        f"Failed to update user with calendar ID: {db_error}",
+                        extra={
+                            "user_id": user_id,
+                            "calendar_id": calendar_id,
+                        },
+                        exc_info=True,
+                    )
+                    return None
 
                 logger.info(f"Created Maigie calendar {calendar_id} for user {user_id}")
                 return calendar_id
 
+        except httpx.HTTPError as http_error:
+            logger.error(
+                f"HTTP error creating Maigie calendar for user {user_id}: {http_error}",
+                extra={"user_id": user_id},
+                exc_info=True,
+            )
+            return None
         except Exception as e:
-            logger.error(f"Error creating Maigie calendar for user {user_id}: {e}")
+            logger.error(
+                f"Error creating Maigie calendar for user {user_id}: {type(e).__name__}: {str(e)}",
+                extra={"user_id": user_id, "exception_type": type(e).__name__},
+                exc_info=True,
+            )
             return None
 
     async def check_freebusy(

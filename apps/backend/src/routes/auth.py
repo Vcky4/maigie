@@ -627,10 +627,28 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     """
     Handle OAuth callback.
     """
+    logger.info(
+        "OAuth callback initiated",
+        extra={
+            "provider": provider,
+            "has_code": bool(code),
+            "has_state": bool(state),
+            "state_length": len(state) if state else 0,
+            "code_length": len(code) if code else 0,
+            "request_url": str(request.url),
+            "request_method": request.method,
+        },
+    )
+
     try:
         # Get OAuth provider instance
         oauth_provider = OAuthProviderFactory.get_provider(provider)
+        logger.debug(f"OAuth provider instance created for {provider}")
     except ValueError as e:
+        logger.error(
+            f"Invalid OAuth provider: {provider}",
+            extra={"provider": provider, "error": str(e)},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -645,6 +663,8 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
     calendar_user_id = None
     backend_callback_uri = None
     frontend_redirect_uri = None
+    state_decoded_successfully = False
+
     try:
         # Try to decode state to get redirect_uri, purpose, and callback info
         # Add padding if needed
@@ -658,18 +678,41 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         frontend_redirect_uri = state_data.get(
             "frontend_redirect_uri"
         )  # Frontend redirect URI (optional)
-    except Exception:
+        state_decoded_successfully = True
+
+        logger.info(
+            "State decoded successfully",
+            extra={
+                "provider": provider,
+                "purpose": purpose,
+                "has_calendar_user_id": bool(calendar_user_id),
+                "has_backend_callback_uri": bool(backend_callback_uri),
+                "has_frontend_redirect_uri": bool(frontend_redirect_uri),
+                "redirect_uri": redirect_uri,
+            },
+        )
+    except Exception as state_error:
         # If state doesn't contain redirect_uri, construct it the same way as authorize
-        pass
+        logger.debug(
+            "State decoding failed, will construct redirect_uri",
+            extra={
+                "provider": provider,
+                "error_type": type(state_error).__name__,
+                "error": str(state_error),
+            },
+        )
 
     # If redirect_uri wasn't in state, construct it from settings or request
     if not redirect_uri:
         if settings.OAUTH_BASE_URL:
             base_url = settings.OAUTH_BASE_URL.rstrip("/")
+            logger.debug(f"Using OAUTH_BASE_URL from settings: {base_url}")
         else:
             base_url = get_base_url_from_request(request)
+            logger.debug(f"Constructed base_url from request: {base_url}")
         callback_path = f"/api/v1/auth/oauth/{provider}/callback"
         redirect_uri = f"{base_url}{callback_path}"
+        logger.info(f"Constructed redirect_uri: {redirect_uri}")
 
     logger.info(
         "OAuth callback received",
@@ -678,15 +721,46 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
             "redirect_uri": redirect_uri,
             "has_code": bool(code),
             "has_state": bool(state),
+            "state_decoded": state_decoded_successfully,
+            "purpose": purpose,
+            "calendar_user_id": calendar_user_id,
         },
     )
 
     try:
         # Exchange authorization code for access token
+        logger.info(
+            "Exchanging authorization code for access token",
+            extra={
+                "provider": provider,
+                "redirect_uri": redirect_uri,
+                "code_length": len(code) if code else 0,
+            },
+        )
+
         token_response = await oauth_provider.get_access_token(code, redirect_uri)
+
+        logger.debug(
+            "Token exchange completed",
+            extra={
+                "provider": provider,
+                "response_type": type(token_response).__name__,
+                "response_keys": (
+                    list(token_response.keys()) if isinstance(token_response, dict) else None
+                ),
+            },
+        )
 
         # Debug: Check token response structure
         if not isinstance(token_response, dict):
+            logger.error(
+                f"Unexpected token response type: {type(token_response)}",
+                extra={
+                    "provider": provider,
+                    "response_type": str(type(token_response)),
+                    "response_value": str(token_response)[:200],  # Limit length
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Unexpected token response type: {type(token_response)}",
@@ -695,8 +769,34 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         access_token = token_response.get("access_token")
         refresh_token = token_response.get("refresh_token")
         expires_in = token_response.get("expires_in", 3600)
+        granted_scopes = token_response.get("scope", "")
+        token_type = token_response.get("token_type", "Bearer")
+
+        logger.info(
+            "Token response parsed",
+            extra={
+                "provider": provider,
+                "has_access_token": bool(access_token),
+                "has_refresh_token": bool(refresh_token),
+                "expires_in": expires_in,
+                "token_type": token_type,
+                "granted_scopes": granted_scopes,
+                "access_token_length": len(access_token) if access_token else 0,
+                "refresh_token_length": len(refresh_token) if refresh_token else 0,
+            },
+        )
 
         if not access_token:
+            logger.error(
+                "No access token in response",
+                extra={
+                    "provider": provider,
+                    "response_keys": list(token_response.keys()),
+                    "response_values": {
+                        k: "***" if "token" in k.lower() else v for k, v in token_response.items()
+                    },
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Failed to obtain access token from OAuth provider. Response keys: {list(token_response.keys())}",
@@ -704,21 +804,53 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
 
         # If this is for Calendar sync, handle it differently
         if purpose == "calendar_sync" and calendar_user_id:
+            logger.info(
+                "Processing calendar sync OAuth callback",
+                extra={
+                    "user_id": calendar_user_id,
+                    "granted_scopes": granted_scopes,
+                    "has_refresh_token": bool(refresh_token),
+                    "expires_in": expires_in,
+                },
+            )
             try:
                 # Verify user exists
+                logger.debug(f"Looking up user {calendar_user_id}")
                 user = await db.user.find_unique(where={"id": calendar_user_id})
                 if not user:
+                    logger.error(
+                        f"User not found for calendar sync",
+                        extra={"user_id": calendar_user_id},
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="User not found",
                     )
 
+                logger.info(
+                    "User found for calendar sync",
+                    extra={
+                        "user_id": user.id,
+                        "user_email": user.email,
+                        "existing_calendar_id": user.googleCalendarId,
+                        "sync_already_enabled": user.googleCalendarSyncEnabled,
+                    },
+                )
+
                 # Calculate expiration time
                 expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
                     seconds=expires_in
                 )
+                logger.debug(
+                    "Calculated token expiration",
+                    extra={
+                        "expires_at": expires_at.isoformat(),
+                        "expires_in_seconds": expires_in,
+                    },
+                )
 
                 # Store Calendar tokens in user record (without calendar ID yet)
+                logger.info(f"Storing calendar tokens for user {calendar_user_id}")
                 await db.user.update(
                     where={"id": calendar_user_id},
                     data={
@@ -728,28 +860,59 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                         "googleCalendarSyncEnabled": True,
                     },
                 )
+                logger.info(f"Calendar tokens stored successfully for user {calendar_user_id}")
 
                 # Create dedicated Maigie calendar
+                logger.info(f"Creating Maigie calendar for user {calendar_user_id}")
                 from src.services.google_calendar_service import google_calendar_service
 
                 calendar_id = await google_calendar_service.create_maigie_calendar(calendar_user_id)
                 if not calendar_id:
-                    logger.error(f"Failed to create Maigie calendar for user {calendar_user_id}")
+                    logger.error(
+                        "Failed to create Maigie calendar",
+                        extra={
+                            "user_id": calendar_user_id,
+                            "granted_scopes": granted_scopes,
+                        },
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail="Failed to create Maigie calendar",
                     )
 
+                logger.info(
+                    "Maigie calendar created successfully",
+                    extra={
+                        "user_id": calendar_user_id,
+                        "calendar_id": calendar_id,
+                    },
+                )
+
                 # Sync existing schedules to the new calendar (don't fail connection if sync fails)
                 sync_results = {"success_count": 0, "error_count": 0, "total": 0}
+                logger.info(f"Syncing existing schedules for user {calendar_user_id}")
                 try:
                     sync_results = await google_calendar_service.sync_existing_schedules(
                         calendar_user_id
                     )
+                    logger.info(
+                        "Schedule sync completed",
+                        extra={
+                            "user_id": calendar_user_id,
+                            "success_count": sync_results.get("success_count", 0),
+                            "error_count": sync_results.get("error_count", 0),
+                            "total": sync_results.get("total", 0),
+                        },
+                    )
                 except Exception as sync_error:
                     # Log sync errors but don't fail the connection
                     logger.warning(
-                        f"Failed to sync existing schedules for user {calendar_user_id}: {sync_error}",
+                        f"Failed to sync existing schedules for user {calendar_user_id}",
+                        extra={
+                            "user_id": calendar_user_id,
+                            "error_type": type(sync_error).__name__,
+                            "error": str(sync_error),
+                        },
                         exc_info=True,
                     )
 
@@ -792,8 +955,19 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                 )
 
         # Get user information from provider (for regular OAuth login)
+        logger.info(
+            "Fetching user info from OAuth provider",
+            extra={"provider": provider},
+        )
         user_info = await oauth_provider.get_user_info(access_token)
-        logger.info("User info retrieved from Google", extra={"user_info": user_info})
+        logger.info(
+            "User info retrieved from OAuth provider",
+            extra={
+                "provider": provider,
+                "user_info_keys": list(user_info.keys()) if isinstance(user_info, dict) else None,
+                "has_email": "email" in user_info if isinstance(user_info, dict) else False,
+            },
+        )
 
         # Extract user data
         email = user_info.get("email", "")
@@ -801,10 +975,24 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         full_name = user_info.get("name") or user_info.get("full_name")
         logger.info(
             "Extracted user data from OAuth response",
-            extra={"email": email, "user_id": user_id, "full_name": full_name},
+            extra={
+                "provider": provider,
+                "email": email,
+                "user_id": user_id,
+                "full_name": full_name,
+                "has_email": bool(email),
+                "has_user_id": bool(user_id),
+            },
         )
 
         if not email:
+            logger.error(
+                "Email not provided by OAuth provider",
+                extra={
+                    "provider": provider,
+                    "user_info": user_info,
+                },
+            )
             raise AuthenticationError("Email not provided by OAuth provider")
 
         # Construct the required Pydantic object
@@ -816,10 +1004,23 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         )
 
         # Get or Create the Maigie user record
+        logger.info(
+            "Getting or creating OAuth user",
+            extra={
+                "provider": provider,
+                "email": email,
+                "provider_user_id": oauth_user_info.provider_user_id,
+            },
+        )
         user = await get_or_create_oauth_user(oauth_user_info, db)
         logger.info(
             "User created/retrieved from database",
-            extra={"user_id": user.id, "user_email": user.email},
+            extra={
+                "user_id": user.id,
+                "user_email": user.email,
+                "provider": provider,
+                "is_new_user": not hasattr(user, "_created") or getattr(user, "_created", False),
+            },
         )
 
         # Update the token_data dictionary using the actual database user's info
@@ -832,9 +1033,28 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         }
 
         # Generate JWT tokens
+        logger.info(
+            "Generating JWT tokens",
+            extra={
+                "user_id": user.id,
+                "user_email": user.email,
+                "expires_minutes": settings.ACCESS_TOKEN_EXPIRE_MINUTES,
+            },
+        )
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         jwt_token = create_access_token(data=token_data, expires_delta=access_token_expires)
         refresh_token = create_refresh_token(data={"sub": user.email})
+
+        logger.info(
+            "OAuth callback completed successfully",
+            extra={
+                "provider": provider,
+                "user_id": user.id,
+                "user_email": user.email,
+                "has_jwt_token": bool(jwt_token),
+                "has_refresh_token": bool(refresh_token),
+            },
+        )
 
         return {
             "access_token": jwt_token,
