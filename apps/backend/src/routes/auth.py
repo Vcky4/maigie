@@ -622,7 +622,7 @@ async def oauth_authorize(
         )
 
 
-@router.get("/oauth/{provider}/callback", response_model=Token)
+@router.get("/oauth/{provider}/callback")
 async def oauth_callback(provider: str, code: str, state: str, request: Request, db: DBDep):
     """
     Handle OAuth callback.

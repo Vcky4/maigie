@@ -382,7 +382,19 @@ class GoogleCalendarService:
                 return None
 
             user = await db.user.find_unique(where={"id": user_id})
-            calendar_id = user.googleCalendarId or "primary"
+            calendar_id = user.googleCalendarId
+
+            # Validate calendar ID - we need the Maigie calendar ID, not primary
+            if not calendar_id:
+                logger.warning(
+                    f"No calendar ID found for user {user_id}. "
+                    f"Calendar sync may not be properly configured. "
+                    f"User has sync enabled: {user.googleCalendarSyncEnabled if user else False}"
+                )
+                return None
+
+            # Log which calendar we're using for debugging
+            logger.debug(f"Creating event in calendar {calendar_id} for user {user_id}")
 
             # Build event data
             event_data: dict[str, Any] = {
@@ -414,9 +426,16 @@ class GoogleCalendarService:
                     json=event_data,
                 )
 
-                if response.status_code != 200:
+                # Google Calendar API returns 201 Created for successful event creation
+                if response.status_code not in (200, 201):
                     logger.error(
-                        f"Failed to create Google Calendar event: {response.status_code} - {response.text}"
+                        f"Failed to create Google Calendar event in calendar {calendar_id}: "
+                        f"{response.status_code} - {response.text}"
+                    )
+                    # Log additional context for debugging
+                    logger.error(
+                        f"Event creation context - User: {user_id}, Calendar ID: {calendar_id}, "
+                        f"Schedule ID: {schedule_id}, Title: {title}"
                     )
                     return None
 
