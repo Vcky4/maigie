@@ -59,7 +59,8 @@ class GoogleCalendarService:
                     json=calendar_data,
                 )
 
-                if response.status_code != 200:
+                # Google Calendar API returns 201 Created for successful calendar creation
+                if response.status_code not in (200, 201):
                     logger.error(
                         f"Failed to create Maigie calendar: {response.status_code} - {response.text}"
                     )
@@ -67,6 +68,10 @@ class GoogleCalendarService:
 
                 calendar = response.json()
                 calendar_id = calendar.get("id")
+
+                if not calendar_id:
+                    logger.error(f"Calendar created but no ID returned: {response.text}")
+                    return None
 
                 # Update user with the calendar ID
                 await db.user.update(
