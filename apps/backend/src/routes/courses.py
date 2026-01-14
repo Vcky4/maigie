@@ -106,9 +106,7 @@ async def calculate_course_progress(db: PrismaClient, course_id: str) -> tuple[f
     return progress, total_topics, completed_topics
 
 
-async def update_goal_progress_for_course(
-    db: PrismaClient, course_id: str, user_id: str
-) -> None:
+async def update_goal_progress_for_course(db: PrismaClient, course_id: str, user_id: str) -> None:
     """
     Update progress for all goals linked to a course.
     """
