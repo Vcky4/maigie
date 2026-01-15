@@ -142,6 +142,11 @@ model User {
   chatSessions ChatSession[]
   chatMessages ChatMessage[] // Direct relation to help count usage (e.g., "50 messages/month")
 
+  // Analytics Relations
+  studySessions StudySession[]
+  userStreak    UserStreak?
+  achievements  Achievement[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -184,6 +189,7 @@ model Course {
   resources Resource[] // Resources linked to this course
   goals     Goal[] // Goals linked to this course
   schedules ScheduleBlock[] // Schedule blocks linked to this course
+  studySessions StudySession[] // Study sessions for this course
 
   @@index([userId])
   @@index([userId, archived])
@@ -223,6 +229,7 @@ model Topic {
   resources Resource[] // Resources linked to this topic
   goals     Goal[] // Goals linked to this topic
   schedules ScheduleBlock[] // Schedule blocks linked to this topic
+  studySessions StudySession[] // Study sessions for this topic
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -519,4 +526,83 @@ model UserInteractionMemory {
   @@index([userId, interactionType])
   @@index([userId, createdAt])
   @@index([entityType, entityId])
+}
+
+// ==========================================
+//  ANALYTICS MODULE
+// ==========================================
+
+model StudySession {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Session details
+  startTime DateTime
+  endTime   DateTime?
+  duration  Float // Duration in minutes (calculated when session ends)
+
+  // Context (what was studied)
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  topicId  String?
+  topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  // Metadata
+  metadata Json? // Additional context (device, location, etc.)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, startTime])
+  @@index([courseId])
+  @@index([topicId])
+  @@index([startTime])
+}
+
+model UserStreak {
+  id String @id @default(cuid())
+
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Streak tracking
+  currentStreak Int @default(0) // Current consecutive days
+  longestStreak Int @default(0) // Longest streak ever achieved
+  lastStudyDate DateTime? // Last date user studied (for streak calculation)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum AchievementType {
+  STUDY_TIME_MILESTONE // e.g., "Studied 100 hours"
+  STREAK_MILESTONE     // e.g., "7 day streak"
+  COURSE_COMPLETION    // e.g., "Completed first course"
+  GOAL_ACHIEVEMENT     // e.g., "Completed 10 goals"
+  TOPIC_COMPLETION     // e.g., "Completed 50 topics"
+  AI_USAGE             // e.g., "Sent 100 AI messages"
+}
+
+model Achievement {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  achievementType AchievementType
+  title           String // e.g., "7 Day Streak"
+  description     String? // e.g., "You've studied for 7 consecutive days!"
+  icon            String? // Icon identifier or emoji
+  metadata        Json? // Additional data (e.g., milestone value)
+
+  unlockedAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, achievementType])
+  @@index([unlockedAt])
 }
