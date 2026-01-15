@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 from prisma import Client as PrismaClient
 
 from ..core.database import db
@@ -141,14 +142,22 @@ async def study_session_websocket(websocket: WebSocket, user_id: str = Query(...
 # ============================================================================
 
 
+class StartSessionRequest(BaseModel):
+    courseId: Optional[str] = None
+    topicId: Optional[str] = None
+
+
 @router.post("/sessions/start")
 async def start_study_session(
     current_user: CurrentUser,
-    course_id: Optional[str] = None,
-    topic_id: Optional[str] = None,
+    request: StartSessionRequest = StartSessionRequest(),
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Start a new study session."""
+    # Handle optional request body (all fields are optional in the model)
+    course_id = request.courseId if request.courseId else None
+    topic_id = request.topicId if request.topicId else None
+
     # Check if there's an active session
     active_session = await db.studysession.find_first(
         where={
@@ -893,13 +902,14 @@ Format as JSON array:
                 insights=[],
             ),
             monthlyReport=MonthlyReport(
-                monthStart=month_start.date().isoformat(),
-                monthEnd=now.date().isoformat(),
+                month=now.strftime("%B"),
+                year=now.year,
                 totalStudyTime=0,
                 sessionsCompleted=0,
-                topicsCompleted=0,
                 coursesCompleted=0,
+                topicsCompleted=0,
                 goalsAchieved=0,
+                averageStreak=0.0,
                 achievementsUnlocked=0,
                 insights=[],
             ),
