@@ -7,13 +7,17 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import asyncio
+import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from prisma import Client as PrismaClient
 
+from ..core.database import db
+from ..core.websocket import manager as ws_manager
 from ..dependencies import AdminUser, CurrentUser
 from ..models.analytics import (
     AchievementBadge,
@@ -30,6 +34,7 @@ from ..models.analytics import (
     LearningPaceTrend,
     MonthlyReport,
     ProgressAnalytics,
+    PlatformStatistics,
     ProductiveTimeSlot,
     Recommendation,
     RetentionMetrics,
@@ -49,7 +54,86 @@ from ..models.analytics import (
 from ..utils.dependencies import get_db_client
 from ..utils.exceptions import ResourceNotFoundError
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
+
+
+# ============================================================================
+# Real-time Study Session Tracking via WebSocket
+# ============================================================================
+
+
+@router.websocket("/sessions/ws")
+async def study_session_websocket(websocket: WebSocket, user_id: str = Query(...)):
+    """
+    WebSocket endpoint for real-time study session tracking.
+    Sends periodic updates about active study sessions.
+    """
+    connection_id = await ws_manager.connect(websocket, user_id)
+
+    try:
+        # Send initial connection confirmation
+        await websocket.send_json(
+            {
+                "type": "connected",
+                "message": "Study session tracking active",
+            }
+        )
+
+        # Keep connection alive and send periodic updates
+        while True:
+            # Check for active session
+            active_session = await db.studysession.find_first(
+                where={
+                    "userId": user_id,
+                    "endTime": None,
+                },
+                order={"startTime": "desc"},
+            )
+
+            if active_session:
+                # Calculate current duration
+                current_time = datetime.utcnow()
+                duration_minutes = (current_time - active_session.startTime).total_seconds() / 60
+
+                # Send session update
+                await websocket.send_json(
+                    {
+                        "type": "session_update",
+                        "sessionId": active_session.id,
+                        "startTime": active_session.startTime.isoformat(),
+                        "duration": duration_minutes,
+                        "courseId": active_session.courseId,
+                        "topicId": active_session.topicId,
+                    }
+                )
+            else:
+                # No active session
+                await websocket.send_json(
+                    {
+                        "type": "no_session",
+                        "message": "No active study session",
+                    }
+                )
+
+            # Wait 10 seconds before next update
+            await asyncio.sleep(10)
+
+            # Handle incoming messages (heartbeat, etc.)
+            try:
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
+                if isinstance(data, dict) and data.get("type") == "heartbeat":
+                    await ws_manager.handle_heartbeat(connection_id)
+            except asyncio.TimeoutError:
+                # No message received, continue
+                pass
+
+    except WebSocketDisconnect:
+        await ws_manager.disconnect(connection_id, reason="client_disconnect")
+    except Exception as e:
+        logger.error(f"WebSocket error for study session tracking: {e}")
+        await ws_manager.disconnect(connection_id, reason="error")
 
 
 # ============================================================================
@@ -136,6 +220,9 @@ async def stop_study_session(
     # Update streak
     await _update_streak(db, current_user.id, end_time.date())
 
+    # Check and unlock achievements
+    await _check_and_unlock_achievements(db, current_user.id, updated_session)
+
     return {
         "sessionId": updated_session.id,
         "duration": updated_session.duration,
@@ -174,7 +261,11 @@ async def get_enhanced_user_analytics(
     total_modules = sum(len(c.modules) for c in courses_data)
     total_topics = sum(len(module.topics) for c in courses_data for module in c.modules)
     completed_topics = sum(
-        1 for c in courses_data for module in c.modules for topic in module.topics if topic.completed
+        1
+        for c in courses_data
+        for module in c.modules
+        for topic in module.topics
+        if topic.completed
     )
 
     # Calculate completed modules
@@ -307,7 +398,11 @@ async def _update_streak(db: PrismaClient, user_id: str, study_date: datetime.da
 
     # Check if this is a new day
     if streak.lastStudyDate:
-        last_date = streak.lastStudyDate.date() if isinstance(streak.lastStudyDate, datetime) else streak.lastStudyDate
+        last_date = (
+            streak.lastStudyDate.date()
+            if isinstance(streak.lastStudyDate, datetime)
+            else streak.lastStudyDate
+        )
         days_diff = (study_date - last_date).days
 
         if days_diff == 0:
@@ -404,7 +499,9 @@ async def _get_study_analytics(db: PrismaClient, user_id: str) -> StudyAnalytics
             courseTitle=data["title"],
             totalMinutes=data["minutes"],
             sessionCount=data["sessions"],
-            averageSessionDuration=data["minutes"] / data["sessions"] if data["sessions"] > 0 else 0,
+            averageSessionDuration=(
+                data["minutes"] / data["sessions"] if data["sessions"] > 0 else 0
+            ),
         )
         for course_id, data in by_course_data.items()
     ]
@@ -431,7 +528,11 @@ async def _get_study_analytics(db: PrismaClient, user_id: str) -> StudyAnalytics
     streak = StudyStreak(
         currentStreak=streak_record.currentStreak if streak_record else 0,
         longestStreak=streak_record.longestStreak if streak_record else 0,
-        lastStudyDate=streak_record.lastStudyDate.isoformat() if streak_record and streak_record.lastStudyDate else None,
+        lastStudyDate=(
+            streak_record.lastStudyDate.isoformat()
+            if streak_record and streak_record.lastStudyDate
+            else None
+        ),
     )
 
     # Productive times (by hour)
@@ -585,10 +686,11 @@ async def _get_ai_usage_analytics(db: PrismaClient, user_id: str) -> AIUsageAnal
 
 async def _get_insights_and_reports(db: PrismaClient, user_id: str) -> InsightsAndReports:
     """Get insights and reports."""
-    # Simplified implementation - can be enhanced with AI-generated insights
-    recommendations = []
-    achievements = []
-    goal_comparisons = []
+    from ..services.llm_service import GeminiService
+
+    # Generate weekly and monthly reports
+    weekly_report = await _generate_weekly_report(db, user_id)
+    monthly_report = await _generate_monthly_report(db, user_id)
 
     # Get achievements
     user_achievements = await db.achievement.find_many(
@@ -609,9 +711,76 @@ async def _get_insights_and_reports(db: PrismaClient, user_id: str) -> InsightsA
         for a in user_achievements
     ]
 
+    # Generate personalized recommendations
+    llm_service = GeminiService()
+    goals = await db.goal.find_many(where={"userId": user_id, "status": "ACTIVE"})
+    courses = await db.course.find_many(where={"userId": user_id, "archived": False})
+
+    recommendations_prompt = f"""Based on the user's learning profile, generate 3-5 personalized recommendations:
+
+Active Goals: {len(goals)}
+Active Courses: {len(courses)}
+Recent Achievements: {len([a for a in user_achievements if (datetime.utcnow() - datetime.fromisoformat(a.unlockedAt.replace('Z', '+00:00'))).days <= 7])}
+
+Generate recommendations that are:
+1. Specific and actionable
+2. Aligned with user's goals
+3. Prioritized (high/medium/low)
+4. Focused on improvement
+
+Format as JSON array:
+[
+  {{
+    "type": "course|goal|schedule|study_time|topic",
+    "title": "Recommendation Title",
+    "description": "Why this recommendation",
+    "priority": "high|medium|low"
+  }}
+]"""
+
+    try:
+        recs_response = await llm_service.get_chat_response([], recommendations_prompt)
+        import json
+        import re
+
+        json_match = re.search(r"\[.*?\]", recs_response, re.DOTALL)
+        if json_match:
+            recommendations_data = json.loads(json_match.group(0))
+            recommendations = [
+                Recommendation(
+                    type=rec.get("type", "study_time"),
+                    title=rec.get("title", "Keep Learning"),
+                    description=rec.get("description", ""),
+                    priority=rec.get("priority", "medium"),
+                )
+                for rec in recommendations_data
+            ]
+        else:
+            recommendations = []
+    except Exception:
+        recommendations = []
+
+    # Get goal comparisons
+    goal_comparisons = []
+    for goal in goals:
+        goal_comparisons.append(
+            GoalComparison(
+                goalId=goal.id,
+                goalTitle=goal.title,
+                targetValue=100.0,
+                currentValue=goal.progress,
+                progress=goal.progress,
+                status=(
+                    "completed"
+                    if goal.progress >= 100
+                    else ("on_track" if goal.progress >= 50 else "behind")
+                ),
+            )
+        )
+
     return InsightsAndReports(
-        weeklyReport=None,  # Can be generated
-        monthlyReport=None,  # Can be generated
+        weeklyReport=weekly_report,
+        monthlyReport=monthly_report,
         recommendations=recommendations,
         achievements=achievements,
         goalComparisons=goal_comparisons,
@@ -630,12 +799,6 @@ async def get_enhanced_admin_analytics(
 ):
     """Get comprehensive enhanced admin analytics."""
     # Get basic platform stats (calculate inline to avoid circular import)
-    from ..models.analytics import (
-        AdminAnalyticsResponse,
-        CourseAnalyticsItem,
-        PlatformStatistics,
-        UserAnalyticsItem,
-    )
 
     # Get all users
     all_users = await db.user.find_many(where={"role": "USER"})
@@ -695,9 +858,7 @@ async def get_enhanced_admin_analytics(
         )
         user_progresses.append(user_progress)
 
-    average_user_progress = (
-        sum(user_progresses) / len(user_progresses) if user_progresses else 0.0
-    )
+    average_user_progress = sum(user_progresses) / len(user_progresses) if user_progresses else 0.0
 
     # Users by tier
     users_by_tier = defaultdict(int)
@@ -878,4 +1039,451 @@ async def get_enhanced_admin_analytics(
         topUsers=top_users,
         topCourses=top_courses,
         recentCourses=recent_courses,
+    )
+
+
+# ============================================================================
+# Achievement Unlocking Logic
+# ============================================================================
+
+
+async def _check_and_unlock_achievements(db: PrismaClient, user_id: str, session=None):
+    """Check and unlock achievements based on milestones."""
+    from ..models.analytics import AchievementType
+
+    # Get user's current stats
+    sessions = await db.studysession.find_many(
+        where={"userId": user_id, "endTime": {"not": None}},
+    )
+    total_study_minutes = sum(s.duration or 0 for s in sessions)
+    total_study_hours = total_study_minutes / 60
+
+    courses = await db.course.find_many(
+        where={"userId": user_id},
+        include={"modules": {"include": {"topics": True}}},
+    )
+    completed_courses = sum(
+        1
+        for course in courses
+        if len([t for m in course.modules for t in m.topics]) > 0
+        and all(t.completed for m in course.modules for t in m.topics)
+    )
+    completed_topics = sum(
+        1
+        for course in courses
+        for module in course.modules
+        for topic in module.topics
+        if topic.completed
+    )
+
+    goals = await db.goal.find_many(where={"userId": user_id})
+    completed_goals = sum(1 for g in goals if g.status == "COMPLETED")
+
+    messages = await db.chatmessage.find_many(where={"userId": user_id, "role": "USER"})
+    total_messages = len(messages)
+
+    streak = await db.userstreak.find_unique(where={"userId": user_id})
+    current_streak = streak.currentStreak if streak else 0
+
+    # Check existing achievements
+    existing_achievements = await db.achievement.find_many(
+        where={"userId": user_id},
+    )
+    unlocked_types = {a.achievementType for a in existing_achievements}
+
+    # Define achievement milestones
+    achievements_to_check = [
+        # Study time milestones
+        (
+            AchievementType.STUDY_TIME_MILESTONE,
+            10,
+            "10 Hours Studied",
+            "You've studied for 10 hours! 🎉",
+            "📚",
+        ),
+        (
+            AchievementType.STUDY_TIME_MILESTONE,
+            50,
+            "50 Hours Studied",
+            "Halfway to 100 hours! Keep going! 💪",
+            "📖",
+        ),
+        (
+            AchievementType.STUDY_TIME_MILESTONE,
+            100,
+            "100 Hours Studied",
+            "Century milestone! Amazing dedication! 🌟",
+            "🏆",
+        ),
+        (
+            AchievementType.STUDY_TIME_MILESTONE,
+            500,
+            "500 Hours Studied",
+            "Incredible! You're a true scholar! 🎓",
+            "👑",
+        ),
+        # Streak milestones
+        (
+            AchievementType.STREAK_MILESTONE,
+            3,
+            "3 Day Streak",
+            "Great start! You're building a habit! 🔥",
+            "🔥",
+        ),
+        (
+            AchievementType.STREAK_MILESTONE,
+            7,
+            "7 Day Streak",
+            "A full week! You're unstoppable! 💪",
+            "🔥🔥",
+        ),
+        (
+            AchievementType.STREAK_MILESTONE,
+            30,
+            "30 Day Streak",
+            "A full month! Incredible consistency! 🌟",
+            "🔥🔥🔥",
+        ),
+        # Course completion
+        (
+            AchievementType.COURSE_COMPLETION,
+            1,
+            "First Course Completed",
+            "Congratulations on your first course! 🎉",
+            "✅",
+        ),
+        (
+            AchievementType.COURSE_COMPLETION,
+            5,
+            "5 Courses Completed",
+            "You're on a roll! 5 courses down! 🚀",
+            "⭐",
+        ),
+        (
+            AchievementType.COURSE_COMPLETION,
+            10,
+            "10 Courses Completed",
+            "Double digits! You're a learning machine! 🎓",
+            "⭐⭐",
+        ),
+        # Topic completion
+        (
+            AchievementType.TOPIC_COMPLETION,
+            10,
+            "10 Topics Completed",
+            "Great progress! Keep learning! 📚",
+            "📝",
+        ),
+        (
+            AchievementType.TOPIC_COMPLETION,
+            50,
+            "50 Topics Completed",
+            "Halfway to 100! Amazing! 💪",
+            "📚📚",
+        ),
+        (
+            AchievementType.TOPIC_COMPLETION,
+            100,
+            "100 Topics Completed",
+            "Century of knowledge! Outstanding! 🌟",
+            "📚📚📚",
+        ),
+        # Goal achievement
+        (
+            AchievementType.GOAL_ACHIEVEMENT,
+            5,
+            "5 Goals Achieved",
+            "You're achieving your dreams! 🎯",
+            "🎯",
+        ),
+        (
+            AchievementType.GOAL_ACHIEVEMENT,
+            10,
+            "10 Goals Achieved",
+            "Double digit achievements! Amazing! 🏆",
+            "🎯🎯",
+        ),
+        # AI usage
+        (
+            AchievementType.AI_USAGE,
+            50,
+            "50 AI Messages",
+            "You're making great use of AI assistance! 🤖",
+            "💬",
+        ),
+        (
+            AchievementType.AI_USAGE,
+            100,
+            "100 AI Messages",
+            "Century of AI interactions! 🚀",
+            "💬💬",
+        ),
+        (
+            AchievementType.AI_USAGE,
+            500,
+            "500 AI Messages",
+            "AI power user! You're maximizing your learning! 🌟",
+            "💬💬💬",
+        ),
+    ]
+
+    # Check and unlock achievements
+    for achievement_type, milestone_value, title, description, icon in achievements_to_check:
+        if achievement_type in unlocked_types:
+            continue  # Already unlocked
+
+        should_unlock = False
+        metadata = {"milestone": milestone_value}
+
+        if achievement_type == AchievementType.STUDY_TIME_MILESTONE:
+            should_unlock = total_study_hours >= milestone_value
+        elif achievement_type == AchievementType.STREAK_MILESTONE:
+            should_unlock = current_streak >= milestone_value
+        elif achievement_type == AchievementType.COURSE_COMPLETION:
+            should_unlock = completed_courses >= milestone_value
+        elif achievement_type == AchievementType.TOPIC_COMPLETION:
+            should_unlock = completed_topics >= milestone_value
+        elif achievement_type == AchievementType.GOAL_ACHIEVEMENT:
+            should_unlock = completed_goals >= milestone_value
+        elif achievement_type == AchievementType.AI_USAGE:
+            should_unlock = total_messages >= milestone_value
+
+        if should_unlock:
+            await db.achievement.create(
+                data={
+                    "userId": user_id,
+                    "achievementType": achievement_type,
+                    "title": title,
+                    "description": description,
+                    "icon": icon,
+                    "metadata": metadata,
+                }
+            )
+            unlocked_types.add(achievement_type)
+
+
+# ============================================================================
+# Report Generation with AI Insights
+# ============================================================================
+
+
+async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyReport:
+    """Generate weekly study report with AI insights."""
+    from ..services.llm_service import GeminiService
+
+    now = datetime.utcnow()
+    week_start = now - timedelta(days=now.weekday())
+    week_end = week_start + timedelta(days=6)
+
+    # Get study sessions for the week
+    sessions = await db.studysession.find_many(
+        where={
+            "userId": user_id,
+            "startTime": {"gte": week_start, "lte": week_end},
+            "endTime": {"not": None},
+        },
+    )
+
+    # Get completed topics
+    courses = await db.course.find_many(
+        where={"userId": user_id},
+        include={"modules": {"include": {"topics": True}}},
+    )
+
+    topics_completed_this_week = []
+    for course in courses:
+        for module in course.modules:
+            for topic in module.topics:
+                if topic.completed and topic.updatedAt >= week_start:
+                    topics_completed_this_week.append(topic)
+
+    # Get completed goals
+    goals = await db.goal.find_many(
+        where={"userId": user_id, "status": "COMPLETED"},
+    )
+    goals_this_week = [g for g in goals if g.updatedAt >= week_start]
+
+    # Get top courses by study time
+    course_study_time = defaultdict(float)
+    for session in sessions:
+        if session.courseId:
+            course_study_time[session.courseId] += session.duration or 0
+
+    top_courses = sorted(course_study_time.items(), key=lambda x: x[1], reverse=True)[:3]
+    top_course_titles = []
+    for course_id, _ in top_courses:
+        course = next((c for c in courses if c.id == course_id), None)
+        if course:
+            top_course_titles.append(course.title)
+
+    # Check streak
+    streak = await db.userstreak.find_unique(where={"userId": user_id})
+    streak_maintained = (
+        streak and streak.lastStudyDate and (now.date() - streak.lastStudyDate.date()).days <= 7
+    )
+
+    # Generate AI insights
+    llm_service = GeminiService()
+    insights_prompt = f"""Based on the following weekly study data, generate 3-5 personalized insights and recommendations:
+
+Total Study Time: {sum(s.duration or 0 for s in sessions) / 60:.1f} hours
+Sessions Completed: {len(sessions)}
+Topics Completed: {len(topics_completed_this_week)}
+Goals Achieved: {len(goals_this_week)}
+Streak Maintained: {streak_maintained}
+Top Courses: {', '.join(top_course_titles) if top_course_titles else 'None'}
+
+Generate insights that are:
+1. Encouraging and motivational
+2. Actionable (specific recommendations)
+3. Personalized to the user's progress
+4. Focused on improvement areas
+
+Format as a JSON array of strings, each string being one insight/recommendation."""
+
+    try:
+        insights_response = await llm_service.get_chat_response([], insights_prompt)
+        # Extract JSON array from response
+        import json
+        import re
+
+        json_match = re.search(r"\[.*?\]", insights_response, re.DOTALL)
+        if json_match:
+            insights = json.loads(json_match.group(0))
+        else:
+            # Fallback: split by lines or common patterns
+            insights = [
+                line.strip()
+                for line in insights_response.split("\n")
+                if line.strip() and not line.strip().startswith("#")
+            ][:5]
+    except Exception:
+        insights = [
+            "Keep up the great work!",
+            "Try to maintain a consistent study schedule.",
+            "Focus on completing one course at a time for better results.",
+        ]
+
+    return WeeklyReport(
+        weekStart=week_start.date().isoformat(),
+        weekEnd=week_end.date().isoformat(),
+        totalStudyTime=sum(s.duration or 0 for s in sessions),
+        sessionsCompleted=len(sessions),
+        topicsCompleted=len(topics_completed_this_week),
+        goalsAchieved=len(goals_this_week),
+        streakMaintained=streak_maintained,
+        topCourses=top_course_titles,
+        insights=insights[:5],
+    )
+
+
+async def _generate_monthly_report(db: PrismaClient, user_id: str) -> MonthlyReport:
+    """Generate monthly progress summary with AI insights."""
+    from ..services.llm_service import GeminiService
+
+    now = datetime.utcnow()
+    month_start = datetime(now.year, now.month, 1)
+    month_end = (
+        datetime(now.year, now.month + 1, 1) - timedelta(days=1)
+        if now.month < 12
+        else datetime(now.year + 1, 1, 1) - timedelta(days=1)
+    )
+
+    # Get study sessions for the month
+    sessions = await db.studysession.find_many(
+        where={
+            "userId": user_id,
+            "startTime": {"gte": month_start, "lte": month_end},
+            "endTime": {"not": None},
+        },
+    )
+
+    # Get completed courses
+    courses = await db.course.find_many(
+        where={"userId": user_id},
+        include={"modules": {"include": {"topics": True}}},
+    )
+    courses_completed_this_month = [
+        course
+        for course in courses
+        if len([t for m in course.modules for t in m.topics]) > 0
+        and all(t.completed for m in course.modules for t in m.topics)
+        and course.updatedAt >= month_start
+    ]
+
+    # Get completed topics
+    topics_completed_this_month = []
+    for course in courses:
+        for module in course.modules:
+            for topic in module.topics:
+                if topic.completed and topic.updatedAt >= month_start:
+                    topics_completed_this_month.append(topic)
+
+    # Get completed goals
+    goals = await db.goal.find_many(
+        where={"userId": user_id, "status": "COMPLETED"},
+    )
+    goals_this_month = [g for g in goals if g.updatedAt >= month_start]
+
+    # Get achievements unlocked this month
+    achievements = await db.achievement.find_many(
+        where={"userId": user_id, "unlockedAt": {"gte": month_start}},
+    )
+
+    # Calculate average streak
+    streak = await db.userstreak.find_unique(where={"userId": user_id})
+    average_streak = streak.currentStreak if streak else 0
+
+    # Generate AI insights
+    llm_service = GeminiService()
+    insights_prompt = f"""Based on the following monthly study data, generate 3-5 comprehensive insights:
+
+Total Study Time: {sum(s.duration or 0 for s in sessions) / 60:.1f} hours
+Sessions Completed: {len(sessions)}
+Courses Completed: {len(courses_completed_this_month)}
+Topics Completed: {len(topics_completed_this_month)}
+Goals Achieved: {len(goals_this_month)}
+Achievements Unlocked: {len(achievements)}
+Average Streak: {average_streak} days
+
+Generate insights that:
+1. Celebrate achievements
+2. Identify patterns and trends
+3. Provide strategic recommendations for next month
+4. Are motivational and personalized
+
+Format as a JSON array of strings."""
+
+    try:
+        insights_response = await llm_service.get_chat_response([], insights_prompt)
+        import json
+        import re
+
+        json_match = re.search(r"\[.*?\]", insights_response, re.DOTALL)
+        if json_match:
+            insights = json.loads(json_match.group(0))
+        else:
+            insights = [
+                line.strip()
+                for line in insights_response.split("\n")
+                if line.strip() and not line.strip().startswith("#")
+            ][:5]
+    except Exception:
+        insights = [
+            "Excellent progress this month!",
+            "Consider setting new goals for next month.",
+            "Your consistency is paying off!",
+        ]
+
+    return MonthlyReport(
+        month=now.strftime("%B"),
+        year=now.year,
+        totalStudyTime=sum(s.duration or 0 for s in sessions),
+        sessionsCompleted=len(sessions),
+        coursesCompleted=len(courses_completed_this_month),
+        topicsCompleted=len(topics_completed_this_month),
+        goalsAchieved=len(goals_this_month),
+        averageStreak=average_streak,
+        achievementsUnlocked=len(achievements),
+        insights=insights[:5],
     )
