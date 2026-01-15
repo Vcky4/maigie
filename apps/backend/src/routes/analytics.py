@@ -7,18 +7,15 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
-import asyncio
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from prisma import Client as PrismaClient
 
-from ..core.database import db
-from ..core.websocket import manager as ws_manager
 from ..dependencies import AdminUser, CurrentUser
 from ..models.analytics import (
     AchievementBadge,
@@ -58,83 +55,6 @@ from ..utils.exceptions import ResourceNotFoundError
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
-
-
-# ============================================================================
-# Real-time Study Session Tracking via WebSocket
-# ============================================================================
-
-
-@router.websocket("/sessions/ws")
-async def study_session_websocket(websocket: WebSocket, user_id: str = Query(...)):
-    """
-    WebSocket endpoint for real-time study session tracking.
-    Sends periodic updates about active study sessions.
-    """
-    connection_id = await ws_manager.connect(websocket, user_id)
-
-    try:
-        # Send initial connection confirmation
-        await websocket.send_json(
-            {
-                "type": "connected",
-                "message": "Study session tracking active",
-            }
-        )
-
-        # Keep connection alive and send periodic updates
-        while True:
-            # Check for active session
-            active_session = await db.studysession.find_first(
-                where={
-                    "userId": user_id,
-                    "endTime": None,
-                },
-                order={"startTime": "desc"},
-            )
-
-            if active_session:
-                # Calculate current duration
-                current_time = datetime.utcnow()
-                duration_minutes = (current_time - active_session.startTime).total_seconds() / 60
-
-                # Send session update
-                await websocket.send_json(
-                    {
-                        "type": "session_update",
-                        "sessionId": active_session.id,
-                        "startTime": active_session.startTime.isoformat(),
-                        "duration": duration_minutes,
-                        "courseId": active_session.courseId,
-                        "topicId": active_session.topicId,
-                    }
-                )
-            else:
-                # No active session
-                await websocket.send_json(
-                    {
-                        "type": "no_session",
-                        "message": "No active study session",
-                    }
-                )
-
-            # Wait 10 seconds before next update
-            await asyncio.sleep(10)
-
-            # Handle incoming messages (heartbeat, etc.)
-            try:
-                data = await asyncio.wait_for(websocket.receive_json(), timeout=0.1)
-                if isinstance(data, dict) and data.get("type") == "heartbeat":
-                    await ws_manager.handle_heartbeat(connection_id)
-            except asyncio.TimeoutError:
-                # No message received, continue
-                pass
-
-    except WebSocketDisconnect:
-        await ws_manager.disconnect(connection_id, reason="client_disconnect")
-    except Exception as e:
-        logger.error(f"WebSocket error for study session tracking: {e}")
-        await ws_manager.disconnect(connection_id, reason="error")
 
 
 # ============================================================================
