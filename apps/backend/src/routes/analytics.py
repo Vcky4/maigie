@@ -154,41 +154,55 @@ async def start_study_session(
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Start a new study session."""
-    # Handle optional request body (all fields are optional in the model)
-    course_id = request.courseId if request.courseId else None
-    topic_id = request.topicId if request.topicId else None
+    try:
+        # Handle optional request body (all fields are optional in the model)
+        course_id = request.courseId if request.courseId else None
+        topic_id = request.topicId if request.topicId else None
 
-    # Check if there's an active session
-    active_session = await db.studysession.find_first(
-        where={
-            "userId": current_user.id,
-            "endTime": None,
-        },
-        order={"startTime": "desc"},
-    )
+        logger.info(
+            f"Starting study session for user {current_user.id}, course: {course_id}, topic: {topic_id}"
+        )
 
-    if active_session:
-        # Return existing session
+        # Check if there's an active session
+        active_session = await db.studysession.find_first(
+            where={
+                "userId": current_user.id,
+                "endTime": None,
+            },
+            order={"startTime": "desc"},
+        )
+
+        if active_session:
+            logger.info(f"Active session already exists: {active_session.id}")
+            # Return existing session
+            return {
+                "sessionId": active_session.id,
+                "startTime": active_session.startTime.isoformat(),
+                "message": "Active session already exists",
+            }
+
+        # Create new session
+        session = await db.studysession.create(
+            data={
+                "userId": current_user.id,
+                "startTime": datetime.utcnow(),
+                "courseId": course_id,
+                "topicId": topic_id,
+            }
+        )
+
+        logger.info(f"Created new study session: {session.id}")
+
         return {
-            "sessionId": active_session.id,
-            "startTime": active_session.startTime.isoformat(),
-            "message": "Active session already exists",
+            "sessionId": session.id,
+            "startTime": session.startTime.isoformat(),
         }
-
-    # Create new session
-    session = await db.studysession.create(
-        data={
-            "userId": current_user.id,
-            "startTime": datetime.utcnow(),
-            "courseId": course_id,
-            "topicId": topic_id,
-        }
-    )
-
-    return {
-        "sessionId": session.id,
-        "startTime": session.startTime.isoformat(),
-    }
+    except Exception as e:
+        logger.error(
+            f"Error starting study session for user {current_user.id}: {str(e)}",
+            exc_info=True,
+        )
+        raise
 
 
 @router.post("/sessions/{session_id}/stop")
@@ -198,45 +212,60 @@ async def stop_study_session(
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Stop an active study session."""
-    session = await db.studysession.find_unique(where={"id": session_id})
+    try:
+        logger.info(f"Stopping study session {session_id} for user {current_user.id}")
 
-    if not session:
-        raise ResourceNotFoundError("StudySession", session_id)
+        session = await db.studysession.find_unique(where={"id": session_id})
 
-    if session.userId != current_user.id:
-        raise ResourceNotFoundError("StudySession", session_id)
+        if not session:
+            logger.warning(f"Study session {session_id} not found")
+            raise ResourceNotFoundError("StudySession", session_id)
 
-    if session.endTime:
+        if session.userId != current_user.id:
+            logger.warning(
+                f"User {current_user.id} attempted to stop session {session_id} owned by {session.userId}"
+            )
+            raise ResourceNotFoundError("StudySession", session_id)
+
+        if session.endTime:
+            logger.info(f"Session {session_id} already ended")
+            return {
+                "sessionId": session.id,
+                "duration": session.duration,
+                "message": "Session already ended",
+            }
+
+        # Calculate duration
+        end_time = datetime.utcnow()
+        duration_minutes = (end_time - session.startTime).total_seconds() / 60
+
+        # Update session
+        updated_session = await db.studysession.update(
+            where={"id": session_id},
+            data={
+                "endTime": end_time,
+                "duration": duration_minutes,
+            },
+        )
+
+        logger.info(f"Session {session_id} stopped. Duration: {duration_minutes:.2f} minutes")
+
+        # Update streak
+        await _update_streak(db, current_user.id, end_time.date())
+
+        # Check and unlock achievements
+        await _check_and_unlock_achievements(db, current_user.id, updated_session)
+
         return {
-            "sessionId": session.id,
-            "duration": session.duration,
-            "message": "Session already ended",
+            "sessionId": updated_session.id,
+            "duration": updated_session.duration,
+            "endTime": updated_session.endTime.isoformat(),
         }
-
-    # Calculate duration
-    end_time = datetime.utcnow()
-    duration_minutes = (end_time - session.startTime).total_seconds() / 60
-
-    # Update session
-    updated_session = await db.studysession.update(
-        where={"id": session_id},
-        data={
-            "endTime": end_time,
-            "duration": duration_minutes,
-        },
-    )
-
-    # Update streak
-    await _update_streak(db, current_user.id, end_time.date())
-
-    # Check and unlock achievements
-    await _check_and_unlock_achievements(db, current_user.id, updated_session)
-
-    return {
-        "sessionId": updated_session.id,
-        "duration": updated_session.duration,
-        "endTime": updated_session.endTime.isoformat(),
-    }
+    except ResourceNotFoundError:
+        raise
+    except Exception as e:
+        logger.error(f"Error stopping study session {session_id}: {str(e)}", exc_info=True)
+        raise
 
 
 # ============================================================================
