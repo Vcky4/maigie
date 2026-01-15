@@ -241,141 +241,146 @@ async def get_enhanced_user_analytics(
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Get comprehensive enhanced analytics for the current user."""
-    user_id = current_user.id
+    try:
+        user_id = current_user.id
 
-    # Get basic analytics (calculate inline to avoid circular import)
-    from ..models.analytics import CourseProgressItem, UserProgressSummary
+        # Get basic analytics (calculate inline to avoid circular import)
+        from ..models.analytics import CourseProgressItem, UserProgressSummary
 
-    # Fetch all user courses
-    courses_data = await db.course.find_many(
-        where={"userId": user_id},
-        include={"modules": {"include": {"topics": True}}},
-        order={"createdAt": "desc"},
-    )
-
-    # Calculate overall statistics
-    total_courses = len(courses_data)
-    active_courses = sum(1 for c in courses_data if not c.archived)
-    archived_courses = sum(1 for c in courses_data if c.archived)
-
-    total_modules = sum(len(c.modules) for c in courses_data)
-    total_topics = sum(len(module.topics) for c in courses_data for module in c.modules)
-    completed_topics = sum(
-        1
-        for c in courses_data
-        for module in c.modules
-        for topic in module.topics
-        if topic.completed
-    )
-
-    # Calculate completed modules
-    completed_modules = 0
-    for course in courses_data:
-        for module in course.modules:
-            if len(module.topics) > 0 and all(topic.completed for topic in module.topics):
-                completed_modules += 1
-
-    # Calculate completed courses
-    completed_courses = 0
-    for course in courses_data:
-        course_topics = [topic for module in course.modules for topic in module.topics]
-        if len(course_topics) > 0 and all(topic.completed for topic in course_topics):
-            completed_courses += 1
-
-    # Calculate estimated hours
-    total_estimated_hours = 0.0
-    completed_estimated_hours = 0.0
-    for course in courses_data:
-        for module in course.modules:
-            for topic in module.topics:
-                if topic.estimatedHours:
-                    total_estimated_hours += topic.estimatedHours
-                    if topic.completed:
-                        completed_estimated_hours += topic.estimatedHours
-
-    # Calculate overall progress
-    overall_progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
-
-    # Calculate average course progress
-    course_progresses = []
-    for course in courses_data:
-        course_topics = [topic for module in course.modules for topic in module.topics]
-        if len(course_topics) > 0:
-            completed = sum(1 for t in course_topics if t.completed)
-            progress = (completed / len(course_topics)) * 100
-            course_progresses.append(progress)
-
-    average_course_progress = (
-        sum(course_progresses) / len(course_progresses) if course_progresses else 0.0
-    )
-
-    # Build summary
-    summary = UserProgressSummary(
-        userId=user_id,
-        totalCourses=total_courses,
-        activeCourses=active_courses,
-        completedCourses=completed_courses,
-        archivedCourses=archived_courses,
-        totalModules=total_modules,
-        completedModules=completed_modules,
-        totalTopics=total_topics,
-        completedTopics=completed_topics,
-        overallProgress=overall_progress,
-        totalEstimatedHours=total_estimated_hours,
-        completedEstimatedHours=completed_estimated_hours,
-        averageCourseProgress=average_course_progress,
-    )
-
-    # Build course progress items
-    courses = []
-    for course in courses_data:
-        course_topics = [topic for module in course.modules for topic in module.topics]
-        course_completed_topics = sum(1 for t in course_topics if t.completed)
-        course_total_topics = len(course_topics)
-        course_progress = (
-            (course_completed_topics / course_total_topics * 100)
-            if course_total_topics > 0
-            else 0.0
+        # Fetch all user courses
+        courses_data = await db.course.find_many(
+            where={"userId": user_id},
+            include={"modules": {"include": {"topics": True}}},
+            order={"createdAt": "desc"},
         )
 
-        courses.append(
-            CourseProgressItem(
-                courseId=course.id,
-                title=course.title,
-                progress=course_progress,
-                totalTopics=course_total_topics,
-                completedTopics=course_completed_topics,
-                totalModules=len(course.modules),
-                completedModules=sum(
-                    1
-                    for module in course.modules
-                    if len(module.topics) > 0 and all(topic.completed for topic in module.topics)
-                ),
-                isArchived=course.archived,
-                createdAt=course.createdAt.isoformat(),
+        # Calculate overall statistics
+        total_courses = len(courses_data)
+        active_courses = sum(1 for c in courses_data if not c.archived)
+        archived_courses = sum(1 for c in courses_data if c.archived)
+
+        total_modules = sum(len(c.modules) for c in courses_data)
+        total_topics = sum(len(module.topics) for c in courses_data for module in c.modules)
+        completed_topics = sum(
+            1
+            for c in courses_data
+            for module in c.modules
+            for topic in module.topics
+            if topic.completed
+        )
+
+        # Calculate completed modules
+        completed_modules = 0
+        for course in courses_data:
+            for module in course.modules:
+                if len(module.topics) > 0 and all(topic.completed for topic in module.topics):
+                    completed_modules += 1
+
+        # Calculate completed courses
+        completed_courses = 0
+        for course in courses_data:
+            course_topics = [topic for module in course.modules for topic in module.topics]
+            if len(course_topics) > 0 and all(topic.completed for topic in course_topics):
+                completed_courses += 1
+
+        # Calculate estimated hours
+        total_estimated_hours = 0.0
+        completed_estimated_hours = 0.0
+        for course in courses_data:
+            for module in course.modules:
+                for topic in module.topics:
+                    if topic.estimatedHours:
+                        total_estimated_hours += topic.estimatedHours
+                        if topic.completed:
+                            completed_estimated_hours += topic.estimatedHours
+
+        # Calculate overall progress
+        overall_progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+
+        # Calculate average course progress
+        course_progresses = []
+        for course in courses_data:
+            course_topics = [topic for module in course.modules for topic in module.topics]
+            if len(course_topics) > 0:
+                completed = sum(1 for t in course_topics if t.completed)
+                progress = (completed / len(course_topics)) * 100
+                course_progresses.append(progress)
+
+        average_course_progress = (
+            sum(course_progresses) / len(course_progresses) if course_progresses else 0.0
+        )
+
+        # Build summary
+        summary = UserProgressSummary(
+            userId=user_id,
+            totalCourses=total_courses,
+            activeCourses=active_courses,
+            completedCourses=completed_courses,
+            archivedCourses=archived_courses,
+            totalModules=total_modules,
+            completedModules=completed_modules,
+            totalTopics=total_topics,
+            completedTopics=completed_topics,
+            overallProgress=overall_progress,
+            totalEstimatedHours=total_estimated_hours,
+            completedEstimatedHours=completed_estimated_hours,
+            averageCourseProgress=average_course_progress,
+        )
+
+        # Build course progress items
+        courses = []
+        for course in courses_data:
+            course_topics = [topic for module in course.modules for topic in module.topics]
+            course_completed_topics = sum(1 for t in course_topics if t.completed)
+            course_total_topics = len(course_topics)
+            course_progress = (
+                (course_completed_topics / course_total_topics * 100)
+                if course_total_topics > 0
+                else 0.0
             )
+
+            courses.append(
+                CourseProgressItem(
+                    courseId=course.id,
+                    title=course.title,
+                    progress=course_progress,
+                    totalTopics=course_total_topics,
+                    completedTopics=course_completed_topics,
+                    totalModules=len(course.modules),
+                    completedModules=sum(
+                        1
+                        for module in course.modules
+                        if len(module.topics) > 0
+                        and all(topic.completed for topic in module.topics)
+                    ),
+                    isArchived=course.archived,
+                    createdAt=course.createdAt.isoformat(),
+                )
+            )
+
+        # Get study analytics
+        study_analytics = await _get_study_analytics(db, user_id)
+
+        # Get progress analytics
+        progress_analytics = await _get_progress_analytics(db, user_id)
+
+        # Get AI usage analytics
+        ai_usage_analytics = await _get_ai_usage_analytics(db, user_id)
+
+        # Get insights and reports
+        insights_and_reports = await _get_insights_and_reports(db, user_id)
+
+        return EnhancedUserAnalyticsResponse(
+            summary=summary,
+            courses=courses,
+            studyAnalytics=study_analytics,
+            progressAnalytics=progress_analytics,
+            aiUsageAnalytics=ai_usage_analytics,
+            insightsAndReports=insights_and_reports,
         )
-
-    # Get study analytics
-    study_analytics = await _get_study_analytics(db, user_id)
-
-    # Get progress analytics
-    progress_analytics = await _get_progress_analytics(db, user_id)
-
-    # Get AI usage analytics
-    ai_usage_analytics = await _get_ai_usage_analytics(db, user_id)
-
-    # Get insights and reports
-    insights_and_reports = await _get_insights_and_reports(db, user_id)
-
-    return EnhancedUserAnalyticsResponse(
-        summary=summary,
-        courses=courses,
-        studyAnalytics=study_analytics,
-        progressAnalytics=progress_analytics,
-        aiUsageAnalytics=ai_usage_analytics,
-        insightsAndReports=insights_and_reports,
-    )
+    except Exception as e:
+        logger.error(f"Error in get_enhanced_user_analytics: {str(e)}", exc_info=True)
+        raise
 
 
 # ============================================================================
@@ -432,295 +437,375 @@ async def _update_streak(db: PrismaClient, user_id: str, study_date: datetime.da
 
 async def _get_study_analytics(db: PrismaClient, user_id: str) -> StudyAnalytics:
     """Get comprehensive study analytics."""
-    now = datetime.utcnow()
+    try:
+        now = datetime.utcnow()
 
-    # Get all completed sessions
-    sessions = await db.studysession.find_many(
-        where={
-            "userId": user_id,
-            "endTime": {"not": None},
-        },
-        include={"course": True, "topic": True},
-        order={"startTime": "desc"},
-    )
+        # Get all completed sessions
+        sessions = await db.studysession.find_many(
+            where={
+                "userId": user_id,
+                "endTime": {"not": None},
+            },
+            include={"course": True, "topic": True},
+            order={"startTime": "desc"},
+        )
 
-    # Daily study time (last 30 days)
-    daily_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
-    for session in sessions:
-        if session.endTime:
-            date_str = session.startTime.date().isoformat()
-            daily_data[date_str]["minutes"] += session.duration or 0
-            daily_data[date_str]["sessions"] += 1
+        # Daily study time (last 30 days)
+        daily_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
+        for session in sessions:
+            if session.endTime:
+                date_str = session.startTime.date().isoformat()
+                daily_data[date_str]["minutes"] += session.duration or 0
+                daily_data[date_str]["sessions"] += 1
 
-    daily = [
-        StudyTimePeriod(date=date, minutes=data["minutes"], sessions=data["sessions"])
-        for date, data in sorted(daily_data.items())[-30:]
-    ]
+        daily = [
+            StudyTimePeriod(date=date, minutes=data["minutes"], sessions=data["sessions"])
+            for date, data in sorted(daily_data.items())[-30:]
+        ]
 
-    # Weekly study time (last 12 weeks)
-    weekly_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
-    for session in sessions:
-        if session.endTime:
-            week_start = session.startTime - timedelta(days=session.startTime.weekday())
-            week_str = week_start.date().isoformat()
-            weekly_data[week_str]["minutes"] += session.duration or 0
-            weekly_data[week_str]["sessions"] += 1
+        # Weekly study time (last 12 weeks)
+        weekly_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
+        for session in sessions:
+            if session.endTime:
+                week_start = session.startTime - timedelta(days=session.startTime.weekday())
+                week_str = week_start.date().isoformat()
+                weekly_data[week_str]["minutes"] += session.duration or 0
+                weekly_data[week_str]["sessions"] += 1
 
-    weekly = [
-        StudyTimePeriod(date=date, minutes=data["minutes"], sessions=data["sessions"])
-        for date, data in sorted(weekly_data.items())[-12:]
-    ]
+        weekly = [
+            StudyTimePeriod(date=date, minutes=data["minutes"], sessions=data["sessions"])
+            for date, data in sorted(weekly_data.items())[-12:]
+        ]
 
-    # Monthly study time (last 12 months)
-    monthly_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
-    for session in sessions:
-        if session.endTime:
-            month_str = session.startTime.strftime("%Y-%m")
-            monthly_data[month_str]["minutes"] += session.duration or 0
-            monthly_data[month_str]["sessions"] += 1
+        # Monthly study time (last 12 months)
+        monthly_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
+        for session in sessions:
+            if session.endTime:
+                month_str = session.startTime.strftime("%Y-%m")
+                monthly_data[month_str]["minutes"] += session.duration or 0
+                monthly_data[month_str]["sessions"] += 1
 
-    monthly = [
-        StudyTimePeriod(date=date, minutes=data["minutes"], sessions=data["sessions"])
-        for date, data in sorted(monthly_data.items())[-12:]
-    ]
+        monthly = [
+            StudyTimePeriod(date=date, minutes=data["minutes"], sessions=data["sessions"])
+            for date, data in sorted(monthly_data.items())[-12:]
+        ]
 
-    # By course
-    by_course_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0, "title": "Unknown"})
-    for session in sessions:
-        if session.endTime and session.courseId:
-            course_title = session.course.title if session.course else "Unknown"
-            by_course_data[session.courseId]["minutes"] += session.duration or 0
-            by_course_data[session.courseId]["sessions"] += 1
-            by_course_data[session.courseId]["title"] = course_title
+        # By course
+        by_course_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0, "title": "Unknown"})
+        for session in sessions:
+            if session.endTime and session.courseId:
+                course_title = session.course.title if session.course else "Unknown"
+                by_course_data[session.courseId]["minutes"] += session.duration or 0
+                by_course_data[session.courseId]["sessions"] += 1
+                by_course_data[session.courseId]["title"] = course_title
 
-    by_course = [
-        StudyTimeByCourse(
-            courseId=course_id,
-            courseTitle=data["title"],
-            totalMinutes=data["minutes"],
-            sessionCount=data["sessions"],
-            averageSessionDuration=(
-                data["minutes"] / data["sessions"] if data["sessions"] > 0 else 0
+        by_course = [
+            StudyTimeByCourse(
+                courseId=course_id,
+                courseTitle=data["title"],
+                totalMinutes=data["minutes"],
+                sessionCount=data["sessions"],
+                averageSessionDuration=(
+                    data["minutes"] / data["sessions"] if data["sessions"] > 0 else 0
+                ),
+            )
+            for course_id, data in by_course_data.items()
+        ]
+
+        # By subject (using course difficulty as subject for now)
+        by_subject_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
+        for session in sessions:
+            if session.endTime and session.course:
+                subject = str(session.course.difficulty)
+                by_subject_data[subject]["minutes"] += session.duration or 0
+                by_subject_data[subject]["sessions"] += 1
+
+        by_subject = [
+            StudyTimeBySubject(
+                subject=subject,
+                totalMinutes=data["minutes"],
+                sessionCount=data["sessions"],
+            )
+            for subject, data in by_subject_data.items()
+        ]
+
+        # Streak
+        streak_record = await db.userstreak.find_unique(where={"userId": user_id})
+        streak = StudyStreak(
+            currentStreak=streak_record.currentStreak if streak_record else 0,
+            longestStreak=streak_record.longestStreak if streak_record else 0,
+            lastStudyDate=(
+                streak_record.lastStudyDate.isoformat()
+                if streak_record and streak_record.lastStudyDate
+                else None
             ),
         )
-        for course_id, data in by_course_data.items()
-    ]
 
-    # By subject (using course difficulty as subject for now)
-    by_subject_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
-    for session in sessions:
-        if session.endTime and session.course:
-            subject = str(session.course.difficulty)
-            by_subject_data[subject]["minutes"] += session.duration or 0
-            by_subject_data[subject]["sessions"] += 1
+        # Productive times (by hour)
+        hourly_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
+        for session in sessions:
+            if session.endTime:
+                hour = session.startTime.hour
+                hourly_data[hour]["minutes"] += session.duration or 0
+                hourly_data[hour]["sessions"] += 1
 
-    by_subject = [
-        StudyTimeBySubject(
-            subject=subject,
-            totalMinutes=data["minutes"],
-            sessionCount=data["sessions"],
+        productive_times = [
+            ProductiveTimeSlot(
+                hour=hour, totalMinutes=data["minutes"], sessionCount=data["sessions"]
+            )
+            for hour, data in sorted(hourly_data.items())
+        ]
+
+        # Session duration stats
+        durations = [s.duration for s in sessions if s.duration]
+        if durations:
+            durations_sorted = sorted(durations)
+            session_stats = SessionDurationStats(
+                average=sum(durations) / len(durations),
+                median=durations_sorted[len(durations_sorted) // 2],
+                min=min(durations),
+                max=max(durations),
+                totalSessions=len(durations),
+            )
+        else:
+            session_stats = SessionDurationStats(
+                average=0,
+                median=0,
+                min=0,
+                max=0,
+                totalSessions=0,
+            )
+
+        return StudyAnalytics(
+            daily=daily,
+            weekly=weekly,
+            monthly=monthly,
+            byCourse=by_course,
+            bySubject=by_subject,
+            streak=streak,
+            productiveTimes=productive_times,
+            sessionStats=session_stats,
         )
-        for subject, data in by_subject_data.items()
-    ]
-
-    # Streak
-    streak_record = await db.userstreak.find_unique(where={"userId": user_id})
-    streak = StudyStreak(
-        currentStreak=streak_record.currentStreak if streak_record else 0,
-        longestStreak=streak_record.longestStreak if streak_record else 0,
-        lastStudyDate=(
-            streak_record.lastStudyDate.isoformat()
-            if streak_record and streak_record.lastStudyDate
-            else None
-        ),
-    )
-
-    # Productive times (by hour)
-    hourly_data = defaultdict(lambda: {"minutes": 0.0, "sessions": 0})
-    for session in sessions:
-        if session.endTime:
-            hour = session.startTime.hour
-            hourly_data[hour]["minutes"] += session.duration or 0
-            hourly_data[hour]["sessions"] += 1
-
-    productive_times = [
-        ProductiveTimeSlot(hour=hour, totalMinutes=data["minutes"], sessionCount=data["sessions"])
-        for hour, data in sorted(hourly_data.items())
-    ]
-
-    # Session duration stats
-    durations = [s.duration for s in sessions if s.duration]
-    if durations:
-        durations_sorted = sorted(durations)
-        session_stats = SessionDurationStats(
-            average=sum(durations) / len(durations),
-            median=durations_sorted[len(durations_sorted) // 2],
-            min=min(durations),
-            max=max(durations),
-            totalSessions=len(durations),
+    except Exception as e:
+        logger.error(f"Error in _get_study_analytics for user {user_id}: {str(e)}", exc_info=True)
+        # Return empty analytics on error
+        return StudyAnalytics(
+            daily=[],
+            weekly=[],
+            monthly=[],
+            byCourse=[],
+            bySubject=[],
+            streak=StudyStreak(currentStreak=0, longestStreak=0, lastStudyDate=None),
+            productiveTimes=[],
+            sessionStats=SessionDurationStats(average=0, median=0, min=0, max=0, totalSessions=0),
         )
-    else:
-        session_stats = SessionDurationStats(
-            average=0,
-            median=0,
-            min=0,
-            max=0,
-            totalSessions=0,
-        )
-
-    return StudyAnalytics(
-        daily=daily,
-        weekly=weekly,
-        monthly=monthly,
-        byCourse=by_course,
-        bySubject=by_subject,
-        streak=streak,
-        productiveTimes=productive_times,
-        sessionStats=session_stats,
-    )
 
 
 async def _get_progress_analytics(db: PrismaClient, user_id: str) -> ProgressAnalytics:
     """Get progress analytics."""
-    # Get courses and calculate completion rates over time
-    courses = await db.course.find_many(
-        where={"userId": user_id},
-        include={"modules": {"include": {"topics": True}}},
-    )
+    try:
+        # Get courses and calculate completion rates over time
+        courses = await db.course.find_many(
+            where={"userId": user_id},
+            include={"modules": {"include": {"topics": True}}},
+        )
 
-    # Completion rates over time (simplified - can be enhanced)
-    completion_rates = []
+        # Completion rates over time (simplified - can be enhanced)
+        completion_rates = []
 
-    # Goal achievement
-    goals = await db.goal.find_many(where={"userId": user_id})
-    completed_goals = [g for g in goals if g.status == "COMPLETED"]
-    active_goals = [g for g in goals if g.status == "ACTIVE"]
+        # Goal achievement
+        goals = await db.goal.find_many(where={"userId": user_id})
+        completed_goals = [g for g in goals if g.status == "COMPLETED"]
+        active_goals = [g for g in goals if g.status == "ACTIVE"]
 
-    goal_achievement_rate = (
-        len(completed_goals) / len(goals) * 100 if goals else 0,
-        sum(g.progress for g in goals) / len(goals) if goals else 0,
-    )
+        goal_achievement_rate = (
+            len(completed_goals) / len(goals) * 100 if goals else 0,
+            sum(g.progress for g in goals) / len(goals) if goals else 0,
+        )
 
-    # Task completion (using goals as tasks for now)
-    task_trends = []
+        # Task completion (using goals as tasks for now)
+        task_trends = []
 
-    # Schedule adherence
-    schedules = await db.scheduleblock.find_many(where={"userId": user_id})
-    # Simplified - would need to compare scheduled vs actual study times
-    schedule_adherence = ScheduleAdherence(
-        totalScheduledBlocks=len(schedules),
-        completedBlocks=0,  # Would need to track completion
-        adherenceRate=0.0,
-        averageDeviationMinutes=0.0,
-    )
+        # Schedule adherence
+        schedules = await db.scheduleblock.find_many(where={"userId": user_id})
+        # Simplified - would need to compare scheduled vs actual study times
+        schedule_adherence = ScheduleAdherence(
+            totalScheduledBlocks=len(schedules),
+            completedBlocks=0,  # Would need to track completion
+            adherenceRate=0.0,
+            averageDeviationMinutes=0.0,
+        )
 
-    # Learning pace trends
-    pace_trends = []
+        # Learning pace trends
+        pace_trends = []
 
-    from ..models.analytics import CompletionRate, GoalAchievementRate, TaskCompletionTrend
+        from ..models.analytics import CompletionRate, GoalAchievementRate, TaskCompletionTrend
 
-    return ProgressAnalytics(
-        courseCompletionRates=completion_rates,
-        goalAchievementRate=GoalAchievementRate(
-            totalGoals=len(goals),
-            completedGoals=len(completed_goals),
-            activeGoals=len(active_goals),
-            achievementRate=goal_achievement_rate[0],
-            averageProgress=goal_achievement_rate[1],
-        ),
-        taskCompletionTrends=task_trends,
-        scheduleAdherence=schedule_adherence,
-        learningPaceTrends=pace_trends,
-    )
+        return ProgressAnalytics(
+            courseCompletionRates=completion_rates,
+            goalAchievementRate=GoalAchievementRate(
+                totalGoals=len(goals),
+                completedGoals=len(completed_goals),
+                activeGoals=len(active_goals),
+                achievementRate=goal_achievement_rate[0],
+                averageProgress=goal_achievement_rate[1],
+            ),
+            taskCompletionTrends=task_trends,
+            scheduleAdherence=schedule_adherence,
+            learningPaceTrends=pace_trends,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in _get_progress_analytics for user {user_id}: {str(e)}", exc_info=True
+        )
+        from ..models.analytics import GoalAchievementRate, ScheduleAdherence
+
+        return ProgressAnalytics(
+            courseCompletionRates=[],
+            goalAchievementRate=GoalAchievementRate(
+                totalGoals=0, completedGoals=0, activeGoals=0, achievementRate=0, averageProgress=0
+            ),
+            taskCompletionTrends=[],
+            scheduleAdherence=ScheduleAdherence(
+                totalScheduledBlocks=0,
+                completedBlocks=0,
+                adherenceRate=0.0,
+                averageDeviationMinutes=0.0,
+            ),
+            learningPaceTrends=[],
+        )
 
 
 async def _get_ai_usage_analytics(db: PrismaClient, user_id: str) -> AIUsageAnalytics:
     """Get AI usage analytics."""
-    # Get messages
-    messages = await db.chatmessage.find_many(
-        where={"userId": user_id},
-        order={"createdAt": "desc"},
-    )
+    try:
+        # Get messages
+        messages = await db.chatmessage.find_many(
+            where={"userId": user_id},
+            order={"createdAt": "desc"},
+        )
 
-    # Message stats
-    total_messages = len([m for m in messages if m.role == "USER"])
-    message_stats = AIMessageStats(
-        totalMessages=total_messages,
-        messagesByPeriod=[],  # Can be enhanced
-        averageMessagesPerDay=total_messages / 30 if total_messages > 0 else 0,
-    )
+        # Message stats
+        total_messages = len([m for m in messages if m.role == "USER"])
+        message_stats = AIMessageStats(
+            totalMessages=total_messages,
+            messagesByPeriod=[],  # Can be enhanced
+            averageMessagesPerDay=total_messages / 30 if total_messages > 0 else 0,
+        )
 
-    # Voice interactions
-    voice_messages = [m for m in messages if m.audioUrl]
-    total_voice_duration = sum(m.duration or 0 for m in voice_messages) / 60  # Convert to minutes
+        # Voice interactions
+        voice_messages = [m for m in messages if m.audioUrl]
+        total_voice_duration = (
+            sum(m.duration or 0 for m in voice_messages) / 60
+        )  # Convert to minutes
 
-    voice_stats = VoiceInteractionStats(
-        totalInteractions=len(voice_messages),
-        totalDuration=total_voice_duration,
-        averageDuration=total_voice_duration / len(voice_messages) if voice_messages else 0,
-        interactionsByPeriod=[],
-    )
+        voice_stats = VoiceInteractionStats(
+            totalInteractions=len(voice_messages),
+            totalDuration=total_voice_duration,
+            averageDuration=total_voice_duration / len(voice_messages) if voice_messages else 0,
+            interactionsByPeriod=[],
+        )
 
-    # Feature usage (simplified)
-    feature_usage = []
+        # Feature usage (simplified)
+        feature_usage = []
 
-    # Generated content
-    courses = await db.course.find_many(where={"userId": user_id, "isAIGenerated": True})
-    notes = await db.note.find_many(where={"userId": user_id})
-    total_tokens = sum(m.tokenCount or 0 for m in messages)
+        # Generated content
+        courses = await db.course.find_many(where={"userId": user_id, "isAIGenerated": True})
+        notes = await db.note.find_many(where={"userId": user_id})
+        total_tokens = sum(m.tokenCount or 0 for m in messages)
 
-    generated_content = AIGeneratedContentStats(
-        coursesGenerated=len(courses),
-        notesGenerated=len(notes),
-        summariesGenerated=len([n for n in notes if n.summary]),
-        totalTokensUsed=total_tokens,
-    )
+        generated_content = AIGeneratedContentStats(
+            coursesGenerated=len(courses),
+            notesGenerated=len(notes),
+            summariesGenerated=len([n for n in notes if n.summary]),
+            totalTokensUsed=total_tokens,
+        )
 
-    return AIUsageAnalytics(
-        messageStats=message_stats,
-        voiceInteractionStats=voice_stats,
-        featureUsage=feature_usage,
-        generatedContentStats=generated_content,
-    )
+        return AIUsageAnalytics(
+            messageStats=message_stats,
+            voiceInteractionStats=voice_stats,
+            featureUsage=feature_usage,
+            generatedContentStats=generated_content,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in _get_ai_usage_analytics for user {user_id}: {str(e)}", exc_info=True
+        )
+        return AIUsageAnalytics(
+            messageStats=AIMessageStats(
+                totalMessages=0, messagesByPeriod=[], averageMessagesPerDay=0
+            ),
+            voiceInteractionStats=VoiceInteractionStats(
+                totalInteractions=0,
+                totalDuration=0,
+                averageDuration=0,
+                interactionsByPeriod=[],
+            ),
+            featureUsage=[],
+            generatedContentStats=AIGeneratedContentStats(
+                coursesGenerated=0,
+                notesGenerated=0,
+                summariesGenerated=0,
+                totalTokensUsed=0,
+            ),
+        )
 
 
 async def _get_insights_and_reports(db: PrismaClient, user_id: str) -> InsightsAndReports:
     """Get insights and reports."""
-    from ..services.llm_service import GeminiService
+    try:
+        from ..services.llm_service import GeminiService
 
-    # Generate weekly and monthly reports
-    weekly_report = await _generate_weekly_report(db, user_id)
-    monthly_report = await _generate_monthly_report(db, user_id)
+        # Generate weekly and monthly reports
+        weekly_report = await _generate_weekly_report(db, user_id)
+        monthly_report = await _generate_monthly_report(db, user_id)
 
-    # Get achievements
-    user_achievements = await db.achievement.find_many(
-        where={"userId": user_id},
-        order={"unlockedAt": "desc"},
-    )
-
-    achievements = [
-        AchievementBadge(
-            id=a.id,
-            type=str(a.achievementType),
-            title=a.title,
-            description=a.description or "",
-            icon=a.icon,
-            unlockedAt=a.unlockedAt.isoformat(),
-            metadata=a.metadata,
+        # Get achievements
+        user_achievements = await db.achievement.find_many(
+            where={"userId": user_id},
+            order={"unlockedAt": "desc"},
         )
-        for a in user_achievements
-    ]
 
-    # Generate personalized recommendations
-    llm_service = GeminiService()
-    goals = await db.goal.find_many(where={"userId": user_id, "status": "ACTIVE"})
-    courses = await db.course.find_many(where={"userId": user_id, "archived": False})
+        achievements = [
+            AchievementBadge(
+                id=a.id,
+                type=str(a.achievementType),
+                title=a.title,
+                description=a.description or "",
+                icon=a.icon,
+                unlockedAt=a.unlockedAt.isoformat(),
+                metadata=a.metadata,
+            )
+            for a in user_achievements
+        ]
 
-    recommendations_prompt = f"""Based on the user's learning profile, generate 3-5 personalized recommendations:
+        # Generate personalized recommendations
+        llm_service = GeminiService()
+        goals = await db.goal.find_many(where={"userId": user_id, "status": "ACTIVE"})
+        courses = await db.course.find_many(where={"userId": user_id, "archived": False})
+
+        # Count recent achievements safely
+        recent_achievements_count = 0
+        try:
+            for a in user_achievements:
+                try:
+                    unlocked_dt = (
+                        datetime.fromisoformat(a.unlockedAt.replace("Z", "+00:00"))
+                        if isinstance(a.unlockedAt, str)
+                        else a.unlockedAt
+                    )
+                    if (datetime.utcnow() - unlocked_dt).days <= 7:
+                        recent_achievements_count += 1
+                except Exception:
+                    continue
+        except Exception:
+            recent_achievements_count = 0
+
+        recommendations_prompt = f"""Based on the user's learning profile, generate 3-5 personalized recommendations:
 
 Active Goals: {len(goals)}
 Active Courses: {len(courses)}
-Recent Achievements: {len([a for a in user_achievements if (datetime.utcnow() - datetime.fromisoformat(a.unlockedAt.replace('Z', '+00:00'))).days <= 7])}
+Recent Achievements: {recent_achievements_count}
 
 Generate recommendations that are:
 1. Specific and actionable
@@ -738,53 +823,90 @@ Format as JSON array:
   }}
 ]"""
 
-    try:
-        recs_response = await llm_service.get_chat_response([], recommendations_prompt)
-        import json
-        import re
+        try:
+            recs_response = await llm_service.get_chat_response([], recommendations_prompt)
+            import json
+            import re
 
-        json_match = re.search(r"\[.*?\]", recs_response, re.DOTALL)
-        if json_match:
-            recommendations_data = json.loads(json_match.group(0))
-            recommendations = [
-                Recommendation(
-                    type=rec.get("type", "study_time"),
-                    title=rec.get("title", "Keep Learning"),
-                    description=rec.get("description", ""),
-                    priority=rec.get("priority", "medium"),
-                )
-                for rec in recommendations_data
-            ]
-        else:
+            json_match = re.search(r"\[.*?\]", recs_response, re.DOTALL)
+            if json_match:
+                recommendations_data = json.loads(json_match.group(0))
+                recommendations = [
+                    Recommendation(
+                        type=rec.get("type", "study_time"),
+                        title=rec.get("title", "Keep Learning"),
+                        description=rec.get("description", ""),
+                        priority=rec.get("priority", "medium"),
+                    )
+                    for rec in recommendations_data
+                ]
+            else:
+                recommendations = []
+        except Exception:
             recommendations = []
-    except Exception:
-        recommendations = []
 
-    # Get goal comparisons
-    goal_comparisons = []
-    for goal in goals:
-        goal_comparisons.append(
-            GoalComparison(
-                goalId=goal.id,
-                goalTitle=goal.title,
-                targetValue=100.0,
-                currentValue=goal.progress,
-                progress=goal.progress,
-                status=(
-                    "completed"
-                    if goal.progress >= 100
-                    else ("on_track" if goal.progress >= 50 else "behind")
-                ),
+        # Get goal comparisons
+        goal_comparisons = []
+        for goal in goals:
+            goal_comparisons.append(
+                GoalComparison(
+                    goalId=goal.id,
+                    goalTitle=goal.title,
+                    targetValue=100.0,
+                    currentValue=goal.progress,
+                    progress=goal.progress,
+                    status=(
+                        "completed"
+                        if goal.progress >= 100
+                        else ("on_track" if goal.progress >= 50 else "behind")
+                    ),
+                )
             )
-        )
 
-    return InsightsAndReports(
-        weeklyReport=weekly_report,
-        monthlyReport=monthly_report,
-        recommendations=recommendations,
-        achievements=achievements,
-        goalComparisons=goal_comparisons,
-    )
+        return InsightsAndReports(
+            weeklyReport=weekly_report,
+            monthlyReport=monthly_report,
+            recommendations=recommendations,
+            achievements=achievements,
+            goalComparisons=goal_comparisons,
+        )
+    except Exception as e:
+        logger.error(
+            f"Error in _get_insights_and_reports for user {user_id}: {str(e)}", exc_info=True
+        )
+        from ..models.analytics import WeeklyReport, MonthlyReport
+
+        now = datetime.utcnow()
+        week_start = now - timedelta(days=now.weekday())
+        week_end = week_start + timedelta(days=6)
+        month_start = datetime(now.year, now.month, 1)
+        return InsightsAndReports(
+            weeklyReport=WeeklyReport(
+                weekStart=week_start.date().isoformat(),
+                weekEnd=week_end.date().isoformat(),
+                totalStudyTime=0,
+                sessionsCompleted=0,
+                topicsCompleted=0,
+                goalsAchieved=0,
+                streakMaintained=False,
+                topCourses=[],
+                insights=[],
+            ),
+            monthlyReport=MonthlyReport(
+                monthStart=month_start.date().isoformat(),
+                monthEnd=now.date().isoformat(),
+                totalStudyTime=0,
+                sessionsCompleted=0,
+                topicsCompleted=0,
+                coursesCompleted=0,
+                goalsAchieved=0,
+                achievementsUnlocked=0,
+                insights=[],
+            ),
+            recommendations=[],
+            achievements=[],
+            goalComparisons=[],
+        )
 
 
 # ============================================================================
@@ -1318,9 +1440,17 @@ async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyRepor
 
     # Check streak
     streak = await db.userstreak.find_unique(where={"userId": user_id})
-    streak_maintained = (
-        streak and streak.lastStudyDate and (now.date() - streak.lastStudyDate.date()).days <= 7
-    )
+    streak_maintained = False
+    if streak and streak.lastStudyDate:
+        try:
+            last_study_date = (
+                streak.lastStudyDate.date()
+                if isinstance(streak.lastStudyDate, datetime)
+                else streak.lastStudyDate
+            )
+            streak_maintained = (now.date() - last_study_date).days <= 7
+        except Exception:
+            streak_maintained = False
 
     # Generate AI insights
     llm_service = GeminiService()
