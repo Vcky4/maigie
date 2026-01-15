@@ -616,7 +616,6 @@ async def _get_progress_analytics(db: PrismaClient, user_id: str) -> ProgressAna
         logger.error(
             f"Error in _get_progress_analytics for user {user_id}: {str(e)}", exc_info=True
         )
-        from ..models.analytics import GoalAchievementRate, ScheduleAdherence
 
         return ProgressAnalytics(
             courseCompletionRates=[],
@@ -1350,9 +1349,10 @@ async def _check_and_unlock_achievements(db: PrismaClient, user_id: str, session
 
 async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyReport:
     """Generate weekly study report with AI insights."""
+    from datetime import timezone
     from ..services.llm_service import GeminiService
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     week_start = now - timedelta(days=now.weekday())
     week_end = week_start + timedelta(days=6)
 
