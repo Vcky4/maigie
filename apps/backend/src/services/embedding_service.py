@@ -105,12 +105,14 @@ class EmbeddingService:
             # Generate embedding
             embedding_vector = await self.generate_embedding(content)
 
-            # Store in database
+            # Store in database (wrap vector in Json for Prisma)
+            from prisma import Json
+
             embedding_record = await db.embedding.create(
                 data={
                     "objectType": object_type,
                     "objectId": object_id,
-                    "vector": embedding_vector,  # Stored as JSON array
+                    "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,  # Store truncated content
                     "metadata": metadata,
                     "resourceId": resource_id,
@@ -248,9 +250,10 @@ class EmbeddingService:
             if existing:
                 # Update existing embedding
                 embedding_vector = await self.generate_embedding(content)
+                from prisma import Json
 
                 data_to_update = {
-                    "vector": embedding_vector,
+                    "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,
                     "metadata": metadata,
                 }
