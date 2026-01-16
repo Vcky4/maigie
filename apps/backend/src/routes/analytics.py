@@ -179,7 +179,7 @@ async def stop_study_session(
         logger.info(f"Session {session_id} stopped. Duration: {duration_minutes:.2f} minutes")
 
         # Update streak
-        await _update_streak(db, current_user.id, end_time.date())
+        await _update_streak(db, current_user.id, end_time)
 
         # Check and unlock achievements
         await _check_and_unlock_achievements(db, current_user.id, updated_session)
@@ -354,8 +354,11 @@ async def get_enhanced_user_analytics(
 # ============================================================================
 
 
-async def _update_streak(db: PrismaClient, user_id: str, study_date: datetime.date):
+async def _update_streak(db: PrismaClient, user_id: str, study_datetime: datetime):
     """Update user's study streak."""
+    # Extract date from datetime for comparison
+    study_date = study_datetime.date()
+
     streak = await db.userstreak.find_unique(where={"userId": user_id})
 
     if not streak:
@@ -396,7 +399,7 @@ async def _update_streak(db: PrismaClient, user_id: str, study_date: datetime.da
         data={
             "currentStreak": new_streak,
             "longestStreak": longest_streak,
-            "lastStudyDate": study_date,
+            "lastStudyDate": study_datetime,  # Store datetime, not date
         },
     )
 
