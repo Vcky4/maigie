@@ -109,6 +109,7 @@ async def start_study_session(
             data={
                 "userId": current_user.id,
                 "startTime": datetime.utcnow(),
+                "duration": 0.0,  # Will be updated when session ends
                 "courseId": course_id,
                 "topicId": topic_id,
             }
