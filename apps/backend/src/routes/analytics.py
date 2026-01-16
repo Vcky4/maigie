@@ -10,9 +10,9 @@ See LICENSE file in the repository root for details.
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
 from prisma import Client as PrismaClient
 
@@ -70,12 +70,15 @@ class StartSessionRequest(BaseModel):
 @router.post("/sessions/start")
 async def start_study_session(
     current_user: CurrentUser,
-    request: StartSessionRequest = StartSessionRequest(),
+    request: Optional[StartSessionRequest] = Body(default=None),
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Start a new study session."""
     try:
         # Handle optional request body (all fields are optional in the model)
+        if request is None:
+            request = StartSessionRequest()
+
         course_id = request.courseId if request.courseId else None
         topic_id = request.topicId if request.topicId else None
 
