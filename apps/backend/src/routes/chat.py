@@ -553,11 +553,32 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             f"Period resets: {credit_usage['period_end']}"
                         )
 
-                    await manager.send_personal_message(f"⚠️ **System:** {error_message}", user.id)
+                    # Send error message with tier information as JSON for frontend handling
+                    error_data = {
+                        "type": "credit_limit_error",
+                        "message": error_message,
+                        "tier": tier,
+                        "is_daily_limit": (
+                            tier == "FREE"
+                            and daily_limit > 0
+                            and (used_today + estimated_total_tokens > daily_limit)
+                        ),
+                    }
+                    await manager.send_personal_message(json.dumps(error_data), user.id)
                     await websocket.close()
                     return
             except SubscriptionLimitError as e:
-                await manager.send_personal_message(f"⚠️ **System:** {e.message}", user.id)
+                # Get user tier for error message
+                user_obj = await db.user.find_unique(where={"id": user.id})
+                tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
+
+                error_data = {
+                    "type": "credit_limit_error",
+                    "message": e.message,
+                    "tier": tier,
+                    "is_daily_limit": False,
+                }
+                await manager.send_personal_message(json.dumps(error_data), user.id)
                 await websocket.close()
                 return
 

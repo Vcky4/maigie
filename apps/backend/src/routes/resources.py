@@ -10,7 +10,7 @@ See LICENSE file in the repository root for details.
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 
 from src.core.database import db
 from src.dependencies import CurrentUser
@@ -30,11 +30,22 @@ router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 
 
 @router.get("")
-async def list_resources(current_user: CurrentUser):
-    """List user's resources."""
+async def list_resources(
+    current_user: CurrentUser,
+    topicId: str | None = Query(None),
+    courseId: str | None = Query(None),
+):
+    """List user's resources, optionally filtered by topic or course."""
     try:
+        where_clause = {"userId": current_user.id}
+
+        if topicId:
+            where_clause["topicId"] = topicId
+        if courseId:
+            where_clause["courseId"] = courseId
+
         resources = await db.resource.find_many(
-            where={"userId": current_user.id},
+            where=where_clause,
             order={"createdAt": "desc"},
         )
 
@@ -327,4 +338,46 @@ async def record_resource_interaction(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to record interaction",
+        )
+
+
+@router.delete("/{resource_id}")
+async def delete_resource(
+    resource_id: str,
+    current_user: CurrentUser,
+):
+    """Delete a resource."""
+    try:
+        # Verify resource exists and belongs to user
+        resource = await db.resource.find_first(
+            where={"id": resource_id, "userId": current_user.id}
+        )
+
+        if not resource:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Resource not found",
+            )
+
+        # Delete the resource
+        await db.resource.delete(where={"id": resource_id})
+
+        return {"success": True, "message": "Resource deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Error deleting resource",
+            extra={
+                "user_id": current_user.id,
+                "resource_id": resource_id,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete resource",
         )

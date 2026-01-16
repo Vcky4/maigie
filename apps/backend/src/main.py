@@ -43,6 +43,7 @@ from .models.error_response import ErrorResponse
 # --- Route Imports ---
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
+from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
 from .routes.examples import router as examples_router
@@ -360,6 +361,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
 
     app.include_router(ai_router)
+    app.include_router(analytics_router)
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")
     app.include_router(goals_router)
     app.include_router(schedule_router)
