@@ -1140,7 +1140,7 @@ async def get_enhanced_admin_analytics(
 
 async def _check_and_unlock_achievements(db: PrismaClient, user_id: str, session=None):
     """Check and unlock achievements based on milestones."""
-    from ..models.analytics import AchievementType
+    from prisma.enums import AchievementType
 
     # Get user's current stats
     sessions = await db.studysession.find_many(
