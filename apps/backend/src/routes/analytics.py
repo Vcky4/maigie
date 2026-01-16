@@ -161,7 +161,11 @@ async def stop_study_session(
 
         # Calculate duration
         end_time = datetime.now(timezone.utc)
-        duration_minutes = (end_time - session.startTime).total_seconds() / 60
+        # Ensure startTime is timezone-aware (Prisma may return naive datetime)
+        start_time = session.startTime
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        duration_minutes = (end_time - start_time).total_seconds() / 60
 
         # Update session
         updated_session = await db.studysession.update(
@@ -1361,6 +1365,7 @@ async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyRepor
     week_end = week_start + timedelta(days=6)
 
     # Get study sessions for the week
+    # Ensure week_start and week_end are timezone-aware for Prisma query
     sessions = await db.studysession.find_many(
         where={
             "userId": user_id,
@@ -1379,14 +1384,26 @@ async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyRepor
     for course in courses:
         for module in course.modules:
             for topic in module.topics:
-                if topic.completed and topic.updatedAt >= week_start:
-                    topics_completed_this_week.append(topic)
+                if topic.completed:
+                    # Ensure timezone-aware comparison
+                    topic_updated = topic.updatedAt
+                    if topic_updated.tzinfo is None:
+                        topic_updated = topic_updated.replace(tzinfo=timezone.utc)
+                    if topic_updated >= week_start:
+                        topics_completed_this_week.append(topic)
 
     # Get completed goals
     goals = await db.goal.find_many(
         where={"userId": user_id, "status": "COMPLETED"},
     )
-    goals_this_week = [g for g in goals if g.updatedAt >= week_start]
+    goals_this_week = []
+    for g in goals:
+        # Ensure timezone-aware comparison
+        goal_updated = g.updatedAt
+        if goal_updated.tzinfo is None:
+            goal_updated = goal_updated.replace(tzinfo=timezone.utc)
+        if goal_updated >= week_start:
+            goals_this_week.append(g)
 
     # Get top courses by study time
     course_study_time = defaultdict(float)
