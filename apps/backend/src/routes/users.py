@@ -148,14 +148,8 @@ async def get_usage(
 
         # Get AI actions (from AIActionLog) for operations count
         # AIActionLog is linked through ChatMessage, so we filter by message userId
-        # First get message IDs for this user in the time period
-        user_message_ids = [
-            msg.id
-            for msg in await db.chatmessage.find_many(
-                where={"userId": user_id, "createdAt": {"gte": thirty_days_ago}},
-                select={"id": True},
-            )
-        ]
+        # Extract message IDs from the messages we already fetched
+        user_message_ids = [msg.id for msg in messages]
 
         # Then get actions for those messages
         actions = []
