@@ -161,23 +161,25 @@ async def enrich_action_data(
             )
 
         action_course_id = action_data.get("courseId")
+        is_course_placeholder = action_course_id and (
+            "course_id_from_context" in action_course_id.lower()
+            or "placeholder" in action_course_id.lower()
+        )
         is_course_likely_title = action_course_id and (
             len(action_course_id) > 30
             or " " in action_course_id
             or not action_course_id.startswith("c")
         )
 
-        if is_course_likely_title or not action_course_id:
+        if is_course_placeholder or is_course_likely_title or not action_course_id:
             if enriched_context and enriched_context.get("courseId"):
                 action_data["courseId"] = enriched_context["courseId"]
                 print(f"📝 Set courseId from enriched_context: {enriched_context['courseId']}")
             elif context and context.get("courseId"):
                 action_data["courseId"] = context["courseId"]
                 print(f"📝 Set courseId from original context: {context['courseId']}")
-            elif is_course_likely_title:
-                print(
-                    f"⚠️ AI provided courseId that looks like a title: {action_course_id}, removing it"
-                )
+            elif is_course_placeholder or is_course_likely_title:
+                print(f"⚠️ AI provided invalid courseId: {action_course_id}, removing it")
                 action_data.pop("courseId", None)
 
     # Handle create_goal action

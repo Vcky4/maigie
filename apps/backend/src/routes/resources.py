@@ -157,14 +157,18 @@ async def create_resource(
         # Index the resource in the background
         background_tasks.add_task(indexing_service.index_resource, resource.id)
 
-        # Record interaction
-        await user_memory_service.record_interaction(
-            user_id=current_user.id,
-            interaction_type="RESOURCE_CREATE",
-            entity_type="resource",
-            entity_id=resource.id,
-            importance=0.6,
-        )
+        # Record interaction (using CHAT_MESSAGE since RESOURCE_CREATE is not in enum)
+        try:
+            await user_memory_service.record_interaction(
+                user_id=current_user.id,
+                interaction_type="CHAT_MESSAGE",
+                entity_type="resource",
+                entity_id=resource.id,
+                importance=0.6,
+            )
+        except Exception as e:
+            # Don't fail resource creation if interaction recording fails
+            logger.warning(f"Failed to record resource interaction: {e}")
 
         return {
             "id": resource.id,
