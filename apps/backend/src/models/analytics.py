@@ -471,3 +471,69 @@ class EnhancedAdminAnalyticsResponse(BaseModel):
     topUsers: list[UserAnalyticsItem]
     topCourses: list[CourseAnalyticsItem]
     recentCourses: list[CourseAnalyticsItem]
+
+
+# ============================================================================
+# Dashboard Models
+# ============================================================================
+
+
+class DashboardStats(BaseModel):
+    """Quick stats for dashboard overview."""
+
+    totalCourses: int
+    activeCourses: int
+    completedCourses: int
+    totalGoals: int
+    activeGoals: int
+    completedGoals: int
+    totalStudyMinutes: float  # Total study time in minutes
+    currentStreak: int
+    longestStreak: int
+    upcomingSchedulesCount: int  # Schedules in next 7 days
+
+
+class DashboardCourseItem(BaseModel):
+    """Recent course item for dashboard."""
+
+    courseId: str
+    title: str
+    progress: float
+    totalTopics: int
+    completedTopics: int
+    createdAt: str
+
+
+class DashboardGoalItem(BaseModel):
+    """Active goal item for dashboard."""
+
+    goalId: str
+    title: str
+    description: Optional[str]
+    progress: float
+    targetDate: Optional[str]
+    status: str
+    createdAt: str
+
+
+class DashboardScheduleItem(BaseModel):
+    """Upcoming schedule item for dashboard."""
+
+    scheduleId: str
+    title: str
+    description: Optional[str]
+    startAt: str
+    endAt: str
+    courseId: Optional[str]
+    topicId: Optional[str]
+    goalId: Optional[str]
+
+
+class DashboardResponse(BaseModel):
+    """Complete dashboard response with aggregated data."""
+
+    stats: DashboardStats
+    recentCourses: list[DashboardCourseItem]  # Latest 5 courses
+    activeGoals: list[DashboardGoalItem]  # Active goals (limit 5)
+    upcomingSchedules: list[DashboardScheduleItem]  # Next 7 days
+    dailyGoalProgress: Optional[float]  # Progress towards daily study goal (0-100)
