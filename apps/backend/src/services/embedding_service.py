@@ -17,22 +17,13 @@ from fastapi import HTTPException
 from src.config import get_settings
 from src.core.database import db
 
-# Configure API - lazy initialization
-_settings = None
-
-
-def _configure_genai():
-    """Configure Gemini API (lazy initialization)."""
-    global _settings
-    if _settings is None:
-        _settings = get_settings()
-        if not _settings.GEMINI_API_KEY or _settings.GEMINI_API_KEY.strip() == "":
-            raise ValueError(
-                "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
-            )
-        genai.configure(api_key=_settings.GEMINI_API_KEY)
-    return _settings
-
+# Configure API
+settings = get_settings()
+if not settings.GEMINI_API_KEY:
+    raise ValueError(
+        "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
+    )
+genai.configure(api_key=settings.GEMINI_API_KEY)
 
 # Use text-embedding-004 model for embeddings
 EMBEDDING_MODEL = "models/text-embedding-004"
@@ -56,8 +47,6 @@ class EmbeddingService:
             List of floats representing the embedding vector
         """
         try:
-            # Ensure API is configured
-            _configure_genai()
             # Use Gemini's embedding model
             result = genai.embed_content(
                 model=EMBEDDING_MODEL,
@@ -83,8 +72,6 @@ class EmbeddingService:
             List of floats representing the embedding vector
         """
         try:
-            # Ensure API is configured
-            _configure_genai()
             result = genai.embed_content(
                 model=EMBEDDING_MODEL,
                 content=text,
