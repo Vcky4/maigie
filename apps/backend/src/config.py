@@ -13,21 +13,38 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 def parse_list_value(value: Any) -> list[str]:
     """Parse list value from various formats."""
+    # Handle None or empty values
+    if value is None:
+        return []
+
     if isinstance(value, list):
         return value
+
     if isinstance(value, str):
         value = value.strip()
+        # Handle empty string
         if not value:
             return []
+        # Try to parse as JSON array if it looks like one
         if value.startswith("[") and value.endswith("]"):
             try:
                 parsed = json.loads(value)
                 if isinstance(parsed, list):
-                    return parsed
-            except (json.JSONDecodeError, TypeError):
+                    return [str(item).strip() for item in parsed if item]
+            except (json.JSONDecodeError, TypeError, ValueError):
+                # If JSON parsing fails, fall through to comma-separated parsing
                 pass
+        # Parse as comma-separated string
         return [item.strip() for item in value.split(",") if item.strip()]
-    return []
+
+    # For any other type, try to convert to string and parse
+    try:
+        str_value = str(value).strip()
+        if not str_value:
+            return []
+        return [item.strip() for item in str_value.split(",") if item.strip()]
+    except Exception:
+        return []
 
 
 ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
