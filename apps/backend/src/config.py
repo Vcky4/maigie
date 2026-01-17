@@ -162,6 +162,9 @@ class Settings(BaseSettings):
     BREVO_API_KEY: str = ""
     BREVO_ENABLED: bool = True
 
+    # --- Google Gemini AI ---
+    GEMINI_API_KEY: str = ""  # Google Gemini API key for AI features
+
     # --- Stripe Subscription ---
     STRIPE_SECRET_KEY: str = ""
     STRIPE_PUBLISHABLE_KEY: str = ""
