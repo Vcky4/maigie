@@ -24,8 +24,8 @@ class CourseService:
             where={"id": course_id, "userId": user_id},
             include={
                 "modules": {
-                    "include": {"topics": {"orderBy": {"order": "asc"}}},
-                    "orderBy": {"order": "asc"},
+                    "include": {"topics": {"order_by": {"order": "asc"}}},
+                    "order_by": {"order": "asc"},
                 }
             },
         )
