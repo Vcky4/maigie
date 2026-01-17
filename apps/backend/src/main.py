@@ -7,6 +7,7 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import asyncio
 import logging
 import traceback
 from contextlib import asynccontextmanager
@@ -38,6 +39,7 @@ from .exceptions import (
     general_exception_handler,
 )
 from .middleware import LoggingMiddleware, SecurityHeadersMiddleware
+from .utils.rate_limit import RateLimitMiddleware
 from .models.error_response import ErrorResponse
 
 # --- Route Imports ---
@@ -292,6 +294,14 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(LoggingMiddleware)
 
+    # Rate limiting middleware
+    if settings.RATE_LIMIT_ENABLED:
+        app.add_middleware(
+            RateLimitMiddleware,
+            requests_per_minute=settings.RATE_LIMIT_REQUESTS_PER_MINUTE,
+            requests_per_hour=settings.RATE_LIMIT_REQUESTS_PER_HOUR,
+        )
+
     # --- PLACEHOLDER FOR TEAMMATE (OAuth Session) ---
     # OAuth requires session middleware to store the 'state' parameter securely.
     # app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
@@ -315,29 +325,69 @@ def create_app() -> FastAPI:
     async def health(
         db_client: Annotated[Any, Depends(get_db_client)],
         redis_client: Annotated[Any, Depends(get_redis_client)],
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         from fastapi import HTTPException, status
+        import time
 
-        # Check DB
+        start_time = time.time()
+        checks = {}
+
+        # Check DB with timeout
+        db_status = "disconnected"
+        db_latency = None
         try:
-            await db_client.query_raw("SELECT 1")
+            db_start = time.time()
+            await asyncio.wait_for(db_client.query_raw("SELECT 1"), timeout=2.0)
+            db_latency = (time.time() - db_start) * 1000  # Convert to ms
             db_status = "connected"
-        except Exception:
-            db_status = "disconnected"
+        except asyncio.TimeoutError:
+            db_status = "timeout"
+        except Exception as e:
+            db_status = f"error: {str(e)[:50]}"
 
-        # Check Redis
+        checks["database"] = {
+            "status": db_status,
+            "latency_ms": round(db_latency, 2) if db_latency else None,
+        }
+
+        # Check Redis with timeout
+        cache_status = "disconnected"
+        cache_latency = None
         try:
-            await redis_client.ping()
+            cache_start = time.time()
+            await asyncio.wait_for(redis_client.ping(), timeout=2.0)
+            cache_latency = (time.time() - cache_start) * 1000  # Convert to ms
             cache_status = "connected"
-        except Exception:
-            cache_status = "disconnected"
+        except asyncio.TimeoutError:
+            cache_status = "timeout"
+        except Exception as e:
+            cache_status = f"error: {str(e)[:50]}"
 
-        if db_status != "connected":
+        checks["cache"] = {
+            "status": cache_status,
+            "latency_ms": round(cache_latency, 2) if cache_latency else None,
+        }
+
+        # Overall health status
+        overall_status = "healthy" if db_status == "connected" else "unhealthy"
+        total_latency = (time.time() - start_time) * 1000
+
+        if overall_status != "healthy":
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={"status": "unhealthy", "db": db_status, "cache": cache_status},
+                detail={
+                    "status": overall_status,
+                    "checks": checks,
+                    "latency_ms": round(total_latency, 2),
+                },
             )
-        return {"status": "healthy", "db": db_status, "cache": cache_status}
+
+        return {
+            "status": overall_status,
+            "checks": checks,
+            "latency_ms": round(total_latency, 2),
+            "timestamp": time.time(),
+        }
 
     # Ready Check
     @app.get("/ready")

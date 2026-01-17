@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     REDIS_SOCKET_TIMEOUT: int = 5
     REDIS_SOCKET_CONNECT_TIMEOUT: int = 5
 
+    # --- Rate Limiting ---
+    RATE_LIMIT_ENABLED: bool = True
+    RATE_LIMIT_REQUESTS_PER_MINUTE: int = 60
+    RATE_LIMIT_REQUESTS_PER_HOUR: int = 1000
+    RATE_LIMIT_USER_CAPACITY: int = 200  # Per authenticated user
+    RATE_LIMIT_USER_REFILL_RATE: float = 200.0 / 60.0  # Tokens per second
+
     # --- WebSocket ---
     WEBSOCKET_HEARTBEAT_INTERVAL: int = 30
     WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60
