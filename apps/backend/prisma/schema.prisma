@@ -147,6 +147,9 @@ model User {
   userStreak    UserStreak?
   achievements  Achievement[]
 
+  // Feedback Relations
+  feedback Feedback[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -605,4 +608,54 @@ model Achievement {
   @@index([userId])
   @@index([userId, achievementType])
   @@index([unlockedAt])
+}
+
+// ==========================================
+//  FEEDBACK MODULE
+// ==========================================
+
+enum FeedbackType {
+  BUG_REPORT
+  FEATURE_REQUEST
+  GENERAL_FEEDBACK
+  UI_UX_FEEDBACK
+  PERFORMANCE_ISSUE
+  OTHER
+}
+
+enum FeedbackStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  ARCHIVED
+}
+
+model Feedback {
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Feedback content
+  type        FeedbackType
+  title       String
+  description String
+  status      FeedbackStatus @default(PENDING)
+
+  // Optional context
+  pageUrl     String? // URL where feedback was submitted from
+  userAgent   String? // Browser/device info
+  metadata    Json?   // Additional context (e.g., screenshots, logs)
+
+  // Admin response
+  adminNotes  String?
+  resolvedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
 }

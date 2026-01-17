@@ -48,6 +48,7 @@ from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
 from .routes.dashboard import router as dashboard_router
 from .routes.examples import router as examples_router
+from .routes.feedback import router as feedback_router
 from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
@@ -365,6 +366,7 @@ def create_app() -> FastAPI:
     app.include_router(analytics_router)
     app.include_router(dashboard_router)
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")
+    app.include_router(feedback_router)
     app.include_router(goals_router)
     app.include_router(schedule_router)
     app.include_router(resources_router)
