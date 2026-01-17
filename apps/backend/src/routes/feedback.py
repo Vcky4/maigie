@@ -15,9 +15,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from prisma import Client as PrismaClient
 
-from src.core.database import get_db_client
 from src.core.security import decode_access_token
 from src.dependencies import CurrentUser, db
+from src.utils.dependencies import get_db_client
 from src.models.auth import TokenData
 from src.models.feedback import (
     FeedbackCreate,
