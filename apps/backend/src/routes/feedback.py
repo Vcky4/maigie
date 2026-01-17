@@ -77,19 +77,32 @@ async def create_feedback(
         user_agent = request.headers.get("user-agent")
         page_url = feedback_data.pageUrl or str(request.url)
 
+        # Build data dict with required fields
+        feedback_data_dict = {
+            "type": feedback_data.type,
+            "title": feedback_data.title,
+            "description": feedback_data.description,
+            "status": "PENDING",
+        }
+
+        # Add optional fields only if they are provided
+        if current_user:
+            feedback_data_dict["userId"] = current_user.id
+
+        if page_url:
+            feedback_data_dict["pageUrl"] = page_url
+
+        if user_agent:
+            feedback_data_dict["userAgent"] = user_agent
+
+        # Handle metadata - Prisma Json fields need explicit Json wrapper or None
+        if feedback_data.metadata is not None:
+            from prisma import Json
+
+            feedback_data_dict["metadata"] = Json(feedback_data.metadata)
+
         # Create feedback
-        feedback = await db.feedback.create(
-            data={
-                "userId": current_user.id if current_user else None,
-                "type": feedback_data.type,
-                "title": feedback_data.title,
-                "description": feedback_data.description,
-                "pageUrl": page_url,
-                "userAgent": user_agent,
-                "metadata": feedback_data.metadata,
-                "status": "PENDING",
-            }
-        )
+        feedback = await db.feedback.create(data=feedback_data_dict)
 
         logger.info(
             f"Feedback created: {feedback.id} by user {current_user.id if current_user else 'anonymous'}"
