@@ -258,7 +258,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
 
 
 async def create_checkout_session(
-    user: User, price_id: str, success_url: str, cancel_url: str
+    user: User, price_id: str, success_url: str, cancel_url: str, price_type: str | None = None
 ) -> dict:
     """
     Create a Stripe checkout session for subscription.
@@ -359,23 +359,29 @@ async def create_checkout_session(
             )
 
     # No existing subscription or modification failed - create new checkout session
-    session = stripe.checkout.Session.create(
-        customer=customer_id,
-        payment_method_types=["card"],
-        line_items=[
+    session_params = {
+        "customer": customer_id,
+        "payment_method_types": ["card"],
+        "line_items": [
             {
                 "price": price_id,
                 "quantity": 1,
             }
         ],
-        mode="subscription",
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata={"user_id": user.id},
-        subscription_data={
+        "mode": "subscription",
+        "success_url": success_url,
+        "cancel_url": cancel_url,
+        "metadata": {"user_id": user.id},
+        "subscription_data": {
             "metadata": {"user_id": user.id},
         },
-    )
+    }
+
+    # Add coupon code for monthly subscriptions (only for new subscriptions, not modifications)
+    if price_type == "monthly":
+        session_params["discounts"] = [{"coupon": "FIRST_MONTH_2USD_OFF"}]
+
+    session = stripe.checkout.Session.create(**session_params)
 
     return {
         "session_id": session.id,

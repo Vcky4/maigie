@@ -104,6 +104,7 @@ async def create_subscription_checkout(
             price_id=price_id,
             success_url=success_url,
             cancel_url=cancel_url,
+            price_type=request.price_type,
         )
 
         # If subscription was modified directly (not through checkout)
