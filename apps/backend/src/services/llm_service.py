@@ -14,15 +14,8 @@ with warnings.catch_warnings():
 from fastapi import HTTPException
 from google.generativeai.types import HarmBlockThreshold, HarmCategory
 
-from src.config import get_settings
-
 # Configure API
-settings = get_settings()
-if not settings.GEMINI_API_KEY:
-    raise ValueError(
-        "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
-    )
-genai.configure(api_key=settings.GEMINI_API_KEY)
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # System instruction to define Maigie's persona
 SYSTEM_INSTRUCTION = """

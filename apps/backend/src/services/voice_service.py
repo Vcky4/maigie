@@ -3,18 +3,13 @@ Voice Service.
 Handles Audio Transcription using Google Gemini.
 """
 
+import os
+
 import google.generativeai as genai
 from fastapi import HTTPException, UploadFile
 
-from src.config import get_settings
-
-# Configure API
-settings = get_settings()
-if not settings.GEMINI_API_KEY:
-    raise ValueError(
-        "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
-    )
-genai.configure(api_key=settings.GEMINI_API_KEY)
+# Reuse the API key from your environment
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 class VoiceService:

@@ -9,21 +9,16 @@ See LICENSE file in the repository root for details.
 """
 
 import json
+import os
 from typing import Any
 
 import google.generativeai as genai
 from fastapi import HTTPException
 
-from src.config import get_settings
 from src.core.database import db
 
 # Configure API
-settings = get_settings()
-if not settings.GEMINI_API_KEY:
-    raise ValueError(
-        "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
-    )
-genai.configure(api_key=settings.GEMINI_API_KEY)
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Use text-embedding-004 model for embeddings
 EMBEDDING_MODEL = "models/text-embedding-004"

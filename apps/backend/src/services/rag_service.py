@@ -10,6 +10,7 @@ See LICENSE file in the repository root for details.
 
 import asyncio
 import json
+import os
 import re
 from typing import Any
 
@@ -17,7 +18,6 @@ from fastapi import HTTPException
 from google import genai
 from google.genai import types
 
-from src.config import get_settings
 from src.core.database import db
 from src.services.embedding_service import embedding_service
 from src.services.web_search_service import web_search_service
@@ -30,12 +30,10 @@ def _get_client() -> genai.Client:
     """Get or create the Gemini client (lazy initialization)."""
     global _client
     if _client is None:
-        settings = get_settings()
-        if not settings.GEMINI_API_KEY:
-            raise ValueError(
-                "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
-            )
-        _client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _client = genai.Client(api_key=api_key)
     return _client
 
 
