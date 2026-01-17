@@ -108,7 +108,20 @@ async def create_feedback(
             f"Feedback created: {feedback.id} by user {current_user.id if current_user else 'anonymous'}"
         )
 
-        return FeedbackResponse.model_validate(feedback)
+        return FeedbackResponse(
+            id=feedback.id,
+            userId=feedback.userId,
+            type=feedback.type,
+            title=feedback.title,
+            description=feedback.description,
+            status=feedback.status,
+            pageUrl=feedback.pageUrl,
+            metadata=feedback.metadata,
+            adminNotes=feedback.adminNotes,
+            resolvedAt=feedback.resolvedAt.isoformat() if feedback.resolvedAt else None,
+            createdAt=feedback.createdAt.isoformat(),
+            updatedAt=feedback.updatedAt.isoformat(),
+        )
     except Exception as e:
         logger.error(f"Error creating feedback: {e}", exc_info=True)
         raise HTTPException(
@@ -161,8 +174,26 @@ async def list_feedback(
             order={"createdAt": "desc"},
         )
 
+        feedback_responses = [
+            FeedbackResponse(
+                id=f.id,
+                userId=f.userId,
+                type=f.type,
+                title=f.title,
+                description=f.description,
+                status=f.status,
+                pageUrl=f.pageUrl,
+                metadata=f.metadata,
+                adminNotes=f.adminNotes,
+                resolvedAt=f.resolvedAt.isoformat() if f.resolvedAt else None,
+                createdAt=f.createdAt.isoformat(),
+                updatedAt=f.updatedAt.isoformat(),
+            )
+            for f in feedback_list
+        ]
+
         return FeedbackListResponse(
-            feedback=[FeedbackResponse.model_validate(f) for f in feedback_list],
+            feedback=feedback_responses,
             total=total,
             page=page,
             pageSize=pageSize,
@@ -203,7 +234,20 @@ async def get_feedback(
                 detail="You don't have permission to access this feedback",
             )
 
-        return FeedbackResponse.model_validate(feedback)
+        return FeedbackResponse(
+            id=feedback.id,
+            userId=feedback.userId,
+            type=feedback.type,
+            title=feedback.title,
+            description=feedback.description,
+            status=feedback.status,
+            pageUrl=feedback.pageUrl,
+            metadata=feedback.metadata,
+            adminNotes=feedback.adminNotes,
+            resolvedAt=feedback.resolvedAt.isoformat() if feedback.resolvedAt else None,
+            createdAt=feedback.createdAt.isoformat(),
+            updatedAt=feedback.updatedAt.isoformat(),
+        )
     except HTTPException:
         raise
     except Exception as e:
