@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from prisma import PrismaClient
+from prisma import Client as PrismaClient
 
 from src.core.database import get_db_client
 from src.core.security import decode_access_token
