@@ -76,40 +76,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         """Add security headers to response."""
         response = await call_next(request)
 
-        # Security headers (OWASP recommended)
+        # Security headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-        # Content Security Policy (CSP) - adjust based on your needs
-        settings = get_settings()
-        csp_policy = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: https:; "
-            "font-src 'self' data:; "
-            "connect-src 'self' https://api.stripe.com https://*.sentry.io; "
-            "frame-src https://js.stripe.com; "
-            "object-src 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self'; "
-            "frame-ancestors 'none'; "
-            "upgrade-insecure-requests;"
-        )
-        response.headers["Content-Security-Policy"] = csp_policy
-
-        # Permissions Policy (formerly Feature Policy)
-        response.headers["Permissions-Policy"] = (
-            "geolocation=(), microphone=(), camera=(), "
-            "payment=(), usb=(), magnetometer=(), gyroscope=()"
-        )
-
         # Add HSTS header in production
+        settings = get_settings()
         if settings.ENVIRONMENT == "production":
-            response.headers["Strict-Transport-Security"] = (
-                "max-age=31536000; includeSubDomains; preload"
-            )
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         return response
