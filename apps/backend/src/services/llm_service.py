@@ -16,13 +16,22 @@ from google.generativeai.types import HarmBlockThreshold, HarmCategory
 
 from src.config import get_settings
 
-# Configure API
-settings = get_settings()
-if not settings.GEMINI_API_KEY:
-    raise ValueError(
-        "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
-    )
-genai.configure(api_key=settings.GEMINI_API_KEY)
+# Configure API - lazy initialization to avoid import-time failures
+_settings = None
+
+
+def _configure_genai():
+    """Configure Gemini API (lazy initialization)."""
+    global _settings
+    if _settings is None:
+        _settings = get_settings()
+        if not _settings.GEMINI_API_KEY or _settings.GEMINI_API_KEY.strip() == "":
+            raise ValueError(
+                "GEMINI_API_KEY environment variable is not set. Please set it in your .env file or environment variables."
+            )
+        genai.configure(api_key=_settings.GEMINI_API_KEY)
+    return _settings
+
 
 # System instruction to define Maigie's persona
 SYSTEM_INSTRUCTION = """
@@ -308,6 +317,8 @@ RULES:
 
 class GeminiService:
     def __init__(self):
+        # Ensure API is configured before creating model
+        _configure_genai()
         self.model = genai.GenerativeModel(
             model_name="models/gemini-flash-latest", system_instruction=SYSTEM_INSTRUCTION
         )
