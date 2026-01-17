@@ -47,9 +47,7 @@ def parse_list_value(value: Any) -> list[str]:
         return []
 
 
-# Use Union type to prevent Pydantic Settings from auto-decoding as JSON
-# This allows our validator to handle empty strings and comma-separated values
-ListStr = Annotated[str | list[str], BeforeValidator(parse_list_value)]
+ListStr = Annotated[list[str], BeforeValidator(parse_list_value)]
 
 
 class Settings(BaseSettings):
