@@ -11,13 +11,19 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.database import db
 from src.dependencies import CurrentUser
-from src.models.goals import GoalCreate, GoalProgressUpdate, GoalResponse, GoalUpdate
+from src.models.goals import (
+    GoalCreate,
+    GoalListResponse,
+    GoalProgressUpdate,
+    GoalResponse,
+    GoalUpdate,
+)
 from src.services.user_memory_service import user_memory_service
 
 router = APIRouter(prefix="/api/v1/goals", tags=["goals"])
 
 
-@router.get("", response_model=list[GoalResponse])
+@router.get("", response_model=GoalListResponse)
 async def list_goals(
     current_user: CurrentUser,
     status_filter: str | None = Query(
@@ -25,19 +31,35 @@ async def list_goals(
         alias="status",
         description="Filter by status (ACTIVE, COMPLETED, ARCHIVED, CANCELLED)",
     ),
+    page: int = Query(1, ge=1, description="Page number"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    sortBy: str = Query("createdAt", pattern="^(createdAt|updatedAt|title|targetDate)$"),
+    sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
 ):
-    """List user's goals."""
+    """List user's goals with pagination."""
     try:
         where_clause = {"userId": current_user.id}
         if status_filter:
             where_clause["status"] = status_filter
 
+        # Calculate skip
+        skip = (page - 1) * pageSize
+
+        # Count total matching goals
+        total = await db.goal.count(where=where_clause)
+
+        # Build order dict
+        order_dict = {sortBy: sortOrder}
+
+        # Fetch paginated goals
         goals = await db.goal.find_many(
             where=where_clause,
-            order={"createdAt": "desc"},
+            order=order_dict,
+            skip=skip,
+            take=pageSize,
         )
 
-        return [
+        goal_responses = [
             GoalResponse(
                 id=goal.id,
                 userId=goal.userId,
@@ -53,6 +75,16 @@ async def list_goals(
             )
             for goal in goals
         ]
+
+        has_more = (skip + pageSize) < total
+
+        return GoalListResponse(
+            goals=goal_responses,
+            total=total,
+            page=page,
+            pageSize=pageSize,
+            hasMore=has_more,
+        )
     except Exception as e:
         print(f"Error listing goals: {e}")
         raise HTTPException(

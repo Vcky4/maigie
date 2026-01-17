@@ -151,12 +151,21 @@ class EmbeddingService:
             # Generate query embedding
             query_embedding = await self.generate_query_embedding(query_text)
 
-            # Get all embeddings (or filtered by object_type)
+            # Get embeddings (or filtered by object_type) with a reasonable limit
+            # For production, this should use pgvector for efficient similarity search
+            # For now, we limit to a reasonable number to avoid loading all embeddings
             where_clause = {}
             if object_type:
                 where_clause["objectType"] = object_type
 
-            all_embeddings = await db.embedding.find_many(where=where_clause)
+            # Limit to 1000 embeddings max for performance
+            # In production with pgvector, this would be handled by the database
+            max_embeddings_to_check = min(limit * 20, 1000)  # Check up to 20x the limit or 1000 max
+            all_embeddings = await db.embedding.find_many(
+                where=where_clause,
+                take=max_embeddings_to_check,
+                order={"createdAt": "desc"},  # Prefer recent embeddings
+            )
 
             # Calculate cosine similarity for each embedding
             similarities = []

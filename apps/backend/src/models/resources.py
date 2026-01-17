@@ -88,3 +88,13 @@ class ResourceResponse(BaseModel):
     updatedAt: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ResourceListResponse(BaseModel):
+    """Schema for paginated resource list response."""
+
+    resources: list[ResourceResponse]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool

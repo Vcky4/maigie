@@ -47,25 +47,28 @@ async def get_dashboard(
         # Calculate Stats
         # ========================================================================
 
-        # Get courses
-        courses = await db.course.find_many(
+        # Get course counts (optimized with count queries)
+        total_courses = await db.course.count(where={"userId": user_id})
+        active_courses = await db.course.count(where={"userId": user_id, "archived": False})
+
+        # For completed courses, we need to check topic completion, so fetch courses with topics
+        # but limit to a reasonable number for performance
+        courses_with_topics = await db.course.find_many(
             where={"userId": user_id},
             include={"modules": {"include": {"topics": True}}},
+            take=100,  # Limit to 100 courses for completion check
         )
-        total_courses = len(courses)
-        active_courses = sum(1 for c in courses if not c.archived)
         completed_courses = sum(
             1
-            for course in courses
+            for course in courses_with_topics
             if len([t for m in course.modules for t in m.topics]) > 0
             and all(t.completed for m in course.modules for t in m.topics)
         )
 
-        # Get goals
-        goals = await db.goal.find_many(where={"userId": user_id})
-        total_goals = len(goals)
-        active_goals = sum(1 for g in goals if g.status == "ACTIVE")
-        completed_goals = sum(1 for g in goals if g.status == "COMPLETED")
+        # Get goal counts (optimized with count queries)
+        total_goals = await db.goal.count(where={"userId": user_id})
+        active_goals = await db.goal.count(where={"userId": user_id, "status": "ACTIVE"})
+        completed_goals = await db.goal.count(where={"userId": user_id, "status": "COMPLETED"})
 
         # Get study sessions for total study time
         sessions = await db.studysession.find_many(

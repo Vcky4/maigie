@@ -66,3 +66,13 @@ class ScheduleResponse(BaseModel):
     updatedAt: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ScheduleListResponse(BaseModel):
+    """Schema for paginated schedule list response."""
+
+    schedules: list[ScheduleResponse]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool

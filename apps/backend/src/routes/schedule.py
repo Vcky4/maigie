@@ -14,7 +14,12 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from src.core.database import db
 from src.dependencies import CurrentUser
-from src.models.schedule import ScheduleCreate, ScheduleResponse, ScheduleUpdate
+from src.models.schedule import (
+    ScheduleCreate,
+    ScheduleListResponse,
+    ScheduleResponse,
+    ScheduleUpdate,
+)
 from src.services.google_calendar_service import google_calendar_service
 from src.services.user_memory_service import user_memory_service
 
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/schedule", tags=["schedule"])
 
 
-@router.get("", response_model=list[ScheduleResponse])
+@router.get("", response_model=ScheduleListResponse)
 async def list_schedules(
     current_user: CurrentUser,
     start_date: datetime | None = Query(
@@ -46,8 +51,10 @@ async def list_schedules(
         alias="goalId",
         description="Filter by goal ID",
     ),
+    page: int = Query(1, ge=1, description="Page number"),
+    pageSize: int = Query(50, ge=1, le=200, description="Items per page"),
 ):
-    """List user's schedule blocks."""
+    """List user's schedule blocks with pagination."""
     try:
         where_clause = {"userId": current_user.id}
 
@@ -59,26 +66,33 @@ async def list_schedules(
         if goal_id:
             where_clause["goalId"] = goal_id
 
+        # Add date range filters to where clause for better performance
+        # A schedule overlaps with the range if: startAt <= end_date AND endAt >= start_date
+        if start_date and end_date:
+            where_clause["AND"] = [
+                {"endAt": {"gte": start_date}},
+                {"startAt": {"lte": end_date}},
+            ]
+        elif start_date:
+            where_clause["endAt"] = {"gte": start_date}
+        elif end_date:
+            where_clause["startAt"] = {"lte": end_date}
+
+        # Calculate skip
+        skip = (page - 1) * pageSize
+
+        # Count total matching schedules
+        total = await db.scheduleblock.count(where=where_clause)
+
+        # Fetch paginated schedules
         schedules = await db.scheduleblock.find_many(
             where=where_clause,
             order={"startAt": "asc"},
+            skip=skip,
+            take=pageSize,
         )
 
-        # Filter by date range in Python (for schedules that overlap with the range)
-        # A schedule overlaps if: startAt <= end_date AND endAt >= start_date
-        if start_date or end_date:
-            filtered_schedules = []
-            for schedule in schedules:
-                overlaps = True
-                if start_date and schedule.endAt < start_date:
-                    overlaps = False
-                if end_date and schedule.startAt > end_date:
-                    overlaps = False
-                if overlaps:
-                    filtered_schedules.append(schedule)
-            schedules = filtered_schedules
-
-        return [
+        schedule_responses = [
             ScheduleResponse(
                 id=schedule.id,
                 userId=schedule.userId,
@@ -101,6 +115,16 @@ async def list_schedules(
             )
             for schedule in schedules
         ]
+
+        has_more = (skip + pageSize) < total
+
+        return ScheduleListResponse(
+            schedules=schedule_responses,
+            total=total,
+            page=page,
+            pageSize=pageSize,
+            hasMore=has_more,
+        )
     except Exception as e:
         logger.error(
             "Error listing schedules",

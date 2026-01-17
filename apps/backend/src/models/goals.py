@@ -67,3 +67,13 @@ class GoalResponse(BaseModel):
     updatedAt: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class GoalListResponse(BaseModel):
+    """Schema for paginated goal list response."""
+
+    goals: list[GoalResponse]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool

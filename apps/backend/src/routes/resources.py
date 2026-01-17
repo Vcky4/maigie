@@ -16,9 +16,11 @@ from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.resources import (
     ResourceCreate,
+    ResourceListResponse,
     ResourceRecommendationItem,
     ResourceRecommendationRequest,
     ResourceRecommendationResponse,
+    ResourceResponse,
 )
 from src.services.indexing_service import indexing_service
 from src.services.rag_service import rag_service
@@ -29,13 +31,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 
 
-@router.get("")
+@router.get("", response_model=ResourceListResponse)
 async def list_resources(
     current_user: CurrentUser,
-    topicId: str | None = Query(None),
-    courseId: str | None = Query(None),
+    topicId: str | None = Query(None, alias="topicId", description="Filter by topic ID"),
+    courseId: str | None = Query(None, alias="courseId", description="Filter by course ID"),
+    type: str | None = Query(None, description="Filter by resource type"),
+    search: str | None = Query(None, max_length=255, description="Search in title/description"),
+    page: int = Query(1, ge=1, description="Page number"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    sortBy: str = Query("createdAt", pattern="^(createdAt|updatedAt|title|clickCount)$"),
+    sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
 ):
-    """List user's resources, optionally filtered by topic or course."""
+    """List user's resources with pagination, optionally filtered by topic or course."""
     try:
         where_clause = {"userId": current_user.id}
 
@@ -43,26 +51,61 @@ async def list_resources(
             where_clause["topicId"] = topicId
         if courseId:
             where_clause["courseId"] = courseId
+        if type:
+            where_clause["type"] = type
+        if search:
+            where_clause["OR"] = [
+                {"title": {"contains": search, "mode": "insensitive"}},
+                {"description": {"contains": search, "mode": "insensitive"}},
+            ]
 
+        # Calculate skip
+        skip = (page - 1) * pageSize
+
+        # Count total matching resources
+        total = await db.resource.count(where=where_clause)
+
+        # Build order dict
+        order_dict = {sortBy: sortOrder}
+
+        # Fetch paginated resources
         resources = await db.resource.find_many(
             where=where_clause,
-            order={"createdAt": "desc"},
+            order=order_dict,
+            skip=skip,
+            take=pageSize,
         )
 
-        return [
-            {
-                "id": r.id,
-                "title": r.title,
-                "url": r.url,
-                "description": r.description,
-                "type": r.type,
-                "isRecommended": r.isRecommended,
-                "recommendationScore": r.recommendationScore,
-                "clickCount": r.clickCount,
-                "createdAt": r.createdAt.isoformat(),
-            }
+        resource_responses = [
+            ResourceResponse(
+                id=r.id,
+                userId=r.userId,
+                title=r.title,
+                url=r.url,
+                description=r.description,
+                type=r.type,
+                metadata=r.metadata,
+                isRecommended=r.isRecommended,
+                recommendationScore=r.recommendationScore,
+                recommendationSource=getattr(r, "recommendationSource", None),
+                clickCount=r.clickCount,
+                bookmarkCount=getattr(r, "bookmarkCount", 0),
+                lastAccessedAt=r.lastAccessedAt.isoformat() if r.lastAccessedAt else None,
+                createdAt=r.createdAt.isoformat(),
+                updatedAt=r.updatedAt.isoformat(),
+            )
             for r in resources
         ]
+
+        has_more = (skip + pageSize) < total
+
+        return ResourceListResponse(
+            resources=resource_responses,
+            total=total,
+            page=page,
+            pageSize=pageSize,
+            hasMore=has_more,
+        )
     except Exception as e:
         logger.error(
             "Error listing resources",
