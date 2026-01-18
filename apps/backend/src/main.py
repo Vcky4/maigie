@@ -25,6 +25,8 @@ from starlette.middleware.sessions import SessionMiddleware
 # --- Import the database helper functions ---
 from src.core.database import check_db_health, connect_db, disconnect_db
 from src.routes import auth, chat, courses
+from src.routes.notes import router as notes_router
+from src.routes.upload import router as upload_router
 
 from .config import get_settings
 from .core.cache import cache
@@ -41,9 +43,12 @@ from .models.error_response import ErrorResponse
 # --- Route Imports ---
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
+from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
+from .routes.dashboard import router as dashboard_router
 from .routes.examples import router as examples_router
+from .routes.feedback import router as feedback_router
 from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
@@ -51,8 +56,6 @@ from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
-from src.routes.notes import router as notes_router
-from src.routes.upload import router as upload_router
 from .routes.waitlist import router as waitlist_router
 from .routes.websockets import router as websockets_router
 from .utils.dependencies import (
@@ -360,7 +363,10 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
 
     app.include_router(ai_router)
+    app.include_router(analytics_router)
+    app.include_router(dashboard_router)
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")
+    app.include_router(feedback_router)
     app.include_router(goals_router)
     app.include_router(schedule_router)
     app.include_router(resources_router)

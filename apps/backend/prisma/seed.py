@@ -30,6 +30,7 @@ from pathlib import Path
 
 import bcrypt
 from passlib.context import CryptContext
+
 from prisma import Prisma
 
 # Setup password hashing (same as src.core.security)
