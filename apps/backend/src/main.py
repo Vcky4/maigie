@@ -54,6 +54,7 @@ from .routes.realtime import router as realtime_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
+from .routes.referrals import router as referrals_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
 from .routes.waitlist import router as waitlist_router
@@ -358,6 +359,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
+    app.include_router(referrals_router, prefix=f"{settings.API_V1_STR}/referrals")
 
     # Admin routes (admin-only access)
     app.include_router(admin_router)

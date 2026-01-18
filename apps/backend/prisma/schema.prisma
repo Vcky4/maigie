@@ -150,6 +150,13 @@ model User {
   // Feedback Relations
   feedback Feedback[]
 
+  // Referral Relations
+  referralCode        String?   @unique // User's unique referral code
+  referredByCode      String? // Code used when user signed up
+  referralRewards     ReferralReward[] // Rewards earned as referrer
+  referralRewardClaim ReferralRewardClaim[] // Claims made by this user
+  referredByRewards   ReferralReward[] @relation("ReferredUser") // Rewards where this user was referred
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -658,4 +665,50 @@ model Feedback {
   @@index([status])
   @@index([type])
   @@index([createdAt])
+}
+
+// ==========================================
+//  REFERRAL MODULE
+// ==========================================
+
+model ReferralReward {
+  id String @id @default(uuid())
+
+  referrerId String // User who referred someone
+  referrer   User   @relation(fields: [referrerId], references: [id], onDelete: Cascade)
+
+  referredUserId String // User who was referred
+  referredUser   User   @relation("ReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  rewardType String // "signup" (1000 tokens) or "subscription" (500 tokens)
+  tokens      Int    @default(0) // Amount of tokens awarded
+  isClaimed   Boolean @default(false) // Whether the reward has been claimed
+  claimedAt   DateTime? // When the reward was claimed
+  claimDate   DateTime? // The date when claimed (for daily limit tracking)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([referrerId])
+  @@index([referredUserId])
+  @@index([isClaimed])
+  @@unique([referrerId, referredUserId, rewardType]) // One reward per referrer-referred pair per type
+}
+
+model ReferralRewardClaim {
+  id String @id @default(uuid())
+
+  userId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rewardId String // Reference to ReferralReward (not a relation to avoid circular dependency)
+  tokensClaimed Int // Amount claimed
+  claimDate     DateTime // Date when claimed (for daily limit tracking)
+  dailyLimitIncrease Int @default(0) // How much daily limit was increased
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([rewardId])
+  @@index([claimDate])
 }
