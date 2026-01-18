@@ -24,6 +24,7 @@ from ..config import Settings, get_settings
 from ..core.database import db
 from ..services.credit_service import reset_credits_for_period_start
 from ..services.email import send_subscription_success_email
+from ..services.referral_service import track_referral_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -585,6 +586,13 @@ async def update_user_subscription_from_stripe(
                 )
             except Exception as e:
                 logger.error(f"Failed to send subscription success email: {e}")
+
+            # Track referral subscription reward
+            try:
+                await track_referral_subscription(updated_user, db_client)
+            except Exception as e:
+                # Don't fail subscription update if referral tracking fails
+                logger.error(f"Failed to track referral subscription: {e}")
 
         return updated_user
 
