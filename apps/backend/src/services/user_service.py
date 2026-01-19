@@ -89,6 +89,8 @@ async def get_or_create_oauth_user(oauth_info: OAuthUserInfo, db: DBDep) -> User
         return email_user
 
     # Create a new user record
+    # Note: Referral code linking is handled separately via /link-referral endpoint
+    # after OAuth authentication completes
     user_data = {
         "email": oauth_info.email,
         "name": oauth_info.full_name,
@@ -96,13 +98,6 @@ async def get_or_create_oauth_user(oauth_info: OAuthUserInfo, db: DBDep) -> User
         "providerId": oauth_info.provider_user_id,
         "isOnboarded": False,  # New OAuth users need to complete onboarding
     }
-
-    # Add referral code if provided (only for new users)
-    if oauth_info.referral_code:
-        user_data["referredByCode"] = oauth_info.referral_code.upper().strip()
-        logger.info(
-            f"Registering referral code {user_data['referredByCode']} for new OAuth user {oauth_info.email}"
-        )
 
     new_user = await db.user.create(data=user_data)
 

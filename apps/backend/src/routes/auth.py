@@ -94,7 +94,7 @@ def get_base_url_from_request(request: Request) -> str:
 class VerifyRequest(BaseModel):
     email: EmailStr
     code: str
-    referralCode: str | None = None  # Optional referral code to register after verification
+    # Note: Referral code linking is now handled separately via /link-referral endpoint
 
 
 class ResendOTPRequest(BaseModel):
@@ -119,6 +119,10 @@ class ResetPasswordConfirm(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class LinkReferralRequest(BaseModel):
+    referralCode: str
 
 
 # ==========================================
@@ -168,13 +172,8 @@ async def signup(user_data: UserSignup):
         include={"preferences": True},
     )
 
-    # 5. Track referral if code provided
-    if user_data.referralCode:
-        try:
-            await track_referral_signup(new_user, user_data.referralCode)
-        except Exception as e:
-            # Don't fail signup if referral tracking fails
-            logger.error(f"Referral tracking failed during signup: {e}")
+    # Note: Referral code linking is now handled separately via /link-referral endpoint
+    # after user completes signup and email verification
 
     # 6. Send Verification Email (Safe Mode)
     try:
@@ -218,23 +217,8 @@ async def verify_email(data: VerifyRequest):
         "verificationCodeExpiresAt": None,
     }
 
-    # 4. Handle referral code registration (only if provided and user doesn't have one)
-    if data.referralCode:
-        # Check if user already has a referral code (immutable once set)
-        if user.referredByCode:
-            logger.warning(
-                f"User {user.id} already has referral code {user.referredByCode}, "
-                f"ignoring new code {data.referralCode}"
-            )
-        else:
-            # Validate referral code exists (check if it's a valid user referral code)
-            # Note: This assumes referral codes are stored somewhere or can be validated
-            # For now, we'll just store it. You may want to add validation logic here
-            # to check against a referral codes table or user IDs
-            update_data["referredByCode"] = data.referralCode.upper().strip()
-            logger.info(
-                f"Registering referral code {update_data['referredByCode']} for user {user.id}"
-            )
+    # Note: Referral code linking is now handled separately via /link-referral endpoint
+    # after user completes email verification
 
     # 5. Activate user and register referral
     updated_user = await db.user.update(
@@ -559,6 +543,62 @@ async def change_password(
     )
 
     return {"message": "Password changed successfully"}
+
+
+@router.post("/link-referral")
+async def link_referral(
+    data: LinkReferralRequest,
+    current_user: CurrentUser,
+):
+    """
+    Link a referral code to the current user after signup/login.
+    Skips if the user was already referred.
+    """
+    # Check if user already has a referral code (immutable once set)
+    if current_user.referredByCode:
+        logger.info(
+            f"User {current_user.id} already has referral code {current_user.referredByCode}, "
+            f"skipping link for code {data.referralCode}"
+        )
+        return {
+            "message": "User already has a referral code",
+            "alreadyReferred": True,
+            "existingCode": current_user.referredByCode,
+        }
+
+    # Normalize referral code
+    referral_code = data.referralCode.upper().strip()
+
+    # Track referral signup (this will validate the code, check for self-referral, etc.)
+    try:
+        # Get fresh user data from database
+        user = await db.user.find_unique(where={"id": current_user.id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        referrer = await track_referral_signup(user, referral_code)
+        if referrer:
+            logger.info(f"Successfully linked referral code {referral_code} for user {user.id}")
+            return {
+                "message": "Referral code linked successfully",
+                "alreadyReferred": False,
+                "referralCode": referral_code,
+            }
+        else:
+            # Referral code not found or invalid
+            logger.warning(f"Referral code {referral_code} not found or invalid")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid referral code",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error linking referral code: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to link referral code",
+        )
 
 
 # ==========================================
