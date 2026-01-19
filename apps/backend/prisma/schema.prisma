@@ -129,6 +129,9 @@ model User {
   googleCalendarSyncEnabled Boolean @default(false) // Whether Calendar sync is enabled
   googleCalendarId String? // Primary calendar ID (usually "primary")
 
+  // Referral tracking
+  referredByCode String? // Referral code of the user who referred this user (immutable once set)
+
   // Relations
   preferences             UserPreferences?
   courses                 Course[]

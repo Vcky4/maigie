@@ -10,12 +10,16 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import logging
+
 from pydantic import BaseModel
 
 from prisma.models import User
 
 from ..dependencies import DBDep
 from ..exceptions import AuthenticationError
+
+logger = logging.getLogger(__name__)
 
 
 class OAuthUserInfo(BaseModel):
@@ -25,6 +29,7 @@ class OAuthUserInfo(BaseModel):
     full_name: str | None = None
     provider: str
     provider_user_id: str
+    referral_code: str | None = None  # Optional referral code for new signups
 
 
 async def get_or_create_oauth_user(oauth_info: OAuthUserInfo, db: DBDep) -> User:
@@ -84,14 +89,21 @@ async def get_or_create_oauth_user(oauth_info: OAuthUserInfo, db: DBDep) -> User
         return email_user
 
     # Create a new user record
-    new_user = await db.user.create(
-        data={
-            "email": oauth_info.email,
-            "name": oauth_info.full_name,
-            "provider": oauth_info.provider,
-            "providerId": oauth_info.provider_user_id,
-            "isOnboarded": False,  # New OAuth users need to complete onboarding
-        }
-    )
+    user_data = {
+        "email": oauth_info.email,
+        "name": oauth_info.full_name,
+        "provider": oauth_info.provider,
+        "providerId": oauth_info.provider_user_id,
+        "isOnboarded": False,  # New OAuth users need to complete onboarding
+    }
+
+    # Add referral code if provided (only for new users)
+    if oauth_info.referral_code:
+        user_data["referredByCode"] = oauth_info.referral_code.upper().strip()
+        logger.info(
+            f"Registering referral code {user_data['referredByCode']} for new OAuth user {oauth_info.email}"
+        )
+
+    new_user = await db.user.create(data=user_data)
 
     return new_user
