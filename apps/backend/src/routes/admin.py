@@ -34,6 +34,7 @@ from ..models.analytics import (
     UserProgressSummary,
 )
 from ..services.credit_service import initialize_user_credits
+from ..services.email import send_bulk_email
 from ..utils.exceptions import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,27 @@ class UserDetailResponse(BaseModel):
     creditsDailyLimit: int | None
     createdAt: str
     updatedAt: str
+
+
+class BulkEmailRequest(BaseModel):
+    """Request model for sending bulk emails."""
+
+    subject: str = Field(..., min_length=1, max_length=200, description="Email subject")
+    content: str = Field(..., min_length=1, description="HTML email content")
+    filterActive: bool | None = Field(
+        None, description="Filter by active status (None = all users)"
+    )
+    filterTier: str | None = Field(None, description="Filter by tier (None = all tiers)")
+
+
+class BulkEmailResponse(BaseModel):
+    """Response model for bulk email operation."""
+
+    message: str
+    totalUsers: int
+    emailsSent: int
+    emailsFailed: int
+    failedEmails: list[str] = []
 
 
 # ==========================================
@@ -870,4 +892,76 @@ async def get_user_analytics(
         user=user_analytics_item,
         courses=course_items,
         summary=summary,
+    )
+
+
+# ============================================================================
+# Bulk Email Endpoint
+# ============================================================================
+
+
+@router.post("/bulk-email", response_model=BulkEmailResponse)
+async def send_bulk_emails(
+    email_data: BulkEmailRequest,
+    admin_user: AdminUser,
+    db: DBDep,
+):
+    """
+    Send bulk emails to all users (with optional filtering).
+
+    Only accessible by admin users.
+    """
+    # Build where clause for filtering users
+    where: dict = {"role": "USER"}  # Only send to regular users, not admins
+
+    if email_data.filterActive is not None:
+        where["isActive"] = email_data.filterActive
+
+    if email_data.filterTier:
+        where["tier"] = email_data.filterTier.upper()
+
+    # Get all matching users
+    users = await db.user.find_many(where=where)
+
+    if not users:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No users found matching the specified filters",
+        )
+
+    total_users = len(users)
+    emails_sent = 0
+    emails_failed = 0
+    failed_emails: list[str] = []
+
+    logger.info(
+        f"Admin {admin_user.email} sending bulk email to {total_users} users. "
+        f"Subject: {email_data.subject}"
+    )
+
+    # Send emails to all users
+    for user in users:
+        try:
+            await send_bulk_email(
+                email=user.email,
+                name=user.name,
+                subject=email_data.subject,
+                content=email_data.content,
+            )
+            emails_sent += 1
+        except Exception as e:
+            emails_failed += 1
+            failed_emails.append(user.email)
+            logger.error(f"Failed to send bulk email to {user.email}: {e}")
+
+    logger.info(
+        f"Bulk email completed: {emails_sent} sent, {emails_failed} failed out of {total_users} total"
+    )
+
+    return BulkEmailResponse(
+        message=f"Bulk email sent to {emails_sent} users. {emails_failed} failed.",
+        totalUsers=total_users,
+        emailsSent=emails_sent,
+        emailsFailed=emails_failed,
+        failedEmails=failed_emails,
     )
