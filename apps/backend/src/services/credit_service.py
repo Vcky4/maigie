@@ -22,6 +22,7 @@ from prisma.models import User
 
 from ..config import Settings, get_settings
 from ..core.database import db
+from ..services.referral_service import get_daily_limit_increase
 from ..utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
@@ -282,8 +283,15 @@ async def check_credit_availability(
         daily_limit = user.creditsDailyLimit or 0
         credits_used_today = user.creditsUsedToday or 0
 
+        # Get daily limit increase from claimed referral rewards
+        referral_increase = await get_daily_limit_increase(user, db_client)
+        effective_daily_limit = daily_limit + referral_increase
+
         # Check daily limit first
-        if daily_limit > 0 and credits_used_today + credits_needed > daily_limit:
+        if (
+            effective_daily_limit > 0
+            and credits_used_today + credits_needed > effective_daily_limit
+        ):
             return False, None
 
     # Check monthly hard cap
@@ -341,10 +349,14 @@ async def consume_credits(
             daily_limit = user.creditsDailyLimit or 0
             credits_used_today = user.creditsUsedToday or 0
 
+            # Get daily limit increase from claimed referral rewards
+            referral_increase = await get_daily_limit_increase(user, db_client)
+            effective_daily_limit = daily_limit + referral_increase
+
             # Check if daily limit is exceeded
-            if daily_limit > 0 and credits_used_today + credits > daily_limit:
+            if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
                 raise SubscriptionLimitError(
-                    message=f"Daily credit limit exceeded. You've used {credits_used_today:,} of {daily_limit:,} credits today.",
+                    message=f"Daily credit limit exceeded. You've used {credits_used_today:,} of {effective_daily_limit:,} credits today.",
                     detail=f"This operation requires {credits} credits. Your daily limit resets at midnight UTC. Upgrade to Premium for higher limits.",
                 )
 
