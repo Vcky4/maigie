@@ -155,7 +155,6 @@ model User {
 
   // Referral Relations
   referralCode        String?   @unique // User's unique referral code
-  referredByCode      String? // Code used when user signed up
   referralRewards     ReferralReward[] // Rewards earned as referrer
   referralRewardClaim ReferralRewardClaim[] // Claims made by this user
   referredByRewards   ReferralReward[] @relation("ReferredUser") // Rewards where this user was referred
