@@ -41,6 +41,7 @@ class UserSignup(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, description="Password must be at least 8 characters")
     name: str = Field(..., description="Full Name")
+    referralCode: str | None = Field(None, description="Optional referral code")
 
 
 class UserLogin(BaseModel):

@@ -46,6 +46,7 @@ from src.services.email import (
     send_verification_email,
     send_welcome_email,
 )
+from src.services.referral_service import track_referral_signup
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
 # Get logger for this module
@@ -166,7 +167,15 @@ async def signup(user_data: UserSignup):
         include={"preferences": True},
     )
 
-    # 5. Send Verification Email (Safe Mode)
+    # 5. Track referral if code provided
+    if user_data.referralCode:
+        try:
+            await track_referral_signup(new_user, user_data.referralCode)
+        except Exception as e:
+            # Don't fail signup if referral tracking fails
+            logger.error(f"Referral tracking failed during signup: {e}")
+
+    # 6. Send Verification Email (Safe Mode)
     try:
         # Pass the 6-digit 'otp_code' directly
         await send_verification_email(new_user.email, otp_code)
