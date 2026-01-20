@@ -2316,3 +2316,80 @@ async def update_system_config(
             "featureFlags": config_data.featureFlags is not None,
         },
     }
+
+
+# ============================================================================
+# Audit Logs Endpoints
+# ============================================================================
+
+
+@router.get("/audit-logs", response_model=dict)
+async def list_audit_logs(
+    admin_user: AdminUser,
+    db: DBDep,
+    page: int = Query(1, ge=1, description="Page number"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    actionType: str | None = Query(None, description="Filter by action type"),
+    resourceType: str | None = Query(None, description="Filter by resource type"),
+    adminUserId: str | None = Query(None, description="Filter by admin user ID"),
+    search: str | None = Query(
+        None, description="Search in action type, resource type, or resource ID"
+    ),
+):
+    """
+    List audit logs with filtering and pagination.
+
+    Only accessible by admin users.
+    """
+    where: dict = {}
+
+    if actionType:
+        where["actionType"] = actionType
+    if resourceType:
+        where["resourceType"] = resourceType
+    if adminUserId:
+        where["adminUserId"] = adminUserId
+    if search:
+        # Search in action type, resource type, or resource ID
+        where["OR"] = [
+            {"actionType": {"contains": search, "mode": "insensitive"}},
+            {"resourceType": {"contains": search, "mode": "insensitive"}},
+            {"resourceId": {"contains": search, "mode": "insensitive"}},
+        ]
+
+    total = await db.auditlog.count(where=where)
+
+    skip = (page - 1) * pageSize
+    audit_logs = await db.auditlog.find_many(
+        where=where,
+        skip=skip,
+        take=pageSize,
+        order={"timestamp": "desc"},
+        include={"adminUser": True},
+    )
+
+    log_list = []
+    for log in audit_logs:
+        log_list.append(
+            {
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat(),
+                "adminUserId": log.adminUserId,
+                "adminEmail": log.adminUser.email if log.adminUser else "Unknown",
+                "adminName": log.adminUser.name if log.adminUser else None,
+                "actionType": log.actionType,
+                "resourceType": log.resourceType,
+                "resourceId": log.resourceId,
+                "details": log.details,
+            }
+        )
+
+    total_pages = (total + pageSize - 1) // pageSize
+
+    return {
+        "logs": log_list,
+        "total": total,
+        "page": page,
+        "pageSize": pageSize,
+        "totalPages": total_pages,
+    }
