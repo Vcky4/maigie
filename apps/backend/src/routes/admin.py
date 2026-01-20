@@ -392,6 +392,11 @@ async def list_users(
                 "role": str(user.role),
                 "isActive": user.isActive,
                 "isOnboarded": user.isOnboarded,
+                "creditsUsed": user.creditsUsed or 0,
+                "creditsHardCap": user.creditsHardCap,
+                "creditsSoftCap": user.creditsSoftCap,
+                "creditsUsedToday": user.creditsUsedToday or 0,
+                "creditsDailyLimit": user.creditsDailyLimit,
                 "createdAt": user.createdAt.isoformat(),
                 "updatedAt": user.updatedAt.isoformat(),
             }
@@ -1027,6 +1032,86 @@ async def get_user_analytics(
     )
 
 
+@router.get("/users/{user_id}/summary", response_model=dict)
+async def get_user_summary(
+    user_id: str,
+    admin_user: AdminUser,
+    db: DBDep,
+):
+    """
+    Get comprehensive user summary including stats, costs, revenue, etc.
+
+    Only accessible by admin users.
+    """
+    # Get user
+    user = await db.user.find_unique(where={"id": user_id})
+    if not user:
+        raise ResourceNotFoundError("User", user_id)
+
+    # Get chat statistics
+    messages = await db.chatmessage.find_many(where={"userId": user_id})
+    total_messages = len(messages)
+    total_tokens = sum(msg.tokenCount or 0 for msg in messages)
+    total_cost_usd = sum(msg.costUsd or 0.0 for msg in messages)
+    total_revenue_usd = sum(msg.revenueUsd or 0.0 for msg in messages)
+
+    # Get course count
+    total_courses = await db.course.count(where={"userId": user_id})
+
+    # Get referral statistics
+    referral_rewards = await db.referralreward.find_many(where={"referrerId": user_id})
+    total_referrals = len(referral_rewards)
+    claimed_referrals = sum(1 for r in referral_rewards if r.isClaimed)
+
+    # Get sessions count
+    total_sessions = await db.chatsession.count(where={"userId": user_id})
+
+    return {
+        "userId": user.id,
+        "email": user.email,
+        "name": user.name,
+        "tier": str(user.tier),
+        "role": str(user.role),
+        "isActive": user.isActive,
+        "subscription": {
+            "status": user.stripeSubscriptionStatus,
+            "customerId": user.stripeCustomerId,
+            "subscriptionId": user.stripeSubscriptionId,
+            "periodStart": (
+                user.subscriptionCurrentPeriodStart.isoformat()
+                if user.subscriptionCurrentPeriodStart
+                else None
+            ),
+            "periodEnd": (
+                user.subscriptionCurrentPeriodEnd.isoformat()
+                if user.subscriptionCurrentPeriodEnd
+                else None
+            ),
+        },
+        "credits": {
+            "used": user.creditsUsed or 0,
+            "hardCap": user.creditsHardCap,
+            "softCap": user.creditsSoftCap,
+            "usedToday": user.creditsUsedToday or 0,
+            "dailyLimit": user.creditsDailyLimit,
+            "periodStart": user.creditsPeriodStart.isoformat() if user.creditsPeriodStart else None,
+            "periodEnd": user.creditsPeriodEnd.isoformat() if user.creditsPeriodEnd else None,
+        },
+        "statistics": {
+            "totalMessages": total_messages,
+            "totalTokens": total_tokens,
+            "totalSessions": total_sessions,
+            "totalCourses": total_courses,
+            "totalCostUsd": round(total_cost_usd, 4),
+            "totalRevenueUsd": round(total_revenue_usd, 4),
+            "totalProfitUsd": round(total_revenue_usd - total_cost_usd, 4),
+            "totalReferrals": total_referrals,
+            "claimedReferrals": claimed_referrals,
+        },
+        "createdAt": user.createdAt.isoformat(),
+    }
+
+
 # ============================================================================
 # Bulk Email Endpoint
 # ============================================================================
@@ -1622,6 +1707,7 @@ async def list_chat_sessions(
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
     userId: str | None = Query(None, description="Filter by user ID"),
+    search: str | None = Query(None, description="Search by user email or name"),
 ):
     """
     List all chat sessions across users.
@@ -1631,6 +1717,23 @@ async def list_chat_sessions(
     where: dict = {}
     if userId:
         where["userId"] = userId
+    elif search:
+        # Find users matching search
+        matching_users = await db.user.find_many(
+            where={
+                "OR": [
+                    {"email": {"contains": search, "mode": "insensitive"}},
+                    {"name": {"contains": search, "mode": "insensitive"}},
+                ]
+            },
+            select={"id": True},
+        )
+        user_ids = [u.id for u in matching_users]
+        if user_ids:
+            where["userId"] = {"in": user_ids}
+        else:
+            # No matching users, return empty result
+            where["userId"] = {"in": []}
 
     total = await db.chatsession.count(where=where)
 
