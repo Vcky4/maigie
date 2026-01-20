@@ -159,6 +159,9 @@ model User {
   referralRewardClaim ReferralRewardClaim[] // Claims made by this user
   referredByRewards   ReferralReward[] @relation("ReferredUser") // Rewards where this user was referred
 
+  // Audit Relations
+  auditLogs AuditLog[] @relation("AdminAuditLogs") // Audit logs created by this admin
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -289,6 +292,13 @@ model ChatMessage {
 
   // Usage tracking (Critical for Free Tier limits)
   tokenCount Int @default(0)
+  
+  // Cost tracking
+  inputTokens  Int? // Input tokens used (for ASSISTANT messages)
+  outputTokens Int? // Output tokens used (for ASSISTANT messages)
+  modelName    String? // Model used (e.g., "gemini-1.5-pro", "gpt-4")
+  costUsd      Float? @default(0) // Actual cost paid to AI provider (in USD)
+  revenueUsd  Float? @default(0) // Revenue charged to user (in USD)
 
   createdAt DateTime @default(now())
 
@@ -297,6 +307,7 @@ model ChatMessage {
 
   @@index([sessionId])
   @@index([userId]) // Helps count "messages this month" quickly
+  @@index([createdAt]) // For cost/revenue analytics
 }
 
 model AIActionLog {
@@ -713,4 +724,29 @@ model ReferralRewardClaim {
   @@index([userId])
   @@index([rewardId])
   @@index([claimDate])
+}
+
+// ==========================================
+//  AUDIT LOG MODULE
+// ==========================================
+
+model AuditLog {
+  id String @id @default(uuid())
+
+  adminUserId String // ID of admin user who performed the action
+  adminUser    User?  @relation("AdminAuditLogs", fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  actionType String // e.g., "create_user", "delete_course", "adjust_credits"
+  resourceType String // e.g., "user", "course", "subscription"
+  resourceId String? // ID of the resource affected (optional)
+
+  details Json? // Additional details about the action (JSON object)
+
+  timestamp DateTime @default(now())
+
+  @@index([adminUserId])
+  @@index([actionType])
+  @@index([resourceType])
+  @@index([timestamp])
+  @@index([resourceType, resourceId])
 }

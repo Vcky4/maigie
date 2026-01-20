@@ -46,6 +46,105 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
 # ==========================================
+#  DASHBOARD ENDPOINT
+# ==========================================
+
+
+@router.get("/dashboard", response_model=dict)
+async def get_dashboard_stats(
+    admin_user: AdminUser,
+    db: DBDep,
+):
+    """
+    Get dashboard statistics overview.
+
+    Only accessible by admin users.
+    """
+    now = datetime.now(UTC)
+    thirty_days_ago = now - timedelta(days=30)
+    seven_days_ago = now - timedelta(days=7)
+
+    # User statistics
+    total_users = await db.user.count()
+    active_users = await db.user.count(where={"isActive": True})
+    new_users_30d = await db.user.count(
+        where={"createdAt": {"gte": thirty_days_ago}, "role": "USER"}
+    )
+    new_users_7d = await db.user.count(where={"createdAt": {"gte": seven_days_ago}, "role": "USER"})
+
+    # Subscription statistics
+    premium_users = await db.user.count(
+        where={"tier": {"in": ["PREMIUM_MONTHLY", "PREMIUM_YEARLY"]}}
+    )
+    free_users = await db.user.count(where={"tier": "FREE"})
+
+    # Chat statistics
+    total_sessions = await db.chatsession.count()
+    total_messages = await db.chatmessage.count()
+    recent_messages = await db.chatmessage.find_many(where={"createdAt": {"gte": thirty_days_ago}})
+    total_tokens = sum(msg.tokenCount or 0 for msg in recent_messages)
+    total_cost_usd = sum(msg.costUsd or 0.0 for msg in recent_messages)
+    total_revenue_usd = sum(msg.revenueUsd or 0.0 for msg in recent_messages)
+    total_profit_usd = total_revenue_usd - total_cost_usd
+
+    # Course statistics
+    total_courses = await db.course.count()
+    ai_courses = await db.course.count(where={"isAIGenerated": True})
+    active_courses = await db.course.count(where={"archived": False})
+
+    # Feedback statistics
+    pending_feedback = await db.feedback.count(where={"status": "PENDING"})
+    total_feedback = await db.feedback.count()
+
+    # Revenue statistics (from subscriptions)
+    premium_monthly_users = await db.user.count(
+        where={"tier": "PREMIUM_MONTHLY", "stripeSubscriptionStatus": "active"}
+    )
+    premium_yearly_users = await db.user.count(
+        where={"tier": "PREMIUM_YEARLY", "stripeSubscriptionStatus": "active"}
+    )
+    # Estimate MRR (Monthly Recurring Revenue)
+    # Assuming $10/month for monthly and $100/year for yearly
+    estimated_mrr = (premium_monthly_users * 10) + (premium_yearly_users * 100 / 12)
+
+    return {
+        "users": {
+            "total": total_users,
+            "active": active_users,
+            "newLast30Days": new_users_30d,
+            "newLast7Days": new_users_7d,
+            "premium": premium_users,
+            "free": free_users,
+        },
+        "subscriptions": {
+            "premiumMonthly": premium_monthly_users,
+            "premiumYearly": premium_yearly_users,
+            "estimatedMRR": round(estimated_mrr, 2),
+        },
+        "chat": {
+            "totalSessions": total_sessions,
+            "totalMessages": total_messages,
+            "totalTokensLast30Days": total_tokens,
+            "totalCostUsdLast30Days": round(total_cost_usd, 4),
+            "totalRevenueUsdLast30Days": round(total_revenue_usd, 4),
+            "totalProfitUsdLast30Days": round(total_profit_usd, 4),
+            "profitMargin": round(
+                (total_profit_usd / total_revenue_usd * 100) if total_revenue_usd > 0 else 0.0, 2
+            ),
+        },
+        "courses": {
+            "total": total_courses,
+            "aiGenerated": ai_courses,
+            "active": active_courses,
+        },
+        "feedback": {
+            "total": total_feedback,
+            "pending": pending_feedback,
+        },
+    }
+
+
+# ==========================================
 #  REQUEST/RESPONSE MODELS
 # ==========================================
 
@@ -1549,6 +1648,10 @@ async def list_chat_sessions(
         total_tokens = sum(msg.tokenCount or 0 for msg in session.messages)
         message_count = len(session.messages)
 
+        # Calculate costs and revenue for this session
+        total_cost = sum(msg.costUsd or 0.0 for msg in session.messages)
+        total_revenue = sum(msg.revenueUsd or 0.0 for msg in session.messages)
+
         session_list.append(
             {
                 "id": session.id,
@@ -1559,6 +1662,9 @@ async def list_chat_sessions(
                 "isActive": session.isActive,
                 "messageCount": message_count,
                 "totalTokens": total_tokens,
+                "totalCostUsd": round(total_cost, 4),
+                "totalRevenueUsd": round(total_revenue, 4),
+                "profitUsd": round(total_revenue - total_cost, 4),
                 "createdAt": session.createdAt.isoformat(),
                 "updatedAt": session.updatedAt.isoformat(),
             }
@@ -1594,6 +1700,12 @@ async def get_chat_statistics(
     total_tokens = sum(msg.tokenCount or 0 for msg in all_messages)
     avg_tokens_per_message = total_tokens / total_messages if total_messages > 0 else 0.0
 
+    # Calculate total costs and revenue
+    total_cost_usd = sum(msg.costUsd or 0.0 for msg in all_messages)
+    total_revenue_usd = sum(msg.revenueUsd or 0.0 for msg in all_messages)
+    total_profit_usd = total_revenue_usd - total_cost_usd
+    profit_margin = (total_profit_usd / total_revenue_usd * 100) if total_revenue_usd > 0 else 0.0
+
     # Get unique users who have chatted
     unique_users = len(set(msg.userId for msg in all_messages))
 
@@ -1606,9 +1718,11 @@ async def get_chat_statistics(
     for msg in recent_messages:
         date_str = msg.createdAt.date().isoformat()
         if date_str not in daily_stats:
-            daily_stats[date_str] = {"messages": 0, "tokens": 0}
+            daily_stats[date_str] = {"messages": 0, "tokens": 0, "costUsd": 0.0, "revenueUsd": 0.0}
         daily_stats[date_str]["messages"] += 1
         daily_stats[date_str]["tokens"] += msg.tokenCount or 0
+        daily_stats[date_str]["costUsd"] += msg.costUsd or 0.0
+        daily_stats[date_str]["revenueUsd"] += msg.revenueUsd or 0.0
 
     return {
         "totalSessions": total_sessions,
@@ -1616,6 +1730,10 @@ async def get_chat_statistics(
         "totalTokens": total_tokens,
         "averageTokensPerMessage": round(avg_tokens_per_message, 2),
         "uniqueUsers": unique_users,
+        "totalCostUsd": round(total_cost_usd, 4),
+        "totalRevenueUsd": round(total_revenue_usd, 4),
+        "totalProfitUsd": round(total_profit_usd, 4),
+        "profitMargin": round(profit_margin, 2),
         "dailyStats": daily_stats,
     }
 

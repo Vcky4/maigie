@@ -13,7 +13,7 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from prisma import Prisma
@@ -45,27 +45,43 @@ async def log_admin_action(
     if db_client is None:
         db_client = db
 
-    # For now, we'll use the logger. In production, you might want to store
-    # audit logs in a separate table or external service
-    log_message = (
-        f"ADMIN_ACTION: user={admin_user_id}, action={action}, "
-        f"resource_type={resource_type}, resource_id={resource_id}"
-    )
-    if details:
-        log_message += f", details={details}"
+    try:
+        # Store in database for production audit trail
+        timestamp = datetime.now(timezone.utc)
+        await db_client.auditlog.create(
+            data={
+                "adminUserId": admin_user_id,
+                "actionType": action,
+                "resourceType": resource_type,
+                "resourceId": resource_id,
+                "details": details,
+                "timestamp": timestamp,
+            }
+        )
 
-    logger.info(
-        log_message,
-        extra={
-            "audit": True,
-            "admin_user_id": admin_user_id,
-            "action": action,
-            "resource_type": resource_type,
-            "resource_id": resource_id,
-            "details": details,
-            "timestamp": datetime.utcnow().isoformat(),
-        },
-    )
+        # Also log to application logs for immediate visibility
+        log_message = (
+            f"ADMIN_ACTION: user={admin_user_id}, action={action}, "
+            f"resource_type={resource_type}, resource_id={resource_id}"
+        )
+        if details:
+            log_message += f", details={details}"
+
+        logger.info(
+            log_message,
+            extra={
+                "audit": True,
+                "admin_user_id": admin_user_id,
+                "action": action,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "details": details,
+                "timestamp": timestamp.isoformat(),
+            },
+        )
+    except Exception as e:
+        # Log error but don't fail the operation
+        logger.error(f"Failed to log admin action to database: {e}", exc_info=True)
 
 
 async def log_user_activity(
@@ -90,6 +106,7 @@ async def log_user_activity(
     if details:
         log_message += f", details={details}"
 
+    timestamp = datetime.now(timezone.utc)
     logger.info(
         log_message,
         extra={
@@ -97,6 +114,6 @@ async def log_user_activity(
             "user_id": user_id,
             "activity_type": activity_type,
             "details": details,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": timestamp.isoformat(),
         },
     )

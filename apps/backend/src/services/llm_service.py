@@ -313,7 +313,7 @@ class GeminiService:
 
     async def get_chat_response(
         self, history: list, user_message: str, context: dict = None
-    ) -> str:
+    ) -> tuple[str, dict]:
         """
         Send message to Gemini and get response.
         History should be formatted as a list of contents.
@@ -391,7 +391,33 @@ class GeminiService:
                 enhanced_message, safety_settings=self.safety_settings
             )
 
-            return response.text
+            # Extract token usage from response
+            usage_info = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "model_name": "gemini-1.5-flash",  # Default model name
+            }
+
+            # Try to get usage metadata from response
+            if hasattr(response, "usage_metadata"):
+                usage_metadata = response.usage_metadata
+                if hasattr(usage_metadata, "prompt_token_count"):
+                    usage_info["input_tokens"] = usage_metadata.prompt_token_count or 0
+                if hasattr(usage_metadata, "candidates_token_count"):
+                    usage_info["output_tokens"] = usage_metadata.candidates_token_count or 0
+                if hasattr(usage_metadata, "total_token_count"):
+                    # If we have total but not individual, estimate
+                    if usage_info["input_tokens"] == 0 and usage_info["output_tokens"] == 0:
+                        total = usage_metadata.total_token_count or 0
+                        # Rough estimate: 70% input, 30% output
+                        usage_info["input_tokens"] = int(total * 0.7)
+                        usage_info["output_tokens"] = int(total * 0.3)
+
+            # Get model name from response if available
+            if hasattr(response, "model"):
+                usage_info["model_name"] = response.model or usage_info["model_name"]
+
+            return response.text, usage_info
 
         except Exception as e:
             print(f"Gemini Error: {e}")
