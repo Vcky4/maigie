@@ -1706,8 +1706,10 @@ async def list_chat_sessions(
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
-    userId: str | None = Query(None, description="Filter by user ID"),
-    search: str | None = Query(None, description="Search by user email or name"),
+    userId: str | None = Query(
+        None, description="Filter by user ID (deprecated, use search instead)"
+    ),
+    search: str | None = Query(None, description="Search by user ID, email, or name"),
 ):
     """
     List all chat sessions across users.
@@ -1715,25 +1717,52 @@ async def list_chat_sessions(
     Only accessible by admin users.
     """
     where: dict = {}
-    if userId:
-        where["userId"] = userId
-    elif search:
-        # Find users matching search
-        matching_users = await db.user.find_many(
-            where={
-                "OR": [
-                    {"email": {"contains": search, "mode": "insensitive"}},
-                    {"name": {"contains": search, "mode": "insensitive"}},
-                ]
-            },
-            select={"id": True},
-        )
-        user_ids = [u.id for u in matching_users]
-        if user_ids:
-            where["userId"] = {"in": user_ids}
-        else:
-            # No matching users, return empty result
-            where["userId"] = {"in": []}
+
+    # Support both userId (for backward compatibility) and search
+    search_term = userId or search
+
+    if search_term:
+        # Find users matching search (by ID, email, or name)
+        try:
+            # First, try to find by exact ID match
+            user_by_id = await db.user.find_unique(where={"id": search_term})
+
+            if user_by_id:
+                # Exact ID match found
+                where["userId"] = user_by_id.id
+            else:
+                # Search by email or name (case-insensitive)
+                matching_users = await db.user.find_many(
+                    where={
+                        "OR": [
+                            {"email": {"contains": search_term, "mode": "insensitive"}},
+                            {"name": {"contains": search_term, "mode": "insensitive"}},
+                        ]
+                    },
+                    select={"id": True},
+                )
+                user_ids = [u.id for u in matching_users]
+                if user_ids:
+                    where["userId"] = {"in": user_ids}
+                else:
+                    # No matching users, return empty result immediately
+                    return {
+                        "sessions": [],
+                        "total": 0,
+                        "page": page,
+                        "pageSize": pageSize,
+                        "totalPages": 0,
+                    }
+        except Exception as e:
+            logger.error(f"Error searching users: {e}", exc_info=True)
+            # Return empty result on error
+            return {
+                "sessions": [],
+                "total": 0,
+                "page": page,
+                "pageSize": pageSize,
+                "totalPages": 0,
+            }
 
     total = await db.chatsession.count(where=where)
 
