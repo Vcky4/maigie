@@ -398,7 +398,7 @@ async def stop_conversation(session_id: str, user: CurrentUser):
 
 
 @router.get("/conversation/{session_id}/status")
-async def get_conversation_status(session_id: str, user: CurrentUser = Depends()):
+async def get_conversation_status(session_id: str, user: CurrentUser):
     """
     Get the status of an active Gemini Live conversation session.
     """
