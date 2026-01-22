@@ -1,0 +1,10 @@
+{{ subject }}
+
+{% if name %}Hi {{ name }},{% endif %}
+
+{{ content }}
+
+If you have any questions, feel free to reply to this email.
+
+Best regards,
+The {{ app_name }} Team

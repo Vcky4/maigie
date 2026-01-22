@@ -94,6 +94,7 @@ def get_base_url_from_request(request: Request) -> str:
 class VerifyRequest(BaseModel):
     email: EmailStr
     code: str
+    # Note: Referral code linking is now handled separately via /link-referral endpoint
 
 
 class ResendOTPRequest(BaseModel):
@@ -118,6 +119,10 @@ class ResetPasswordConfirm(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+
+class LinkReferralRequest(BaseModel):
+    referralCode: str
 
 
 # ==========================================
@@ -167,13 +172,8 @@ async def signup(user_data: UserSignup):
         include={"preferences": True},
     )
 
-    # 5. Track referral if code provided
-    if user_data.referralCode:
-        try:
-            await track_referral_signup(new_user, user_data.referralCode)
-        except Exception as e:
-            # Don't fail signup if referral tracking fails
-            logger.error(f"Referral tracking failed during signup: {e}")
+    # Note: Referral code linking is now handled separately via /link-referral endpoint
+    # after user completes signup and email verification
 
     # 6. Send Verification Email (Safe Mode)
     try:
@@ -190,6 +190,7 @@ async def signup(user_data: UserSignup):
 async def verify_email(data: VerifyRequest):
     """
     Verify the 6-digit OTP code to activate the account.
+    Also registers referral code if provided (only if user doesn't already have one).
     """
     # 1. Find user
     user = await db.user.find_unique(where={"email": data.email})
@@ -209,17 +210,23 @@ async def verify_email(data: VerifyRequest):
     if user.verificationCodeExpiresAt and user.verificationCodeExpiresAt < now:
         raise HTTPException(status_code=400, detail="Verification code expired")
 
-    # 3. Activate user
+    # 3. Prepare update data
+    update_data = {
+        "isActive": True,
+        "verificationCode": None,
+        "verificationCodeExpiresAt": None,
+    }
+
+    # Note: Referral code linking is now handled separately via /link-referral endpoint
+    # after user completes email verification
+
+    # 5. Activate user and register referral
     updated_user = await db.user.update(
         where={"id": user.id},
-        data={
-            "isActive": True,
-            "verificationCode": None,
-            "verificationCodeExpiresAt": None,
-        },
+        data=update_data,
     )
 
-    # 4. Send Welcome Email (Fire and Forget)
+    # 6. Send Welcome Email (Fire and Forget)
     try:
         await send_welcome_email(updated_user.email, updated_user.name)
     except Exception as e:
@@ -538,6 +545,62 @@ async def change_password(
     return {"message": "Password changed successfully"}
 
 
+@router.post("/link-referral")
+async def link_referral(
+    data: LinkReferralRequest,
+    current_user: CurrentUser,
+):
+    """
+    Link a referral code to the current user after signup/login.
+    Skips if the user was already referred.
+    """
+    # Check if user already has a referral code (immutable once set)
+    if current_user.referredByCode:
+        logger.info(
+            f"User {current_user.id} already has referral code {current_user.referredByCode}, "
+            f"skipping link for code {data.referralCode}"
+        )
+        return {
+            "message": "User already has a referral code",
+            "alreadyReferred": True,
+            "existingCode": current_user.referredByCode,
+        }
+
+    # Normalize referral code
+    referral_code = data.referralCode.upper().strip()
+
+    # Track referral signup (this will validate the code, check for self-referral, etc.)
+    try:
+        # Get fresh user data from database
+        user = await db.user.find_unique(where={"id": current_user.id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        referrer = await track_referral_signup(user, referral_code)
+        if referrer:
+            logger.info(f"Successfully linked referral code {referral_code} for user {user.id}")
+            return {
+                "message": "Referral code linked successfully",
+                "alreadyReferred": False,
+                "referralCode": referral_code,
+            }
+        else:
+            # Referral code not found or invalid
+            logger.warning(f"Referral code {referral_code} not found or invalid")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid referral code",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error linking referral code: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to link referral code",
+        )
+
+
 # ==========================================
 #  OAUTH AUTHENTICATION
 # ==========================================
@@ -557,6 +620,7 @@ async def oauth_authorize(
     request: Request,
     redirect: bool = False,
     redirect_uri: str | None = None,
+    referral_code: str | None = None,
 ):
     """
     Initiate OAuth flow.
@@ -566,6 +630,7 @@ async def oauth_authorize(
         redirect: If True, perform server-side redirect instead of returning JSON
         redirect_uri: Optional custom redirect URI. If not provided, will be constructed
                      from OAUTH_BASE_URL or request.base_url
+        referral_code: Optional referral code to register after OAuth signup
     """
     try:
         # Get OAuth provider instance (validates provider and credentials)
@@ -594,8 +659,10 @@ async def oauth_authorize(
         redirect_uri = f"{base_url}{callback_path}"
 
     # Generate a secure state token for CSRF protection
-    # Encode the redirect_uri in the state so callback can use the same one
+    # Encode the redirect_uri and referral_code in the state so callback can use them
     state_data = {"redirect_uri": redirect_uri, "random": secrets.token_urlsafe(32)}
+    if referral_code:
+        state_data["referral_code"] = referral_code.upper().strip()
     state = base64.urlsafe_b64encode(json.dumps(state_data).encode()).decode().rstrip("=")
 
     # Log the redirect URI for debugging (helps verify Google Cloud Console config)
@@ -687,6 +754,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
         frontend_redirect_uri = state_data.get(
             "frontend_redirect_uri"
         )  # Frontend redirect URI (optional)
+        referral_code = state_data.get("referral_code")  # Referral code from signup URL
         state_decoded_successfully = True
 
         logger.info(
@@ -1010,6 +1078,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
             full_name=full_name,
             provider=provider,
             provider_user_id=str(user_id),
+            referral_code=referral_code if state_decoded_successfully else None,
         )
 
         # Get or Create the Maigie user record

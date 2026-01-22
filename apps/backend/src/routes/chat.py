@@ -611,14 +611,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if content_to_summarize:
                     summary = await llm_service.generate_summary(content_to_summarize)
                     ai_response_text = f"I've generated a summary for you:\n\n{summary}"
+                    # For summaries, use estimated tokens
+                    usage_info = {
+                        "input_tokens": len(content_to_summarize) // 4,
+                        "output_tokens": len(summary) // 4,
+                        "model_name": "gemini-1.5-flash",
+                    }
                 else:
                     # No content to summarize, ask user or provide general response
-                    ai_response_text = await llm_service.get_chat_response(
+                    ai_response_text, usage_info = await llm_service.get_chat_response(
                         history=formatted_history, user_message=user_text, context=enriched_context
                     )
             else:
                 # 6. Get AI Response (with optional enriched context)
-                ai_response_text = await llm_service.get_chat_response(
+                ai_response_text, usage_info = await llm_service.get_chat_response(
                     history=formatted_history, user_message=user_text, context=enriched_context
                 )
 
@@ -785,11 +791,17 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
 
             # 7. Calculate actual token usage and consume credits
-            # Estimate tokens: input (user message + context + history) + output (AI response)
-            actual_input_tokens = (
-                len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
-            ) // 4
-            actual_output_tokens = len(clean_response) // 4
+            # Use actual token counts from API if available, otherwise estimate
+            actual_input_tokens = usage_info.get("input_tokens", 0)
+            actual_output_tokens = usage_info.get("output_tokens", 0)
+
+            # Fallback to estimation if API didn't provide token counts
+            if actual_input_tokens == 0 and actual_output_tokens == 0:
+                actual_input_tokens = (
+                    len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
+                ) // 4
+                actual_output_tokens = len(clean_response) // 4
+
             actual_total_tokens = actual_input_tokens + actual_output_tokens
 
             # Consume credits based on actual token usage
@@ -801,7 +813,22 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # This shouldn't happen if check above worked, but handle gracefully
                 print(f"Warning: Credit consumption failed: {e}")
 
-            # 8. Save AI Message to DB (We save the CLEAN text with token count)
+            # Calculate costs and revenue
+            from ..services.cost_calculator import calculate_ai_cost, calculate_revenue
+
+            model_name = usage_info.get("model_name", "gemini-1.5-flash")
+            cost_usd = calculate_ai_cost(
+                input_tokens=actual_input_tokens,
+                output_tokens=actual_output_tokens,
+                model_name=model_name,
+            )
+            revenue_usd = calculate_revenue(
+                input_tokens=actual_input_tokens,
+                output_tokens=actual_output_tokens,
+                user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
+            )
+
+            # 8. Save AI Message to DB (We save the CLEAN text with token count and costs)
             await db.chatmessage.create(
                 data={
                     "sessionId": session.id,
@@ -809,6 +836,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     "role": "ASSISTANT",
                     "content": clean_response,
                     "tokenCount": actual_total_tokens,
+                    "inputTokens": actual_input_tokens,
+                    "outputTokens": actual_output_tokens,
+                    "modelName": model_name,
+                    "costUsd": cost_usd,
+                    "revenueUsd": revenue_usd,
                 }
             )
 
