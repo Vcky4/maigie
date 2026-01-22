@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import httpx
@@ -19,7 +19,7 @@ from src.config import settings
 from src.dependencies import CurrentUser
 from src.routes.chat import get_current_user_ws
 from src.services.gemini_live_service import get_gemini_live_service
-from src.services.llm_service import SYSTEM_INSTRUCTION
+from src.services.llm_service import SYSTEM_INSTRUCTION, GeminiService
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ class StartConversationRequest(BaseModel):
     token: Optional[str] = None
     session_id: Optional[str] = None
     system_instruction: Optional[str] = None
+    course_id: Optional[str] = None
+    topic_id: Optional[str] = None
 
 
 class DailyRoomConfig(BaseModel):
@@ -125,7 +127,7 @@ async def create_daily_room(user_id: str) -> DailyRoomConfig:
 @router.post("/conversation/start")
 async def start_conversation(
     request: StartConversationRequest,
-    user: CurrentUser = Depends(),
+    user: CurrentUser,
 ):
     """
     Start a new Gemini Live conversation session.
@@ -144,49 +146,192 @@ async def start_conversation(
             room_url = request.room_url
             token = request.token
 
-        # Create or update chat session in database first
-        session = await db.chatsession.find_first(
+        # Find or create active study session (acts as the current study session)
+        study_session = await db.studysession.find_first(
+            where={"userId": user.id, "endTime": None}, order={"startTime": "desc"}
+        )
+
+        # If no active study session, create one
+        if not study_session:
+            study_session = await db.studysession.create(
+                data={
+                    "userId": user.id,
+                    "startTime": datetime.now(timezone.utc),
+                    "courseId": request.course_id,
+                    "topicId": request.topic_id,
+                }
+            )
+        else:
+            # Update study session with course/topic if provided
+            if request.course_id or request.topic_id:
+                update_data = {}
+                if request.course_id:
+                    update_data["courseId"] = request.course_id
+                if request.topic_id:
+                    update_data["topicId"] = request.topic_id
+                if update_data:
+                    study_session = await db.studysession.update(
+                        where={"id": study_session.id}, data=update_data
+                    )
+
+        # Get course and topic context for system instruction
+        course = None
+        topic = None
+        if study_session.courseId:
+            course = await db.course.find_unique(where={"id": study_session.courseId})
+        if study_session.topicId:
+            topic = await db.topic.find_unique(where={"id": study_session.topicId})
+
+        # Build contextual system instruction
+        context_parts = []
+        if course:
+            context_parts.append(f"Course: {course.title}")
+        if topic:
+            context_parts.append(f"Topic: {topic.title}")
+            if topic.content:
+                context_parts.append(f"Topic Content: {topic.content[:500]}...")
+
+        context_info = "\n".join(context_parts) if context_parts else ""
+
+        # Enhanced system instruction with study session context
+        enhanced_instruction = SYSTEM_INSTRUCTION
+        if context_info:
+            enhanced_instruction = f"""{SYSTEM_INSTRUCTION}
+
+CURRENT STUDY SESSION CONTEXT:
+{context_info}
+
+IMPORTANT: You are helping the user study this topic. Take notes in the background based on the discussion. 
+When key concepts are discussed, automatically create or update notes for this topic.
+"""
+
+        # Use system instruction from request or enhanced default
+        system_instruction = request.system_instruction or enhanced_instruction
+
+        # Create or find chat session for message storage
+        chat_session = await db.chatsession.find_first(
             where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
         )
 
-        if not session:
-            session = await db.chatsession.create(
+        if not chat_session:
+            chat_session = await db.chatsession.create(
                 data={"userId": user.id, "title": "Voice Conversation"}
             )
 
-        # Use system instruction from request or default
-        system_instruction = request.system_instruction or SYSTEM_INSTRUCTION
+        # Track conversation for note generation
+        conversation_buffer = []
+        llm_service = GeminiService()
 
-        # Create callbacks for saving messages to database
+        # Create callbacks for saving messages to database and note generation
         async def on_user_message(text: str):
-            """Save user message to database."""
+            """Save user message to database and buffer for note generation."""
             try:
                 await db.chatmessage.create(
                     data={
-                        "sessionId": session.id,
+                        "sessionId": chat_session.id,
                         "userId": user.id,
                         "role": "USER",
                         "content": text,
                     }
                 )
-                logger.info(f"Saved user message to session {session.id}")
+                conversation_buffer.append({"role": "user", "content": text})
+                logger.info(f"Saved user message to session {chat_session.id}")
             except Exception as e:
                 logger.error(f"Error saving user message: {e}")
 
         async def on_assistant_message(text: str):
-            """Save assistant message to database."""
+            """Save assistant message to database and buffer for note generation."""
             try:
                 await db.chatmessage.create(
                     data={
-                        "sessionId": session.id,
+                        "sessionId": chat_session.id,
                         "userId": user.id,
                         "role": "ASSISTANT",
                         "content": text,
                     }
                 )
-                logger.info(f"Saved assistant message to session {session.id}")
+                conversation_buffer.append({"role": "assistant", "content": text})
+                logger.info(f"Saved assistant message to session {chat_session.id}")
+
+                # Generate notes in background when conversation reaches threshold
+                if len(conversation_buffer) >= 6:  # After 3 exchanges (6 messages)
+                    asyncio.create_task(
+                        generate_notes_from_conversation(
+                            conversation_buffer.copy(),
+                            study_session,
+                            user.id,
+                        )
+                    )
+                    conversation_buffer.clear()  # Clear buffer after processing
             except Exception as e:
                 logger.error(f"Error saving assistant message: {e}")
+
+        async def generate_notes_from_conversation(messages: list, study_session, user_id: str):
+            """Generate notes from conversation in the background."""
+            try:
+                if not study_session.topicId:
+                    logger.info("No topic ID in study session, skipping note generation")
+                    return
+
+                # Check if note already exists for this topic
+                existing_note = await db.note.find_unique(where={"topicId": study_session.topicId})
+
+                # Format conversation for summarization
+                conversation_text = "\n".join(
+                    [
+                        f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+                        for msg in messages
+                    ]
+                )
+
+                # Generate note content from conversation
+                note_prompt = f"""Based on the following study conversation, create or update comprehensive notes.
+
+Conversation:
+{conversation_text}
+
+Create well-structured notes in markdown format covering:
+- Key concepts discussed
+- Important explanations
+- Examples or clarifications
+- Any questions and answers
+
+Format the notes with proper headings, lists, and structure."""
+
+                note_content = await llm_service.model.generate_content_async(note_prompt)
+
+                if existing_note:
+                    # Update existing note by appending new content
+                    updated_content = (
+                        f"{existing_note.content}\n\n---\n\n## Additional Notes from Voice Discussion\n\n{note_content.text}"
+                        if existing_note.content
+                        else f"## Notes from Voice Discussion\n\n{note_content.text}"
+                    )
+                    await db.note.update(
+                        where={"id": existing_note.id},
+                        data={"content": updated_content, "updatedAt": datetime.now(timezone.utc)},
+                    )
+                    logger.info(f"Updated note {existing_note.id} from conversation")
+                else:
+                    # Create new note
+                    topic = await db.topic.find_unique(where={"id": study_session.topicId})
+                    note_title = f"Study Notes: {topic.title}" if topic else "Study Notes"
+
+                    await db.note.create(
+                        data={
+                            "userId": user_id,
+                            "title": note_title,
+                            "content": f"## Notes from Voice Discussion\n\n{note_content.text}",
+                            "topicId": study_session.topicId,
+                            "courseId": study_session.courseId,
+                        }
+                    )
+                    logger.info(
+                        f"Created new note from conversation for topic {study_session.topicId}"
+                    )
+
+            except Exception as e:
+                logger.error(f"Error generating notes from conversation: {e}", exc_info=True)
 
         # Start conversation with callbacks
         result = await gemini_service.start_conversation(
@@ -204,7 +349,10 @@ async def start_conversation(
             "room_url": room_url,
             "token": token,
             "status": "started",
-            "chat_session_id": session.id,
+            "chat_session_id": chat_session.id,
+            "study_session_id": study_session.id,
+            "course_id": study_session.courseId,
+            "topic_id": study_session.topicId,
         }
 
     except Exception as e:
@@ -213,7 +361,7 @@ async def start_conversation(
 
 
 @router.post("/conversation/{session_id}/stop")
-async def stop_conversation(session_id: str, user: CurrentUser = Depends()):
+async def stop_conversation(session_id: str, user: CurrentUser):
     """
     Stop an active Gemini Live conversation session.
     """
@@ -231,6 +379,13 @@ async def stop_conversation(session_id: str, user: CurrentUser = Depends()):
         success = await gemini_service.stop_conversation(session_id)
 
         if success:
+            # Generate final notes from any remaining conversation
+            session_info = gemini_service.get_session_info(session_id)
+            if session_info and session_info.get("study_session_id"):
+                # Trigger final note generation if needed
+                # This would require storing conversation buffer in session_info
+                pass
+
             return {"session_id": session_id, "status": "stopped"}
         else:
             raise HTTPException(status_code=500, detail="Failed to stop conversation")
@@ -271,7 +426,7 @@ async def get_conversation_status(session_id: str, user: CurrentUser = Depends()
 
 
 @router.get("/conversations")
-async def list_conversations(user: CurrentUser = Depends()):
+async def list_conversations(user: CurrentUser):
     """
     List all active Gemini Live conversation sessions for the current user.
     """
