@@ -201,7 +201,7 @@ async def start_conversation(
 CURRENT STUDY SESSION CONTEXT:
 {context_info}
 
-IMPORTANT: You are helping the user study this topic. Take notes in the background based on the discussion. 
+IMPORTANT: You are helping the user study this topic. Take notes in the background based on the discussion.
 When key concepts are discussed, automatically create or update notes for this topic.
 """
 
