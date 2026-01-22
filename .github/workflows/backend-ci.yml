@@ -180,6 +180,7 @@ jobs:
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
             --load \
             --platform linux/amd64 \
+            --no-cache \
             .
           docker images | grep maigie-backend-preview
 

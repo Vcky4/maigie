@@ -19,7 +19,10 @@ RUN apt-get update && apt-get install -y build-essential curl && rm -rf /var/lib
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:$PATH"
 COPY pyproject.toml poetry.lock ./
-RUN poetry config virtualenvs.create false && poetry install --no-root --no-interaction --no-ansi
+RUN poetry config virtualenvs.create false && \
+    poetry install --no-root --no-interaction --no-ansi && \
+    python -c "import pipecat; print(f'Pipecat installed successfully')" || \
+    (echo "ERROR: pipecat-ai not installed!" && exit 1)
 
 FROM python:3.12-slim
 WORKDIR /app
