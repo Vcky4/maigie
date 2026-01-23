@@ -38,6 +38,7 @@ class GeminiLiveConversationService:
         on_user_message: Optional[Callable[[str], None]] = None,
         on_assistant_message: Optional[Callable[[str], None]] = None,
         on_transcription: Optional[Callable[[str], None]] = None,
+        on_audio: Optional[Callable[[bytes], None]] = None,
         system_instruction: Optional[str] = None,
     ) -> dict:
         """
@@ -222,13 +223,19 @@ class GeminiLiveConversationService:
                 "on_user_message": on_user_message,
                 "on_assistant_message": on_assistant_message,
                 "on_transcription": on_transcription,
+                "on_audio": on_audio,
                 "task": None,
             }
 
             # Start listening for responses in background
             task = asyncio.create_task(
                 self._handle_responses(
-                    session, session_id, on_user_message, on_assistant_message, on_transcription
+                    session,
+                    session_id,
+                    on_user_message,
+                    on_assistant_message,
+                    on_transcription,
+                    on_audio,
                 )
             )
             session_info["task"] = task
@@ -236,6 +243,14 @@ class GeminiLiveConversationService:
             self.active_sessions[session_id] = session_info
 
             logger.info(f"Started Gemini Live conversation session {session_id} for user {user_id}")
+
+            # Send initial greeting to trigger AI response
+            try:
+                greeting = "Hello! I'm Maigie, your study companion. How can I help you today?"
+                await self.send_text(session_id, greeting, turn_complete=True)
+                logger.info(f"Sent initial greeting for session {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to send initial greeting for session {session_id}: {e}")
 
             return {"session_id": session_id, "status": "started"}
 
@@ -250,29 +265,71 @@ class GeminiLiveConversationService:
         on_user_message: Optional[Callable[[str], None]],
         on_assistant_message: Optional[Callable[[str], None]],
         on_transcription: Optional[Callable[[str], None]],
+        on_audio: Optional[Callable[[bytes], None]] = None,
     ):
         """Handle responses from Gemini Live API."""
         try:
             async for message in session.receive():
                 try:
+                    # Get current callbacks from session_info (they may be updated dynamically)
+                    session_info = self.active_sessions.get(session_id)
+                    current_on_audio = session_info.get("on_audio") if session_info else on_audio
+                    current_on_assistant = (
+                        session_info.get("on_assistant_message")
+                        if session_info
+                        else on_assistant_message
+                    )
+
                     # Handle server content (assistant responses)
                     if hasattr(message, "server_content") and message.server_content:
                         for content in message.server_content:
                             if hasattr(content, "model_turn") and content.model_turn:
                                 model_turn = content.model_turn
 
-                                # Handle text responses
+                                # Handle parts (text and audio)
                                 if hasattr(model_turn, "parts") and model_turn.parts:
                                     for part in model_turn.parts:
+                                        # Handle text responses
                                         if hasattr(part, "text") and part.text:
                                             text = part.text
-                                            if on_assistant_message:
-                                                if asyncio.iscoroutinefunction(
-                                                    on_assistant_message
-                                                ):
-                                                    await on_assistant_message(text)
+                                            callback = current_on_assistant or on_assistant_message
+                                            if callback:
+                                                if asyncio.iscoroutinefunction(callback):
+                                                    await callback(text)
                                                 else:
-                                                    on_assistant_message(text)
+                                                    callback(text)
+
+                                        # Handle audio responses - check inline_data first
+                                        if hasattr(part, "inline_data") and part.inline_data:
+                                            audio_data = part.inline_data.data
+                                            if audio_data:
+                                                callback = current_on_audio or on_audio
+                                                if callback:
+                                                    logger.info(
+                                                        f"Received audio response for session {session_id}, size: {len(audio_data)} bytes"
+                                                    )
+                                                    if asyncio.iscoroutinefunction(callback):
+                                                        await callback(audio_data)
+                                                    else:
+                                                        callback(audio_data)
+
+                                        # Also check for audio in other possible formats
+                                        if hasattr(part, "audio") and part.audio:
+                                            audio_data = (
+                                                part.audio.data
+                                                if hasattr(part.audio, "data")
+                                                else None
+                                            )
+                                            if audio_data:
+                                                callback = current_on_audio or on_audio
+                                                if callback:
+                                                    logger.info(
+                                                        f"Received audio response (alt format) for session {session_id}, size: {len(audio_data)} bytes"
+                                                    )
+                                                    if asyncio.iscoroutinefunction(callback):
+                                                        await callback(audio_data)
+                                                    else:
+                                                        callback(audio_data)
 
                     # Handle user content (transcriptions)
                     if hasattr(message, "user_content") and message.user_content:

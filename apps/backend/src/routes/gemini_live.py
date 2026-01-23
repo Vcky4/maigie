@@ -112,6 +112,83 @@ class StartConversationRequest(BaseModel):
     topic_id: Optional[str] = None
 
 
+async def generate_notes_from_conversation(
+    messages: list, study_session, user_id: str, llm_service_instance
+):
+    """Generate study notes from conversation transcript at end of session."""
+    try:
+        if not study_session.topicId:
+            logger.info("No topic ID in study session, skipping note generation")
+            return
+
+        if len(messages) == 0:
+            logger.info("No conversation messages to generate notes from")
+            return
+
+        # Check if note already exists for this topic and user
+        existing_note = await db.note.find_first(
+            where={"topicId": study_session.topicId, "userId": user_id}
+        )
+
+        # Format conversation for summarization
+        conversation_text = "\n".join(
+            [
+                f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+                for msg in messages
+            ]
+        )
+
+        # Generate note content from conversation
+        note_prompt = f"""Based on the following study session conversation transcript, create comprehensive study notes.
+
+Conversation Transcript:
+{conversation_text}
+
+Create well-structured study notes in markdown format covering:
+- Key concepts discussed
+- Important explanations and clarifications
+- Examples or use cases mentioned
+- Questions asked and answers provided
+- Important takeaways
+
+Format the notes with proper headings, lists, and structure. Make them suitable for studying and review."""
+
+        note_content = await llm_service_instance.model.generate_content_async(note_prompt)
+
+        if existing_note:
+            # Update existing note by appending new content
+            updated_content = (
+                f"{existing_note.content}\n\n---\n\n## Study Session Notes\n\n{note_content.text}"
+                if existing_note.content
+                else f"## Study Session Notes\n\n{note_content.text}"
+            )
+            await db.note.update(
+                where={"id": existing_note.id},
+                data={"content": updated_content, "updatedAt": datetime.now(timezone.utc)},
+            )
+            logger.info(f"Updated note {existing_note.id} from study session conversation")
+        else:
+            # Create new study note
+            topic = await db.topic.find_unique(where={"id": study_session.topicId})
+            note_title = f"Study Notes: {topic.title}" if topic else "Study Notes"
+
+            await db.note.create(
+                data={
+                    "userId": user_id,
+                    "title": note_title,
+                    "content": f"## Study Session Notes\n\n{note_content.text}",
+                    "topicId": study_session.topicId,
+                    "courseId": study_session.courseId,
+                }
+            )
+            logger.info(
+                f"Created new study note from conversation for topic {study_session.topicId}"
+            )
+
+    except Exception as e:
+        logger.error(f"Error generating notes from conversation: {e}", exc_info=True)
+
+
 @router.post("/conversation/start")
 async def start_conversation(
     request: StartConversationRequest,
@@ -201,11 +278,11 @@ When key concepts are discussed, automatically create or update notes for this t
                 data={"userId": user.id, "title": "Voice Conversation"}
             )
 
-        # Track conversation for note generation
+        # Track conversation for note generation at end of session
         conversation_buffer = []
         llm_service = GeminiService()
 
-        # Create callbacks for saving messages to database and note generation
+        # Create callbacks for saving messages to database and tracking conversation
         async def on_user_message(text: str):
             """Save user message to database and buffer for note generation."""
             try:
@@ -235,86 +312,8 @@ When key concepts are discussed, automatically create or update notes for this t
                 )
                 conversation_buffer.append({"role": "assistant", "content": text})
                 logger.info(f"Saved assistant message to session {chat_session.id}")
-
-                # Generate notes in background when conversation reaches threshold
-                if len(conversation_buffer) >= 6:  # After 3 exchanges (6 messages)
-                    asyncio.create_task(
-                        generate_notes_from_conversation(
-                            conversation_buffer.copy(),
-                            study_session,
-                            user.id,
-                        )
-                    )
-                    conversation_buffer.clear()  # Clear buffer after processing
             except Exception as e:
                 logger.error(f"Error saving assistant message: {e}")
-
-        async def generate_notes_from_conversation(messages: list, study_session, user_id: str):
-            """Generate notes from conversation in the background."""
-            try:
-                if not study_session.topicId:
-                    logger.info("No topic ID in study session, skipping note generation")
-                    return
-
-                # Check if note already exists for this topic
-                existing_note = await db.note.find_unique(where={"topicId": study_session.topicId})
-
-                # Format conversation for summarization
-                conversation_text = "\n".join(
-                    [
-                        f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
-                        for msg in messages
-                    ]
-                )
-
-                # Generate note content from conversation
-                note_prompt = f"""Based on the following study conversation, create or update comprehensive notes.
-
-Conversation:
-{conversation_text}
-
-Create well-structured notes in markdown format covering:
-- Key concepts discussed
-- Important explanations
-- Examples or clarifications
-- Any questions and answers
-
-Format the notes with proper headings, lists, and structure."""
-
-                note_content = await llm_service.model.generate_content_async(note_prompt)
-
-                if existing_note:
-                    # Update existing note by appending new content
-                    updated_content = (
-                        f"{existing_note.content}\n\n---\n\n## Additional Notes from Voice Discussion\n\n{note_content.text}"
-                        if existing_note.content
-                        else f"## Notes from Voice Discussion\n\n{note_content.text}"
-                    )
-                    await db.note.update(
-                        where={"id": existing_note.id},
-                        data={"content": updated_content, "updatedAt": datetime.now(timezone.utc)},
-                    )
-                    logger.info(f"Updated note {existing_note.id} from conversation")
-                else:
-                    # Create new note
-                    topic = await db.topic.find_unique(where={"id": study_session.topicId})
-                    note_title = f"Study Notes: {topic.title}" if topic else "Study Notes"
-
-                    await db.note.create(
-                        data={
-                            "userId": user_id,
-                            "title": note_title,
-                            "content": f"## Notes from Voice Discussion\n\n{note_content.text}",
-                            "topicId": study_session.topicId,
-                            "courseId": study_session.courseId,
-                        }
-                    )
-                    logger.info(
-                        f"Created new note from conversation for topic {study_session.topicId}"
-                    )
-
-            except Exception as e:
-                logger.error(f"Error generating notes from conversation: {e}", exc_info=True)
 
         # Start conversation with callbacks
         session_id = request.session_id or str(uuid.uuid4())
@@ -326,11 +325,15 @@ Format the notes with proper headings, lists, and structure."""
             system_instruction=system_instruction,
         )
 
-        # Store additional info in session for later use
+        # Store additional info in session for later use (including conversation buffer for note generation)
         session_info = gemini_service.get_session_info(session_id)
         if session_info:
             session_info["chat_session_id"] = chat_session.id
             session_info["study_session_id"] = study_session.id
+            session_info["conversation_buffer"] = conversation_buffer
+            session_info["study_session"] = study_session
+            session_info["user_id"] = user.id
+            session_info["llm_service"] = llm_service
 
         return {
             "session_id": result["session_id"],
@@ -365,6 +368,24 @@ async def stop_conversation(session_id: str, user: CurrentUser):
         # Verify session belongs to user
         if session_info["user_id"] != user.id:
             raise HTTPException(status_code=403, detail="Session does not belong to user")
+
+        # Generate notes from conversation transcript before stopping
+        conversation_buffer = session_info.get("conversation_buffer", [])
+        study_session = session_info.get("study_session")
+        llm_service = session_info.get("llm_service")
+
+        if conversation_buffer and study_session and llm_service and len(conversation_buffer) > 0:
+            try:
+                await generate_notes_from_conversation(
+                    conversation_buffer,
+                    study_session,
+                    user.id,
+                    llm_service,
+                )
+                logger.info(f"Generated notes from conversation for session {session_id}")
+            except Exception as e:
+                logger.error(f"Error generating notes from conversation: {e}", exc_info=True)
+                # Don't fail the stop request if note generation fails
 
         success = await gemini_service.stop_conversation(session_id)
 
@@ -492,6 +513,10 @@ async def gemini_live_websocket(
                 {"type": "assistant_message", "text": text, "session_id": session_id}, user.id
             )
 
+        async def on_audio(audio_data: bytes):
+            """Send audio response to WebSocket client as binary."""
+            await gemini_live_connection_manager.send_bytes(audio_data, user.id)
+
         async def combined_on_user(text: str):
             if original_on_user:
                 if asyncio.iscoroutinefunction(original_on_user):
@@ -511,6 +536,7 @@ async def gemini_live_websocket(
         # Update session callbacks
         session_info["on_user_message"] = combined_on_user
         session_info["on_assistant_message"] = combined_on_assistant
+        session_info["on_audio"] = on_audio
         if original_on_transcription:
             session_info["on_transcription"] = original_on_transcription
 
@@ -580,6 +606,36 @@ async def gemini_live_websocket(
                         )
                     elif msg_type == "stop":
                         if session_id:
+                            # Generate notes from conversation transcript before stopping
+                            session_info = gemini_service.get_session_info(session_id)
+                            if session_info:
+                                conversation_buffer = session_info.get("conversation_buffer", [])
+                                study_session = session_info.get("study_session")
+                                llm_service = session_info.get("llm_service")
+
+                                if (
+                                    conversation_buffer
+                                    and study_session
+                                    and llm_service
+                                    and len(conversation_buffer) > 0
+                                ):
+                                    try:
+                                        await generate_notes_from_conversation(
+                                            conversation_buffer,
+                                            study_session,
+                                            user.id,
+                                            llm_service,
+                                        )
+                                        logger.info(
+                                            f"Generated notes from conversation for session {session_id} (WebSocket stop)"
+                                        )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error generating notes from conversation: {e}",
+                                            exc_info=True,
+                                        )
+                                        # Don't fail the stop request if note generation fails
+
                             await gemini_service.stop_conversation(session_id)
                             await gemini_live_connection_manager.send_json(
                                 {"type": "stopped", "session_id": session_id}, user.id
