@@ -218,9 +218,7 @@ Format your response as a JSON array with this structure:
 Return exactly {limit} high-quality recommendations with real URLs from your web search."""
 
             # <--- FIXED: Use standard SDK syntax for Tools --->
-            tools = [
-                {"google_search": {}}  # Enables Google Search Grounding
-            ]
+            tools = [{"google_search": {}}]  # Enables Google Search Grounding
 
             # Use a model that supports tools (gemini-1.5-flash or gemini-1.5-pro)
             model = genai.GenerativeModel(
