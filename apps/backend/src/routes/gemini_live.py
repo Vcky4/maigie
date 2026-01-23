@@ -396,6 +396,7 @@ async def gemini_live_websocket(
         return
 
     await websocket.accept()
+    logger.info(f"WebSocket accepted for session {session_id}, user {user.id}")
 
     # Set up callbacks to forward messages to WebSocket client
     async def on_transcription(text: str):
