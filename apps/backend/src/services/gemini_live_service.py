@@ -10,6 +10,7 @@ import uuid
 from typing import Callable, Optional
 
 from google.genai import Client, types
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class GeminiLiveConversationService:
             last_error = None
             successful_model = None
             session = None
+            successful_config = None  # Store the successful config
 
             # Try different configurations for each model
             for model_name in model_names:
@@ -196,6 +198,7 @@ class GeminiLiveConversationService:
                         # Try to enter the context manager
                         session = await context_manager.__aenter__()
                         successful_model = model_name
+                        successful_config = config_attempt["config"]  # Store successful config
                         logger.info(
                             f"Successfully connected with {model_name} using {config_attempt['name']}"
                         )
@@ -218,6 +221,7 @@ class GeminiLiveConversationService:
             session_info = {
                 "session": session,
                 "context_manager": context_manager,  # Store context manager for cleanup
+                "config": successful_config,  # Store config to check response modalities
                 "user_id": user_id,
                 "session_id": session_id,
                 "on_user_message": on_user_message,
@@ -245,10 +249,24 @@ class GeminiLiveConversationService:
             logger.info(f"Started Gemini Live conversation session {session_id} for user {user_id}")
 
             # Send initial greeting to trigger AI response
+            # For audio-only sessions, skip text greeting - wait for audio input instead
+            # The API will respond when it receives audio
             try:
-                greeting = "Hello! I'm Maigie, your study companion. How can I help you today?"
-                await self.send_text(session_id, greeting, turn_complete=True)
-                logger.info(f"Sent initial greeting for session {session_id}")
+                # Check if this is an audio-only session by checking response_modalities
+                # If it's audio-only, don't send text greeting as it might cause connection issues
+                config = session_info.get("config")
+                is_audio_only = False
+                if config and hasattr(config, "response_modalities"):
+                    is_audio_only = config.response_modalities == ["AUDIO"]
+
+                if not is_audio_only:
+                    greeting = "Hello! I'm Maigie, your study companion. How can I help you today?"
+                    await self.send_text(session_id, greeting, turn_complete=True)
+                    logger.info(f"Sent initial text greeting for session {session_id}")
+                else:
+                    logger.info(
+                        f"Skipping text greeting for audio-only session {session_id} - waiting for audio input"
+                    )
             except Exception as e:
                 logger.warning(f"Failed to send initial greeting for session {session_id}: {e}")
 
@@ -268,8 +286,12 @@ class GeminiLiveConversationService:
         on_audio: Optional[Callable[[bytes], None]] = None,
     ):
         """Handle responses from Gemini Live API."""
+        logger.info(f"Starting response handler for session {session_id}")
         try:
+            message_count = 0
             async for message in session.receive():
+                message_count += 1
+                logger.debug(f"Received message #{message_count} for session {session_id}")
                 try:
                     # Get current callbacks from session_info (they may be updated dynamically)
                     session_info = self.active_sessions.get(session_id)
@@ -357,20 +379,41 @@ class GeminiLiveConversationService:
 
         except asyncio.CancelledError:
             logger.info(f"Response handler cancelled for session {session_id}")
+        except (ConnectionClosedOK, ConnectionClosed) as e:
+            logger.warning(
+                f"Gemini Live connection closed for session {session_id}: {e}. "
+                f"Received {message_count} messages before closure."
+            )
+            # Don't remove session here - let send_audio/send_text handle it
+            # This allows the frontend to be notified properly
         except Exception as e:
-            logger.error(f"Error in response handler for session {session_id}: {e}", exc_info=True)
+            logger.error(
+                f"Error in response handler for session {session_id}: {e}. "
+                f"Received {message_count} messages before error.",
+                exc_info=True,
+            )
         finally:
-            # Clean up session if it's still in active_sessions
+            logger.info(
+                f"Response handler exiting for session {session_id} (received {message_count} messages)"
+            )
+            # Only clean up if session is still in active_sessions
+            # This prevents double cleanup if session was already removed by send_audio/send_text
             if session_id in self.active_sessions:
                 session_info = self.active_sessions[session_id]
                 context_manager = session_info.get("context_manager")
                 try:
                     if context_manager:
+                        logger.info(f"Closing context manager for session {session_id}")
                         await context_manager.__aexit__(None, None, None)
                     elif session:
+                        logger.info(f"Closing session directly for session {session_id}")
                         await session.close()
                 except Exception as e:
                     logger.warning(f"Error closing session {session_id}: {e}")
+                finally:
+                    # Remove session from active_sessions after cleanup
+                    self.active_sessions.pop(session_id, None)
+                    logger.info(f"Removed session {session_id} from active_sessions")
 
     async def send_audio(self, session_id: str, audio_data: bytes) -> bool:
         """
@@ -401,8 +444,22 @@ class GeminiLiveConversationService:
             )
 
             return True
+        except (ConnectionClosedOK, ConnectionClosed) as e:
+            # Connection closed - remove session immediately
+            logger.warning(
+                f"Gemini Live connection closed for session {session_id}: {e}. Removing session."
+            )
+            # Remove session from active_sessions
+            self.active_sessions.pop(session_id, None)
+            return False
         except Exception as e:
             logger.error(f"Error sending audio to session {session_id}: {e}", exc_info=True)
+            # Check if it's a connection-related error
+            error_str = str(e).lower()
+            if "closed" in error_str or "connection" in error_str:
+                # Connection issue - remove session
+                logger.warning(f"Connection error detected, removing session {session_id}")
+                self.active_sessions.pop(session_id, None)
             return False
 
     async def send_text(self, session_id: str, text: str, turn_complete: bool = True) -> bool:
@@ -432,8 +489,22 @@ class GeminiLiveConversationService:
             )
 
             return True
+        except (ConnectionClosedOK, ConnectionClosed) as e:
+            # Connection closed - remove session immediately
+            logger.warning(
+                f"Gemini Live connection closed for session {session_id}: {e}. Removing session."
+            )
+            # Remove session from active_sessions
+            self.active_sessions.pop(session_id, None)
+            return False
         except Exception as e:
             logger.error(f"Error sending text to session {session_id}: {e}", exc_info=True)
+            # Check if it's a connection-related error
+            error_str = str(e).lower()
+            if "closed" in error_str or "connection" in error_str:
+                # Connection issue - remove session
+                logger.warning(f"Connection error detected, removing session {session_id}")
+                self.active_sessions.pop(session_id, None)
             return False
 
     async def stop_conversation(self, session_id: str) -> bool:
