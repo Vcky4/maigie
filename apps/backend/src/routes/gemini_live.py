@@ -19,10 +19,75 @@ from src.dependencies import CurrentUser
 from src.routes.chat import get_current_user_ws
 from src.services.gemini_live_service import get_gemini_live_service
 from src.services.llm_service import SYSTEM_INSTRUCTION, GeminiService
+from src.services.socket_manager import manager as gemini_live_manager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/gemini-live", tags=["Gemini Live"])
+
+
+# Create a separate connection manager for Gemini Live to avoid conflicts with chat
+class GeminiLiveConnectionManager:
+    """Manages WebSocket connections for Gemini Live (one per user)."""
+
+    def __init__(self):
+        # Maps user_id -> WebSocket connection
+        self.active_connections: dict[str, WebSocket] = {}
+        # Maps user_id -> active_session_id (only one active Gemini Live session per user)
+        self.user_sessions: dict[str, str] = {}
+
+    async def connect(self, websocket: WebSocket, user_id: str):
+        """Accept a new WebSocket connection and store it."""
+        await websocket.accept()
+        # If user already has a connection, close it first
+        if user_id in self.active_connections:
+            try:
+                old_ws = self.active_connections[user_id]
+                await old_ws.close(code=1000, reason="New connection established")
+            except Exception:
+                pass
+        self.active_connections[user_id] = websocket
+        logger.info(f"User {user_id} connected to Gemini Live WebSocket.")
+
+    def disconnect(self, user_id: str):
+        """Remove a user's connection."""
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+        if user_id in self.user_sessions:
+            del self.user_sessions[user_id]
+        logger.info(f"User {user_id} disconnected from Gemini Live WebSocket.")
+
+    def set_active_session(self, user_id: str, session_id: str):
+        """Set the active Gemini Live session for a user."""
+        self.user_sessions[user_id] = session_id
+
+    def get_active_session(self, user_id: str) -> str | None:
+        """Get the active Gemini Live session for a user."""
+        return self.user_sessions.get(user_id)
+
+    async def send_json(self, data: dict, user_id: str):
+        """Send a JSON object to a specific user."""
+        if user_id in self.active_connections:
+            websocket = self.active_connections[user_id]
+            try:
+                await websocket.send_json(data)
+            except Exception as e:
+                logger.error(f"Error sending JSON to user {user_id}: {e}")
+                self.disconnect(user_id)
+
+    async def send_bytes(self, data: bytes, user_id: str):
+        """Send binary data to a specific user."""
+        if user_id in self.active_connections:
+            websocket = self.active_connections[user_id]
+            try:
+                await websocket.send_bytes(data)
+            except Exception as e:
+                logger.error(f"Error sending bytes to user {user_id}: {e}")
+                self.disconnect(user_id)
+
+
+# Global instance for Gemini Live connections
+gemini_live_connection_manager = GeminiLiveConnectionManager()
 
 
 class StartConversationRequest(BaseModel):
@@ -360,184 +425,240 @@ async def list_conversations(user: CurrentUser):
         raise HTTPException(status_code=500, detail=f"Failed to list conversations: {str(e)}")
 
 
-@router.websocket("/ws/{session_id}")
+@router.websocket("/ws")
 async def gemini_live_websocket(
     websocket: WebSocket,
-    session_id: str,
     token: str = Query(...),
 ):
     """
     WebSocket endpoint for Gemini Live conversation.
 
+    Maintains a single persistent WebSocket connection per user.
+    Messages include session_id to route to the correct Gemini Live session.
+
     Handles:
-    - Receiving audio data from client (base64 encoded PCM audio)
+    - Receiving audio data from client (binary PCM or base64 encoded)
     - Sending transcription and assistant responses back to client
     - Forwarding audio to Gemini Live API
     """
     # Authenticate user
     try:
         user = await get_current_user_ws(token)
+        logger.info(f"Gemini Live WebSocket connection attempt for user {user.id}")
     except Exception as e:
+        logger.warning(f"Gemini Live WebSocket authentication failed: {e}")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    # Verify session belongs to user
+    # Connect using connection manager (one connection per user)
+    await gemini_live_connection_manager.connect(websocket, user.id)
+    logger.info(f"Gemini Live WebSocket connected for user {user.id}")
+
     gemini_service = get_gemini_live_service()
-    session_info = gemini_service.get_session_info(session_id)
 
-    if not session_info:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Session not found")
-        return
+    # Set up callbacks that route to the connection manager
+    async def setup_session_callbacks(session_id: str):
+        """Set up callbacks for a Gemini Live session to send via WebSocket."""
+        session_info = gemini_service.get_session_info(session_id)
+        if not session_info:
+            return
 
-    if session_info["user_id"] != user.id:
-        await websocket.close(
-            code=status.WS_1008_POLICY_VIOLATION, reason="Session does not belong to user"
-        )
-        return
+        original_on_user = session_info.get("on_user_message")
+        original_on_assistant = session_info.get("on_assistant_message")
+        original_on_transcription = session_info.get("on_transcription")
 
-    await websocket.accept()
-    logger.info(f"WebSocket accepted for session {session_id}, user {user.id}")
+        async def on_transcription(text: str):
+            """Send transcription to WebSocket client."""
+            await gemini_live_connection_manager.send_json(
+                {"type": "transcription", "text": text, "session_id": session_id}, user.id
+            )
 
-    # Set up callbacks to forward messages to WebSocket client
-    async def on_transcription(text: str):
-        """Send transcription to WebSocket client."""
-        try:
-            await websocket.send_json({"type": "transcription", "text": text})
-        except Exception as e:
-            logger.error(f"Error sending transcription: {e}")
+        async def on_assistant_message(text: str):
+            """Send assistant message to WebSocket client."""
+            await gemini_live_connection_manager.send_json(
+                {"type": "assistant_message", "text": text, "session_id": session_id}, user.id
+            )
 
-    async def on_assistant_message(text: str):
-        """Send assistant message to WebSocket client."""
-        try:
-            await websocket.send_json({"type": "assistant_message", "text": text})
-        except Exception as e:
-            logger.error(f"Error sending assistant message: {e}")
+        async def combined_on_user(text: str):
+            if original_on_user:
+                if asyncio.iscoroutinefunction(original_on_user):
+                    await original_on_user(text)
+                else:
+                    original_on_user(text)
+            await on_transcription(text)
 
-    # Update session callbacks to also send to WebSocket
-    original_on_user = session_info.get("on_user_message")
-    original_on_assistant = session_info.get("on_assistant_message")
-    original_on_transcription = session_info.get("on_transcription")
+        async def combined_on_assistant(text: str):
+            if original_on_assistant:
+                if asyncio.iscoroutinefunction(original_on_assistant):
+                    await original_on_assistant(text)
+                else:
+                    original_on_assistant(text)
+            await on_assistant_message(text)
 
-    async def combined_on_user(text: str):
-        if original_on_user:
-            if asyncio.iscoroutinefunction(original_on_user):
-                await original_on_user(text)
-            else:
-                original_on_user(text)
-        await on_transcription(text)
-
-    async def combined_on_assistant(text: str):
-        if original_on_assistant:
-            if asyncio.iscoroutinefunction(original_on_assistant):
-                await original_on_assistant(text)
-            else:
-                original_on_assistant(text)
-        await on_assistant_message(text)
-
-    # Update session callbacks
-    session_info["on_user_message"] = combined_on_user
-    session_info["on_assistant_message"] = combined_on_assistant
-    if original_on_transcription:
-        session_info["on_transcription"] = original_on_transcription
+        # Update session callbacks
+        session_info["on_user_message"] = combined_on_user
+        session_info["on_assistant_message"] = combined_on_assistant
+        if original_on_transcription:
+            session_info["on_transcription"] = original_on_transcription
 
     try:
         while True:
-            # Check if session is still active before processing messages
-            if session_id not in gemini_service.get_active_sessions():
-                logger.info(f"Session {session_id} no longer active, closing WebSocket")
-                await websocket.send_json(
-                    {"type": "error", "message": "Session ended due to service unavailability"}
-                )
-                break
-
             # Receive messages from client
             message = await websocket.receive()
 
             # Check for disconnect message
             if message.get("type") == "websocket.disconnect":
-                logger.info(f"WebSocket disconnect received for session {session_id}")
+                logger.info(f"Gemini Live WebSocket disconnect received for user {user.id}")
                 break
 
+            # Extract session_id from message
+            session_id = None
             if "text" in message:
-                # JSON message (control commands)
-                data = json.loads(message["text"])
-                msg_type = data.get("type")
+                # JSON message (control commands or audio)
+                try:
+                    data = json.loads(message["text"])
+                    session_id = data.get("session_id")
+                    msg_type = data.get("type")
 
-                if msg_type == "ping":
-                    await websocket.send_json({"type": "pong"})
-                elif msg_type == "stop":
-                    await gemini_service.stop_conversation(session_id)
-                    await websocket.send_json({"type": "stopped", "session_id": session_id})
-                    break
-                elif msg_type == "audio":
-                    # Audio data (base64 encoded PCM)
-                    audio_base64 = data.get("data")
-                    if audio_base64:
-                        try:
-                            audio_bytes = base64.b64decode(audio_base64)
-                            success = await gemini_service.send_audio(session_id, audio_bytes)
-                            if not success:
-                                logger.warning(
-                                    f"Failed to send audio for session {session_id}, closing WebSocket"
-                                )
-                                await websocket.send_json(
+                    if not session_id and msg_type != "ping":
+                        await gemini_live_connection_manager.send_json(
+                            {"type": "error", "message": "session_id required in message"}, user.id
+                        )
+                        continue
+
+                    if session_id:
+                        # Verify session belongs to user
+                        session_info = gemini_service.get_session_info(session_id)
+                        if not session_info:
+                            await gemini_live_connection_manager.send_json(
+                                {
+                                    "type": "error",
+                                    "message": "Session not found",
+                                    "session_id": session_id,
+                                },
+                                user.id,
+                            )
+                            continue
+
+                        if session_info["user_id"] != user.id:
+                            await gemini_live_connection_manager.send_json(
+                                {
+                                    "type": "error",
+                                    "message": "Session does not belong to user",
+                                    "session_id": session_id,
+                                },
+                                user.id,
+                            )
+                            continue
+
+                        # Set active session for user
+                        gemini_live_connection_manager.set_active_session(user.id, session_id)
+                        # Ensure callbacks are set up
+                        await setup_session_callbacks(session_id)
+
+                    if msg_type == "ping":
+                        await gemini_live_connection_manager.send_json(
+                            (
+                                {"type": "pong", "session_id": session_id}
+                                if session_id
+                                else {"type": "pong"}
+                            ),
+                            user.id,
+                        )
+                    elif msg_type == "stop":
+                        if session_id:
+                            await gemini_service.stop_conversation(session_id)
+                            await gemini_live_connection_manager.send_json(
+                                {"type": "stopped", "session_id": session_id}, user.id
+                            )
+                            gemini_live_connection_manager.set_active_session(user.id, None)
+                    elif msg_type == "audio":
+                        # Audio data (base64 encoded PCM)
+                        audio_base64 = data.get("data")
+                        if audio_base64 and session_id:
+                            try:
+                                audio_bytes = base64.b64decode(audio_base64)
+                                success = await gemini_service.send_audio(session_id, audio_bytes)
+                                if not success:
+                                    await gemini_live_connection_manager.send_json(
+                                        {
+                                            "type": "error",
+                                            "message": "Failed to send audio - session may be inactive",
+                                            "session_id": session_id,
+                                        },
+                                        user.id,
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error processing audio: {e}")
+                                await gemini_live_connection_manager.send_json(
                                     {
                                         "type": "error",
-                                        "message": "Failed to send audio - session may be inactive",
-                                    }
+                                        "message": f"Error processing audio: {str(e)}",
+                                        "session_id": session_id,
+                                    },
+                                    user.id,
                                 )
-                                break
-                        except Exception as e:
-                            logger.error(f"Error processing audio: {e}")
-                            await websocket.send_json(
-                                {"type": "error", "message": f"Error processing audio: {str(e)}"}
+                    elif msg_type == "start_session":
+                        # Client notifies that a session is starting
+                        if session_id:
+                            gemini_live_connection_manager.set_active_session(user.id, session_id)
+                            await setup_session_callbacks(session_id)
+                            await gemini_live_connection_manager.send_json(
+                                {"type": "session_started", "session_id": session_id}, user.id
                             )
-                            break
+
+                except json.JSONDecodeError:
+                    await gemini_live_connection_manager.send_json(
+                        {"type": "error", "message": "Invalid JSON message"}, user.id
+                    )
 
             elif "bytes" in message:
-                # Binary audio data (raw PCM)
+                # Binary audio data (raw PCM) - need session_id from active session
+                session_id = gemini_live_connection_manager.get_active_session(user.id)
+                if not session_id:
+                    await gemini_live_connection_manager.send_json(
+                        {
+                            "type": "error",
+                            "message": "No active session. Send start_session message first.",
+                        },
+                        user.id,
+                    )
+                    continue
+
                 audio_bytes = message["bytes"]
                 try:
                     success = await gemini_service.send_audio(session_id, audio_bytes)
                     if not success:
-                        logger.warning(
-                            f"Failed to send audio bytes for session {session_id}, closing WebSocket"
-                        )
-                        await websocket.send_json(
+                        await gemini_live_connection_manager.send_json(
                             {
                                 "type": "error",
                                 "message": "Failed to send audio - session may be inactive",
-                            }
+                                "session_id": session_id,
+                            },
+                            user.id,
                         )
-                        break
                 except Exception as e:
                     logger.error(f"Error processing audio bytes: {e}")
-                    await websocket.send_json(
-                        {"type": "error", "message": f"Error processing audio: {str(e)}"}
+                    await gemini_live_connection_manager.send_json(
+                        {
+                            "type": "error",
+                            "message": f"Error processing audio: {str(e)}",
+                            "session_id": session_id,
+                        },
+                        user.id,
                     )
-                    break
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for session {session_id}")
-        # Don't try to close - already disconnected
+        logger.info(f"Gemini Live WebSocket disconnected for user {user.id}")
     except RuntimeError as e:
-        # Handle "Cannot call receive once disconnect message has been received" error
         error_msg = str(e).lower()
         if "disconnect" in error_msg or "receive" in error_msg:
-            logger.info(f"WebSocket already disconnected for session {session_id}: {e}")
+            logger.info(f"Gemini Live WebSocket already disconnected for user {user.id}: {e}")
         else:
-            logger.error(f"WebSocket runtime error for session {session_id}: {e}", exc_info=True)
-            # Only try to close if it's not a disconnect-related error
-            try:
-                await websocket.close()
-            except Exception:
-                pass  # WebSocket already closed
+            logger.error(
+                f"Gemini Live WebSocket runtime error for user {user.id}: {e}", exc_info=True
+            )
     except Exception as e:
-        logger.error(f"WebSocket error for session {session_id}: {e}", exc_info=True)
-        # Only try to close if websocket is still open and error is not disconnect-related
-        error_msg = str(e).lower()
-        if "disconnect" not in error_msg and "close" not in error_msg:
-            try:
-                await websocket.close()
-            except Exception:
-                pass  # WebSocket already closed
+        logger.error(f"Gemini Live WebSocket error for user {user.id}: {e}", exc_info=True)
+    finally:
+        gemini_live_connection_manager.disconnect(user.id)
