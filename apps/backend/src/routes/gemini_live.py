@@ -39,10 +39,23 @@ class GeminiLiveConnectionManager:
     async def connect(self, websocket: WebSocket, user_id: str):
         """Accept a new WebSocket connection and store it."""
         await websocket.accept()
-        # If user already has a connection, close it first
+        # If user already has a connection, close it gracefully after a short delay
+        # This allows the old connection to finish processing any pending messages
         if user_id in self.active_connections:
             try:
                 old_ws = self.active_connections[user_id]
+                # Send a message to the old connection before closing
+                try:
+                    await old_ws.send_json(
+                        {
+                            "type": "connection_replaced",
+                            "message": "New connection established, closing this connection",
+                        }
+                    )
+                except Exception:
+                    pass  # Old connection might already be closed
+                # Close after a short delay to allow message processing
+                await asyncio.sleep(0.1)
                 await old_ws.close(code=1000, reason="New connection established")
             except Exception:
                 pass
