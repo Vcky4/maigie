@@ -14,7 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
-from prisma import Prisma
+from src.core.database import db
 from src.dependencies import CurrentUser
 from src.routes.chat import get_current_user_ws
 from src.services.gemini_live_service import get_gemini_live_service
@@ -23,7 +23,6 @@ from src.services.llm_service import SYSTEM_INSTRUCTION, GeminiService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/gemini-live", tags=["Gemini Live"])
-db = Prisma()
 
 
 class StartConversationRequest(BaseModel):
@@ -45,6 +44,10 @@ async def start_conversation(
     Returns session_id for WebSocket connection.
     """
     try:
+        # Ensure DB is connected (safety check for race conditions)
+        if not db.is_connected():
+            await db.connect()
+
         gemini_service = get_gemini_live_service()
 
         # Find or create active study session (acts as the current study session)
