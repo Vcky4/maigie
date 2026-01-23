@@ -38,8 +38,6 @@ stripe = "^10.0.0"
 google-generativeai = "^0.8.6"
 google-genai = ">=1.57.0,<2.0.0"
 duckduckgo-search = "^7.0.0"
-pipecat-ai = {extras = ["webrtc", "google"], version = ">=0.0.83"}
-aiortc = "^1.6.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

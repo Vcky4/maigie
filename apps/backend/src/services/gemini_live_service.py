@@ -1,6 +1,6 @@
 """
-Gemini Live API Service using Pipecat.
-Handles real-time voice conversations with WebRTC support.
+Gemini Live API Service using direct WebSocket connections.
+Handles real-time voice conversations with Gemini Live API.
 """
 
 import asyncio
@@ -9,91 +9,15 @@ import os
 import uuid
 from typing import Callable, Optional
 
+from google.genai import Client, types
+
 logger = logging.getLogger(__name__)
-
-try:
-    from pipecat.frames.frames import (
-        AudioRawFrame,
-        Frame,
-        LLMMessagesFrame,
-        TextFrame,
-        TranscriptionFrame,
-    )
-    from pipecat.frames.frame_processor import FrameDirection, FrameProcessor
-    from pipecat.pipeline.pipeline import Pipeline
-    from pipecat.pipeline.runner import PipelineRunner
-    from pipecat.pipeline.task import PipelineTask
-    from pipecat.processors.aggregators.llm_response import LLMUserResponseAggregator
-    from pipecat.services.google import GeminiLiveService
-    from pipecat.transports.services.daily import DailyParams, DailyTransport
-
-    PIPECAT_AVAILABLE = True
-
-    class CallbackFrameProcessor(FrameProcessor):
-        """Frame processor that calls callbacks for specific frame types."""
-
-        def __init__(
-            self,
-            on_user_message: Optional[Callable[[str], None]] = None,
-            on_assistant_message: Optional[Callable[[str], None]] = None,
-            on_transcription: Optional[Callable[[str], None]] = None,
-            user_id: Optional[str] = None,
-        ):
-            super().__init__()
-            self.on_user_message = on_user_message
-            self.on_assistant_message = on_assistant_message
-            self.on_transcription = on_transcription
-            self.user_id = user_id
-
-        async def process_frame(self, frame: Frame, direction: FrameDirection):
-            """Process frames and call appropriate callbacks."""
-            await super().process_frame(frame, direction)
-
-            try:
-                if isinstance(frame, TranscriptionFrame):
-                    # User speech transcribed
-                    if self.on_transcription:
-                        if asyncio.iscoroutinefunction(self.on_transcription):
-                            await self.on_transcription(frame.text)
-                        else:
-                            self.on_transcription(frame.text)
-
-                    # Check if this is from the user
-                    if (
-                        self.on_user_message
-                        and hasattr(frame, "user_id")
-                        and frame.user_id == self.user_id
-                    ):
-                        if asyncio.iscoroutinefunction(self.on_user_message):
-                            await self.on_user_message(frame.text)
-                        else:
-                            self.on_user_message(frame.text)
-
-                elif isinstance(frame, TextFrame):
-                    # Assistant response text
-                    if self.on_assistant_message:
-                        if asyncio.iscoroutinefunction(self.on_assistant_message):
-                            await self.on_assistant_message(frame.text)
-                        else:
-                            self.on_assistant_message(frame.text)
-
-            except Exception as e:
-                logger.error(f"Error in callback frame processor: {e}", exc_info=True)
-
-            # Always forward frames downstream
-            await self.push_frame(frame, direction)
-
-except ImportError:
-    PIPECAT_AVAILABLE = False
-    logger.warning("Pipecat not available. Install with: pip install 'pipecat-ai[webrtc,google]'")
-    # Define a placeholder class when pipecat is not available
-    CallbackFrameProcessor = None  # type: ignore
 
 
 class GeminiLiveConversationService:
     """
-    Service for managing real-time voice conversations using Gemini Live API via Pipecat.
-    Supports Daily.co WebRTC transport for real-time audio streaming.
+    Service for managing real-time voice conversations using Gemini Live API.
+    Uses direct WebSocket connections to Google's Gemini Live API.
     """
 
     def __init__(self, api_key: str):
@@ -103,19 +27,12 @@ class GeminiLiveConversationService:
         Args:
             api_key: Google Gemini API key
         """
-        if not PIPECAT_AVAILABLE:
-            raise ImportError(
-                "Pipecat is not installed. Install with: pip install 'pipecat-ai[webrtc,google]'"
-            )
         self.api_key = api_key
-        self.active_sessions: dict[str, dict] = (
-            {}
-        )  # Store session info including task and transport
+        self.client = Client(api_key=api_key)
+        self.active_sessions: dict[str, dict] = {}  # Store active session info
 
     async def start_conversation(
         self,
-        room_url: str,
-        token: str,
         user_id: str,
         session_id: Optional[str] = None,
         on_user_message: Optional[Callable[[str], None]] = None,
@@ -127,8 +44,6 @@ class GeminiLiveConversationService:
         Start a new Gemini Live conversation session.
 
         Args:
-            room_url: Daily.co room URL for WebRTC connection
-            token: Daily.co room token
             user_id: User ID for the conversation
             session_id: Unique session ID (auto-generated if not provided)
             on_user_message: Callback when user speaks (transcribed text)
@@ -137,7 +52,7 @@ class GeminiLiveConversationService:
             system_instruction: Custom system instruction for the AI
 
         Returns:
-            Dictionary with session_id and task info
+            Dictionary with session_id and status
         """
         if session_id is None:
             session_id = str(uuid.uuid4())
@@ -146,17 +61,7 @@ class GeminiLiveConversationService:
             logger.warning(f"Session {session_id} already exists, stopping previous session")
             await self.stop_conversation(session_id)
 
-        # Create Daily transport for WebRTC
-        transport = DailyTransport(
-            room_url=room_url,
-            token=token,
-            bot_name="Maigie AI Assistant",
-            mic_enabled=True,
-            mic_sample_rate=16000,
-            camera_enabled=False,
-        )
-
-        # Create Gemini Live service with system instruction
+        # Default system instruction
         default_instruction = (
             "You are Maigie, an intelligent study companion. "
             "Your goal is to help students organize learning, generate courses, "
@@ -164,53 +69,187 @@ class GeminiLiveConversationService:
             "Be conversational, helpful, and encouraging."
         )
 
-        gemini_service = GeminiLiveService(
-            api_key=self.api_key,
-            system_instruction=system_instruction or default_instruction,
+        # Create Live API configuration
+        config = types.LiveConnectConfig(
+            system_instruction=types.Content(
+                parts=[types.Part(text=system_instruction or default_instruction)]
+            ),
+            response_modalities=["AUDIO", "TEXT"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
+                )
+            ),
         )
 
-        # Create callback frame processor
-        callback_processor = CallbackFrameProcessor(
-            on_user_message=on_user_message,
-            on_assistant_message=on_assistant_message,
-            on_transcription=on_transcription,
-            user_id=user_id,
-        )
+        # Create Live API session
+        try:
+            session = await self.client.aio.live.connect(
+                model="models/gemini-2.0-flash-exp",
+                config=config,
+            )
 
-        # Build pipeline with callback processor
-        # Place callback processor after gemini_service to catch both transcriptions and responses
-        pipeline = Pipeline(
-            [
-                transport.input(),
-                gemini_service,
-                callback_processor,  # Process frames and call callbacks
-                transport.output(),
-            ]
-        )
+            # Store session info
+            session_info = {
+                "session": session,
+                "user_id": user_id,
+                "session_id": session_id,
+                "on_user_message": on_user_message,
+                "on_assistant_message": on_assistant_message,
+                "on_transcription": on_transcription,
+                "task": None,
+            }
 
-        # Create pipeline task
-        task = PipelineTask(pipeline)
-        runner = PipelineRunner()
+            # Start listening for responses in background
+            task = asyncio.create_task(
+                self._handle_responses(
+                    session, session_id, on_user_message, on_assistant_message, on_transcription
+                )
+            )
+            session_info["task"] = task
 
-        # Store session info
-        session_info = {
-            "task": task,
-            "transport": transport,
-            "runner": runner,
-            "user_id": user_id,
-            "session_id": session_id,
-            "on_user_message": on_user_message,
-            "on_assistant_message": on_assistant_message,
-            "on_transcription": on_transcription,
-        }
-        self.active_sessions[session_id] = session_info
+            self.active_sessions[session_id] = session_info
 
-        # Start the pipeline in background
-        asyncio.create_task(runner.run(task))
+            logger.info(f"Started Gemini Live conversation session {session_id} for user {user_id}")
 
-        logger.info(f"Started Gemini Live conversation session {session_id} for user {user_id}")
+            return {"session_id": session_id, "status": "started"}
 
-        return {"session_id": session_id, "status": "started"}
+        except Exception as e:
+            logger.error(f"Error starting Gemini Live session: {e}", exc_info=True)
+            raise
+
+    async def _handle_responses(
+        self,
+        session,
+        session_id: str,
+        on_user_message: Optional[Callable[[str], None]],
+        on_assistant_message: Optional[Callable[[str], None]],
+        on_transcription: Optional[Callable[[str], None]],
+    ):
+        """Handle responses from Gemini Live API."""
+        try:
+            async for message in session.receive():
+                try:
+                    # Handle server content (assistant responses)
+                    if hasattr(message, "server_content") and message.server_content:
+                        for content in message.server_content:
+                            if hasattr(content, "model_turn") and content.model_turn:
+                                model_turn = content.model_turn
+
+                                # Handle text responses
+                                if hasattr(model_turn, "parts") and model_turn.parts:
+                                    for part in model_turn.parts:
+                                        if hasattr(part, "text") and part.text:
+                                            text = part.text
+                                            if on_assistant_message:
+                                                if asyncio.iscoroutinefunction(
+                                                    on_assistant_message
+                                                ):
+                                                    await on_assistant_message(text)
+                                                else:
+                                                    on_assistant_message(text)
+
+                    # Handle user content (transcriptions)
+                    if hasattr(message, "user_content") and message.user_content:
+                        for content in message.user_content:
+                            if hasattr(content, "parts") and content.parts:
+                                for part in content.parts:
+                                    if hasattr(part, "text") and part.text:
+                                        text = part.text
+                                        if on_transcription:
+                                            if asyncio.iscoroutinefunction(on_transcription):
+                                                await on_transcription(text)
+                                            else:
+                                                on_transcription(text)
+
+                                        if on_user_message:
+                                            if asyncio.iscoroutinefunction(on_user_message):
+                                                await on_user_message(text)
+                                            else:
+                                                on_user_message(text)
+
+                except Exception as e:
+                    logger.error(
+                        f"Error processing response in session {session_id}: {e}", exc_info=True
+                    )
+
+        except asyncio.CancelledError:
+            logger.info(f"Response handler cancelled for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error in response handler for session {session_id}: {e}", exc_info=True)
+        finally:
+            # Clean up session if it's still in active_sessions
+            if session_id in self.active_sessions:
+                try:
+                    await session.close()
+                except Exception as e:
+                    logger.warning(f"Error closing session {session_id}: {e}")
+
+    async def send_audio(self, session_id: str, audio_data: bytes) -> bool:
+        """
+        Send audio data to the Gemini Live session.
+
+        Args:
+            session_id: Session ID
+            audio_data: Raw audio bytes (PCM, 16-bit, 16kHz, mono)
+
+        Returns:
+            True if audio was sent, False otherwise
+        """
+        if session_id not in self.active_sessions:
+            logger.warning(f"Session {session_id} not found")
+            return False
+
+        try:
+            session_info = self.active_sessions[session_id]
+            session = session_info["session"]
+
+            # Send audio to Gemini Live API
+            await session.send_realtime_input(
+                media_chunks=[
+                    types.RealtimeInput(
+                        mime_type="audio/pcm",
+                        data=audio_data,
+                    )
+                ],
+                turn_complete=False,
+            )
+
+            return True
+        except Exception as e:
+            logger.error(f"Error sending audio to session {session_id}: {e}", exc_info=True)
+            return False
+
+    async def send_text(self, session_id: str, text: str, turn_complete: bool = True) -> bool:
+        """
+        Send text message to the Gemini Live session.
+
+        Args:
+            session_id: Session ID
+            text: Text message to send
+            turn_complete: Whether this is the end of the turn
+
+        Returns:
+            True if text was sent, False otherwise
+        """
+        if session_id not in self.active_sessions:
+            logger.warning(f"Session {session_id} not found")
+            return False
+
+        try:
+            session_info = self.active_sessions[session_id]
+            session = session_info["session"]
+
+            # Send text to Gemini Live API
+            await session.send_client_content(
+                turns=[types.Content(parts=[types.Part(text=text)])],
+                turn_complete=turn_complete,
+            )
+
+            return True
+        except Exception as e:
+            logger.error(f"Error sending text to session {session_id}: {e}", exc_info=True)
+            return False
 
     async def stop_conversation(self, session_id: str) -> bool:
         """
@@ -228,44 +267,30 @@ class GeminiLiveConversationService:
 
         session_info = self.active_sessions[session_id]
         try:
-            task = session_info["task"]
-            transport = session_info.get("transport")
+            session = session_info.get("session")
+            task = session_info.get("task")
 
-            # Cancel the task
-            await task.cancel()
-
-            # Clean up transport if available
-            if transport:
+            # Cancel the response handler task
+            if task and not task.done():
+                task.cancel()
                 try:
-                    await transport.cleanup()
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            # Close the session
+            if session:
+                try:
+                    await session.close()
                 except Exception as e:
-                    logger.warning(f"Error cleaning up transport: {e}")
+                    logger.warning(f"Error closing session: {e}")
 
             del self.active_sessions[session_id]
             logger.info(f"Stopped conversation session {session_id}")
             return True
         except Exception as e:
-            logger.error(f"Error stopping session {session_id}: {e}")
+            logger.error(f"Error stopping session {session_id}: {e}", exc_info=True)
             return False
-
-    async def send_text_message(self, session_id: str, message: str) -> bool:
-        """
-        Send a text message to the conversation (for testing or manual input).
-
-        Args:
-            session_id: Session ID
-            message: Text message to send
-
-        Returns:
-            True if message was sent, False otherwise
-        """
-        if session_id not in self.active_sessions:
-            return False
-
-        # This would require access to the pipeline's input
-        # For now, this is a placeholder for future implementation
-        logger.info(f"Sending text message to session {session_id}: {message}")
-        return True
 
     def is_session_active(self, session_id: str) -> bool:
         """Check if a session is currently active."""

@@ -1,21 +1,20 @@
 """
 Gemini Live API Routes.
-Handles real-time voice conversations using Gemini Live API with WebRTC support.
+Handles real-time voice conversations using Gemini Live API via WebSocket.
 """
 
 import asyncio
+import base64
+import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel
 
 from prisma import Prisma
-from src.config import settings
 from src.dependencies import CurrentUser
 from src.routes.chat import get_current_user_ws
 from src.services.gemini_live_service import get_gemini_live_service
@@ -30,98 +29,10 @@ db = Prisma()
 class StartConversationRequest(BaseModel):
     """Request model for starting a Gemini Live conversation."""
 
-    room_url: Optional[str] = None
-    token: Optional[str] = None
     session_id: Optional[str] = None
     system_instruction: Optional[str] = None
     course_id: Optional[str] = None
     topic_id: Optional[str] = None
-
-
-class DailyRoomConfig(BaseModel):
-    """Daily.co room configuration."""
-
-    room_url: str
-    token: str
-    room_name: str
-
-
-async def create_daily_room(user_id: str) -> DailyRoomConfig:
-    """
-    Create a Daily.co room for WebRTC connection.
-
-    Args:
-        user_id: User ID for the room
-
-    Returns:
-        DailyRoomConfig with room URL and token
-    """
-    daily_api_key = settings.DAILY_API_KEY
-    if not daily_api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="Daily.co API key not configured. Set DAILY_API_KEY environment variable.",
-        )
-
-    # Create room via Daily.co API
-    room_name = f"maigie-{user_id}-{uuid.uuid4().hex[:8]}"
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.daily.co/v1/rooms",
-            headers={
-                "Authorization": f"Bearer {daily_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "name": room_name,
-                "privacy": "private",
-                "properties": {
-                    "exp": int((datetime.now().timestamp() + 7200)),  # 2 hour expiry
-                    "enable_chat": False,
-                    "enable_knocking": False,
-                    "enable_screenshare": False,
-                    "enable_recording": False,
-                },
-            },
-        )
-
-        if response.status_code != 200:
-            logger.error(f"Failed to create Daily room: {response.text}")
-            raise HTTPException(
-                status_code=500, detail="Failed to create Daily.co room for WebRTC connection"
-            )
-
-        room_data = response.json()
-
-        # Create token for the room
-        token_response = await client.post(
-            f"https://api.daily.co/v1/rooms/{room_name}/tokens",
-            headers={
-                "Authorization": f"Bearer {daily_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "properties": {
-                    "room_name": room_name,
-                    "user_id": user_id,
-                    "is_owner": True,
-                }
-            },
-        )
-
-        if token_response.status_code != 200:
-            logger.error(f"Failed to create Daily token: {token_response.text}")
-            raise HTTPException(
-                status_code=500, detail="Failed to create Daily.co token for WebRTC connection"
-            )
-
-        token_data = token_response.json()
-
-        return DailyRoomConfig(
-            room_url=room_data["url"],
-            token=token_data["token"],
-            room_name=room_name,
-        )
 
 
 @router.post("/conversation/start")
@@ -131,20 +42,10 @@ async def start_conversation(
 ):
     """
     Start a new Gemini Live conversation session.
-
-    Creates a Daily.co room if not provided, then starts the Gemini Live pipeline.
+    Returns session_id for WebSocket connection.
     """
     try:
         gemini_service = get_gemini_live_service()
-
-        # Create Daily room if not provided
-        if not request.room_url or not request.token:
-            room_config = await create_daily_room(user.id)
-            room_url = room_config.room_url
-            token = room_config.token
-        else:
-            room_url = request.room_url
-            token = request.token
 
         # Find or create active study session (acts as the current study session)
         study_session = await db.studysession.find_first(
@@ -334,20 +235,23 @@ Format the notes with proper headings, lists, and structure."""
                 logger.error(f"Error generating notes from conversation: {e}", exc_info=True)
 
         # Start conversation with callbacks
+        session_id = request.session_id or str(uuid.uuid4())
         result = await gemini_service.start_conversation(
-            room_url=room_url,
-            token=token,
             user_id=user.id,
-            session_id=request.session_id or str(uuid.uuid4()),
+            session_id=session_id,
             on_user_message=on_user_message,
             on_assistant_message=on_assistant_message,
             system_instruction=system_instruction,
         )
 
+        # Store additional info in session for later use
+        session_info = gemini_service.get_session_info(session_id)
+        if session_info:
+            session_info["chat_session_id"] = chat_session.id
+            session_info["study_session_id"] = study_session.id
+
         return {
             "session_id": result["session_id"],
-            "room_url": room_url,
-            "token": token,
             "status": "started",
             "chat_session_id": chat_session.id,
             "study_session_id": study_session.id,
@@ -379,13 +283,6 @@ async def stop_conversation(session_id: str, user: CurrentUser):
         success = await gemini_service.stop_conversation(session_id)
 
         if success:
-            # Generate final notes from any remaining conversation
-            session_info = gemini_service.get_session_info(session_id)
-            if session_info and session_info.get("study_session_id"):
-                # Trigger final note generation if needed
-                # This would require storing conversation buffer in session_info
-                pass
-
             return {"session_id": session_id, "status": "stopped"}
         else:
             raise HTTPException(status_code=500, detail="Failed to stop conversation")
@@ -462,12 +359,12 @@ async def gemini_live_websocket(
     token: str = Query(...),
 ):
     """
-    WebSocket endpoint for Gemini Live conversation signaling and updates.
+    WebSocket endpoint for Gemini Live conversation.
 
-    This endpoint can be used for:
-    - Receiving real-time transcription updates
-    - Receiving assistant response text
-    - Sending control messages (pause, resume, etc.)
+    Handles:
+    - Receiving audio data from client (base64 encoded PCM audio)
+    - Sending transcription and assistant responses back to client
+    - Forwarding audio to Gemini Live API
     """
     # Authenticate user
     try:
@@ -492,17 +389,81 @@ async def gemini_live_websocket(
 
     await websocket.accept()
 
+    # Set up callbacks to forward messages to WebSocket client
+    async def on_transcription(text: str):
+        """Send transcription to WebSocket client."""
+        try:
+            await websocket.send_json({"type": "transcription", "text": text})
+        except Exception as e:
+            logger.error(f"Error sending transcription: {e}")
+
+    async def on_assistant_message(text: str):
+        """Send assistant message to WebSocket client."""
+        try:
+            await websocket.send_json({"type": "assistant_message", "text": text})
+        except Exception as e:
+            logger.error(f"Error sending assistant message: {e}")
+
+    # Update session callbacks to also send to WebSocket
+    original_on_user = session_info.get("on_user_message")
+    original_on_assistant = session_info.get("on_assistant_message")
+    original_on_transcription = session_info.get("on_transcription")
+
+    async def combined_on_user(text: str):
+        if original_on_user:
+            if asyncio.iscoroutinefunction(original_on_user):
+                await original_on_user(text)
+            else:
+                original_on_user(text)
+        await on_transcription(text)
+
+    async def combined_on_assistant(text: str):
+        if original_on_assistant:
+            if asyncio.iscoroutinefunction(original_on_assistant):
+                await original_on_assistant(text)
+            else:
+                original_on_assistant(text)
+        await on_assistant_message(text)
+
+    # Update session callbacks
+    session_info["on_user_message"] = combined_on_user
+    session_info["on_assistant_message"] = combined_on_assistant
+    if original_on_transcription:
+        session_info["on_transcription"] = original_on_transcription
+
     try:
         while True:
-            # Receive messages from client (for control commands)
-            message = await websocket.receive_json()
+            # Receive messages from client
+            message = await websocket.receive()
 
-            if message.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-            elif message.get("type") == "stop":
-                await gemini_service.stop_conversation(session_id)
-                await websocket.send_json({"type": "stopped", "session_id": session_id})
-                break
+            if "text" in message:
+                # JSON message (control commands)
+                data = json.loads(message["text"])
+                msg_type = data.get("type")
+
+                if msg_type == "ping":
+                    await websocket.send_json({"type": "pong"})
+                elif msg_type == "stop":
+                    await gemini_service.stop_conversation(session_id)
+                    await websocket.send_json({"type": "stopped", "session_id": session_id})
+                    break
+                elif msg_type == "audio":
+                    # Audio data (base64 encoded PCM)
+                    audio_base64 = data.get("data")
+                    if audio_base64:
+                        try:
+                            audio_bytes = base64.b64decode(audio_base64)
+                            await gemini_service.send_audio(session_id, audio_bytes)
+                        except Exception as e:
+                            logger.error(f"Error processing audio: {e}")
+
+            elif "bytes" in message:
+                # Binary audio data (raw PCM)
+                audio_bytes = message["bytes"]
+                try:
+                    await gemini_service.send_audio(session_id, audio_bytes)
+                except Exception as e:
+                    logger.error(f"Error processing audio bytes: {e}")
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session {session_id}")
