@@ -70,20 +70,7 @@ class GeminiLiveConversationService:
         )
 
         # Create Live API configuration
-        # System instruction as string (simpler format that matches API docs)
         system_instruction_text = system_instruction or default_instruction
-
-        # Create config with Content format (required by typed API)
-        config = types.LiveConnectConfig(
-            system_instruction=types.Content(parts=[types.Part(text=system_instruction_text)]),
-            response_modalities=["AUDIO", "TEXT"],
-            speech_config=types.SpeechConfig(
-                voice_config=types.VoiceConfig(
-                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
-                ),
-                language_code="en-US",
-            ),
-        )
 
         # Create Live API session
         # Note: connect() returns an async context manager, so we need to enter it explicitly
@@ -100,49 +87,131 @@ class GeminiLiveConversationService:
             context_manager = None
             last_error = None
             successful_model = None
+            session = None
 
+            # Try different configurations for each model
             for model_name in model_names:
-                try:
-                    logger.info(f"Attempting to connect with model: {model_name}")
-                    context_manager = self.client.aio.live.connect(
-                        model=model_name,
-                        config=config,
-                    )
-                    logger.info(f"Successfully created context manager with model: {model_name}")
-                    successful_model = model_name
+                if session is not None:
                     break
-                except Exception as e:
-                    last_error = e
-                    logger.warning(f"Failed to connect with model {model_name}: {e}")
-                    continue
 
-            if context_manager is None:
-                raise Exception(f"Failed to connect with any model. Last error: {last_error}")
+                # Determine if this is a native-audio model
+                is_native_audio = "native-audio" in model_name.lower()
 
-            # Try to enter the context manager (this sends the config over WebSocket)
-            try:
-                session = await context_manager.__aenter__()
-                logger.info(f"Successfully entered context manager with model: {successful_model}")
-            except Exception as enter_error:
-                # If entering fails, try with a minimal config
-                logger.warning(f"Failed to enter context with full config: {enter_error}")
-                logger.info("Attempting with minimal config (TEXT only, no speech_config)")
+                # Try configurations in order of preference
+                configs_to_try = []
 
-                # Try minimal config without speech_config
-                minimal_config = types.LiveConnectConfig(
-                    system_instruction=types.Content(
-                        parts=[types.Part(text=system_instruction_text)]
-                    ),
-                    response_modalities=["TEXT"],  # Try TEXT only first
+                if is_native_audio:
+                    # Native audio models require AUDIO modality
+                    # Try AUDIO-only first, then AUDIO+TEXT
+                    configs_to_try = [
+                        {
+                            "name": "AUDIO-only with speech_config",
+                            "config": types.LiveConnectConfig(
+                                system_instruction=types.Content(
+                                    parts=[types.Part(text=system_instruction_text)]
+                                ),
+                                response_modalities=["AUDIO"],
+                                speech_config=types.SpeechConfig(
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name="Aoede"
+                                        )
+                                    ),
+                                    language_code="en-US",
+                                ),
+                            ),
+                        },
+                        {
+                            "name": "AUDIO-only without speech_config",
+                            "config": types.LiveConnectConfig(
+                                system_instruction=types.Content(
+                                    parts=[types.Part(text=system_instruction_text)]
+                                ),
+                                response_modalities=["AUDIO"],
+                            ),
+                        },
+                        {
+                            "name": "AUDIO+TEXT with speech_config",
+                            "config": types.LiveConnectConfig(
+                                system_instruction=types.Content(
+                                    parts=[types.Part(text=system_instruction_text)]
+                                ),
+                                response_modalities=["AUDIO", "TEXT"],
+                                speech_config=types.SpeechConfig(
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name="Aoede"
+                                        )
+                                    ),
+                                    language_code="en-US",
+                                ),
+                            ),
+                        },
+                    ]
+                else:
+                    # Non-native-audio models can use TEXT or AUDIO+TEXT
+                    configs_to_try = [
+                        {
+                            "name": "AUDIO+TEXT with speech_config",
+                            "config": types.LiveConnectConfig(
+                                system_instruction=types.Content(
+                                    parts=[types.Part(text=system_instruction_text)]
+                                ),
+                                response_modalities=["AUDIO", "TEXT"],
+                                speech_config=types.SpeechConfig(
+                                    voice_config=types.VoiceConfig(
+                                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                            voice_name="Aoede"
+                                        )
+                                    ),
+                                    language_code="en-US",
+                                ),
+                            ),
+                        },
+                        {
+                            "name": "TEXT-only",
+                            "config": types.LiveConnectConfig(
+                                system_instruction=types.Content(
+                                    parts=[types.Part(text=system_instruction_text)]
+                                ),
+                                response_modalities=["TEXT"],
+                            ),
+                        },
+                    ]
+
+                for config_attempt in configs_to_try:
+                    try:
+                        logger.info(
+                            f"Attempting {model_name} with config: {config_attempt['name']}"
+                        )
+                        context_manager = self.client.aio.live.connect(
+                            model=model_name,
+                            config=config_attempt["config"],
+                        )
+                        logger.info(
+                            f"Successfully created context manager with {model_name} using {config_attempt['name']}"
+                        )
+
+                        # Try to enter the context manager
+                        session = await context_manager.__aenter__()
+                        successful_model = model_name
+                        logger.info(
+                            f"Successfully connected with {model_name} using {config_attempt['name']}"
+                        )
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed {model_name} with {config_attempt['name']}: {e}")
+                        last_error = e
+                        context_manager = None
+                        continue
+
+                if session is not None:
+                    break
+
+            if session is None:
+                raise Exception(
+                    f"Failed to connect with any model/config. Last error: {last_error}"
                 )
-
-                # Create new connection with minimal config
-                context_manager = self.client.aio.live.connect(
-                    model=successful_model,
-                    config=minimal_config,
-                )
-                session = await context_manager.__aenter__()
-                logger.info("Successfully connected with minimal config")
 
             # Store session info
             session_info = {
