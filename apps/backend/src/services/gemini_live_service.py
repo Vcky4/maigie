@@ -40,6 +40,7 @@ class GeminiLiveConversationService:
         on_assistant_message: Optional[Callable[[str], None]] = None,
         on_transcription: Optional[Callable[[str], None]] = None,
         on_audio: Optional[Callable[[bytes], None]] = None,
+        on_session_closed: Optional[Callable[[str], None]] = None,
         system_instruction: Optional[str] = None,
     ) -> dict:
         """
@@ -122,6 +123,10 @@ class GeminiLiveConversationService:
                                     ),
                                     language_code="en-US",
                                 ),
+                                # Enable context window compression to prevent session timeout
+                                context_window_compression=types.ContextWindowCompressionConfig(
+                                    sliding_window=types.SlidingWindow(),
+                                ),
                             ),
                         },
                         {
@@ -131,6 +136,10 @@ class GeminiLiveConversationService:
                                     parts=[types.Part(text=system_instruction_text)]
                                 ),
                                 response_modalities=["AUDIO"],
+                                # Enable context window compression to prevent session timeout
+                                context_window_compression=types.ContextWindowCompressionConfig(
+                                    sliding_window=types.SlidingWindow(),
+                                ),
                             ),
                         },
                         {
@@ -147,6 +156,10 @@ class GeminiLiveConversationService:
                                         )
                                     ),
                                     language_code="en-US",
+                                ),
+                                # Enable context window compression to prevent session timeout
+                                context_window_compression=types.ContextWindowCompressionConfig(
+                                    sliding_window=types.SlidingWindow(),
                                 ),
                             ),
                         },
@@ -168,6 +181,10 @@ class GeminiLiveConversationService:
                                         )
                                     ),
                                     language_code="en-US",
+                                ),
+                                # Enable context window compression to prevent session timeout
+                                context_window_compression=types.ContextWindowCompressionConfig(
+                                    sliding_window=types.SlidingWindow(),
                                 ),
                             ),
                         },
@@ -228,6 +245,7 @@ class GeminiLiveConversationService:
                 "on_assistant_message": on_assistant_message,
                 "on_transcription": on_transcription,
                 "on_audio": on_audio,
+                "on_session_closed": on_session_closed,  # Callback when session closes
                 "task": None,
             }
 
@@ -289,9 +307,24 @@ class GeminiLiveConversationService:
         logger.info(f"Starting response handler for session {session_id}")
         try:
             message_count = 0
-            async for message in session.receive():
-                message_count += 1
-                logger.debug(f"Received message #{message_count} for session {session_id}")
+            try:
+                async for message in session.receive():
+                    message_count += 1
+                    logger.debug(f"Received message #{message_count} for session {session_id}")
+            except (ConnectionClosedOK, ConnectionClosed) as e:
+                # Connection closed during receive loop
+                logger.warning(
+                    f"Connection closed during receive loop for session {session_id}: {e}. "
+                    f"Received {message_count} messages before closure."
+                )
+                raise  # Re-raise to be caught by outer handler
+            except StopAsyncIteration:
+                # Iterator exhausted - connection closed normally
+                logger.info(
+                    f"Receive iterator exhausted for session {session_id}. "
+                    f"Received {message_count} messages total."
+                )
+                raise ConnectionClosedOK(None, None)  # Treat as connection closed
                 try:
                     # Get current callbacks from session_info (they may be updated dynamically)
                     session_info = self.active_sessions.get(session_id)
@@ -400,6 +433,20 @@ class GeminiLiveConversationService:
             # This prevents double cleanup if session was already removed by send_audio/send_text
             if session_id in self.active_sessions:
                 session_info = self.active_sessions[session_id]
+
+                # Notify that session is closing before cleanup
+                on_session_closed = session_info.get("on_session_closed")
+                if on_session_closed:
+                    try:
+                        if asyncio.iscoroutinefunction(on_session_closed):
+                            await on_session_closed(session_id)
+                        else:
+                            on_session_closed(session_id)
+                    except Exception as e:
+                        logger.warning(
+                            f"Error calling on_session_closed for session {session_id}: {e}"
+                        )
+
                 context_manager = session_info.get("context_manager")
                 try:
                     if context_manager:

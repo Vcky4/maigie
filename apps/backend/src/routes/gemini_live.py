@@ -321,6 +321,23 @@ When key concepts are discussed, automatically create or update notes for this t
             except Exception as e:
                 logger.error(f"Error saving assistant message: {e}")
 
+        # Callback to notify frontend when session closes unexpectedly
+        async def on_session_closed(closed_session_id: str):
+            """Notify frontend when Gemini Live session closes unexpectedly."""
+            try:
+                await gemini_live_connection_manager.send_json(
+                    {
+                        "type": "stopped",
+                        "message": "Session closed by server",
+                        "session_id": closed_session_id,
+                    },
+                    user.id,
+                )
+                # Clear active session
+                gemini_live_connection_manager.set_active_session(user.id, None)
+            except Exception as e:
+                logger.warning(f"Error notifying frontend of session closure: {e}")
+
         # Start conversation with callbacks
         session_id = request.session_id or str(uuid.uuid4())
         result = await gemini_service.start_conversation(
@@ -328,6 +345,7 @@ When key concepts are discussed, automatically create or update notes for this t
             session_id=session_id,
             on_user_message=on_user_message,
             on_assistant_message=on_assistant_message,
+            on_session_closed=on_session_closed,
             system_instruction=system_instruction,
         )
 
