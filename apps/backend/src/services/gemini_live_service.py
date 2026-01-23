@@ -341,7 +341,6 @@ class GeminiLiveConversationService:
                     data=audio_data,
                     mime_type="audio/pcm;rate=16000",
                 ),
-                turn_complete=False,
             )
 
             return True
