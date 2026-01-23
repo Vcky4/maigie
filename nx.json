@@ -18,6 +18,12 @@
       }
     },
     {
+      "plugin": "@nx/eslint/plugin",
+      "options": {
+        "targetName": "lint"
+      }
+    },
+    {
       "plugin": "@nx/expo/plugin",
       "options": {
         "startTargetName": "start",
@@ -34,16 +40,9 @@
       }
     },
     {
-      "plugin": "@nx/vitest",
+      "plugin": "@nx/jest/plugin",
       "options": {
-        "testTargetName": "test",
-        "ciTargetName": "test-ci"
-      }
-    },
-    {
-      "plugin": "@nx/eslint/plugin",
-      "options": {
-        "targetName": "lint"
+        "targetName": "test"
       }
     }
   ],
@@ -70,6 +69,11 @@
       "cache": true,
       "dependsOn": ["^build"],
       "inputs": ["default", "^default"]
+    },
+    "nx:run-commands": {
+      "options": {
+        "forwardAllArgs": false
+      }
     }
   }
 }

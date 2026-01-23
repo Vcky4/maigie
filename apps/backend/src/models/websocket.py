@@ -1,0 +1,69 @@
+"""
+WebSocket message models.
+
+Copyright (C) 2025 Maigie
+
+Licensed under the Business Source License 1.1 (BUSL-1.1).
+See LICENSE file in the repository root for details.
+"""
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class WebSocketMessage(BaseModel):
+    """Base WebSocket message model."""
+
+    type: str = Field(..., description="Message type")
+    data: dict[str, Any] | None = Field(None, description="Message data")
+    timestamp: str | None = Field(None, description="Message timestamp")
+
+
+class HeartbeatMessage(BaseModel):
+    """Heartbeat message model."""
+
+    type: Literal["heartbeat"] = "heartbeat"
+    status: Literal["ping", "pong"] = Field(..., description="Heartbeat status")
+
+
+class SubscribeMessage(BaseModel):
+    """Subscribe to channel message."""
+
+    type: Literal["subscribe"] = "subscribe"
+    channel: str = Field(..., description="Channel name to subscribe to")
+
+
+class UnsubscribeMessage(BaseModel):
+    """Unsubscribe from channel message."""
+
+    type: Literal["unsubscribe"] = "unsubscribe"
+    channel: str = Field(..., description="Channel name to unsubscribe from")
+
+
+class BroadcastMessage(BaseModel):
+    """Broadcast message model."""
+
+    type: Literal["broadcast"] = "broadcast"
+    channel: str | None = Field(None, description="Channel to broadcast to")
+    message: dict[str, Any] = Field(..., description="Message to broadcast")
+
+
+class ConnectionMessage(BaseModel):
+    """Connection status message."""
+
+    type: Literal["connection"] = "connection"
+    status: Literal["connected", "disconnected", "reconnected"] = Field(
+        ..., description="Connection status"
+    )
+    connection_id: str | None = Field(None, description="Connection ID")
+    heartbeat_interval: int | None = Field(None, description="Heartbeat interval in seconds")
+
+
+class ErrorMessage(BaseModel):
+    """Error message model."""
+
+    type: Literal["error"] = "error"
+    code: str = Field(..., description="Error code")
+    message: str = Field(..., description="Error message")
+    details: dict[str, Any] | None = Field(None, description="Error details")
