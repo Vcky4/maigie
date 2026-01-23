@@ -235,7 +235,7 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
             response_text = response.text
 
             # Extract JSON from response
-            import json  # Ensure json is imported locally if needed, though it's at top level
+            # Ensure json is imported locally if needed, though it's at top level
 
             json_match = re.search(r"\[.*?\]", response_text, re.DOTALL)
 
