@@ -36,9 +36,7 @@ async def db_lifecycle():
             pytest.skip("Database tables do not exist. Run migrations first.")
         except Exception as e:
             error_msg = str(e).lower()
-            if "table" in error_msg and (
-                "does not exist" in error_msg or "not found" in error_msg
-            ):
+            if "table" in error_msg and ("does not exist" in error_msg or "not found" in error_msg):
                 pytest.skip("Database tables do not exist. Run migrations first.")
             raise
         yield
@@ -89,15 +87,11 @@ async def auth_headers(client: AsyncClient):
 
     # Fallback: Try with trailing slash (FastAPI sometimes requires this)
     if response.status_code == 404:
-        response = await client.post(
-            "/api/v1/auth/login/", data=login_data, headers=headers
-        )
+        response = await client.post("/api/v1/auth/login/", data=login_data, headers=headers)
 
     # Fallback: Try standard OAuth2 path /token
     if response.status_code == 404:
-        response = await client.post(
-            "/api/v1/auth/token", data=login_data, headers=headers
-        )
+        response = await client.post("/api/v1/auth/token", data=login_data, headers=headers)
 
     if response.status_code != 200:
         pytest.fail(

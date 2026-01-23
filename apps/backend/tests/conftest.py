@@ -16,6 +16,7 @@ from src.main import app
 
 # 1. Force session-scoped event loop (handled by pytest-asyncio default or plugins)
 
+
 # 2. Manage Database Lifecycle
 @pytest.fixture(scope="function", autouse=True)
 async def db_lifecycle():
@@ -81,18 +82,15 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
 # ... (keep imports and other fixtures same) ...
 
+
 @pytest.fixture
 async def auth_headers(client: AsyncClient):
     """Creates a user, forces them active, and logs them in."""
     unique_email = f"test_{uuid.uuid4()}@example.com"
     password = "StrongPassword123!"
-    
-    user_data = {
-        "email": unique_email,
-        "password": password,
-        "name": "Test User"
-    }
-    
+
+    user_data = {"email": unique_email, "password": password, "name": "Test User"}
+
     # 1. Signup
     signup_res = await client.post("/api/v1/auth/signup", json=user_data)
     if signup_res.status_code != 201:
@@ -100,23 +98,17 @@ async def auth_headers(client: AsyncClient):
 
     # 2. FORCE ACTIVATE USER
     # Bypass OTP verification
-    user = await db.user.update(
-        where={"email": unique_email},
-        data={"isActive": True} 
-    )
+    user = await db.user.update(where={"email": unique_email}, data={"isActive": True})
     if not user:
-         pytest.fail("Database update failed: User not found after signup")
-    
+        pytest.fail("Database update failed: User not found after signup")
+
     # 3. Login
-    login_data = {
-        "username": unique_email,
-        "password": password
-    }
+    login_data = {"username": unique_email, "password": password}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
     # Try standard URL
     response = await client.post("/api/v1/auth/login", data=login_data, headers=headers)
-    
+
     # Fallback: Try with trailing slash (FastAPI sometimes requires this)
     if response.status_code == 404:
         response = await client.post("/api/v1/auth/login/", data=login_data, headers=headers)
@@ -126,7 +118,9 @@ async def auth_headers(client: AsyncClient):
         response = await client.post("/api/v1/auth/token", data=login_data, headers=headers)
 
     if response.status_code != 200:
-        pytest.fail(f"Login failed on all attempted URLs. Last Status: {response.status_code}, Body: {response.text}")
+        pytest.fail(
+            f"Login failed on all attempted URLs. Last Status: {response.status_code}, Body: {response.text}"
+        )
 
     token = response.json().get("access_token")
     if not token:
