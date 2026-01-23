@@ -70,10 +70,12 @@ class GeminiLiveConversationService:
         )
 
         # Create Live API configuration
+        # System instruction as string (simpler format that matches API docs)
+        system_instruction_text = system_instruction or default_instruction
+
+        # Create config with Content format (required by typed API)
         config = types.LiveConnectConfig(
-            system_instruction=types.Content(
-                parts=[types.Part(text=system_instruction or default_instruction)]
-            ),
+            system_instruction=types.Content(parts=[types.Part(text=system_instruction_text)]),
             response_modalities=["AUDIO", "TEXT"],
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
@@ -97,6 +99,8 @@ class GeminiLiveConversationService:
 
             context_manager = None
             last_error = None
+            successful_model = None
+
             for model_name in model_names:
                 try:
                     logger.info(f"Attempting to connect with model: {model_name}")
@@ -104,7 +108,8 @@ class GeminiLiveConversationService:
                         model=model_name,
                         config=config,
                     )
-                    logger.info(f"Successfully connected with model: {model_name}")
+                    logger.info(f"Successfully created context manager with model: {model_name}")
+                    successful_model = model_name
                     break
                 except Exception as e:
                     last_error = e
@@ -114,7 +119,30 @@ class GeminiLiveConversationService:
             if context_manager is None:
                 raise Exception(f"Failed to connect with any model. Last error: {last_error}")
 
-            session = await context_manager.__aenter__()
+            # Try to enter the context manager (this sends the config over WebSocket)
+            try:
+                session = await context_manager.__aenter__()
+                logger.info(f"Successfully entered context manager with model: {successful_model}")
+            except Exception as enter_error:
+                # If entering fails, try with a minimal config
+                logger.warning(f"Failed to enter context with full config: {enter_error}")
+                logger.info("Attempting with minimal config (TEXT only, no speech_config)")
+
+                # Try minimal config without speech_config
+                minimal_config = types.LiveConnectConfig(
+                    system_instruction=types.Content(
+                        parts=[types.Part(text=system_instruction_text)]
+                    ),
+                    response_modalities=["TEXT"],  # Try TEXT only first
+                )
+
+                # Create new connection with minimal config
+                context_manager = self.client.aio.live.connect(
+                    model=successful_model,
+                    config=minimal_config,
+                )
+                session = await context_manager.__aenter__()
+                logger.info("Successfully connected with minimal config")
 
             # Store session info
             session_info = {
