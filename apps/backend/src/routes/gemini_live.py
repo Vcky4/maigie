@@ -272,15 +272,19 @@ Format the notes with proper headings, lists, and structure."""
 async def stop_conversation(session_id: str, user: CurrentUser):
     """
     Stop an active Gemini Live conversation session.
+    Returns success even if session is already stopped (idempotent).
     """
     try:
         gemini_service = get_gemini_live_service()
 
-        # Verify session belongs to user
+        # Check if session exists
         session_info = gemini_service.get_session_info(session_id)
         if not session_info:
-            raise HTTPException(status_code=404, detail="Session not found")
+            # Session already stopped or doesn't exist - return success (idempotent)
+            logger.info(f"Stop requested for non-existent session {session_id}, returning success")
+            return {"session_id": session_id, "status": "stopped", "already_stopped": True}
 
+        # Verify session belongs to user
         if session_info["user_id"] != user.id:
             raise HTTPException(status_code=403, detail="Session does not belong to user")
 
@@ -440,6 +444,11 @@ async def gemini_live_websocket(
             # Receive messages from client
             message = await websocket.receive()
 
+            # Check for disconnect message
+            if message.get("type") == "websocket.disconnect":
+                logger.info(f"WebSocket disconnect received for session {session_id}")
+                break
+
             if "text" in message:
                 # JSON message (control commands)
                 data = json.loads(message["text"])
@@ -471,6 +480,25 @@ async def gemini_live_websocket(
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session {session_id}")
+        # Don't try to close - already disconnected
+    except RuntimeError as e:
+        # Handle "Cannot call receive once disconnect message has been received" error
+        error_msg = str(e).lower()
+        if "disconnect" in error_msg or "receive" in error_msg:
+            logger.info(f"WebSocket already disconnected for session {session_id}: {e}")
+        else:
+            logger.error(f"WebSocket runtime error for session {session_id}: {e}", exc_info=True)
+            # Only try to close if it's not a disconnect-related error
+            try:
+                await websocket.close()
+            except Exception:
+                pass  # WebSocket already closed
     except Exception as e:
         logger.error(f"WebSocket error for session {session_id}: {e}", exc_info=True)
-        await websocket.close()
+        # Only try to close if websocket is still open and error is not disconnect-related
+        error_msg = str(e).lower()
+        if "disconnect" not in error_msg and "close" not in error_msg:
+            try:
+                await websocket.close()
+            except Exception:
+                pass  # WebSocket already closed

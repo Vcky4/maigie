@@ -413,11 +413,14 @@ class GeminiLiveConversationService:
                 except Exception as e:
                     logger.warning(f"Error closing session: {e}")
 
-            del self.active_sessions[session_id]
+            # Remove session from active_sessions (handle race condition)
+            self.active_sessions.pop(session_id, None)
             logger.info(f"Stopped conversation session {session_id}")
             return True
         except Exception as e:
             logger.error(f"Error stopping session {session_id}: {e}", exc_info=True)
+            # Ensure session is removed even if there was an error
+            self.active_sessions.pop(session_id, None)
             return False
 
     def is_session_active(self, session_id: str) -> bool:
