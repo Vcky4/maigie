@@ -83,15 +83,18 @@ class GeminiLiveConversationService:
         )
 
         # Create Live API session
+        # Note: connect() returns an async context manager, so we need to enter it explicitly
         try:
-            session = await self.client.aio.live.connect(
+            context_manager = self.client.aio.live.connect(
                 model="models/gemini-2.0-flash-exp",
                 config=config,
             )
+            session = await context_manager.__aenter__()
 
             # Store session info
             session_info = {
                 "session": session,
+                "context_manager": context_manager,  # Store context manager for cleanup
                 "user_id": user_id,
                 "session_id": session_id,
                 "on_user_message": on_user_message,
@@ -180,8 +183,13 @@ class GeminiLiveConversationService:
         finally:
             # Clean up session if it's still in active_sessions
             if session_id in self.active_sessions:
+                session_info = self.active_sessions[session_id]
+                context_manager = session_info.get("context_manager")
                 try:
-                    await session.close()
+                    if context_manager:
+                        await context_manager.__aexit__(None, None, None)
+                    elif session:
+                        await session.close()
                 except Exception as e:
                     logger.warning(f"Error closing session {session_id}: {e}")
 

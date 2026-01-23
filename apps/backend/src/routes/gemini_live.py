@@ -61,6 +61,7 @@ async def start_conversation(
                 data={
                     "userId": user.id,
                     "startTime": datetime.now(timezone.utc),
+                    "duration": 0.0,  # Will be updated when session ends
                     "courseId": request.course_id,
                     "topicId": request.topic_id,
                 }
