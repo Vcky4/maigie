@@ -35,6 +35,8 @@ class GeminiLiveConnectionManager:
         self.active_connections: dict[str, WebSocket] = {}
         # Maps user_id -> active_session_id (only one active Gemini Live session per user)
         self.user_sessions: dict[str, str] = {}
+        # Track last error message time per user to rate limit errors
+        self.last_error_time: dict[str, float] = {}
 
     async def connect(self, websocket: WebSocket, user_id: str):
         """Accept a new WebSocket connection and store it."""
@@ -70,9 +72,13 @@ class GeminiLiveConnectionManager:
             del self.user_sessions[user_id]
         logger.info(f"User {user_id} disconnected from Gemini Live WebSocket.")
 
-    def set_active_session(self, user_id: str, session_id: str):
+    def set_active_session(self, user_id: str, session_id: str | None):
         """Set the active Gemini Live session for a user."""
-        self.user_sessions[user_id] = session_id
+        if session_id is None:
+            if user_id in self.user_sessions:
+                del self.user_sessions[user_id]
+        else:
+            self.user_sessions[user_id] = session_id
 
     def get_active_session(self, user_id: str) -> str | None:
         """Get the active Gemini Live session for a user."""
@@ -649,14 +655,42 @@ async def gemini_live_websocket(
                                 audio_bytes = base64.b64decode(audio_base64)
                                 success = await gemini_service.send_audio(session_id, audio_bytes)
                                 if not success:
-                                    await gemini_live_connection_manager.send_json(
-                                        {
-                                            "type": "error",
-                                            "message": "Failed to send audio - session may be inactive",
-                                            "session_id": session_id,
-                                        },
-                                        user.id,
+                                    # Rate limit error messages (max once per 5 seconds per user)
+                                    current_time = datetime.now(timezone.utc).timestamp()
+                                    last_error = gemini_live_connection_manager.last_error_time.get(
+                                        user.id, 0
                                     )
+
+                                    if current_time - last_error > 5.0:  # 5 second cooldown
+                                        gemini_live_connection_manager.last_error_time[user.id] = (
+                                            current_time
+                                        )
+
+                                        # Check if session still exists
+                                        session_info = gemini_service.get_session_info(session_id)
+                                        if not session_info:
+                                            # Session doesn't exist - clear active session and notify client
+                                            gemini_live_connection_manager.set_active_session(
+                                                user.id, None
+                                            )
+                                            await gemini_live_connection_manager.send_json(
+                                                {
+                                                    "type": "stopped",
+                                                    "message": "Session no longer active",
+                                                    "session_id": session_id,
+                                                },
+                                                user.id,
+                                            )
+                                        else:
+                                            # Session exists but send_audio failed - might be temporary
+                                            await gemini_live_connection_manager.send_json(
+                                                {
+                                                    "type": "error",
+                                                    "message": "Failed to send audio - session may be inactive",
+                                                    "session_id": session_id,
+                                                },
+                                                user.id,
+                                            )
                             except Exception as e:
                                 logger.error(f"Error processing audio: {e}")
                                 await gemini_live_connection_manager.send_json(
@@ -698,14 +732,36 @@ async def gemini_live_websocket(
                 try:
                     success = await gemini_service.send_audio(session_id, audio_bytes)
                     if not success:
-                        await gemini_live_connection_manager.send_json(
-                            {
-                                "type": "error",
-                                "message": "Failed to send audio - session may be inactive",
-                                "session_id": session_id,
-                            },
-                            user.id,
-                        )
+                        # Rate limit error messages (max once per 5 seconds per user)
+                        current_time = datetime.now(timezone.utc).timestamp()
+                        last_error = gemini_live_connection_manager.last_error_time.get(user.id, 0)
+
+                        if current_time - last_error > 5.0:  # 5 second cooldown
+                            gemini_live_connection_manager.last_error_time[user.id] = current_time
+
+                            # Check if session still exists
+                            session_info = gemini_service.get_session_info(session_id)
+                            if not session_info:
+                                # Session doesn't exist - clear active session and notify client
+                                gemini_live_connection_manager.set_active_session(user.id, None)
+                                await gemini_live_connection_manager.send_json(
+                                    {
+                                        "type": "stopped",
+                                        "message": "Session no longer active",
+                                        "session_id": session_id,
+                                    },
+                                    user.id,
+                                )
+                            else:
+                                # Session exists but send_audio failed - might be temporary
+                                await gemini_live_connection_manager.send_json(
+                                    {
+                                        "type": "error",
+                                        "message": "Failed to send audio - session may be inactive",
+                                        "session_id": session_id,
+                                    },
+                                    user.id,
+                                )
                 except Exception as e:
                     logger.error(f"Error processing audio bytes: {e}")
                     await gemini_live_connection_manager.send_json(
