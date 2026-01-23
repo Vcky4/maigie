@@ -442,6 +442,14 @@ async def gemini_live_websocket(
 
     try:
         while True:
+            # Check if session is still active before processing messages
+            if session_id not in gemini_service.get_active_sessions():
+                logger.info(f"Session {session_id} no longer active, closing WebSocket")
+                await websocket.send_json(
+                    {"type": "error", "message": "Session ended due to service unavailability"}
+                )
+                break
+
             # Receive messages from client
             message = await websocket.receive()
 
@@ -467,17 +475,47 @@ async def gemini_live_websocket(
                     if audio_base64:
                         try:
                             audio_bytes = base64.b64decode(audio_base64)
-                            await gemini_service.send_audio(session_id, audio_bytes)
+                            success = await gemini_service.send_audio(session_id, audio_bytes)
+                            if not success:
+                                logger.warning(
+                                    f"Failed to send audio for session {session_id}, closing WebSocket"
+                                )
+                                await websocket.send_json(
+                                    {
+                                        "type": "error",
+                                        "message": "Failed to send audio - session may be inactive",
+                                    }
+                                )
+                                break
                         except Exception as e:
                             logger.error(f"Error processing audio: {e}")
+                            await websocket.send_json(
+                                {"type": "error", "message": f"Error processing audio: {str(e)}"}
+                            )
+                            break
 
             elif "bytes" in message:
                 # Binary audio data (raw PCM)
                 audio_bytes = message["bytes"]
                 try:
-                    await gemini_service.send_audio(session_id, audio_bytes)
+                    success = await gemini_service.send_audio(session_id, audio_bytes)
+                    if not success:
+                        logger.warning(
+                            f"Failed to send audio bytes for session {session_id}, closing WebSocket"
+                        )
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": "Failed to send audio - session may be inactive",
+                            }
+                        )
+                        break
                 except Exception as e:
                     logger.error(f"Error processing audio bytes: {e}")
+                    await websocket.send_json(
+                        {"type": "error", "message": f"Error processing audio: {str(e)}"}
+                    )
+                    break
 
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for session {session_id}")
