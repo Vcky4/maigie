@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -296,3 +297,74 @@ async def send_subscription_success_email(email: EmailStr, name: str, tier: str)
     except Exception as e:
         logger.error(f"Failed to send subscription email: {e}")
         # Don't raise here, as subscription was successful
+
+
+async def send_bulk_email(
+    email: EmailStr,
+    name: str | None,
+    subject: str,
+    content: str,
+):
+    """
+    Sends a bulk email to a user using the generic bulk email template.
+
+    Args:
+        email: Recipient email address
+        name: Recipient name (optional)
+        subject: Email subject line
+        content: HTML content for the email body
+    """
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping bulk email to {email}")
+        return
+
+    template_data = {
+        "name": name,
+        "subject": subject,
+        "content": content,
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
+
+    # Render templates
+    html_template = jinja_env.get_template("bulk_email.html")
+    try:
+        text_template = jinja_env.get_template("bulk_email.txt")
+        # Convert HTML content to plain text for text version
+        # Simple conversion: remove HTML tags (basic implementation)
+        text_content = re.sub(r"<[^>]+>", "", content)
+        text_content = (
+            text_content.replace("&nbsp;", " ")
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+        )
+        template_data["content"] = text_content
+        text_body = text_template.render(**template_data)
+    except Exception:
+        # Fallback: simple text version
+        text_content = re.sub(r"<[^>]+>", "", content)
+        text_body = f"{subject}\n\nHi {name or 'there'},\n\n{text_content}"
+
+    # Reset content for HTML template
+    template_data["content"] = content
+    html_body = html_template.render(**template_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"bulk-{email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(email),
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Bulk email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send bulk email to {email}: {e}")
+        raise

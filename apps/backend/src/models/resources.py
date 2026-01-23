@@ -33,6 +33,10 @@ class ResourceCreate(BaseModel):
     description: str | None = Field(None, max_length=1000)
     type: str = Field(default="OTHER")
     metadata: dict[str, Any] | None = None
+    isRecommended: bool = Field(default=False)
+    recommendationScore: float | None = Field(None, ge=0.0, le=1.0)
+    courseId: str | None = None
+    topicId: str | None = None
 
 
 class ResourceRecommendationRequest(BaseModel):
@@ -84,3 +88,13 @@ class ResourceResponse(BaseModel):
     updatedAt: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ResourceListResponse(BaseModel):
+    """Schema for paginated resource list response."""
+
+    resources: list[ResourceResponse]
+    total: int
+    page: int
+    pageSize: int
+    hasMore: bool

@@ -17,6 +17,13 @@ class Token(BaseModel):
 
     access_token: str
     token_type: str = "bearer"
+    refresh_token: str | None = None
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request schema for token refresh."""
+
+    refresh_token: str
 
 
 class TokenData(BaseModel):
@@ -34,6 +41,7 @@ class UserSignup(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, description="Password must be at least 8 characters")
     name: str = Field(..., description="Full Name")
+    referralCode: str | None = Field(None, description="Optional referral code from URL parameter")
 
 
 class UserLogin(BaseModel):

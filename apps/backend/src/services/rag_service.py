@@ -13,14 +13,21 @@ import os
 import re
 from typing import Any
 
-import google.generativeai as genai
+import google.generativeai as genai  # <--- FIXED IMPORT
 from fastapi import HTTPException
+from google.generativeai.types import HarmBlockThreshold, HarmCategory
 
 from src.core.database import db
 from src.services.embedding_service import embedding_service
+from src.services.web_search_service import web_search_service
 
-# Configure API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Configure API globally to match llm_service
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    # Optional: Log warning, though llm_service usually handles the config
+    print("⚠️ GEMINI_API_KEY not found in environment variables.")
+else:
+    genai.configure(api_key=api_key)
 
 
 class RAGService:
@@ -28,7 +35,11 @@ class RAGService:
 
     def __init__(self):
         """Initialize the RAG service."""
-        pass
+        # Safety settings
+        self.safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+        }
 
     async def retrieve_relevant_context(
         self,
@@ -39,15 +50,6 @@ class RAGService:
     ) -> list[dict[str, Any]]:
         """
         Retrieve relevant context from user's data using semantic search.
-
-        Args:
-            query: The search query
-            user_id: ID of the user
-            object_types: Types of objects to search ("resource", "note", "course", "topic")
-            limit: Maximum number of results
-
-        Returns:
-            List of relevant objects with their content and metadata
         """
         try:
             # Find similar embeddings
@@ -88,14 +90,6 @@ class RAGService:
     ) -> dict[str, Any] | None:
         """
         Fetch an object from the database based on type and ID.
-
-        Args:
-            object_type: Type of object
-            object_id: ID of the object
-            user_id: User ID for ownership verification
-
-        Returns:
-            Object data or None if not found or not owned by user
         """
         try:
             if object_type == "resource":
@@ -160,16 +154,7 @@ class RAGService:
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """
-        Generate personalized recommendations using RAG.
-
-        Args:
-            query: The user's query or intent
-            user_id: ID of the user
-            user_context: Additional user context (courses, goals, recent activity)
-            limit: Maximum number of recommendations
-
-        Returns:
-            List of recommended resources with scores and explanations
+        Generate personalized recommendations using RAG with Google Search Grounding.
         """
         try:
             # 1. Retrieve relevant context from user's data
@@ -203,7 +188,7 @@ class RAGService:
                 "\n".join(context_parts) if context_parts else "No specific context available."
             )
 
-            # 3. Generate recommendations using LLM with RAG context
+            # 3. Use Gemini with Google Search Grounding
             recommendation_prompt = f"""You are an AI assistant helping a student find educational resources.
 
 User Query: {query}
@@ -211,54 +196,80 @@ User Query: {query}
 Context about the user:
 {context_str}
 
-Based on the user's query and context, generate a list of educational resource recommendations.
+Based on the user's query and context, search the web and generate a list of educational resource recommendations.
 For each recommendation, provide:
-- Title
-- URL (if you know a specific one, otherwise suggest a type like "video", "article", "course")
-- Description
+- Title (from the actual web page)
+- URL (the real URL from your web search - DO NOT make up URLs)
+- Description (summarize why this resource is useful)
 - Resource type (VIDEO, ARTICLE, BOOK, COURSE, DOCUMENT, WEBSITE, PODCAST, or OTHER)
-- Why this resource is relevant to the user
+- Relevance explanation (why this resource is relevant to the user)
 
 Format your response as a JSON array with this structure:
 [
   {{
     "title": "Resource Title",
-    "url": "https://example.com/resource",
+    "url": "https://real-url.com/resource",
     "description": "Why this resource is useful",
-    "type": "VIDEO",
-    "relevance": "Explanation of why this is relevant"
+    "type": "VIDEO|ARTICLE|BOOK|COURSE|DOCUMENT|WEBSITE|PODCAST|OTHER",
+    "relevance": "Explanation of why this resource is relevant to the user"
   }}
 ]
 
-Generate {limit} high-quality recommendations. Focus on resources that align with the user's learning goals and current courses.
+Return exactly {limit} high-quality recommendations with real URLs from your web search."""
 
-IMPORTANT: If the user is currently viewing a specific topic or course, prioritize resources that are directly relevant to that topic/course. Include the reason why each resource is recommended (e.g., "for learning Python basics", "related to machine learning course")."""
+            # <--- FIXED: Use standard SDK syntax for Tools --->
+            tools = [
+                {"google_search": {}}  # Enables Google Search Grounding
+            ]
 
-            # Call LLM to generate recommendations
-            # Create a temporary model instance for this specific prompt
-            temp_model = genai.GenerativeModel("models/gemini-flash-latest")
-            response = await temp_model.generate_content_async(recommendation_prompt)
-            response_text = response
+            # Use a model that supports tools (gemini-1.5-flash or gemini-1.5-pro)
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                tools=tools,
+                system_instruction="You are a helpful educational assistant.",
+            )
+
+            # Call async generation directly
+            response = await model.generate_content_async(
+                recommendation_prompt, safety_settings=self.safety_settings
+            )
+
+            response_text = response.text
 
             # Extract JSON from response
-            response_text_str = (
-                response_text.text if hasattr(response_text, "text") else str(response_text)
-            )
-            json_match = re.search(r"\[.*?\]", response_text_str, re.DOTALL)
+            import json  # Ensure json is imported locally if needed, though it's at top level
+
+            json_match = re.search(r"\[.*?\]", response_text, re.DOTALL)
+
             if json_match:
                 recommendations = json.loads(json_match.group(0))
             else:
                 # Fallback: try to parse entire response
                 try:
-                    recommendations = json.loads(response_text_str)
+                    recommendations = json.loads(response_text)
                 except json.JSONDecodeError:
                     # If JSON parsing fails, return empty list
-                    print(f"Failed to parse LLM response as JSON: {response_text_str[:200]}")
+                    print("JSON Parse failed for recommendations")
                     recommendations = []
 
-            # 4. Score and rank recommendations
+            # 4. Validate URLs are real (not example.com) and infer resource types
+            validated_recommendations = []
+            for rec in recommendations:
+                url = rec.get("url", "")
+                # Skip if URL is fake/placeholder
+                if url and not url.startswith("https://example.com"):
+                    # Ensure resource type is set
+                    if not rec.get("type") or rec.get("type") == "OTHER":
+                        rec["type"] = web_search_service.infer_resource_type(
+                            url,
+                            rec.get("title", ""),
+                            rec.get("description", ""),
+                        )
+                    validated_recommendations.append(rec)
+
+            # 5. Score and rank recommendations
             scored_recommendations = []
-            for rec in recommendations[:limit]:
+            for rec in validated_recommendations[:limit]:
                 # Calculate score based on relevance to query and user context
                 score = self._calculate_recommendation_score(rec, query, relevant_context)
                 scored_recommendations.append(
@@ -275,6 +286,7 @@ IMPORTANT: If the user is currently viewing a specific topic or course, prioriti
 
         except Exception as e:
             print(f"RAG recommendation generation error: {e}")
+            # Do not re-raise traceback here to keep logs clean in prod, just return empty or 500
             import traceback
 
             traceback.print_exc()
@@ -288,13 +300,6 @@ IMPORTANT: If the user is currently viewing a specific topic or course, prioriti
     ) -> float:
         """
         Calculate a relevance score for a recommendation.
-
-        Args:
-            recommendation: The recommendation object
-            relevant_context: Relevant context from user's data
-
-        Returns:
-            Score from 0.0 to 1.0
         """
         score = 0.5  # Base score
 
@@ -309,14 +314,12 @@ IMPORTANT: If the user is currently viewing a specific topic or course, prioriti
         desc_words = set(desc_lower.split())
 
         # Title matches are more important
-        title_overlap = len(query_words & title_words) / max(len(query_words), 1)
-        desc_overlap = len(query_words & desc_words) / max(len(query_words), 1)
+        if query_words:
+            title_overlap = len(query_words & title_words) / max(len(query_words), 1)
+            desc_overlap = len(query_words & desc_words) / max(len(query_words), 1)
 
-        score += title_overlap * 0.3
-        score += desc_overlap * 0.2
-
-        # Boost if recommendation type matches user's preferences (could be enhanced with user memory)
-        # For now, we'll keep it simple
+            score += title_overlap * 0.3
+            score += desc_overlap * 0.2
 
         return min(1.0, max(0.0, score))
 

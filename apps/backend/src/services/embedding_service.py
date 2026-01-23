@@ -105,12 +105,14 @@ class EmbeddingService:
             # Generate embedding
             embedding_vector = await self.generate_embedding(content)
 
-            # Store in database
+            # Store in database (wrap vector in Json for Prisma)
+            from prisma import Json
+
             embedding_record = await db.embedding.create(
                 data={
                     "objectType": object_type,
                     "objectId": object_id,
-                    "vector": embedding_vector,  # Stored as JSON array
+                    "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,  # Store truncated content
                     "metadata": metadata,
                     "resourceId": resource_id,
@@ -149,12 +151,21 @@ class EmbeddingService:
             # Generate query embedding
             query_embedding = await self.generate_query_embedding(query_text)
 
-            # Get all embeddings (or filtered by object_type)
+            # Get embeddings (or filtered by object_type) with a reasonable limit
+            # For production, this should use pgvector for efficient similarity search
+            # For now, we limit to a reasonable number to avoid loading all embeddings
             where_clause = {}
             if object_type:
                 where_clause["objectType"] = object_type
 
-            all_embeddings = await db.embedding.find_many(where=where_clause)
+            # Limit to 1000 embeddings max for performance
+            # In production with pgvector, this would be handled by the database
+            max_embeddings_to_check = min(limit * 20, 1000)  # Check up to 20x the limit or 1000 max
+            all_embeddings = await db.embedding.find_many(
+                where=where_clause,
+                take=max_embeddings_to_check,
+                order={"createdAt": "desc"},  # Prefer recent embeddings
+            )
 
             # Calculate cosine similarity for each embedding
             similarities = []
@@ -224,6 +235,7 @@ class EmbeddingService:
         object_id: str,
         content: str,
         metadata: dict[str, Any] | None = None,
+        resource_id: str | None = None,
     ) -> str:
         """
         Update an existing embedding or create a new one if it doesn't exist.
@@ -233,6 +245,7 @@ class EmbeddingService:
             object_id: ID of the object
             content: New text content to embed
             metadata: Optional metadata
+            resource_id: Optional resource ID (for linking)
 
         Returns:
             ID of the embedding record
@@ -246,18 +259,28 @@ class EmbeddingService:
             if existing:
                 # Update existing embedding
                 embedding_vector = await self.generate_embedding(content)
+                from prisma import Json
+
+                data_to_update = {
+                    "vector": Json(embedding_vector),  # Wrap in Json for Prisma
+                    "content": content[:1000] if content else None,
+                    "metadata": metadata,
+                }
+
+                # Update resourceId if provided
+                if resource_id:
+                    data_to_update["resourceId"] = resource_id
+
                 updated = await db.embedding.update(
                     where={"id": existing.id},
-                    data={
-                        "vector": embedding_vector,
-                        "content": content[:1000] if content else None,
-                        "metadata": metadata,
-                    },
+                    data=data_to_update,
                 )
                 return updated.id
             else:
                 # Create new embedding
-                return await self.store_embedding(object_type, object_id, content, metadata)
+                return await self.store_embedding(
+                    object_type, object_id, content, metadata, resource_id
+                )
 
         except Exception as e:
             print(f"Error updating embedding: {e}")
