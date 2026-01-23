@@ -335,13 +335,12 @@ class GeminiLiveConversationService:
             session = session_info["session"]
 
             # Send audio to Gemini Live API
+            # Use Blob with correct MIME type including sample rate
             await session.send_realtime_input(
-                media_chunks=[
-                    types.RealtimeInput(
-                        mime_type="audio/pcm",
-                        data=audio_data,
-                    )
-                ],
+                audio=types.Blob(
+                    data=audio_data,
+                    mime_type="audio/pcm;rate=16000",
+                ),
                 turn_complete=False,
             )
 
