@@ -78,17 +78,42 @@ class GeminiLiveConversationService:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
-                )
+                ),
+                language_code="en-US",
             ),
         )
 
         # Create Live API session
         # Note: connect() returns an async context manager, so we need to enter it explicitly
         try:
-            context_manager = self.client.aio.live.connect(
-                model="models/gemini-2.0-flash-exp",
-                config=config,
-            )
+            # Use a valid Gemini Live model
+            # Live API models typically don't use "models/" prefix
+            # Try different model names in order of preference
+            model_names = [
+                "gemini-2.5-flash-native-audio-preview-12-2025",
+                "gemini-live-2.5-flash-native-audio",
+                "gemini-live-2.5-flash",
+            ]
+
+            context_manager = None
+            last_error = None
+            for model_name in model_names:
+                try:
+                    logger.info(f"Attempting to connect with model: {model_name}")
+                    context_manager = self.client.aio.live.connect(
+                        model=model_name,
+                        config=config,
+                    )
+                    logger.info(f"Successfully connected with model: {model_name}")
+                    break
+                except Exception as e:
+                    last_error = e
+                    logger.warning(f"Failed to connect with model {model_name}: {e}")
+                    continue
+
+            if context_manager is None:
+                raise Exception(f"Failed to connect with any model. Last error: {last_error}")
+
             session = await context_manager.__aenter__()
 
             # Store session info
