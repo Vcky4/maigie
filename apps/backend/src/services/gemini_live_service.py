@@ -411,26 +411,45 @@ class GeminiLiveConversationService:
                 )
                 raise  # Re-raise to be caught by outer handler
             except StopAsyncIteration:
-                # Iterator exhausted - connection closed normally
-                logger.info(
-                    f"Receive iterator exhausted for session {session_id}. "
-                    f"Received {message_count} messages total."
+                # Iterator exhausted - this might mean connection closed or just no more messages
+                # Log more details to understand what's happening
+                logger.warning(
+                    f"Receive iterator exhausted (StopAsyncIteration) for session {session_id}. "
+                    f"Received {message_count} messages total. "
+                    f"This usually means the connection closed."
                 )
+                # Check if session still exists and is valid before treating as closed
+                if session_id in self.active_sessions:
+                    session_info = self.active_sessions.get(session_id)
+                    session = session_info.get("session") if session_info else None
+                    if session:
+                        # Try to check if session is still open
+                        try:
+                            # If we can't determine, assume connection is closed
+                            logger.info(
+                                f"Session {session_id} still in active_sessions, but iterator exhausted"
+                            )
+                        except Exception:
+                            pass
                 raise ConnectionClosedOK(None, None)  # Treat as connection closed
 
         except asyncio.CancelledError:
             logger.info(f"Response handler cancelled for session {session_id}")
+            # Don't clean up on cancellation - let the canceller handle cleanup
+            return
         except (ConnectionClosedOK, ConnectionClosed) as e:
             logger.warning(
                 f"Gemini Live connection closed for session {session_id}: {e}. "
-                f"Received {message_count} messages before closure."
+                f"Received {message_count} messages before closure. "
+                f"Exception type: {type(e).__name__}, args: {e.args}"
             )
-            # Don't remove session here - let send_audio/send_text handle it
-            # This allows the frontend to be notified properly
+            # Connection closed - this is expected when the API closes the connection
+            # The finally block will handle cleanup
         except Exception as e:
             logger.error(
                 f"Error in response handler for session {session_id}: {e}. "
-                f"Received {message_count} messages before error.",
+                f"Received {message_count} messages before error. "
+                f"Exception type: {type(e).__name__}",
                 exc_info=True,
             )
         finally:
@@ -443,32 +462,46 @@ class GeminiLiveConversationService:
                 session_info = self.active_sessions[session_id]
 
                 # Notify that session is closing before cleanup
+                # This allows the frontend to be notified before the session is removed
                 on_session_closed = session_info.get("on_session_closed")
                 if on_session_closed:
                     try:
+                        logger.info(f"Calling on_session_closed callback for session {session_id}")
                         if asyncio.iscoroutinefunction(on_session_closed):
                             await on_session_closed(session_id)
                         else:
                             on_session_closed(session_id)
+                        logger.info(
+                            f"Successfully called on_session_closed for session {session_id}"
+                        )
                     except Exception as e:
-                        logger.warning(
-                            f"Error calling on_session_closed for session {session_id}: {e}"
+                        logger.error(
+                            f"Error calling on_session_closed for session {session_id}: {e}",
+                            exc_info=True,
                         )
 
+                # Get session and context_manager before removing from active_sessions
                 context_manager = session_info.get("context_manager")
+                session = session_info.get("session")
+
+                # Remove session from active_sessions BEFORE closing to prevent race conditions
+                # This ensures send_audio/send_text will see the session as inactive
+                self.active_sessions.pop(session_id, None)
+                logger.info(f"Removed session {session_id} from active_sessions")
+
+                # Now close the connection
                 try:
                     if context_manager:
                         logger.info(f"Closing context manager for session {session_id}")
                         await context_manager.__aexit__(None, None, None)
                     elif session:
                         logger.info(f"Closing session directly for session {session_id}")
-                        await session.close()
+                        try:
+                            await session.close()
+                        except Exception as close_error:
+                            logger.warning(f"Error closing session object: {close_error}")
                 except Exception as e:
-                    logger.warning(f"Error closing session {session_id}: {e}")
-                finally:
-                    # Remove session from active_sessions after cleanup
-                    self.active_sessions.pop(session_id, None)
-                    logger.info(f"Removed session {session_id} from active_sessions")
+                    logger.warning(f"Error closing session {session_id}: {e}", exc_info=True)
 
     async def send_audio(self, session_id: str, audio_data: bytes) -> bool:
         """
