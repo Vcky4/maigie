@@ -36,7 +36,7 @@ COPY pyproject.toml poetry.lock ./
 # Regenerate lock file on Linux to get Linux-compatible wheels
 RUN poetry lock --no-interaction
 
-# Install PyTorch first (required by lmdeploy)
+# Install PyTorch FIRST (before Poetry) to avoid duplication
 # CUDA version works on both GPU and CPU (falls back to CPU if GPU unavailable)
 RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
         echo "Installing CUDA-enabled PyTorch (CUDA ${CUDA_VERSION})..." && \
@@ -44,30 +44,40 @@ RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
     else \
         echo "Installing CPU-only PyTorch..." && \
         pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; \
-    fi
+    fi && \
+    pip cache purge
 
-# Install all dependencies via Poetry (including soprano-tts, but lmdeploy may fail)
-RUN poetry config virtualenvs.create false && poetry install --no-root --no-interaction --no-ansi || true
+# Install Poetry dependencies (Poetry will skip torch since it's already installed)
+RUN poetry config virtualenvs.create false && \
+    poetry install --no-root --no-interaction --no-ansi --without dev || true
+
+# Clean up build artifacts and caches aggressively to save space
+RUN rm -rf /root/.cache/pip && \
+    rm -rf /root/.cache/pypoetry && \
+    rm -rf /tmp/* && \
+    find /usr/local/lib/python3.12/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.12/site-packages -name "*.pyo" -delete 2>/dev/null || true
 
 # Install lmdeploy - required for soprano-tts performance
 # Try multiple installation methods to ensure it works
-RUN set -e; \
-    if ! python3 -c "import lmdeploy" 2>/dev/null; then \
-        echo "Installing lmdeploy..."; \
-        pip install --no-cache-dir lmdeploy && echo "lmdeploy installed via pip wheels" || \
-        (echo "Trying lmdeploy without TurboMind..." && \
-         DISABLE_TURBOMIND=1 pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
-         echo "lmdeploy installed from source (without TurboMind)") || \
-        (echo "Trying full lmdeploy source install..." && \
-         pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
-         echo "lmdeploy installed from source") || \
-        (echo "Trying specific lmdeploy version..." && \
-         pip install --no-cache-dir "lmdeploy>=0.2.0,<0.3.0" && \
-         echo "lmdeploy installed (specific version)") || \
-        (echo "ERROR: Failed to install lmdeploy with all methods" && \
-         echo "TTS will use transformers backend (slower)" && \
-         exit 0); \
-    fi
+RUN sh -c 'if ! python3 -c "import lmdeploy" 2>/dev/null; then \
+    echo "Installing lmdeploy..."; \
+    pip install --no-cache-dir lmdeploy && echo "lmdeploy installed via pip wheels" || \
+    (echo "Trying lmdeploy without TurboMind..." && \
+     DISABLE_TURBOMIND=1 pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
+     echo "lmdeploy installed from source (without TurboMind)") || \
+    (echo "Trying full lmdeploy source install..." && \
+     pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
+     echo "lmdeploy installed from source") || \
+    (echo "Trying specific lmdeploy version..." && \
+     pip install --no-cache-dir "lmdeploy>=0.2.0,<0.3.0" && \
+     echo "lmdeploy installed (specific version)") || \
+    (echo "ERROR: Failed to install lmdeploy with all methods" && \
+     echo "TTS will use transformers backend (slower)" && \
+     exit 0); \
+    pip cache purge; \
+fi'
 
 # Ensure soprano-tts is installed (should be from Poetry, but verify)
 RUN sh -c 'if ! python3 -c "import soprano_tts" 2>/dev/null; then \
