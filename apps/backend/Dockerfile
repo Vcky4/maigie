@@ -36,14 +36,15 @@ COPY pyproject.toml poetry.lock ./
 # Regenerate lock file on Linux to get Linux-compatible wheels
 RUN poetry lock --no-interaction
 
-# Remove torch from lock file to prevent Poetry from installing it (we install it separately)
-# This saves significant disk space by avoiding duplicate PyTorch installations
+# Remove torch and lmdeploy from lock file to prevent Poetry from installing them
+# We install torch separately to avoid CUDA dependency issues
+# We install lmdeploy separately because it has ABI compatibility issues with Poetry
 RUN python3 << 'EOF'
 import sys
 lines = open('poetry.lock').readlines()
 output = []
 skip = False
-pkgs = {'torch', 'torchvision', 'torchaudio'}
+pkgs = {'torch', 'torchvision', 'torchaudio', 'lmdeploy'}
 i = 0
 while i < len(lines):
     line = lines[i]
@@ -53,7 +54,7 @@ while i < len(lines):
             pkg_name = lines[i + 1].split('name = "')[1].split('"')[0]
             skip = pkg_name in pkgs
     if not skip:
-        # Check if line contains any torch package references
+        # Check if line contains any package references we want to skip
         should_skip_line = False
         for p in pkgs:
             if p + ' =' in line:
@@ -65,14 +66,15 @@ while i < len(lines):
 open('poetry.lock', 'w').writelines(output)
 EOF
 
-# Install Poetry dependencies first (without torch to save space)
-# Remove || true to ensure failures are caught, but allow some packages to fail if they're optional
+# Install Poetry dependencies first (without torch and lmdeploy to avoid issues)
 RUN poetry config virtualenvs.create false && \
   poetry install --no-root --no-interaction --no-ansi --without dev
 
-# Verify critical packages are installed
-RUN python3 -c "import prisma; print('✅ Prisma installed')" && \
-  python3 -c "import fastapi; print('✅ FastAPI installed')" && \
+# Verify critical packages are installed (fail if required packages are missing)
+RUN python3 -c "import prisma; print('✅ Prisma installed')" || \
+  (echo "❌ ERROR: Prisma is required but not installed!" && exit 1) && \
+  python3 -c "import fastapi; print('✅ FastAPI installed')" || \
+  (echo "❌ ERROR: FastAPI is required but not installed!" && exit 1) && \
   echo "Core dependencies verified"
 
 # Install PyTorch AFTER Poetry (to avoid duplication and save space)
