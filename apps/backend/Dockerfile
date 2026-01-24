@@ -66,8 +66,14 @@ open('poetry.lock', 'w').writelines(output)
 EOF
 
 # Install Poetry dependencies first (without torch to save space)
+# Remove || true to ensure failures are caught, but allow some packages to fail if they're optional
 RUN poetry config virtualenvs.create false && \
-  poetry install --no-root --no-interaction --no-ansi --without dev || true
+  poetry install --no-root --no-interaction --no-ansi --without dev
+
+# Verify critical packages are installed
+RUN python3 -c "import prisma; print('✅ Prisma installed')" && \
+  python3 -c "import fastapi; print('✅ FastAPI installed')" && \
+  echo "Core dependencies verified"
 
 # Install PyTorch AFTER Poetry (to avoid duplication and save space)
 # CUDA version works on both GPU and CPU (falls back to CPU if GPU unavailable)
@@ -139,9 +145,9 @@ RUN sh -c 'if ! python3 -c "import soprano_tts" 2>/dev/null; then \
 RUN python3 -c "import lmdeploy; print('✅ lmdeploy successfully installed (version:', getattr(lmdeploy, '__version__', 'unknown'), ')')" || \
   (python3 -c "print('⚠️  WARNING: lmdeploy is not installed - soprano-tts will use transformers backend (slower)')" && exit 0)
 
-# Verify Prisma is installed and find its CLI location
-RUN python3 -c "import prisma; print('✅ Prisma Python package installed')" && \
-  (which prisma || find /usr/local -name prisma -type f 2>/dev/null | head -1 || echo "Prisma CLI will be run via python3 -m prisma")
+# Verify Prisma is installed (required dependency)
+RUN python3 -c "import prisma; print('✅ Prisma Python package installed')" || \
+  (echo "❌ ERROR: Prisma is required but not installed!" && exit 1)
 
 FROM python:3.12-slim
 WORKDIR /app
@@ -159,8 +165,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
-# Generate Prisma Client - use python3 -m prisma which works reliably
-RUN python3 -m prisma generate
+# Generate Prisma Client - Prisma is required, so fail if it's not available
+RUN python3 -c "import prisma; print('✅ Prisma available')" || \
+  (echo "❌ ERROR: Prisma is required but not found in final stage!" && exit 1) && \
+  python3 -m prisma generate
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
