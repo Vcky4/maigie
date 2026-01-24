@@ -110,7 +110,24 @@ class LiveVoiceConversationService:
         if self._tts_model is None:
             try:
                 device = self._get_device()
-                self._tts_model = Soprano(device=device)
+                # Try to use lmdeploy backend first (faster), fallback to transformers if not available
+                try:
+                    import lmdeploy
+
+                    backend = "auto"  # Will use lmdeploy if available
+                    logger.info("Using lmdeploy backend for Soprano TTS (faster)")
+                except ImportError:
+                    backend = "transformers"  # Fallback to transformers backend
+                    logger.info(
+                        "lmdeploy not available, using transformers backend for Soprano TTS (slower but compatible)"
+                    )
+
+                # Soprano accepts backend parameter - try with backend, fallback to default if not supported
+                try:
+                    self._tts_model = Soprano(device=device, backend=backend)
+                except TypeError:
+                    # If backend parameter not supported, use default initialization
+                    self._tts_model = Soprano(device=device)
                 logger.info(f"Soprano TTS initialized with device: {device}")
             except Exception as e:
                 logger.error(f"Failed to initialize Soprano TTS: {e}", exc_info=True)
