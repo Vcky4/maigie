@@ -32,6 +32,8 @@ RUN apt-get update && apt-get install -y \
 
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:$PATH"
+# Configure Poetry to NOT create virtualenvs BEFORE copying files
+RUN poetry config virtualenvs.create false
 COPY pyproject.toml poetry.lock ./
 # Regenerate lock file on Linux to get Linux-compatible wheels
 RUN poetry lock --no-interaction
@@ -67,8 +69,19 @@ open('poetry.lock', 'w').writelines(output)
 EOF
 
 # Install Poetry dependencies first (without torch and lmdeploy to avoid issues)
+# Config is already set above, but ensure it's still false
 RUN poetry config virtualenvs.create false && \
+  poetry config virtualenvs.in-project false && \
   poetry install --no-root --no-interaction --no-ansi --without dev
+
+# If Poetry still created a venv (despite config), copy packages to system Python
+RUN if [ -d "/root/.cache/pypoetry/virtualenvs" ]; then \
+  VENV_PATH=$(find /root/.cache/pypoetry/virtualenvs -type d -name "site-packages" | head -1); \
+  if [ -n "$VENV_PATH" ]; then \
+    echo "⚠️  Poetry created venv despite config, copying packages to system Python..."; \
+    cp -r "$VENV_PATH"/* /usr/local/lib/python3.12/site-packages/ 2>/dev/null || true; \
+  fi; \
+  fi
 
 # Verify critical packages are installed (fail if required packages are missing)
 RUN python3 -c "import prisma; print('✅ Prisma installed')" || \
