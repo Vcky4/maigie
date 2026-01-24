@@ -38,19 +38,32 @@ RUN poetry lock --no-interaction
 
 # Remove torch from lock file to prevent Poetry from installing it (we install it separately)
 # This saves significant disk space by avoiding duplicate PyTorch installations
-RUN python3 -c "import sys; lines = open('poetry.lock').readlines(); output = []; skip = False; pkgs = {'torch', 'torchvision', 'torchaudio'}; i = 0; \
-    while i < len(lines): \
-        line = lines[i]; \
-        if line.strip() == '[[package]]': \
-            skip = False; \
-            if i + 1 < len(lines) and 'name = \"' in lines[i + 1]: \
-                pkg_name = lines[i + 1].split('name = \"')[1].split('\"')[0]; \
-                skip = pkg_name in pkgs; \
-        if not skip: \
-            if not any(f'{p} =' in line for p in pkgs): \
-                output.append(line); \
-        i += 1; \
-    open('poetry.lock', 'w').writelines(output)"
+RUN python3 << 'EOF'
+import sys
+lines = open('poetry.lock').readlines()
+output = []
+skip = False
+pkgs = {'torch', 'torchvision', 'torchaudio'}
+i = 0
+while i < len(lines):
+    line = lines[i]
+    if line.strip() == '[[package]]':
+        skip = False
+        if i + 1 < len(lines) and 'name = "' in lines[i + 1]:
+            pkg_name = lines[i + 1].split('name = "')[1].split('"')[0]
+            skip = pkg_name in pkgs
+    if not skip:
+        # Check if line contains any torch package references
+        should_skip_line = False
+        for p in pkgs:
+            if p + ' =' in line:
+                should_skip_line = True
+                break
+        if not should_skip_line:
+            output.append(line)
+    i += 1
+open('poetry.lock', 'w').writelines(output)
+EOF
 
 # Install Poetry dependencies first (without torch to save space)
 RUN poetry config virtualenvs.create false && \
