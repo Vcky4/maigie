@@ -38,6 +38,18 @@ stripe = "^10.0.0"
 google-generativeai = "^0.8.6"
 google-genai = ">=1.57.0,<2.0.0"
 duckduckgo-search = "^7.0.0"
+soprano-tts = {version = "^0.0.2", markers = "sys_platform != 'win32'"}
+numpy = "^2.0.0"
+transformers = "^4.40.0"
+# Note: torch is installed separately to avoid CUDA dependency resolution issues
+# After poetry install, run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+# Or for CUDA support: pip install torch --index-url https://download.pytorch.org/whl/cu121
+#
+# Windows Development Note:
+# CUDA dependencies (nvidia-nccl-cu11, etc.) are not available on Windows.
+# On Windows, install with: poetry install --only=main
+# Or ignore CUDA errors: poetry install (errors are harmless, CUDA deps are optional)
+# Production runs on Linux (Docker) where CUDA packages are available.
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

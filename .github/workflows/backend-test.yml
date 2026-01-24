@@ -43,6 +43,8 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install Dependencies
         run: poetry install --no-root
+      - name: Install PyTorch (CPU)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Run Linting
         run: |
           poetry run black . --check --diff || (poetry run black . --diff && exit 1)

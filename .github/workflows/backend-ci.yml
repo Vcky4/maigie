@@ -177,6 +177,8 @@ jobs:
         working-directory: ./apps/backend
         run: |
           docker buildx build \
+            --build-arg PYTORCH_VERSION=cuda \
+            --build-arg CUDA_VERSION=cu121 \
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
             --load \
             --platform linux/amd64 \
@@ -802,7 +804,11 @@ jobs:
 
       - name: Build Docker Image
         working-directory: ./apps/backend
-        run: docker build -t maigie-backend:latest .
+        run: |
+          docker build \
+            --build-arg PYTORCH_VERSION=cuda \
+            --build-arg CUDA_VERSION=cu121 \
+            -t maigie-backend:latest .
 
       - name: Save Docker Image
         run: |
@@ -1044,7 +1050,11 @@ jobs:
 
       - name: Build Docker Image
         working-directory: ./apps/backend
-        run: docker build -t maigie-backend:staging .
+        run: |
+          docker build \
+            --build-arg PYTORCH_VERSION=cuda \
+            --build-arg CUDA_VERSION=cu121 \
+            -t maigie-backend:staging .
 
       - name: Save Docker Image
         run: |

@@ -66,6 +66,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Set PYTORCH_VERSION=cuda to build with CUDA support
+        # Requires NVIDIA GPU and nvidia-container-toolkit on host
+        PYTORCH_VERSION: ${PYTORCH_VERSION:-cpu}
+        CUDA_VERSION: ${CUDA_VERSION:-cu121}
     container_name: maigie-backend
     restart: unless-stopped
     environment:
@@ -79,6 +84,14 @@ services:
       - redis
     networks:
       - maigie_network
+    # Uncomment the following lines to enable GPU support (requires nvidia-container-toolkit)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     command: >
       sh -c "
         prisma migrate deploy &&

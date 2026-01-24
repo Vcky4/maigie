@@ -15,15 +15,39 @@
 
 FROM python:3.12-slim AS builder
 WORKDIR /app
+
+# Build argument to choose PyTorch version (cpu or cuda)
+ARG PYTORCH_VERSION=cpu
+ARG CUDA_VERSION=cu121
+
 RUN apt-get update && apt-get install -y build-essential curl && rm -rf /var/lib/apt/lists/*
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:$PATH"
 COPY pyproject.toml poetry.lock ./
 RUN poetry config virtualenvs.create false && poetry install --no-root --no-interaction --no-ansi
 
+# Install PyTorch based on build argument
+# CUDA version works on both GPU and CPU (falls back to CPU if GPU unavailable)
+# CPU version is smaller but GPU-only
+RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
+        echo "Installing CUDA-enabled PyTorch (CUDA ${CUDA_VERSION})..." && \
+        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${CUDA_VERSION}; \
+    else \
+        echo "Installing CPU-only PyTorch..." && \
+        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; \
+    fi
+
 FROM python:3.12-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y libpq-dev curl libatomic1 postgresql-client && rm -rf /var/lib/apt/lists/*
+
+# Install runtime dependencies
+# For GPU support, nvidia-container-toolkit must be installed on the host
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    curl \
+    libatomic1 \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .

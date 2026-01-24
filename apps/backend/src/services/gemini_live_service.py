@@ -310,7 +310,12 @@ class GeminiLiveConversationService:
             try:
                 async for message in session.receive():
                     message_count += 1
-                    logger.debug(f"Received message #{message_count} for session {session_id}")
+                    logger.info(
+                        f"Received message #{message_count} for session {session_id}. "
+                        f"Message type: {type(message).__name__}, "
+                        f"Has server_content: {hasattr(message, 'server_content') and bool(message.server_content)}, "
+                        f"Has user_content: {hasattr(message, 'user_content') and bool(message.user_content)}"
+                    )
 
                     try:
                         # Get current callbacks from session_info (they may be updated dynamically)
@@ -416,22 +421,38 @@ class GeminiLiveConversationService:
                 logger.warning(
                     f"Receive iterator exhausted (StopAsyncIteration) for session {session_id}. "
                     f"Received {message_count} messages total. "
-                    f"This usually means the connection closed."
+                    f"This usually means the connection closed. "
+                    f"Session still in active_sessions: {session_id in self.active_sessions}"
                 )
                 # Check if session still exists and is valid before treating as closed
                 if session_id in self.active_sessions:
                     session_info = self.active_sessions.get(session_id)
-                    session = session_info.get("session") if session_info else None
-                    if session:
+                    session_obj = session_info.get("session") if session_info else None
+                    if session_obj:
                         # Try to check if session is still open
                         try:
-                            # If we can't determine, assume connection is closed
+                            # Check if session has any attributes that indicate it's closed
                             logger.info(
-                                f"Session {session_id} still in active_sessions, but iterator exhausted"
+                                f"Session {session_id} still in active_sessions with session object. "
+                                f"Session type: {type(session_obj).__name__}"
                             )
-                        except Exception:
-                            pass
+                        except Exception as check_error:
+                            logger.warning(f"Error checking session state: {check_error}")
+                else:
+                    logger.warning(
+                        f"Session {session_id} not in active_sessions when iterator exhausted"
+                    )
                 raise ConnectionClosedOK(None, None)  # Treat as connection closed
+            except Exception as unexpected_error:
+                # Catch any other unexpected exceptions during iteration
+                logger.error(
+                    f"Unexpected error in receive loop for session {session_id}: {unexpected_error}. "
+                    f"Received {message_count} messages before error. "
+                    f"Exception type: {type(unexpected_error).__name__}",
+                    exc_info=True,
+                )
+                # Re-raise to be handled by outer exception handler
+                raise
 
         except asyncio.CancelledError:
             logger.info(f"Response handler cancelled for session {session_id}")
