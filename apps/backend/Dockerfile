@@ -22,13 +22,13 @@ ARG CUDA_VERSION=cu121
 
 # Install build dependencies needed for lmdeploy (CMake, Ninja, rapidjson-dev, etc.)
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    cmake \
-    ninja-build \
-    rapidjson-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+  build-essential \
+  curl \
+  cmake \
+  ninja-build \
+  rapidjson-dev \
+  git \
+  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:$PATH"
@@ -38,80 +38,74 @@ RUN poetry lock --no-interaction
 
 # Remove torch from lock file to prevent Poetry from installing it (we install it separately)
 # This saves significant disk space by avoiding duplicate PyTorch installations
-RUN printf '%s\n' \
-    'lines = open("poetry.lock").readlines()' \
-    'output = []' \
-    'skip = False' \
-    'pkgs = {"torch", "torchvision", "torchaudio"}' \
-    'i = 0' \
-    'while i < len(lines):' \
-    '    line = lines[i]' \
-    '    if line.strip() == "[[package]]":' \
-    '        skip = False' \
-    '        if i + 1 < len(lines) and "name = \\"" in lines[i + 1]:' \
-    '            pkg_name = lines[i + 1].split("name = \\"")[1].split("\\"")[0]' \
-    '            skip = pkg_name in pkgs' \
-    '    if not skip:' \
-    '        if not any(f"{p} =" in line for p in pkgs):' \
-    '            output.append(line)' \
-    '    i += 1' \
-    'open("poetry.lock", "w").writelines(output)' \
-    > /tmp/remove_torch.py && python3 /tmp/remove_torch.py && rm /tmp/remove_torch.py
+RUN python3 -c "import sys; lines = open('poetry.lock').readlines(); output = []; skip = False; pkgs = {'torch', 'torchvision', 'torchaudio'}; i = 0; \
+    while i < len(lines): \
+        line = lines[i]; \
+        if line.strip() == '[[package]]': \
+            skip = False; \
+            if i + 1 < len(lines) and 'name = \"' in lines[i + 1]: \
+                pkg_name = lines[i + 1].split('name = \"')[1].split('\"')[0]; \
+                skip = pkg_name in pkgs; \
+        if not skip: \
+            if not any(f'{p} =' in line for p in pkgs): \
+                output.append(line); \
+        i += 1; \
+    open('poetry.lock', 'w').writelines(output)"
 
 # Install Poetry dependencies first (without torch to save space)
 RUN poetry config virtualenvs.create false && \
-    poetry install --no-root --no-interaction --no-ansi --without dev || true
+  poetry install --no-root --no-interaction --no-ansi --without dev || true
 
 # Install PyTorch AFTER Poetry (to avoid duplication and save space)
 # CUDA version works on both GPU and CPU (falls back to CPU if GPU unavailable)
 RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
-        echo "Installing CUDA-enabled PyTorch (CUDA ${CUDA_VERSION})..." && \
-        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${CUDA_VERSION} && \
-        pip cache purge; \
-    else \
-        echo "Installing CPU-only PyTorch..." && \
-        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
-        pip cache purge; \
-    fi
+  echo "Installing CUDA-enabled PyTorch (CUDA ${CUDA_VERSION})..." && \
+  pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${CUDA_VERSION} && \
+  pip cache purge; \
+  else \
+  echo "Installing CPU-only PyTorch..." && \
+  pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+  pip cache purge; \
+  fi
 
 # Clean up build artifacts and caches aggressively to save space
 RUN rm -rf /root/.cache/pip && \
-    rm -rf /root/.cache/pypoetry && \
-    rm -rf /tmp/* && \
-    find /usr/local/lib/python3.12/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
-    find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete 2>/dev/null || true && \
-    find /usr/local/lib/python3.12/site-packages -name "*.pyo" -delete 2>/dev/null || true
+  rm -rf /root/.cache/pypoetry && \
+  rm -rf /tmp/* && \
+  find /usr/local/lib/python3.12/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete 2>/dev/null || true && \
+  find /usr/local/lib/python3.12/site-packages -name "*.pyo" -delete 2>/dev/null || true
 
 # Install lmdeploy - required for soprano-tts performance
 # Try multiple installation methods to ensure it works
 RUN sh -c 'if ! python3 -c "import lmdeploy" 2>/dev/null; then \
-    echo "Installing lmdeploy..."; \
-    pip install --no-cache-dir lmdeploy && echo "lmdeploy installed via pip wheels" || \
-    (echo "Trying lmdeploy without TurboMind..." && \
-     DISABLE_TURBOMIND=1 pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
-     echo "lmdeploy installed from source (without TurboMind)") || \
-    (echo "Trying full lmdeploy source install..." && \
-     pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
-     echo "lmdeploy installed from source") || \
-    (echo "Trying specific lmdeploy version..." && \
-     pip install --no-cache-dir "lmdeploy>=0.2.0,<0.3.0" && \
-     echo "lmdeploy installed (specific version)") || \
-    (echo "ERROR: Failed to install lmdeploy with all methods" && \
-     echo "TTS will use transformers backend (slower)" && \
-     exit 0); \
-    pip cache purge; \
-fi'
+  echo "Installing lmdeploy..."; \
+  pip install --no-cache-dir lmdeploy && echo "lmdeploy installed via pip wheels" || \
+  (echo "Trying lmdeploy without TurboMind..." && \
+  DISABLE_TURBOMIND=1 pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
+  echo "lmdeploy installed from source (without TurboMind)") || \
+  (echo "Trying full lmdeploy source install..." && \
+  pip install --no-cache-dir git+https://github.com/InternLM/lmdeploy.git && \
+  echo "lmdeploy installed from source") || \
+  (echo "Trying specific lmdeploy version..." && \
+  pip install --no-cache-dir "lmdeploy>=0.2.0,<0.3.0" && \
+  echo "lmdeploy installed (specific version)") || \
+  (echo "ERROR: Failed to install lmdeploy with all methods" && \
+  echo "TTS will use transformers backend (slower)" && \
+  exit 0); \
+  pip cache purge; \
+  fi'
 
 # Ensure soprano-tts is installed (should be from Poetry, but verify)
 RUN sh -c 'if ! python3 -c "import soprano_tts" 2>/dev/null; then \
-    echo "soprano-tts not installed, installing..."; \
-    pip install --no-cache-dir soprano-tts || \
-    echo "Warning: soprano-tts installation failed - TTS will not be available"; \
-fi'
+  echo "soprano-tts not installed, installing..."; \
+  pip install --no-cache-dir soprano-tts || \
+  echo "Warning: soprano-tts installation failed - TTS will not be available"; \
+  fi'
 
 # Verify lmdeploy installation
 RUN python3 -c "import lmdeploy; print('✅ lmdeploy successfully installed (version:', getattr(lmdeploy, '__version__', 'unknown'), ')')" || \
-    (python3 -c "print('⚠️  WARNING: lmdeploy is not installed - soprano-tts will use transformers backend (slower)')" && exit 0)
+  (python3 -c "print('⚠️  WARNING: lmdeploy is not installed - soprano-tts will use transformers backend (slower)')" && exit 0)
 
 FROM python:3.12-slim
 WORKDIR /app
@@ -119,11 +113,11 @@ WORKDIR /app
 # Install runtime dependencies
 # For GPU support, nvidia-container-toolkit must be installed on the host
 RUN apt-get update && apt-get install -y \
-    libpq-dev \
-    curl \
-    libatomic1 \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+  libpq-dev \
+  curl \
+  libatomic1 \
+  postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
