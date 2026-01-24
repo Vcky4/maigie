@@ -139,6 +139,10 @@ RUN sh -c 'if ! python3 -c "import soprano_tts" 2>/dev/null; then \
 RUN python3 -c "import lmdeploy; print('✅ lmdeploy successfully installed (version:', getattr(lmdeploy, '__version__', 'unknown'), ')')" || \
   (python3 -c "print('⚠️  WARNING: lmdeploy is not installed - soprano-tts will use transformers backend (slower)')" && exit 0)
 
+# Verify Prisma is installed and find its CLI location
+RUN python3 -c "import prisma; print('✅ Prisma Python package installed')" && \
+  (which prisma || find /usr/local -name prisma -type f 2>/dev/null | head -1 || echo "Prisma CLI will be run via python3 -m prisma")
+
 FROM python:3.12-slim
 WORKDIR /app
 
@@ -155,7 +159,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
-RUN prisma generate
+# Generate Prisma Client - use python3 -m prisma which works reliably
+RUN python3 -m prisma generate
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
