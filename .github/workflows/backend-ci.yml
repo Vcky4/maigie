@@ -173,6 +173,12 @@ jobs:
           echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
           echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
 
+      - name: Clean up Docker to free space
+        run: |
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          df -h
+
       - name: Build Docker Image
         working-directory: ./apps/backend
         run: |
@@ -185,6 +191,12 @@ jobs:
             --no-cache \
             .
           docker images | grep maigie-backend-preview
+          docker system df
+          
+      - name: Clean up intermediate build layers
+        run: |
+          docker builder prune -af || true
+          df -h
 
       - name: Save Docker Image
         run: |

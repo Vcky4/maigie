@@ -81,13 +81,27 @@ RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
   pip cache purge; \
   fi
 
+# Remove build dependencies to save space (no longer needed after package installation)
+RUN apt-get purge -y \
+  build-essential \
+  cmake \
+  ninja-build \
+  git \
+  && apt-get autoremove -y \
+  && apt-get clean
+
 # Clean up build artifacts and caches aggressively to save space
 RUN rm -rf /root/.cache/pip && \
   rm -rf /root/.cache/pypoetry && \
   rm -rf /tmp/* && \
+  rm -rf /var/lib/apt/lists/* && \
+  rm -rf /usr/share/doc/* && \
+  rm -rf /usr/share/man/* && \
   find /usr/local/lib/python3.12/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
   find /usr/local/lib/python3.12/site-packages -name "*.pyc" -delete 2>/dev/null || true && \
-  find /usr/local/lib/python3.12/site-packages -name "*.pyo" -delete 2>/dev/null || true
+  find /usr/local/lib/python3.12/site-packages -name "*.pyo" -delete 2>/dev/null || true && \
+  find /usr/local/lib/python3.12/site-packages -type d -name "*.dist-info" -exec rm -rf {} + 2>/dev/null || true && \
+  find /usr/local/lib/python3.12/site-packages -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 
 # Install lmdeploy - required for soprano-tts performance
 # Try multiple installation methods to ensure it works
@@ -107,14 +121,19 @@ RUN sh -c 'if ! python3 -c "import lmdeploy" 2>/dev/null; then \
   echo "TTS will use transformers backend (slower)" && \
   exit 0); \
   pip cache purge; \
-  fi'
+  fi' && \
+  rm -rf /root/.cache/pip && \
+  rm -rf /tmp/*
 
 # Ensure soprano-tts is installed (should be from Poetry, but verify)
 RUN sh -c 'if ! python3 -c "import soprano_tts" 2>/dev/null; then \
   echo "soprano-tts not installed, installing..."; \
   pip install --no-cache-dir soprano-tts || \
   echo "Warning: soprano-tts installation failed - TTS will not be available"; \
-  fi'
+  fi' && \
+  pip cache purge && \
+  rm -rf /root/.cache/pip && \
+  rm -rf /tmp/*
 
 # Verify lmdeploy installation
 RUN python3 -c "import lmdeploy; print('✅ lmdeploy successfully installed (version:', getattr(lmdeploy, '__version__', 'unknown'), ')')" || \
@@ -125,12 +144,14 @@ WORKDIR /app
 
 # Install runtime dependencies
 # For GPU support, nvidia-container-toolkit must be installed on the host
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
   libpq-dev \
   curl \
   libatomic1 \
   postgresql-client \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/share/doc/* \
+  && rm -rf /usr/share/man/*
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .

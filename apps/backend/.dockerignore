@@ -58,7 +58,24 @@ test_*.py
 # Prisma (will be generated)
 prisma/migrations/
 
+# Node.js (if any)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Large data files
+*.csv
+*.json.bak
+*.db
+*.sqlite
+*.sqlite3
+
 # Other
 *.md
 README*
 LICENSE*
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
