@@ -36,20 +36,38 @@ COPY pyproject.toml poetry.lock ./
 # Regenerate lock file on Linux to get Linux-compatible wheels
 RUN poetry lock --no-interaction
 
-# Install PyTorch FIRST (before Poetry) to avoid duplication
+# Remove torch from lock file to prevent Poetry from installing it (we install it separately)
+# This saves significant disk space by avoiding duplicate PyTorch installations
+RUN python3 -c "import sys; lines = open('poetry.lock').readlines(); output = []; skip = False; pkgs = {'torch', 'torchvision', 'torchaudio'}; i = 0; \
+while i < len(lines): \
+    line = lines[i]; \
+    if line.strip() == '[[package]]': \
+        if i + 1 < len(lines) and 'name = \"' in lines[i + 1]: \
+            pkg_name = lines[i + 1].split('name = \"')[1].split('\"')[0]; \
+            skip = pkg_name in pkgs; \
+            if skip: i += 1; continue; \
+    if skip: \
+        if line.strip() == '[[package]]': skip = False; \
+        else: i += 1; continue; \
+    if any(f'{p} =' in line for p in pkgs): i += 1; continue; \
+    output.append(line); i += 1; \
+open('poetry.lock', 'w').writelines(output)"
+
+# Install Poetry dependencies first (without torch to save space)
+RUN poetry config virtualenvs.create false && \
+    poetry install --no-root --no-interaction --no-ansi --without dev || true
+
+# Install PyTorch AFTER Poetry (to avoid duplication and save space)
 # CUDA version works on both GPU and CPU (falls back to CPU if GPU unavailable)
 RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
         echo "Installing CUDA-enabled PyTorch (CUDA ${CUDA_VERSION})..." && \
-        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${CUDA_VERSION}; \
+        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/${CUDA_VERSION} && \
+        pip cache purge; \
     else \
         echo "Installing CPU-only PyTorch..." && \
-        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu; \
-    fi && \
-    pip cache purge
-
-# Install Poetry dependencies (Poetry will skip torch since it's already installed)
-RUN poetry config virtualenvs.create false && \
-    poetry install --no-root --no-interaction --no-ansi --without dev || true
+        pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+        pip cache purge; \
+    fi
 
 # Clean up build artifacts and caches aggressively to save space
 RUN rm -rf /root/.cache/pip && \
