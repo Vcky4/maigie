@@ -13,60 +13,58 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
 # ================================
-# CUDA base image
+# Base (small + stable)
 # ================================
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS app
+FROM python:3.11-slim
 
 # ----------------
-# System deps
+# System deps (minimal)
 # ----------------
 RUN apt-get update && apt-get install -y \
-    python3.11 \
-    python3.11-distutils \
-    python3-pip \
-    build-essential \
     ffmpeg \
     git \
     curl \
  && rm -rf /var/lib/apt/lists/*
 
-RUN ln -sf /usr/bin/python3.11 /usr/bin/python
-
 # ----------------
 # Python tooling
 # ----------------
-RUN pip install --upgrade pip poetry
+RUN pip install --no-cache-dir --upgrade pip poetry
 RUN poetry config virtualenvs.create false
 
 WORKDIR /app
 
 # ----------------
-# Copy dependency files
+# Copy deps first (cache-friendly)
 # ----------------
 COPY pyproject.toml poetry.lock ./
 
 # ----------------
-# Install torch FIRST (CUDA)
+# Install torch (CPU ONLY)
 # ----------------
 RUN pip install --no-cache-dir \
-    torch==2.1.0 \
-    --index-url https://download.pytorch.org/whl/cu121
+    torch==2.1.0+cpu \
+    --index-url https://download.pytorch.org/whl/cpu
 
 # ----------------
-# Install app dependencies
+# Prevent heavy builds
 # ----------------
-RUN poetry install --no-root --no-interaction --without dev
+ENV PIP_NO_CACHE_DIR=1
+ENV POETRY_NO_INTERACTION=1
 
 # ----------------
-# Copy app code
+# Install app deps
+# ----------------
+RUN poetry install --no-root --without dev
+
+# ----------------
+# Copy app
 # ----------------
 COPY . .
 
 # ----------------
-# Runtime
+# Run
 # ----------------
 EXPOSE 8000
-
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
