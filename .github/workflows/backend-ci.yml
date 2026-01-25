@@ -188,7 +188,7 @@ jobs:
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
             --load \
             --platform linux/amd64 \
-            --no-cache \
+            --progress=plain \
             .
           docker images | grep maigie-backend-preview
           docker system df
@@ -196,7 +196,11 @@ jobs:
       - name: Clean up intermediate build layers
         run: |
           docker builder prune -af || true
+          # Remove dangling images
+          docker image prune -af || true
+          # Show disk usage
           df -h
+          docker system df
 
       - name: Save Docker Image
         run: |
@@ -240,6 +244,9 @@ jobs:
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             preview-image.tar.gz \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
+          # Remove the tar.gz file after upload to free up space
+          rm -f preview-image.tar.gz
+          df -h
 
       - name: Load Image and Deploy Preview
         uses: appleboy/ssh-action@v1.0.0
