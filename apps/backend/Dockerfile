@@ -105,7 +105,7 @@ RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
 # Install lmdeploy ONLY if not already present (optional, for soprano-tts performance)
 # CRITICAL: Use constraints file to prevent PyTorch reinstallation (saves ~2GB+ disk space)
 # soprano-tts is already installed via Poetry and works fine without lmdeploy (just slower)
-RUN python3 << 'EOF'
+RUN python3 << 'PYEOF'
 import sys
 import subprocess
 
@@ -113,56 +113,51 @@ import subprocess
 try:
     import lmdeploy
     print(f"✅ lmdeploy already installed (version: {getattr(lmdeploy, '__version__', 'unknown')})")
-    sys.exit(0)
 except ImportError:
-    pass
-
-# Get installed PyTorch versions to create constraints file
-try:
-    import torch
-    torch_version = torch.__version__
+    # Get installed PyTorch versions to create constraints file
     try:
-        import torchvision
-        tv_version = torchvision.__version__
-    except:
-        tv_version = None
-    try:
-        import torchaudio
-        ta_version = torchaudio.__version__
-    except:
-        ta_version = None
-    
-    # Create constraints file to prevent PyTorch reinstallation
-    with open('/tmp/pytorch-constraints.txt', 'w') as f:
-        f.write(f'torch=={torch_version}\n')
-        if tv_version:
-            f.write(f'torchvision=={tv_version}\n')
-        if ta_version:
-            f.write(f'torchaudio=={ta_version}\n')
-    
-    print(f"✅ Created constraints file pinning PyTorch {torch_version}")
-    
-    # Install lmdeploy with constraints
-    print("Installing lmdeploy (optional, for TTS performance)...")
-    result = subprocess.run([
-        sys.executable, "-m", "pip", "install",
-        "--no-cache-dir", "--constraint", "/tmp/pytorch-constraints.txt", "lmdeploy"
-    ], capture_output=True, text=True)
-    
-    if result.returncode == 0:
-        print("✅ lmdeploy installed successfully")
-    else:
-        print("⚠️  lmdeploy installation failed (TTS will use transformers backend)")
-        print("This is acceptable - soprano-tts works without lmdeploy, just slower")
-        print(f"Error: {result.stderr[-300:] if result.stderr else 'Unknown error'}")
-        sys.exit(0)  # Non-fatal
+        import torch
+        torch_version = torch.__version__
+        try:
+            import torchvision
+            tv_version = torchvision.__version__
+        except:
+            tv_version = None
+        try:
+            import torchaudio
+            ta_version = torchaudio.__version__
+        except:
+            ta_version = None
         
-except Exception as e:
-    print(f"⚠️  Could not install lmdeploy: {e}")
-    print("TTS will use transformers backend (slower but functional)")
-    sys.exit(0)  # Non-fatal
-EOF
-&& pip cache purge || true && \
+        # Create constraints file to prevent PyTorch reinstallation
+        with open('/tmp/pytorch-constraints.txt', 'w') as f:
+            f.write(f'torch=={torch_version}\n')
+            if tv_version:
+                f.write(f'torchvision=={tv_version}\n')
+            if ta_version:
+                f.write(f'torchaudio=={ta_version}\n')
+        
+        print(f"✅ Created constraints file pinning PyTorch {torch_version}")
+        
+        # Install lmdeploy with constraints
+        print("Installing lmdeploy (optional, for TTS performance)...")
+        result = subprocess.run([
+            sys.executable, "-m", "pip", "install",
+            "--no-cache-dir", "--constraint", "/tmp/pytorch-constraints.txt", "lmdeploy"
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print("✅ lmdeploy installed successfully")
+        else:
+            print("⚠️  lmdeploy installation failed (TTS will use transformers backend)")
+            print("This is acceptable - soprano-tts works without lmdeploy, just slower")
+            if result.stderr:
+                print(f"Error: {result.stderr[-300:]}")
+    except Exception as e:
+        print(f"⚠️  Could not install lmdeploy: {e}")
+        print("TTS will use transformers backend (slower but functional)")
+PYEOF
+pip cache purge || true && \
 rm -rf /root/.cache/pip && \
 rm -rf /tmp/*
 
