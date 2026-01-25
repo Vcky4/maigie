@@ -14,90 +14,59 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 
-############################
-# Builder
-############################
-FROM python:3.12-slim AS builder
-WORKDIR /app
+# ================================
+# CUDA base image
+# ================================
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS app
 
-ARG PYTORCH_VERSION=cpu
-ARG CUDA_VERSION=cu121
-
+# ----------------
 # System deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# ----------------
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-distutils \
+    python3-pip \
     build-essential \
-    curl \
+    ffmpeg \
     git \
-    cmake \
-    ninja-build \
-    rapidjson-dev \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+ && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 -
-ENV PATH="/root/.local/bin:$PATH"
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python
 
-# Disable venvs cleanly
+# ----------------
+# Python tooling
+# ----------------
+RUN pip install --upgrade pip poetry
 RUN poetry config virtualenvs.create false
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
-
-# Install app deps (NO torch, NO lmdeploy here)
-RUN poetry install --no-root --no-interaction --without dev
-
-# ---- PyTorch (explicit, controlled) ----
-RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
-      pip install --no-cache-dir torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/${CUDA_VERSION}; \
-    else \
-      pip install --no-cache-dir torch torchvision torchaudio \
-        --index-url https://download.pytorch.org/whl/cpu; \
-    fi
-
-# ---- Optional lmdeploy ----
-RUN pip install --no-cache-dir lmdeploy || \
-    echo "⚠️ lmdeploy not installed, soprano will use transformers backend"
-
-# Sanity checks
-RUN python - <<EOF
-import fastapi, prisma, torch
-print("✅ Core deps OK")
-try:
-    import soprano_tts
-    print("✅ soprano-tts OK")
-except ImportError:
-    print("⚠️ soprano-tts missing")
-EOF
-
-############################
-# Runtime
-############################
-FROM python:3.12-slim
 WORKDIR /app
 
-# Runtime libs only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev \
-    curl \
-    libatomic1 \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+# ----------------
+# Copy dependency files
+# ----------------
+COPY pyproject.toml poetry.lock ./
 
-# Copy python env
-COPY --from=builder /usr/local/lib/python3.12/site-packages \
-                     /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# ----------------
+# Install torch FIRST (CUDA)
+# ----------------
+RUN pip install --no-cache-dir \
+    torch==2.1.0 \
+    --index-url https://download.pytorch.org/whl/cu121
 
-# Copy app
+# ----------------
+# Install app dependencies
+# ----------------
+RUN poetry install --no-root --no-interaction --without dev
+
+# ----------------
+# Copy app code
+# ----------------
 COPY . .
 
-# Prisma client
-RUN python -m prisma generate
-
+# ----------------
+# Runtime
+# ----------------
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-  CMD curl -f http://localhost:8000/health || exit 1
-
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
