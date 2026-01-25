@@ -102,17 +102,25 @@ RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
   pip cache purge; \
   fi
 
-# Install lmdeploy and soprano-tts BEFORE removing build tools
-# CRITICAL: Pin PyTorch versions to prevent reinstallation (saves ~2GB+ disk space)
+# Install lmdeploy ONLY if not already present (optional, for soprano-tts performance)
+# CRITICAL: Use constraints file to prevent PyTorch reinstallation (saves ~2GB+ disk space)
+# soprano-tts is already installed via Poetry and works fine without lmdeploy (just slower)
 RUN python3 << 'EOF'
-import subprocess
 import sys
+import subprocess
 
-# Get installed torch version (including build suffix like +cu121)
+# Check if lmdeploy is already installed
+try:
+    import lmdeploy
+    print(f"✅ lmdeploy already installed (version: {getattr(lmdeploy, '__version__', 'unknown')})")
+    sys.exit(0)
+except ImportError:
+    pass
+
+# Get installed PyTorch versions to create constraints file
 try:
     import torch
     torch_version = torch.__version__
-    # Get torchvision and torchaudio versions too
     try:
         import torchvision
         tv_version = torchvision.__version__
@@ -132,61 +140,35 @@ try:
         if ta_version:
             f.write(f'torchaudio=={ta_version}\n')
     
-    print(f'✅ Created constraints file pinning torch=={torch_version}')
-    if tv_version:
-        print(f'   torchvision=={tv_version}')
-    if ta_version:
-        print(f'   torchaudio=={ta_version}')
+    print(f"✅ Created constraints file pinning PyTorch {torch_version}")
+    
+    # Install lmdeploy with constraints
+    print("Installing lmdeploy (optional, for TTS performance)...")
+    result = subprocess.run([
+        sys.executable, "-m", "pip", "install",
+        "--no-cache-dir", "--constraint", "/tmp/pytorch-constraints.txt", "lmdeploy"
+    ], capture_output=True, text=True)
+    
+    if result.returncode == 0:
+        print("✅ lmdeploy installed successfully")
+    else:
+        print("⚠️  lmdeploy installation failed (TTS will use transformers backend)")
+        print("This is acceptable - soprano-tts works without lmdeploy, just slower")
+        print(f"Error: {result.stderr[-300:] if result.stderr else 'Unknown error'}")
+        sys.exit(0)  # Non-fatal
+        
 except Exception as e:
-    print(f'⚠️  Could not create constraints file: {e}')
-    sys.exit(0)  # Non-fatal, continue without constraints
+    print(f"⚠️  Could not install lmdeploy: {e}")
+    print("TTS will use transformers backend (slower but functional)")
+    sys.exit(0)  # Non-fatal
 EOF
+pip cache purge || true && \
+rm -rf /root/.cache/pip && \
+rm -rf /tmp/*
 
-# Install lmdeploy - required for soprano-tts performance
-# Use constraints to prevent PyTorch reinstallation
-RUN sh -c 'if ! python3 -c "import lmdeploy" 2>/dev/null; then \
-  echo "Installing lmdeploy..."; \
-  if [ -f /tmp/pytorch-constraints.txt ]; then \
-    pip install --no-cache-dir --constraint /tmp/pytorch-constraints.txt lmdeploy && \
-    echo "✅ lmdeploy installed via pip wheels" || \
-    (echo "Trying lmdeploy without TurboMind..." && \
-    DISABLE_TURBOMIND=1 pip install --no-cache-dir --constraint /tmp/pytorch-constraints.txt git+https://github.com/InternLM/lmdeploy.git && \
-    echo "✅ lmdeploy installed from source (without TurboMind)") || \
-    (echo "Trying full lmdeploy source install..." && \
-    pip install --no-cache-dir --constraint /tmp/pytorch-constraints.txt git+https://github.com/InternLM/lmdeploy.git && \
-    echo "✅ lmdeploy installed from source") || \
-    (echo "⚠️  ERROR: Failed to install lmdeploy with all methods" && \
-    echo "TTS will use transformers backend (slower)" && \
-    exit 0); \
-  else \
-    pip install --no-cache-dir lmdeploy && \
-    echo "✅ lmdeploy installed via pip wheels" || \
-    (echo "⚠️  ERROR: Failed to install lmdeploy" && \
-    echo "TTS will use transformers backend (slower)" && \
-    exit 0); \
-  fi; \
-  pip cache purge; \
-  fi' && \
-  rm -rf /root/.cache/pip && \
-  rm -rf /tmp/*
-
-# Ensure soprano-tts is installed (should be from Poetry, but verify)
-# Use constraints to prevent PyTorch reinstallation
-RUN sh -c 'if ! python3 -c "import soprano_tts" 2>/dev/null; then \
-  echo "soprano-tts not installed, installing..."; \
-  if [ -f /tmp/pytorch-constraints.txt ]; then \
-    pip install --no-cache-dir --constraint /tmp/pytorch-constraints.txt soprano-tts && \
-    echo "✅ soprano-tts installed" || \
-    echo "⚠️  Warning: soprano-tts installation failed - TTS will not be available"; \
-  else \
-    pip install --no-cache-dir soprano-tts && \
-    echo "✅ soprano-tts installed" || \
-    echo "⚠️  Warning: soprano-tts installation failed - TTS will not be available"; \
-  fi; \
-  pip cache purge; \
-  fi' && \
-  rm -rf /root/.cache/pip && \
-  rm -rf /tmp/*
+# Verify soprano-tts is available (should be from Poetry, don't reinstall to avoid PyTorch issues)
+RUN python3 -c "import soprano_tts; print('✅ soprano-tts available (from Poetry)')" || \
+  (echo "⚠️  WARNING: soprano-tts not available - TTS will not be available" && exit 0)
 
 # Remove build dependencies AFTER installing packages that might need them
 # Keep git until after lmdeploy is confirmed installed (for fallback git installs)
