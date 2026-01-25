@@ -162,7 +162,7 @@ except Exception as e:
     print("TTS will use transformers backend (slower but functional)")
     sys.exit(0)  # Non-fatal
 EOF
-pip cache purge || true && \
+&& pip cache purge || true && \
 rm -rf /root/.cache/pip && \
 rm -rf /tmp/*
 
