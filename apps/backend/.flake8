@@ -5,4 +5,4 @@ max-line-length = 88
 # F401: Unused imports
 # F841: Unused variables
 extend-ignore = E203, E501, F401, F841
-exclude = .git,__pycache__,.venv,dist
+exclude = .git,__pycache__,.venv,dist,*_pb2.py,*_pb2_grpc.py
