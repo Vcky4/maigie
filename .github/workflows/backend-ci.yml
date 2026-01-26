@@ -97,6 +97,11 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     steps:
+      - name: Check build-soprano-preview job status
+        run: |
+          echo "Checking build-soprano-preview job status..."
+          echo "Job should have completed before this step runs"
+          echo "If artifact is missing, check the build-soprano-preview job logs"
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
@@ -221,6 +226,22 @@ jobs:
           path: .
         continue-on-error: true
 
+      - name: Debug Artifact Download
+        run: |
+          echo "=== Checking for downloaded artifact ==="
+          ls -la | grep -E "(soprano|tar\.gz)" || echo "No soprano artifacts found"
+          echo "=== Listing all files in current directory ==="
+          ls -la
+          echo "=== Checking if artifact file exists ==="
+          if [ -f soprano-preview-image.tar.gz ]; then
+            echo "✓ Found soprano-preview-image.tar.gz"
+            ls -lh soprano-preview-image.tar.gz
+          else
+            echo "❌ soprano-preview-image.tar.gz not found"
+            echo "Checking for alternative names..."
+            find . -name "*soprano*" -o -name "*preview*" | head -10 || echo "No matching files found"
+          fi
+
       - name: Build Backend Docker Image
         working-directory: ./apps/backend
         run: |
@@ -236,6 +257,7 @@ jobs:
       - name: Load Soprano TTS Image
         run: |
           if [ -f soprano-preview-image.tar.gz ]; then
+            echo "Loading soprano-preview-image.tar.gz..."
             docker load < soprano-preview-image.tar.gz
             docker tag maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} || true
             echo "✓ Soprano TTS image loaded"
@@ -243,6 +265,13 @@ jobs:
             echo "❌ Error: Soprano TTS image artifact not found"
             echo "The soprano-tts-service image is required for preview deployment."
             echo "Please ensure the build-soprano-preview job completed successfully."
+            echo ""
+            echo "Debugging information:"
+            echo "- Current directory: $(pwd)"
+            echo "- Files in current directory:"
+            ls -la | head -20
+            echo "- Looking for soprano artifacts:"
+            find . -name "*soprano*" -o -name "*preview*" 2>/dev/null || echo "No matching files found"
             exit 1
           fi
           
@@ -250,7 +279,9 @@ jobs:
           PREVIEW_ID="${{ steps.preview.outputs.id }}"
           if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:${PREVIEW_ID}"; then
             echo "❌ Error: Failed to load/tag Soprano TTS image"
+            echo "Loaded images:"
             docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
+            echo "Expected tag: maigie-soprano-tts-preview:${PREVIEW_ID}"
             exit 1
           fi
 
