@@ -296,11 +296,26 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
+          if [ ! -f preview-images.tar.gz ]; then
+            echo "Error: preview-images.tar.gz not found"
+            exit 1
+          fi
+          echo "Uploading preview-images.tar.gz ($(du -h preview-images.tar.gz | cut -f1))..."
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             preview-images.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-images.tar.gz
+          if [ $? -eq 0 ]; then
+            echo "✓ File uploaded successfully"
+            # Verify file exists on remote server
+            ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+              "ls -lh /tmp/preview-images.tar.gz && echo 'File verified on remote server'"
+          else
+            echo "❌ File upload failed"
+            exit 1
+          fi
           # Remove the tar.gz file after upload to free up space
-          rm -f preview-image.tar.gz
+          rm -f preview-images.tar.gz
           df -h
 
       - name: Load Image and Deploy Preview
@@ -427,15 +442,40 @@ jobs:
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
             
+            # Verify file exists before loading
+            if [ ! -f /tmp/preview-images.tar.gz ]; then
+              echo "❌ Error: /tmp/preview-images.tar.gz not found on server"
+              echo "Checking /tmp directory:"
+              ls -la /tmp/ | grep preview || echo "No preview files found"
+              exit 1
+            fi
+            
+            echo "Loading Docker images from /tmp/preview-images.tar.gz..."
             # Load Docker images
             docker load < /tmp/preview-images.tar.gz
+            if [ $? -ne 0 ]; then
+              echo "❌ Error: Failed to load Docker images"
+              exit 1
+            fi
+            
+            echo "Loaded images:"
+            docker images | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No maigie images found"
+            
             rm /tmp/preview-images.tar.gz
             
-            # Tag images for docker-compose
-            docker tag maigie-backend-preview:${{ steps.preview.outputs.id }} maigie-backend-preview:${{ steps.preview.outputs.id }} || true
-            # Tag Soprano TTS image if it exists (may have been skipped if no changes)
-            if docker images | grep -q "maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }}"; then
-              docker tag maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} || true
+            # Tag images for docker-compose (images should already have correct tags from save)
+            # Just verify they exist
+            if ! docker images | grep -q "maigie-backend-preview:${{ steps.preview.outputs.id }}"; then
+              echo "❌ Error: Backend image not found after load"
+              docker images
+              exit 1
+            fi
+            
+            # Check if Soprano TTS image was loaded
+            if docker images | grep -q "maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"; then
+              echo "✓ Soprano TTS image loaded"
+            else
+              echo "⚠ Warning: Soprano TTS image not found (may have been skipped if no changes)"
             fi
             
             # Generate random password for preview database
