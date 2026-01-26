@@ -6,17 +6,20 @@ Handles communication with the separate Soprano TTS container.
 import asyncio
 import logging
 import os
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, TYPE_CHECKING, Any
 
 import grpc
 
 # Import generated proto files (will be generated during build)
-try:
+if TYPE_CHECKING:
     from src.proto import tts_pb2, tts_pb2_grpc
-except ImportError:
-    # Fallback if proto files not generated yet
-    tts_pb2 = None  # type: ignore
-    tts_pb2_grpc = None  # type: ignore
+else:
+    try:
+        from src.proto import tts_pb2, tts_pb2_grpc
+    except ImportError:
+        # Fallback if proto files not generated yet
+        tts_pb2 = None  # type: ignore
+        tts_pb2_grpc = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ class TTSClient:
             "SOPRANO_TTS_SERVICE_URL", "soprano-tts-service:50051"
         )
         self._channel: Optional[grpc.aio.Channel] = None
-        self._stub: Optional[tts_pb2_grpc.TTSServiceStub] = None
+        self._stub: Optional[Any] = None  # type: ignore
         self._lock = asyncio.Lock()
 
         # Validate proto files are available (lazy check on first use)

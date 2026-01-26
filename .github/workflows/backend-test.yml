@@ -69,7 +69,11 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Generate gRPC Proto Files
         run: |
+          # Ensure proto directory exists
+          mkdir -p src/proto || true
+          
           if [ -f "src/proto/tts.proto" ]; then
+            echo "Found tts.proto, generating Python files..."
             python -m grpc_tools.protoc \
               --proto_path=src/proto \
               --python_out=src/proto \
@@ -77,9 +81,15 @@ jobs:
               src/proto/tts.proto
             echo "Proto files generated successfully"
             ls -la src/proto/ || true
+            # Verify generated files exist
+            if [ -f "src/proto/tts_pb2.py" ] && [ -f "src/proto/tts_pb2_grpc.py" ]; then
+              echo "✓ Proto files generated correctly"
+            else
+              echo "⚠ Warning: Proto files may not have been generated correctly"
+            fi
           else
             echo "Warning: src/proto/tts.proto not found, skipping proto generation"
-            echo "This is expected if proto files are not yet committed"
+            echo "Tests may fail if TTS client is used"
           fi
       - name: Run Linting
         run: |
