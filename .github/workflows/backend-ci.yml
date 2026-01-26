@@ -218,10 +218,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: soprano-tts-image-preview
-          path: .
+          path: ./apps/backend
         continue-on-error: true
 
       - name: Debug Artifact Download
+        working-directory: ./apps/backend
         run: |
           echo "=== Checking for downloaded artifact ==="
           ls -la | grep -E "(soprano|tar\.gz)" || echo "No soprano artifacts found"
@@ -250,6 +251,7 @@ jobs:
           docker system df
 
       - name: Load Soprano TTS Image
+        working-directory: ./apps/backend
         run: |
           if [ -f soprano-preview-image.tar.gz ]; then
             echo "Loading soprano-preview-image.tar.gz..."
