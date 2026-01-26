@@ -22,12 +22,12 @@ FROM python:3.11-slim
 # Build arguments
 # ----------------
 ARG PYTORCH_VERSION=cpu
-ARG CUDA_VERSION=cu121
 
 # ----------------
 # System deps (minimal)
 # ----------------
-RUN apt-get update && apt-get install -y \
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
@@ -54,24 +54,18 @@ ENV POETRY_NO_INTERACTION=1
 COPY pyproject.toml poetry.lock ./
 
 # ----------------
-# Install PyTorch based on build args
-# ----------------
-RUN if [ "$PYTORCH_VERSION" = "cuda" ]; then \
-        pip install --no-cache-dir \
-            torch \
-            --index-url https://download.pytorch.org/whl/${CUDA_VERSION}; \
-    else \
-        pip install --no-cache-dir \
-            torch==2.1.0+cpu \
-            --index-url https://download.pytorch.org/whl/cpu; \
-    fi
-
-# ----------------
-# Install app deps and clean up
+# Install app deps with poetry
 # ----------------
 RUN poetry install --no-root --without dev && \
-    # Clean up pip cache
-    pip cache purge || true && \
+    # Clean up poetry + pip caches (best-effort)
+    (poetry cache clear pypi --all -n || true) && \
+    (pip cache purge || true) && \
+    rm -rf /root/.cache/pypoetry /root/.cache/pip /tmp/* /var/tmp/* 2>/dev/null || true
+
+# ----------------
+# Final cleanup to reduce image size
+# ----------------
+RUN (pip cache purge || true) && \
     # Remove Python cache files (safe to remove)
     find /usr/local/lib/python3.11/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python3.11/site-packages -type f -name "*.pyc" -delete 2>/dev/null || true && \
@@ -85,7 +79,9 @@ RUN poetry install --no-root --without dev && \
     find /usr/local/lib/python3.11/site-packages -type f -name "LICENSE*" -delete 2>/dev/null || true && \
     find /usr/local/lib/python3.11/site-packages -type f -name "CHANGELOG*" -delete 2>/dev/null || true && \
     # Clean up any temporary build artifacts
-    rm -rf /tmp/* /var/tmp/* 2>/dev/null || true
+    rm -rf /tmp/* /var/tmp/* ~/.cache 2>/dev/null || true && \
+    # Show disk usage for debugging
+    df -h || true
 
 # ----------------
 # Copy app
