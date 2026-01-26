@@ -67,6 +67,20 @@ jobs:
         run: poetry install --no-root
       - name: Install PyTorch (CPU)
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Generate gRPC Proto Files
+        run: |
+          if [ -f "src/proto/tts.proto" ]; then
+            python -m grpc_tools.protoc \
+              --proto_path=src/proto \
+              --python_out=src/proto \
+              --grpc_python_out=src/proto \
+              src/proto/tts.proto
+            echo "Proto files generated successfully"
+            ls -la src/proto/ || true
+          else
+            echo "Warning: src/proto/tts.proto not found, skipping proto generation"
+            echo "This is expected if proto files are not yet committed"
+          fi
       - name: Run Linting
         run: |
           poetry run black . --check --diff || (poetry run black . --diff && exit 1)

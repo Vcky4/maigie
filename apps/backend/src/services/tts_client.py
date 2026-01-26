@@ -34,13 +34,6 @@ class TTSClient:
         Args:
             service_url: gRPC service URL (default: from SOPRANO_TTS_SERVICE_URL env var)
         """
-        if tts_pb2 is None or tts_pb2_grpc is None:
-            raise RuntimeError(
-                "gRPC proto files not generated. "
-                "Run: python -m grpc_tools.protoc --proto_path=src/proto "
-                "--python_out=src/proto --grpc_python_out=src/proto src/proto/tts.proto"
-            )
-
         self.service_url = service_url or os.getenv(
             "SOPRANO_TTS_SERVICE_URL", "soprano-tts-service:50051"
         )
@@ -48,8 +41,23 @@ class TTSClient:
         self._stub: Optional[tts_pb2_grpc.TTSServiceStub] = None
         self._lock = asyncio.Lock()
 
+        # Validate proto files are available (lazy check on first use)
+        if tts_pb2 is None or tts_pb2_grpc is None:
+            logger.warning(
+                "gRPC proto files not generated. TTS client will fail on first use. "
+                "Run: python -m grpc_tools.protoc --proto_path=src/proto "
+                "--python_out=src/proto --grpc_python_out=src/proto src/proto/tts.proto"
+            )
+
     async def _ensure_connection(self):
         """Ensure gRPC channel and stub are initialized."""
+        if tts_pb2 is None or tts_pb2_grpc is None:
+            raise RuntimeError(
+                "gRPC proto files not generated. "
+                "Run: python -m grpc_tools.protoc --proto_path=src/proto "
+                "--python_out=src/proto --grpc_python_out=src/proto src/proto/tts.proto"
+            )
+
         async with self._lock:
             if self._channel is None or self._stub is None:
                 try:

@@ -102,6 +102,10 @@ class LiveVoiceConversationService:
             try:
                 self._tts_client = get_tts_client()
                 logger.info("TTS gRPC client initialized")
+            except RuntimeError as e:
+                # Proto files not generated - this is OK for tests, will fail at runtime
+                logger.warning(f"TTS client not available: {e}")
+                raise
             except Exception as e:
                 logger.error(f"Failed to initialize TTS client: {e}", exc_info=True)
                 raise
