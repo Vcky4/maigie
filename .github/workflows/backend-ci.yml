@@ -242,29 +242,57 @@ jobs:
           else
             echo "No Soprano TTS image found - build may have been skipped due to no changes"
           fi
-          
-      - name: Clean up intermediate build layers
-        run: |
-          docker builder prune -af || true
-          # Remove dangling images
-          docker image prune -af || true
-          # Show disk usage
-          df -h
-          docker system df
 
       - name: Save Docker Images
         run: |
-          if docker images | grep -q "maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"; then
-            docker save maigie-backend-preview:${{ steps.preview.outputs.id }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} | gzip > preview-images.tar.gz
+          echo "=== Checking available Docker images ==="
+          docker images | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No preview images found"
+          
+          # Verify backend image exists
+          if ! docker images | grep -q "maigie-backend-preview:${{ steps.preview.outputs.id }}"; then
+            echo "❌ Error: maigie-backend-preview:${{ steps.preview.outputs.id }} not found"
+            docker images | grep maigie-backend-preview || echo "No backend preview images found"
+            exit 1
+          fi
+          
+          echo "=== Saving Docker images ==="
+          BACKEND_IMAGE="maigie-backend-preview:${{ steps.preview.outputs.id }}"
+          SOPRANO_IMAGE="maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"
+          
+          if docker images | grep -q "$SOPRANO_IMAGE"; then
+            echo "Saving both backend and soprano-tts images..."
+            # Save both images and verify the command succeeded
+            if ! docker save "$BACKEND_IMAGE" "$SOPRANO_IMAGE" | gzip > preview-images.tar.gz; then
+              echo "❌ Error: Failed to save Docker images"
+              exit 1
+            fi
           else
-            docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > preview-images.tar.gz
+            echo "Saving backend image only (soprano-tts not found)..."
+            # Save single image and verify the command succeeded
+            if ! docker save "$BACKEND_IMAGE" | gzip > preview-images.tar.gz; then
+              echo "❌ Error: Failed to save Docker image"
+              exit 1
+            fi
             echo "Warning: Soprano TTS image not included"
           fi
+          
+          echo "=== Validating saved image file ==="
           ls -lh preview-images.tar.gz
           if [ ! -f preview-images.tar.gz ] || [ ! -s preview-images.tar.gz ]; then
             echo "Error: Docker image file was not created or is empty"
             exit 1
           fi
+          
+          # Verify the gzip file is valid
+          if ! gzip -t preview-images.tar.gz 2>/dev/null; then
+            echo "Error: preview-images.tar.gz is not a valid gzip file"
+            exit 1
+          fi
+          
+          # Calculate checksum for verification
+          sha256sum preview-images.tar.gz > preview-images.tar.gz.sha256
+          cat preview-images.tar.gz.sha256
+          echo "✓ Image file validated successfully"
 
       - name: Setup SSH Key
         run: |
@@ -300,23 +328,57 @@ jobs:
             echo "Error: preview-images.tar.gz not found"
             exit 1
           fi
-          echo "Uploading preview-images.tar.gz ($(du -h preview-images.tar.gz | cut -f1))..."
+          
+          LOCAL_SIZE=$(stat -f%z preview-images.tar.gz 2>/dev/null || stat -c%s preview-images.tar.gz 2>/dev/null || du -b preview-images.tar.gz | cut -f1)
+          LOCAL_CHECKSUM=$(cat preview-images.tar.gz.sha256 | cut -d' ' -f1)
+          
+          echo "Uploading preview-images.tar.gz (Size: $(du -h preview-images.tar.gz | cut -f1), Checksum: $LOCAL_CHECKSUM)..."
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             preview-images.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-images.tar.gz
+            preview-images.tar.gz.sha256 \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          
           if [ $? -eq 0 ]; then
-            echo "✓ File uploaded successfully"
-            # Verify file exists on remote server
+            echo "✓ Files uploaded successfully"
+            # Verify file exists and integrity on remote server
             ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
               ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-              "ls -lh /tmp/preview-images.tar.gz && echo 'File verified on remote server'"
+              "ls -lh /tmp/preview-images.tar.gz && \
+               echo 'Verifying file integrity...' && \
+               if command -v gzip >/dev/null 2>&1; then \
+                 if gzip -t /tmp/preview-images.tar.gz 2>/dev/null; then \
+                   echo '✓ Gzip file is valid'; \
+                 else \
+                   echo '❌ Gzip file is corrupted'; \
+                   exit 1; \
+                 fi; \
+               else \
+                 echo 'Warning: gzip not available for validation'; \
+               fi && \
+               REMOTE_SIZE=\$(stat -c%s /tmp/preview-images.tar.gz 2>/dev/null || stat -f%z /tmp/preview-images.tar.gz 2>/dev/null || du -b /tmp/preview-images.tar.gz | cut -f1) && \
+               echo \"Local size: $LOCAL_SIZE bytes\" && \
+               echo \"Remote size: \$REMOTE_SIZE bytes\" && \
+               if [ \"\$REMOTE_SIZE\" -eq \"$LOCAL_SIZE\" ]; then \
+                 echo '✓ File sizes match'; \
+               else \
+                 echo '❌ File size mismatch - transfer may be incomplete'; \
+                 exit 1; \
+               fi"
           else
             echo "❌ File upload failed"
             exit 1
           fi
           # Remove the tar.gz file after upload to free up space
-          rm -f preview-images.tar.gz
+          rm -f preview-images.tar.gz preview-images.tar.gz.sha256
+          
+          # Clean up intermediate build layers AFTER saving images
+          echo "=== Cleaning up Docker resources after saving images ==="
+          docker builder prune -af || true
+          # Only remove dangling (untagged) images, not all unused images
+          docker image prune -f || true
+          # Show disk usage
           df -h
+          docker system df
 
       - name: Load Image and Deploy Preview
         uses: appleboy/ssh-action@v1.2.4
@@ -450,11 +512,34 @@ jobs:
               exit 1
             fi
             
-            echo "Loading Docker images from /tmp/preview-images.tar.gz..."
-            # Load Docker images
-            docker load < /tmp/preview-images.tar.gz
-            if [ $? -ne 0 ]; then
+            echo "=== Validating Docker image file before loading ==="
+            # Verify gzip integrity
+            if command -v gzip >/dev/null 2>&1; then
+              if ! gzip -t /tmp/preview-images.tar.gz 2>/dev/null; then
+                echo "❌ Error: /tmp/preview-images.tar.gz is corrupted (gzip test failed)"
+                exit 1
+              fi
+              echo "✓ Gzip file is valid"
+            fi
+            
+            # Check file size (should be > 0)
+            FILE_SIZE=$(stat -c%s /tmp/preview-images.tar.gz 2>/dev/null || stat -f%z /tmp/preview-images.tar.gz 2>/dev/null || du -b /tmp/preview-images.tar.gz | cut -f1)
+            if [ "$FILE_SIZE" -eq 0 ]; then
+              echo "❌ Error: /tmp/preview-images.tar.gz is empty"
+              exit 1
+            fi
+            echo "File size: $FILE_SIZE bytes"
+            
+            echo "=== Loading Docker images from /tmp/preview-images.tar.gz ==="
+            # Load Docker images with better error handling
+            if ! docker load < /tmp/preview-images.tar.gz; then
               echo "❌ Error: Failed to load Docker images"
+              echo "Attempting to diagnose the issue..."
+              # Try to extract and inspect the tar file
+              if command -v gunzip >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+                echo "Extracting tar.gz to inspect contents..."
+                gunzip -c /tmp/preview-images.tar.gz | tar -t | head -20 || echo "Could not list tar contents"
+              fi
               exit 1
             fi
             
