@@ -230,7 +230,7 @@ jobs:
             --platform linux/amd64 \
             --progress=plain \
             .
-          docker images | grep maigie-backend-preview
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
           docker system df
 
       - name: Load Soprano TTS Image if available
@@ -246,20 +246,24 @@ jobs:
       - name: Save Docker Images
         run: |
           echo "=== Checking available Docker images ==="
-          docker images | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No preview images found"
+          PREVIEW_ID="${{ steps.preview.outputs.id }}"
+          # Format docker images output to use colon format for easier checking
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No preview images found"
           
           # Verify backend image exists
-          if ! docker images | grep -q "maigie-backend-preview:${{ steps.preview.outputs.id }}"; then
-            echo "❌ Error: maigie-backend-preview:${{ steps.preview.outputs.id }} not found"
-            docker images | grep maigie-backend-preview || echo "No backend preview images found"
+          BACKEND_IMAGE="maigie-backend-preview:${PREVIEW_ID}"
+          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
+            echo "❌ Error: ${BACKEND_IMAGE} not found"
+            echo "Available images:"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
             exit 1
           fi
           
           echo "=== Saving Docker images ==="
-          BACKEND_IMAGE="maigie-backend-preview:${{ steps.preview.outputs.id }}"
-          SOPRANO_IMAGE="maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"
+          SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
           
-          if docker images | grep -q "$SOPRANO_IMAGE"; then
+          # Check for soprano image
+          if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
             echo "Saving both backend and soprano-tts images..."
             # Save both images and verify the command succeeded
             if ! docker save "$BACKEND_IMAGE" "$SOPRANO_IMAGE" | gzip > preview-images.tar.gz; then
@@ -544,20 +548,24 @@ jobs:
             fi
             
             echo "Loaded images:"
-            docker images | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No maigie images found"
+            PREVIEW_ID="${{ steps.preview.outputs.id }}"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No maigie images found"
             
             rm /tmp/preview-images.tar.gz
             
             # Tag images for docker-compose (images should already have correct tags from save)
             # Just verify they exist
-            if ! docker images | grep -q "maigie-backend-preview:${{ steps.preview.outputs.id }}"; then
+            BACKEND_IMAGE="maigie-backend-preview:${PREVIEW_ID}"
+            if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
               echo "❌ Error: Backend image not found after load"
-              docker images
+              echo "Available images:"
+              docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
               exit 1
             fi
             
             # Check if Soprano TTS image was loaded
-            if docker images | grep -q "maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"; then
+            SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
+            if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
               echo "✓ Soprano TTS image loaded"
             else
               echo "⚠ Warning: Soprano TTS image not found (may have been skipped if no changes)"
@@ -1062,11 +1070,35 @@ jobs:
 
       - name: Save Docker Images
         run: |
-          if docker images | grep -q "maigie-soprano-tts:latest"; then
-            docker save maigie-backend:latest maigie-soprano-tts:latest | gzip > production-images.tar.gz
+          echo "=== Checking available Docker images ==="
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend|maigie-soprano-tts)" || echo "No maigie images found"
+          
+          BACKEND_IMAGE="maigie-backend:latest"
+          SOPRANO_IMAGE="maigie-soprano-tts:latest"
+          
+          # Verify backend image exists
+          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
+            echo "❌ Error: ${BACKEND_IMAGE} not found"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend || echo "No backend images found"
+            exit 1
+          fi
+          
+          echo "=== Saving Docker images ==="
+          # Check for soprano image
+          if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
+            echo "Saving both backend and soprano-tts images..."
+            docker save "${BACKEND_IMAGE}" "${SOPRANO_IMAGE}" | gzip > production-images.tar.gz
           else
-            docker save maigie-backend:latest | gzip > production-images.tar.gz
+            echo "Saving backend image only (soprano-tts not found)..."
+            docker save "${BACKEND_IMAGE}" | gzip > production-images.tar.gz
             echo "Warning: Soprano TTS image not included"
+          fi
+          
+          echo "=== Validating saved image file ==="
+          ls -lh production-images.tar.gz
+          if [ ! -f production-images.tar.gz ] || [ ! -s production-images.tar.gz ]; then
+            echo "❌ Error: Docker image file was not created or is empty"
+            exit 1
           fi
 
       - name: Setup SSH
@@ -1360,11 +1392,35 @@ jobs:
 
       - name: Save Docker Images
         run: |
-          if docker images | grep -q "maigie-soprano-tts:staging"; then
-            docker save maigie-backend:staging maigie-soprano-tts:staging | gzip > staging-images.tar.gz
+          echo "=== Checking available Docker images ==="
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend|maigie-soprano-tts)" || echo "No maigie images found"
+          
+          BACKEND_IMAGE="maigie-backend:staging"
+          SOPRANO_IMAGE="maigie-soprano-tts:staging"
+          
+          # Verify backend image exists
+          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
+            echo "❌ Error: ${BACKEND_IMAGE} not found"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend || echo "No backend images found"
+            exit 1
+          fi
+          
+          echo "=== Saving Docker images ==="
+          # Check for soprano image
+          if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
+            echo "Saving both backend and soprano-tts images..."
+            docker save "${BACKEND_IMAGE}" "${SOPRANO_IMAGE}" | gzip > staging-images.tar.gz
           else
-            docker save maigie-backend:staging | gzip > staging-images.tar.gz
+            echo "Saving backend image only (soprano-tts not found)..."
+            docker save "${BACKEND_IMAGE}" | gzip > staging-images.tar.gz
             echo "Warning: Soprano TTS image not included"
+          fi
+          
+          echo "=== Validating saved image file ==="
+          ls -lh staging-images.tar.gz
+          if [ ! -f staging-images.tar.gz ] || [ ! -s staging-images.tar.gz ]; then
+            echo "❌ Error: Docker image file was not created or is empty"
+            exit 1
           fi
 
       - name: Setup SSH
