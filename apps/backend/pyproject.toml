@@ -87,6 +87,21 @@ ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | __pycache__
+  | \.pytest_cache
+  | \.mypy_cache
+  | build
+  | dist
+  | \.eggs
+  | \*\.egg-info
+  | .*_pb2\.py
+  | .*_pb2_grpc\.py
+)/
+'''
 #NEW
 [tool.mypy]
 python_version = "3.12"
