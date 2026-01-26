@@ -97,11 +97,6 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     steps:
-      - name: Check build-soprano-preview job status
-        run: |
-          echo "Checking build-soprano-preview job status..."
-          echo "Job should have completed before this step runs"
-          echo "If artifact is missing, check the build-soprano-preview job logs"
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
