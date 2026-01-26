@@ -1,5 +1,5 @@
 """
-Live Voice Service using Kyutai STT, Gemini Chat, and Soprano TTS.
+Live Voice Service using Voice Service (STT), Gemini Chat, and Voice Service (TTS).
 Handles real-time voice conversations via WebSocket streaming.
 """
 
@@ -10,14 +10,9 @@ import os
 import uuid
 from typing import Callable, Optional
 
-import numpy as np
-import torch
 import google.generativeai as genai
-from transformers import (
-    KyutaiSpeechToTextForConditionalGeneration,
-    KyutaiSpeechToTextProcessor,
-)
 
+from src.services.stt_client import get_stt_client
 from src.services.tts_client import get_tts_client
 
 logger = logging.getLogger(__name__)
@@ -29,72 +24,19 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 class LiveVoiceConversationService:
     """
     Service for managing real-time voice conversations.
-    Uses Kyutai STT for speech-to-text, Gemini for chat, and Soprano for text-to-speech.
+    Uses Voice Service (STT) for speech-to-text, Gemini for chat, and Voice Service (TTS) for text-to-speech.
     Streams everything via WebSocket for real-time feel.
     """
 
     def __init__(self):
         """Initialize the Live Voice service."""
         self.active_sessions: dict[str, dict] = {}
-        # TTS client for communicating with Soprano TTS service
+        # TTS client for communicating with Voice Service
         self._tts_client = None
-        # Kyutai STT models (lazy loading)
-        self._stt_processor: Optional[KyutaiSpeechToTextProcessor] = None
-        self._stt_model: Optional[KyutaiSpeechToTextForConditionalGeneration] = None
+        # STT client for communicating with Voice Service
+        self._stt_client = None
         # Gemini model for chat (will be initialized per session with system instruction)
         self._chat_models: dict[str, genai.GenerativeModel] = {}
-        # Device for STT models
-        self._device = None
-
-    def _get_device(self) -> str:
-        """Get the device (cuda/cpu) for models with detailed GPU information."""
-        if self._device is None:
-            try:
-                if torch.cuda.is_available():
-                    self._device = "cuda"
-                    gpu_count = torch.cuda.device_count()
-                    gpu_name = torch.cuda.get_device_name(0) if gpu_count > 0 else "Unknown"
-                    gpu_memory = (
-                        f"{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB"
-                        if gpu_count > 0
-                        else "Unknown"
-                    )
-                    logger.info(
-                        f"GPU detected: Using CUDA device (GPU: {gpu_name}, "
-                        f"Memory: {gpu_memory}, Count: {gpu_count})"
-                    )
-                else:
-                    self._device = "cpu"
-                    logger.info("No GPU detected: Using CPU device")
-            except Exception as e:
-                self._device = "cpu"
-                logger.warning(f"GPU detection failed ({e}): Falling back to CPU")
-        return self._device
-
-    def _get_stt_models(
-        self,
-    ) -> tuple[KyutaiSpeechToTextProcessor, KyutaiSpeechToTextForConditionalGeneration]:
-        """Get or initialize Kyutai STT models."""
-        if self._stt_processor is None or self._stt_model is None:
-            try:
-                device = self._get_device()
-                # Use the low-latency model for real-time conversation
-                model_id = (
-                    "kyutai/stt-1b-en_fr"  # Low latency (500ms delay), supports English and French
-                )
-
-                logger.info(f"Loading Kyutai STT model: {model_id}")
-                self._stt_processor = KyutaiSpeechToTextProcessor.from_pretrained(model_id)
-                self._stt_model = KyutaiSpeechToTextForConditionalGeneration.from_pretrained(
-                    model_id
-                )
-                self._stt_model = self._stt_model.to(device)
-                self._stt_model.eval()  # Set to evaluation mode
-                logger.info(f"Kyutai STT initialized with device: {device}")
-            except Exception as e:
-                logger.error(f"Failed to initialize Kyutai STT: {e}", exc_info=True)
-                raise
-        return self._stt_processor, self._stt_model
 
     def _get_tts_client(self):
         """Get or initialize TTS gRPC client."""
@@ -111,33 +53,20 @@ class LiveVoiceConversationService:
                 raise
         return self._tts_client
 
-    def _transcribe_audio_sync(
-        self,
-        processor: KyutaiSpeechToTextProcessor,
-        model: KyutaiSpeechToTextForConditionalGeneration,
-        audio_array: np.ndarray,
-        device: str,
-    ) -> str:
-        """Synchronous transcription function to run in executor."""
-        try:
-            # Prepare inputs for Kyutai STT
-            # The processor expects raw audio waveform (numpy array)
-            inputs = processor(audio_array, sampling_rate=16000, return_tensors="pt")
-
-            # Move inputs to device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-
-            # Generate transcription
-            with torch.no_grad():
-                output_tokens = model.generate(**inputs)
-
-            # Decode tokens to text
-            transcription = processor.batch_decode(output_tokens, skip_special_tokens=True)[0]
-
-            return transcription
-        except Exception as e:
-            logger.error(f"Error in Kyutai STT transcription: {e}", exc_info=True)
-            return ""
+    def _get_stt_client(self):
+        """Get or initialize STT gRPC client."""
+        if self._stt_client is None:
+            try:
+                self._stt_client = get_stt_client()
+                logger.info("STT gRPC client initialized")
+            except RuntimeError as e:
+                # Proto files not generated - this is OK for tests, will fail at runtime
+                logger.warning(f"STT client not available: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to initialize STT client: {e}", exc_info=True)
+                raise
+        return self._stt_client
 
     async def start_conversation(
         self,
@@ -276,31 +205,17 @@ class LiveVoiceConversationService:
             if len(audio_buffer) == 0:
                 return
 
-            # Step 1: Transcribe audio using Kyutai STT
+            # Step 1: Transcribe audio using Voice Service STT
             logger.info(
                 f"Transcribing audio for session {session_id}, size: {len(audio_buffer)} bytes"
             )
 
-            # Convert PCM bytes to numpy array
-            # Audio is 16-bit PCM, 16kHz, mono
-            audio_array = np.frombuffer(audio_buffer, dtype=np.int16).astype(np.float32)
-            # Normalize to [-1, 1] range
-            audio_array = audio_array / 32768.0
+            # Get STT client
+            stt_client = self._get_stt_client()
 
-            # Get STT models
-            processor, stt_model = self._get_stt_models()
-            device = self._get_device()
-
-            # Process audio with Kyutai STT
-            # Run in a thread pool to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            transcribed_text = await loop.run_in_executor(
-                None,
-                self._transcribe_audio_sync,
-                processor,
-                stt_model,
-                audio_array,
-                device,
+            # Transcribe audio using Voice Service
+            transcribed_text = await stt_client.transcribe_audio(
+                audio_data=audio_buffer, sample_rate=16000
             )
 
             if not transcribed_text or not transcribed_text.strip():

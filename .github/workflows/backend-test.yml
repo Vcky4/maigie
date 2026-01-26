@@ -45,8 +45,6 @@ jobs:
         run: poetry lock
       - name: Install Dependencies
         run: poetry install --no-root
-      - name: Install PyTorch (CPU)
-        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Verify grpcio-tools installation
         run: |
           poetry run python -c "import grpc_tools.protoc; print('grpc_tools found')" || {

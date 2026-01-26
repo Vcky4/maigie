@@ -74,6 +74,37 @@ class TTSServiceServicer(tts_pb2_grpc.TTSServiceServicer):
             await context.set_details(f"Error generating speech: {str(e)}")
             raise
 
+    async def TranscribeAudio(
+        self, request: tts_pb2.TranscribeAudioRequest, context: grpc.aio.ServicerContext
+    ) -> tts_pb2.TranscribeAudioResponse:
+        """
+        Transcribe audio to text.
+
+        Args:
+            request: TranscribeAudioRequest with audio data
+            context: gRPC context
+
+        Returns:
+            TranscribeAudioResponse with transcribed text
+        """
+        try:
+            logger.info(f"Transcribing audio, size: {len(request.audio_data)} bytes")
+            sample_rate = request.sample_rate if request.sample_rate > 0 else 16000
+
+            # Transcribe audio using Kyutai STT
+            transcribed_text = self.stt_service.transcribe_audio(
+                audio_data=request.audio_data, sample_rate=sample_rate
+            )
+
+            logger.info(f"Transcribed text: {transcribed_text[:50]}...")
+            return tts_pb2.TranscribeAudioResponse(text=transcribed_text, is_final=True)
+
+        except Exception as e:
+            logger.error(f"Error transcribing audio: {e}", exc_info=True)
+            await context.set_code(grpc.StatusCode.INTERNAL)
+            await context.set_details(f"Error transcribing audio: {str(e)}")
+            raise
+
     async def HealthCheck(
         self, request: tts_pb2.HealthCheckRequest, context: grpc.aio.ServicerContext
     ) -> tts_pb2.HealthCheckResponse:
@@ -88,11 +119,23 @@ class TTSServiceServicer(tts_pb2_grpc.TTSServiceServicer):
             HealthCheckResponse with health status
         """
         try:
-            is_healthy = self.tts_service.is_healthy()
+            tts_healthy = self.tts_service.is_healthy()
+            stt_healthy = self.stt_service.is_healthy()
+            is_healthy = tts_healthy and stt_healthy
+
             if is_healthy:
-                return tts_pb2.HealthCheckResponse(healthy=True, message="Service is healthy")
+                return tts_pb2.HealthCheckResponse(
+                    healthy=True, message="TTS and STT services are healthy"
+                )
             else:
-                return tts_pb2.HealthCheckResponse(healthy=False, message="Service is not healthy")
+                status_parts = []
+                if not tts_healthy:
+                    status_parts.append("TTS")
+                if not stt_healthy:
+                    status_parts.append("STT")
+                return tts_pb2.HealthCheckResponse(
+                    healthy=False, message=f"Service unhealthy: {', '.join(status_parts)}"
+                )
         except Exception as e:
             logger.error(f"Health check error: {e}", exc_info=True)
             return tts_pb2.HealthCheckResponse(
@@ -106,13 +149,13 @@ async def serve():
     server = grpc.aio.server(futures.ThreadPoolExecutor(max_workers=10))
 
     # Add servicer
-    tts_pb2_grpc.add_TTSServiceServicer_to_server(TTSServiceServicer(), server)
+    tts_pb2_grpc.add_VoiceServiceServicer_to_server(VoiceServiceServicer(), server)
 
     # Listen on port
     listen_addr = f"0.0.0.0:{port}"
     server.add_insecure_port(listen_addr)
 
-    logger.info(f"Starting Soprano TTS gRPC server on {listen_addr}")
+    logger.info(f"Starting Voice Service (TTS & STT) gRPC server on {listen_addr}")
     await server.start()
 
     try:

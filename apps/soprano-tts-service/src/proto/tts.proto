@@ -1,11 +1,14 @@
 syntax = "proto3";
 
-package tts;
+package voice;
 
-// TTS Service for generating speech from text
-service TTSService {
+// Voice Service for TTS (text-to-speech) and STT (speech-to-text)
+service VoiceService {
   // Generate speech from text, streaming audio chunks
   rpc GenerateSpeech(GenerateSpeechRequest) returns (stream AudioChunk);
+  
+  // Transcribe audio to text
+  rpc TranscribeAudio(TranscribeAudioRequest) returns (TranscribeAudioResponse);
   
   // Health check endpoint
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
@@ -21,6 +24,18 @@ message GenerateSpeechRequest {
 message AudioChunk {
   bytes audio_data = 1;
   bool is_final = 2;
+}
+
+// Request to transcribe audio
+message TranscribeAudioRequest {
+  bytes audio_data = 1;  // PCM audio data (16-bit, 16kHz, mono)
+  int32 sample_rate = 2; // Sample rate (default: 16000)
+}
+
+// Response from transcription
+message TranscribeAudioResponse {
+  string text = 1;  // Transcribed text
+  bool is_final = 2; // Whether transcription is final
 }
 
 // Health check request

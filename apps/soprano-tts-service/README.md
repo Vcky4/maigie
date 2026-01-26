@@ -1,20 +1,32 @@
-# Soprano TTS Service
+# Voice Service (TTS & STT)
 
-A gRPC-based Text-to-Speech (TTS) microservice using the Soprano TTS model. This service provides high-quality speech synthesis capabilities for the Maigie platform, enabling real-time voice generation for study sessions and conversations.
+A gRPC-based microservice providing both Text-to-Speech (TTS) and Speech-to-Text (STT) capabilities. This service combines Soprano TTS for speech synthesis and Kyutai STT for speech recognition, enabling real-time voice interactions for the Maigie platform.
 
 ## Overview
 
-The Soprano TTS Service is a standalone microservice that converts text into natural-sounding speech audio. It's designed to be deployed as a separate container, allowing for independent scaling and resource management of the TTS functionality.
+The Voice Service is a standalone microservice that handles both directions of voice processing:
+- **TTS (Text-to-Speech)**: Converts text into natural-sounding speech audio using Soprano TTS
+- **STT (Speech-to-Text)**: Transcribes audio into text using Kyutai STT
+
+It's designed to be deployed as a separate container, allowing for independent scaling and resource management of voice processing functionality.
 
 ## Features
 
+### TTS Features
 - **High-Quality Speech Synthesis**: Uses the Soprano TTS model for natural-sounding voice generation
 - **Streaming Audio**: Streams audio chunks in real-time for low-latency playback
+- **Multiple Backends**: Supports both `lmdeploy` (faster) and `transformers` (compatible) backends
+
+### STT Features
+- **Low-Latency Transcription**: Uses Kyutai STT model optimized for real-time conversation (500ms delay)
+- **Multi-Language Support**: Supports English and French
+- **High Accuracy**: State-of-the-art speech recognition
+
+### Shared Features
 - **GPU Acceleration**: Automatically detects and uses CUDA-capable GPUs when available
 - **CPU Fallback**: Gracefully falls back to CPU processing when GPU is unavailable
-- **Multiple Backends**: Supports both `lmdeploy` (faster) and `transformers` (compatible) backends
 - **gRPC Interface**: Efficient binary protocol for inter-service communication
-- **Health Checks**: Built-in health monitoring endpoint
+- **Health Checks**: Built-in health monitoring endpoint for both TTS and STT
 - **Docker Ready**: Containerized for easy deployment
 
 ## Architecture
@@ -115,7 +127,7 @@ docker run -p 50051:50051 soprano-tts-service
 
 The service implements the following gRPC methods:
 
-#### `GenerateSpeech`
+#### `GenerateSpeech` (TTS)
 
 Generates speech from text and streams audio chunks.
 
@@ -141,7 +153,7 @@ import grpc
 from src.proto import tts_pb2, tts_pb2_grpc
 
 async with grpc.aio.insecure_channel('localhost:50051') as channel:
-    stub = tts_pb2_grpc.TTSServiceStub(channel)
+    stub = tts_pb2_grpc.VoiceServiceStub(channel)
     request = tts_pb2.GenerateSpeechRequest(text="Hello, world!")
     
     async for chunk in stub.GenerateSpeech(request):
@@ -247,9 +259,11 @@ The Dockerfile includes optimizations to reduce image size:
 
 ## Integration with Backend
 
-The backend service connects to this TTS service via gRPC. The connection URL is configured via the `SOPRANO_TTS_SERVICE_URL` environment variable (default: `soprano-tts-service:50051`).
+The backend service connects to this Voice Service via gRPC for both TTS and STT functionality. The connection URL is configured via the `SOPRANO_TTS_SERVICE_URL` environment variable (default: `soprano-tts-service:50051`).
 
-See `apps/backend/src/services/tts_client.py` for the client implementation.
+See:
+- `apps/backend/src/services/tts_client.py` for TTS client implementation
+- `apps/backend/src/services/stt_client.py` for STT client implementation
 
 ## Performance Considerations
 

@@ -1,6 +1,6 @@
 """
-gRPC client for Soprano TTS service.
-Handles communication with the separate Soprano TTS container.
+gRPC client for Voice Service TTS functionality.
+Handles communication with the separate Voice Service container for text-to-speech.
 """
 
 import asyncio
@@ -152,7 +152,7 @@ class TTSClient:
             await self._channel.close()
             self._channel = None
             self._stub = None
-            logger.info("Closed connection to Soprano TTS service")
+            logger.info("Closed connection to Voice Service")
 
 
 # Global instance
