@@ -233,14 +233,25 @@ jobs:
           docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
           docker system df
 
-      - name: Load Soprano TTS Image if available
+      - name: Load Soprano TTS Image
         run: |
           if [ -f soprano-preview-image.tar.gz ]; then
             docker load < soprano-preview-image.tar.gz
             docker tag maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} || true
-            echo "Soprano TTS image loaded"
+            echo "✓ Soprano TTS image loaded"
           else
-            echo "No Soprano TTS image found - build may have been skipped due to no changes"
+            echo "❌ Error: Soprano TTS image artifact not found"
+            echo "The soprano-tts-service image is required for preview deployment."
+            echo "Please ensure the build-soprano-preview job completed successfully."
+            exit 1
+          fi
+          
+          # Verify the image exists after loading
+          PREVIEW_ID="${{ steps.preview.outputs.id }}"
+          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:${PREVIEW_ID}"; then
+            echo "❌ Error: Failed to load/tag Soprano TTS image"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
+            exit 1
           fi
 
       - name: Save Docker Images
@@ -563,12 +574,17 @@ jobs:
               exit 1
             fi
             
-            # Check if Soprano TTS image was loaded
+            # Verify Soprano TTS image exists (required for deployment)
             SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
             if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
               echo "✓ Soprano TTS image loaded"
             else
-              echo "⚠ Warning: Soprano TTS image not found (may have been skipped if no changes)"
+              echo "❌ Error: Soprano TTS image ${SOPRANO_IMAGE} not found"
+              echo "Available images:"
+              docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie|soprano)" || echo "No maigie images found"
+              echo "The soprano-tts-service image is required for preview deployment."
+              echo "Please ensure the soprano-tts-service was included in the saved images."
+              exit 1
             fi
             
             # Generate random password for preview database
@@ -592,7 +608,25 @@ jobs:
               cat .env
             fi
             
-            # Create docker-compose.yml
+            # Check if Soprano TTS image was loaded, build if missing
+            SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
+            if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
+              echo "✓ Soprano TTS image loaded"
+            else
+              echo "⚠ Soprano TTS image not found, building locally..."
+              # Build the image locally if it wasn't included in the saved images
+              cd /opt/maigie/previews/${PREVIEW_ID}
+              if [ -d "../soprano-tts-service" ]; then
+                cd ../soprano-tts-service
+                docker build -t ${SOPRANO_IMAGE} .
+                echo "✓ Soprano TTS image built locally"
+              else
+                echo "❌ Error: Cannot build Soprano TTS image - source directory not found"
+                exit 1
+              fi
+            fi
+            
+            # Create docker-compose.yml (always include soprano-tts-service)
             cat > docker-compose.yml << EOF
             services:
               postgres:
