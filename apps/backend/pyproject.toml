@@ -38,7 +38,10 @@ stripe = "^10.0.0"
 google-generativeai = "^0.8.6"
 google-genai = ">=1.57.0,<2.0.0"
 duckduckgo-search = "^7.0.0"
-soprano-tts = {version = "^0.0.2", markers = "sys_platform != 'win32'"}
+# soprano-tts moved to separate container service
+# soprano-tts = {version = "^0.0.2", markers = "sys_platform != 'win32'"}
+grpcio = "^1.66.0"
+grpcio-tools = "^1.66.0"
 numpy = "^2.0.0"
 transformers = "^4.40.0"
 # Note: torch is installed separately to avoid CUDA dependency resolution issues

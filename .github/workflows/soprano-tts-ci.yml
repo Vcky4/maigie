@@ -1,0 +1,156 @@
+name: Soprano TTS Service Deployment
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+        description: 'Deployment environment (preview, production, staging)'
+      preview_id:
+        required: false
+        type: string
+        description: 'Preview ID for preview deployments'
+      image_tag:
+        required: true
+        type: string
+        description: 'Docker image tag to use'
+      output_file:
+        required: true
+        type: string
+        description: 'Output filename for saved image'
+    outputs:
+      image_built:
+        description: 'Whether the image was built'
+        value: ${{ jobs.build-and-save.outputs.image_built }}
+      image_file:
+        description: 'Path to the built image file'
+        value: ${{ jobs.build-and-save.outputs.image_file }}
+  push:
+    branches:
+      - main
+      - development
+    paths:
+      - 'apps/soprano-tts-service/**'
+  pull_request:
+    branches:
+      - main
+      - development
+    paths:
+      - 'apps/soprano-tts-service/**'
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      has-changes: ${{ steps.changes.outputs.soprano }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for changes in soprano-tts-service
+        id: changes
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            soprano:
+              - 'apps/soprano-tts-service/**'
+
+  build-and-save:
+    needs: check-changes
+    runs-on: ubuntu-latest
+    if: needs.check-changes.outputs.has-changes == 'true' || github.event_name == 'workflow_call'
+    outputs:
+      image_built: ${{ steps.build.outputs.built }}
+      image_file: ${{ steps.build.outputs.image_file }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Determine image tag and output file
+        id: build
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_call" ]; then
+            echo "tag=${{ inputs.image_tag }}" >> $GITHUB_OUTPUT
+            echo "output_file=${{ inputs.output_file }}" >> $GITHUB_OUTPUT
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "preview_id=${{ inputs.preview_id }}" >> $GITHUB_OUTPUT
+            echo "built=true" >> $GITHUB_OUTPUT
+            echo "image_file=${{ inputs.output_file }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "pull_request" ]; then
+            PREVIEW_ID=$(echo ${{ github.event.pull_request.number }})
+            echo "tag=maigie-soprano-tts-preview:$PREVIEW_ID" >> $GITHUB_OUTPUT
+            echo "output_file=soprano-preview-image.tar.gz" >> $GITHUB_OUTPUT
+            echo "environment=preview" >> $GITHUB_OUTPUT
+            echo "preview_id=$PREVIEW_ID" >> $GITHUB_OUTPUT
+            echo "built=true" >> $GITHUB_OUTPUT
+            echo "image_file=soprano-preview-image.tar.gz" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "tag=maigie-soprano-tts:latest" >> $GITHUB_OUTPUT
+            echo "output_file=soprano-production-image.tar.gz" >> $GITHUB_OUTPUT
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "preview_id=" >> $GITHUB_OUTPUT
+            echo "built=true" >> $GITHUB_OUTPUT
+            echo "image_file=soprano-production-image.tar.gz" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" == "refs/heads/development" ]; then
+            echo "tag=maigie-soprano-tts:staging" >> $GITHUB_OUTPUT
+            echo "output_file=soprano-staging-image.tar.gz" >> $GITHUB_OUTPUT
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "preview_id=" >> $GITHUB_OUTPUT
+            echo "built=true" >> $GITHUB_OUTPUT
+            echo "image_file=soprano-staging-image.tar.gz" >> $GITHUB_OUTPUT
+          else
+            echo "built=false" >> $GITHUB_OUTPUT
+            echo "image_file=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Soprano TTS Service Docker Image
+        if: steps.build.outputs.built == 'true'
+        working-directory: ./apps/soprano-tts-service
+        run: |
+          if [ "${{ steps.build.outputs.environment }}" == "preview" ]; then
+            docker buildx build \
+              --tag ${{ steps.build.outputs.tag }} \
+              --load \
+              --platform linux/amd64 \
+              --progress=plain \
+              .
+          else
+            docker build \
+              -t ${{ steps.build.outputs.tag }} .
+          fi
+          docker images | grep maigie-soprano-tts
+          docker system df
+
+      - name: Save Docker Image
+        if: steps.build.outputs.built == 'true'
+        run: |
+          docker save ${{ steps.build.outputs.tag }} | gzip > ${{ steps.build.outputs.output_file }}
+          ls -lh ${{ steps.build.outputs.output_file }}
+          if [ ! -f ${{ steps.build.outputs.output_file }} ] || [ ! -s ${{ steps.build.outputs.output_file }} ]; then
+            echo "Error: Docker image file was not created or is empty"
+            exit 1
+          fi
+
+      - name: Upload image artifact
+        if: steps.build.outputs.built == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: soprano-tts-image-${{ steps.build.outputs.environment }}
+          path: ${{ steps.build.outputs.output_file }}
+          retention-days: 1
+
+  skip-build:
+    needs: check-changes
+    runs-on: ubuntu-latest
+    if: needs.check-changes.outputs.has-changes == 'false' && github.event_name != 'workflow_call'
+    steps:
+      - name: Skip build
+        run: |
+          echo "No changes detected in apps/soprano-tts-service/**"
+          echo "Skipping Soprano TTS build"
+          exit 0

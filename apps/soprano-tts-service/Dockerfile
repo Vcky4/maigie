@@ -18,10 +18,7 @@
 # ================================
 FROM python:3.11-slim
 
-# ----------------
-# Build arguments
-# ----------------
-# ----------------
+# ----------------  
 # System deps (minimal)
 # ----------------
 ENV DEBIAN_FRONTEND=noninteractive
@@ -29,10 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
+    build-essential \
  && rm -rf /var/lib/apt/lists/* \
  && apt-get clean
 
-# ----------------
+# ----------------  
 # Python tooling
 # ----------------
 RUN pip install --no-cache-dir --upgrade pip poetry
@@ -40,18 +38,18 @@ RUN poetry config virtualenvs.create false
 
 WORKDIR /app
 
-# ----------------
+# ----------------  
 # Prevent heavy builds
 # ----------------
 ENV PIP_NO_CACHE_DIR=1
 ENV POETRY_NO_INTERACTION=1
 
-# ----------------
+# ----------------  
 # Copy deps first (cache-friendly)
 # ----------------
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml ./
 
-# ----------------
+# ----------------  
 # Install app deps with poetry
 # ----------------
 RUN poetry install --no-root --without dev && \
@@ -60,7 +58,21 @@ RUN poetry install --no-root --without dev && \
     (pip cache purge || true) && \
     rm -rf /root/.cache/pypoetry /root/.cache/pip /tmp/* /var/tmp/* 2>/dev/null || true
 
+# ----------------  
+# Copy app
 # ----------------
+COPY . .
+
+# ----------------  
+# Generate gRPC code from proto files
+# ----------------
+RUN python -m grpc_tools.protoc \
+    --proto_path=src/proto \
+    --python_out=src/proto \
+    --grpc_python_out=src/proto \
+    src/proto/tts.proto
+
+# ----------------  
 # Final cleanup to reduce image size
 # ----------------
 RUN (pip cache purge || true) && \
@@ -81,22 +93,8 @@ RUN (pip cache purge || true) && \
     # Show disk usage for debugging
     df -h || true
 
-# ----------------
-# Copy app
-# ----------------
-COPY . .
-
-# ----------------
-# Generate gRPC code from proto files
-# ----------------
-RUN python -m grpc_tools.protoc \
-    --proto_path=src/proto \
-    --python_out=src/proto \
-    --grpc_python_out=src/proto \
-    src/proto/tts.proto || true
-
-# ----------------
+# ----------------  
 # Run
 # ----------------
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 50051
+CMD ["python", "-m", "src.main"]

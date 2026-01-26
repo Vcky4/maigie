@@ -18,11 +18,7 @@ from transformers import (
     KyutaiSpeechToTextProcessor,
 )
 
-try:
-    from soprano_tts import Soprano
-except ImportError:
-    # soprano-tts is not available on Windows (depends on lmdeploy which has no Windows wheels)
-    Soprano = None  # type: ignore
+from src.services.tts_client import get_tts_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +36,14 @@ class LiveVoiceConversationService:
     def __init__(self):
         """Initialize the Live Voice service."""
         self.active_sessions: dict[str, dict] = {}
-        # Initialize Soprano TTS model (lazy loading)
-        self._tts_model: Optional[Soprano] = None
+        # TTS client for communicating with Soprano TTS service
+        self._tts_client = None
         # Kyutai STT models (lazy loading)
         self._stt_processor: Optional[KyutaiSpeechToTextProcessor] = None
         self._stt_model: Optional[KyutaiSpeechToTextForConditionalGeneration] = None
         # Gemini model for chat (will be initialized per session with system instruction)
         self._chat_models: dict[str, genai.GenerativeModel] = {}
-        # Device for STT/TTS models
+        # Device for STT models
         self._device = None
 
     def _get_device(self) -> str:
@@ -100,39 +96,16 @@ class LiveVoiceConversationService:
                 raise
         return self._stt_processor, self._stt_model
 
-    def _get_tts_model(self) -> Soprano:
-        """Get or initialize Soprano TTS model."""
-        if Soprano is None:
-            raise RuntimeError(
-                "Soprano TTS is not available on Windows. "
-                "Please use Linux/Docker for TTS functionality."
-            )
-        if self._tts_model is None:
+    def _get_tts_client(self):
+        """Get or initialize TTS gRPC client."""
+        if self._tts_client is None:
             try:
-                device = self._get_device()
-                # Try to use lmdeploy backend first (faster), fallback to transformers if not available
-                try:
-                    import lmdeploy
-
-                    backend = "auto"  # Will use lmdeploy if available
-                    logger.info("Using lmdeploy backend for Soprano TTS (faster)")
-                except ImportError:
-                    backend = "transformers"  # Fallback to transformers backend
-                    logger.info(
-                        "lmdeploy not available, using transformers backend for Soprano TTS (slower but compatible)"
-                    )
-
-                # Soprano accepts backend parameter - try with backend, fallback to default if not supported
-                try:
-                    self._tts_model = Soprano(device=device, backend=backend)
-                except TypeError:
-                    # If backend parameter not supported, use default initialization
-                    self._tts_model = Soprano(device=device)
-                logger.info(f"Soprano TTS initialized with device: {device}")
+                self._tts_client = get_tts_client()
+                logger.info("TTS gRPC client initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize Soprano TTS: {e}", exc_info=True)
+                logger.error(f"Failed to initialize TTS client: {e}", exc_info=True)
                 raise
-        return self._tts_model
+        return self._tts_client
 
     def _transcribe_audio_sync(
         self,
@@ -412,49 +385,22 @@ class LiveVoiceConversationService:
                 else:
                     on_assistant_message_complete(response_text)
 
-            # Step 3: Generate TTS audio using Soprano
+            # Step 3: Generate TTS audio using Soprano TTS service via gRPC
             logger.info(f"Generating TTS audio for session {session_id}")
             try:
-                tts_model = self._get_tts_model()
+                tts_client = self._get_tts_client()
 
-                # Generate audio using Soprano
-                # Soprano.generate() returns audio data
-                audio_output = tts_model.generate(text=response_text)
-
-                # Convert to bytes if needed
-                if isinstance(audio_output, bytes):
-                    audio_bytes = audio_output
-                elif hasattr(audio_output, "tobytes"):
-                    audio_bytes = audio_output.tobytes()
-                elif hasattr(audio_output, "numpy"):
-                    import numpy as np
-
-                    audio_array = np.array(audio_output)
-                    # Convert to 16-bit PCM if needed
-                    if audio_array.dtype != np.int16:
-                        # Normalize to [-1, 1] range and convert to int16
-                        audio_array = np.clip(audio_array, -1.0, 1.0)
-                        audio_array = (audio_array * 32767).astype(np.int16)
-                    audio_bytes = audio_array.tobytes()
-                else:
-                    # Try to convert to bytes directly
-                    audio_bytes = bytes(audio_output)
-
-                # Stream audio in chunks for real-time playback
-                chunk_size = 8192  # ~0.25 seconds of audio at 16kHz mono 16-bit
-                for i in range(0, len(audio_bytes), chunk_size):
-                    chunk = audio_bytes[i : i + chunk_size]
+                # Generate audio using gRPC client (streams audio chunks)
+                async for audio_chunk in tts_client.generate_speech(text=response_text):
                     if on_audio:
                         if asyncio.iscoroutinefunction(on_audio):
-                            await on_audio(chunk)
+                            await on_audio(audio_chunk)
                         else:
-                            on_audio(chunk)
+                            on_audio(audio_chunk)
                     # Small delay to simulate streaming
                     await asyncio.sleep(0.01)
 
-                logger.info(
-                    f"Streamed TTS audio for session {session_id}, total size: {len(audio_bytes)} bytes"
-                )
+                logger.info(f"Streamed TTS audio for session {session_id}")
 
             except Exception as e:
                 logger.error(

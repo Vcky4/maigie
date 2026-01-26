@@ -14,6 +14,13 @@ on:
     paths:
       - 'apps/backend/**'
     types: [opened, synchronize, reopened, closed]
+  workflow_run:
+    workflows: ["Soprano TTS Service Deployment"]
+    types:
+      - completed
+    branches:
+      - main
+      - development
 
 permissions:
   contents: read
@@ -75,8 +82,18 @@ jobs:
               core.info(`Test workflow passed! Proceeding with deployment.`);
             }
 
+  build-soprano-preview:
+    uses: ./.github/workflows/soprano-tts-ci.yml
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    secrets: inherit
+    with:
+      environment: preview
+      preview_id: ${{ github.event.pull_request.number }}
+      image_tag: maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }}
+      output_file: soprano-preview-image.tar.gz
+
   deploy-preview:
-    needs: check-tests
+    needs: [check-tests, build-soprano-preview]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     steps:
@@ -197,7 +214,14 @@ jobs:
           df -h
           docker system df
 
-      - name: Build Docker Image
+      - name: Download Soprano TTS Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: soprano-tts-image-preview
+          path: .
+        continue-on-error: true
+
+      - name: Build Backend Docker Image
         working-directory: ./apps/backend
         run: |
           docker buildx build \
@@ -208,6 +232,16 @@ jobs:
             .
           docker images | grep maigie-backend-preview
           docker system df
+
+      - name: Load Soprano TTS Image if available
+        run: |
+          if [ -f soprano-preview-image.tar.gz ]; then
+            docker load < soprano-preview-image.tar.gz
+            docker tag maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} || true
+            echo "Soprano TTS image loaded"
+          else
+            echo "No Soprano TTS image found - build may have been skipped due to no changes"
+          fi
           
       - name: Clean up intermediate build layers
         run: |
@@ -218,11 +252,16 @@ jobs:
           df -h
           docker system df
 
-      - name: Save Docker Image
+      - name: Save Docker Images
         run: |
-          docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > preview-image.tar.gz
-          ls -lh preview-image.tar.gz
-          if [ ! -f preview-image.tar.gz ] || [ ! -s preview-image.tar.gz ]; then
+          if docker images | grep -q "maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"; then
+            docker save maigie-backend-preview:${{ steps.preview.outputs.id }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} | gzip > preview-images.tar.gz
+          else
+            docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > preview-images.tar.gz
+            echo "Warning: Soprano TTS image not included"
+          fi
+          ls -lh preview-images.tar.gz
+          if [ ! -f preview-images.tar.gz ] || [ ! -s preview-images.tar.gz ]; then
             echo "Error: Docker image file was not created or is empty"
             exit 1
           fi
@@ -258,7 +297,7 @@ jobs:
       - name: Deploy to Contabo VPS
         run: |
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            preview-image.tar.gz \
+            preview-images.tar.gz \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
           # Remove the tar.gz file after upload to free up space
           rm -f preview-image.tar.gz
@@ -388,9 +427,16 @@ jobs:
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
             
-            # Load Docker image
-            docker load < /tmp/preview-image.tar.gz
-            rm /tmp/preview-image.tar.gz
+            # Load Docker images
+            docker load < /tmp/preview-images.tar.gz
+            rm /tmp/preview-images.tar.gz
+            
+            # Tag images for docker-compose
+            docker tag maigie-backend-preview:${{ steps.preview.outputs.id }} maigie-backend-preview:${{ steps.preview.outputs.id }} || true
+            # Tag Soprano TTS image if it exists (may have been skipped if no changes)
+            if docker images | grep -q "maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }}"; then
+              docker tag maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} || true
+            fi
             
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -444,6 +490,22 @@ jobs:
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
             
+              soprano-tts-service:
+                image: maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}
+                container_name: maigie-preview-soprano-tts-${{ steps.preview.outputs.id }}
+                environment:
+                  PORT: 50051
+                  ENVIRONMENT: preview
+                  PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import grpc; print('gRPC available')"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
+            
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
                 container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
@@ -451,6 +513,7 @@ jobs:
                   - .env
                 environment:
                   PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                  SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
                 ports:
                   - "0:8000"
                 depends_on:
@@ -458,6 +521,8 @@ jobs:
                     condition: service_healthy
                   redis:
                     condition: service_healthy
+                  soprano-tts-service:
+                    condition: service_started
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
@@ -758,8 +823,18 @@ jobs:
               body: `🚀 **Preview deployment ready!**\n\n🔗 **Preview URL:** ${previewUrl}\n\n📝 **Preview ID:** ${{ steps.preview.outputs.id }}\n\n⚠️ This preview will be automatically cleaned up when the PR is closed, or after 3 days if the PR remains open.`
             });
 
+  build-soprano-production:
+    uses: ./.github/workflows/soprano-tts-ci.yml
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    secrets: inherit
+    with:
+      environment: production
+      preview_id: ''
+      image_tag: maigie-soprano-tts:latest
+      output_file: soprano-production-image.tar.gz
+
   deploy-production:
-    needs: check-tests
+    needs: [check-tests, build-soprano-production]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
@@ -837,15 +912,37 @@ jobs:
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
 
-      - name: Build Docker Image
+      - name: Download Soprano TTS Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: soprano-tts-image-production
+          path: .
+        continue-on-error: true
+
+      - name: Build Backend Docker Image
         working-directory: ./apps/backend
         run: |
           docker build \
             -t maigie-backend:latest .
 
-      - name: Save Docker Image
+      - name: Load Soprano TTS Image if available
         run: |
-          docker save maigie-backend:latest | gzip > production-image.tar.gz
+          if [ -f soprano-production-image.tar.gz ]; then
+            docker load < soprano-production-image.tar.gz
+            docker tag maigie-soprano-tts:latest maigie-soprano-tts:latest || true
+            echo "Soprano TTS image loaded"
+          else
+            echo "No Soprano TTS image found, will use existing or skip"
+          fi
+
+      - name: Save Docker Images
+        run: |
+          if docker images | grep -q "maigie-soprano-tts:latest"; then
+            docker save maigie-backend:latest maigie-soprano-tts:latest | gzip > production-images.tar.gz
+          else
+            docker save maigie-backend:latest | gzip > production-images.tar.gz
+            echo "Warning: Soprano TTS image not included"
+          fi
 
       - name: Setup SSH
         run: |
@@ -870,7 +967,7 @@ jobs:
       - name: Deploy to Contabo VPS
         run: |
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            production-image.tar.gz .env \
+            production-images.tar.gz .env \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Production
@@ -882,9 +979,9 @@ jobs:
           script: |
             cd /opt/maigie/production
             
-            # Load Docker image
-            docker load < /tmp/production-image.tar.gz
-            rm /tmp/production-image.tar.gz
+            # Load Docker images
+            docker load < /tmp/production-images.tar.gz
+            rm /tmp/production-images.tar.gz
 
             # Update .env from uploaded file
             if [ -f /tmp/.env ]; then
@@ -911,8 +1008,9 @@ jobs:
               echo "ENVIRONMENT=production" >> .env
             fi
             
-            # Tag the loaded image for docker-compose (if needed)
+            # Tag the loaded images for docker-compose (if needed)
             docker tag maigie-backend:latest maigie-backend:latest || true
+            docker tag maigie-soprano-tts:latest maigie-soprano-tts:latest || true
             
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
@@ -936,6 +1034,22 @@ jobs:
                   retries: 5
                 networks:
                   - maigie_network
+            
+              soprano-tts-service:
+                image: maigie-soprano-tts:latest
+                container_name: maigie-soprano-tts-prod
+                restart: unless-stopped
+                environment:
+                  PORT: 50051
+                  ENVIRONMENT: production
+                networks:
+                  - maigie_network
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import grpc; print('gRPC available')"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
             
               celery-worker:
                 image: maigie-backend:latest
@@ -967,10 +1081,15 @@ jobs:
                 restart: unless-stopped
                 env_file:
                   - .env
+                environment:
+                  SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
                 ports:
                   - "8000:8000"
                 depends_on:
-                  - redis
+                  redis:
+                    condition: service_healthy
+                  soprano-tts-service:
+                    condition: service_started
                 networks:
                   - maigie_network
                 command: >
@@ -1002,8 +1121,18 @@ jobs:
             
             echo "Production deployment complete!"
 
+  build-soprano-staging:
+    uses: ./.github/workflows/soprano-tts-ci.yml
+    if: github.ref == 'refs/heads/development' && github.event_name == 'push'
+    secrets: inherit
+    with:
+      environment: staging
+      preview_id: ''
+      image_tag: maigie-soprano-tts:staging
+      output_file: soprano-staging-image.tar.gz
+
   deploy-staging:
-    needs: check-tests
+    needs: [check-tests, build-soprano-staging]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/development' && github.event_name == 'push'
     steps:
@@ -1081,15 +1210,37 @@ jobs:
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
 
-      - name: Build Docker Image
+      - name: Download Soprano TTS Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: soprano-tts-image-staging
+          path: .
+        continue-on-error: true
+
+      - name: Build Backend Docker Image
         working-directory: ./apps/backend
         run: |
           docker build \
             -t maigie-backend:staging .
 
-      - name: Save Docker Image
+      - name: Load Soprano TTS Image if available
         run: |
-          docker save maigie-backend:staging | gzip > staging-image.tar.gz
+          if [ -f soprano-staging-image.tar.gz ]; then
+            docker load < soprano-staging-image.tar.gz
+            docker tag maigie-soprano-tts:staging maigie-soprano-tts:staging || true
+            echo "Soprano TTS image loaded"
+          else
+            echo "No Soprano TTS image found, will use existing or skip"
+          fi
+
+      - name: Save Docker Images
+        run: |
+          if docker images | grep -q "maigie-soprano-tts:staging"; then
+            docker save maigie-backend:staging maigie-soprano-tts:staging | gzip > staging-images.tar.gz
+          else
+            docker save maigie-backend:staging | gzip > staging-images.tar.gz
+            echo "Warning: Soprano TTS image not included"
+          fi
 
       - name: Setup SSH
         run: |
@@ -1121,7 +1272,7 @@ jobs:
       - name: Deploy to Contabo VPS
         run: |
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            staging-image.tar.gz \
+            staging-images.tar.gz \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Staging
@@ -1197,9 +1348,9 @@ jobs:
             
             cd /opt/maigie/staging
             
-            # Load Docker image
-            docker load < /tmp/staging-image.tar.gz
-            rm /tmp/staging-image.tar.gz
+            # Load Docker images
+            docker load < /tmp/staging-images.tar.gz
+            rm /tmp/staging-images.tar.gz
 
             # Generate .env from template using generator script
             if [ -f ".env.example" ] && [ -f "scripts/generate-env-from-secrets.sh" ]; then
@@ -1232,8 +1383,9 @@ jobs:
               fi
             fi
             
-            # Tag the loaded image for docker-compose (if needed)
+            # Tag the loaded images for docker-compose (if needed)
             docker tag maigie-backend:staging maigie-backend:staging || true
+            docker tag maigie-soprano-tts:staging maigie-soprano-tts:staging || true
             
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
@@ -1257,6 +1409,22 @@ jobs:
                   retries: 5
                 networks:
                   - maigie_network
+            
+              soprano-tts-service:
+                image: maigie-soprano-tts:staging
+                container_name: maigie-soprano-tts-staging
+                restart: unless-stopped
+                environment:
+                  PORT: 50051
+                  ENVIRONMENT: staging
+                networks:
+                  - maigie_network
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import grpc; print('gRPC available')"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
             
               celery-worker:
                 image: maigie-backend:staging
@@ -1288,10 +1456,15 @@ jobs:
                 restart: unless-stopped
                 env_file:
                   - .env
+                environment:
+                  SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
                 ports:
                   - "8001:8000"
                 depends_on:
-                  - redis
+                  redis:
+                    condition: service_healthy
+                  soprano-tts-service:
+                    condition: service_started
                 networks:
                   - maigie_network
                 command: >

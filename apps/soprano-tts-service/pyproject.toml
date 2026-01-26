@@ -1,0 +1,43 @@
+[project]
+name = "soprano-tts-service"
+version = "0.1.0"
+description = "Soprano TTS gRPC Service"
+authors = [
+    {name = "Maigie Team"}
+]
+license = {text = "BUSL-1.1"}
+requires-python = ">=3.11,<4.0"
+dynamic = ["dependencies"]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.11"
+grpcio = "^1.66.0"
+grpcio-tools = "^1.66.0"
+soprano-tts = "^0.0.2"
+numpy = "^2.0.0"
+torch = {version = "*", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.0"
+pytest-asyncio = "^0.24.0"
+ruff = "^0.6.0"
+black = "^25.12.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501", "N818", "F401", "F841"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
