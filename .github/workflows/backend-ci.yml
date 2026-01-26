@@ -201,7 +201,6 @@ jobs:
         working-directory: ./apps/backend
         run: |
           docker buildx build \
-            --build-arg PYTORCH_VERSION=cpu \
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
             --load \
             --platform linux/amd64 \
@@ -842,7 +841,6 @@ jobs:
         working-directory: ./apps/backend
         run: |
           docker build \
-            --build-arg PYTORCH_VERSION=cpu \
             -t maigie-backend:latest .
 
       - name: Save Docker Image
@@ -1087,7 +1085,6 @@ jobs:
         working-directory: ./apps/backend
         run: |
           docker build \
-            --build-arg PYTORCH_VERSION=cpu \
             -t maigie-backend:staging .
 
       - name: Save Docker Image

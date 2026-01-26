@@ -21,8 +21,6 @@ FROM python:3.11-slim
 # ----------------
 # Build arguments
 # ----------------
-ARG PYTORCH_VERSION=cpu
-
 # ----------------
 # System deps (minimal)
 # ----------------
