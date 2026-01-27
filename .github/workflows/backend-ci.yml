@@ -248,16 +248,119 @@ jobs:
             --progress=plain \
             .
           docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
+          
+          echo "=== Cleaning up build cache immediately after build ==="
+          docker buildx prune -af --filter "until=1h" || true
+          docker builder prune -af || true
+          
           docker system df
+
+      - name: Clean up Docker before loading Soprano image
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df
+          
+          echo "=== Cleaning up Docker build cache and intermediate layers ==="
+          # Clean up buildkit cache aggressively (this is critical for disk space)
+          docker buildx prune -af --filter "until=1h" || true
+          docker buildx prune -af || true
+          
+          # Remove all unused images except the one we just built
+          docker image prune -af --filter "until=1h" || true
+          
+          # Remove all unused build cache
+          docker builder prune -af || true
+          
+          # Remove all stopped containers
+          docker container prune -f || true
+          
+          # Remove all unused volumes
+          docker volume prune -f || true
+          
+          # Remove all unused networks
+          docker network prune -f || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df
+          
+          # Check available disk space
+          AVAILABLE=$(df / | tail -1 | awk '{print $4}')
+          echo "Available disk space: ${AVAILABLE}KB"
+          if [ "$AVAILABLE" -lt 5242880 ]; then
+            echo "⚠️ Warning: Less than 5GB available. May have issues loading image."
+          fi
 
       - name: Load Soprano TTS Image
         working-directory: ./apps/backend
         run: |
           if [ -f soprano-preview-image.tar.gz ]; then
+            echo "=== Disk space before loading ==="
+            df -h
+            docker system df
+            
             echo "Loading soprano-preview-image.tar.gz..."
-            docker load < soprano-preview-image.tar.gz
-            docker tag maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }} maigie-soprano-tts-preview:${{ steps.preview.outputs.id }} || true
-            echo "✓ Soprano TTS image loaded"
+            # Load the image and capture output to see what tag was loaded
+            LOAD_OUTPUT=$(docker load < soprano-preview-image.tar.gz 2>&1)
+            LOAD_EXIT_CODE=$?
+            
+            if [ $LOAD_EXIT_CODE -ne 0 ]; then
+              echo "❌ Error: Failed to load Docker image"
+              echo "Load output: $LOAD_OUTPUT"
+              echo "=== Disk space after failed load ==="
+              df -h
+              docker system df
+              exit 1
+            fi
+            
+            echo "Load output: $LOAD_OUTPUT"
+            
+            # Extract the loaded image tag from the output
+            # The output format is: "Loaded image: maigie-soprano-tts-preview:86" or "Loaded image: maigie-soprano-tts-preview:pr-86"
+            LOADED_TAG=$(echo "$LOAD_OUTPUT" | grep "Loaded image:" | sed 's/.*Loaded image: //' | head -1)
+            
+            echo "Detected loaded image tag: $LOADED_TAG"
+            
+            # Show all soprano images before tagging
+            echo "Soprano images before tagging:"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
+            
+            PREVIEW_ID="${{ steps.preview.outputs.id }}"
+            TARGET_TAG="maigie-soprano-tts-preview:${PREVIEW_ID}"
+            
+            # Tag the loaded image to the expected tag
+            if [ -n "$LOADED_TAG" ]; then
+              echo "Tagging $LOADED_TAG to $TARGET_TAG"
+              docker tag "$LOADED_TAG" "$TARGET_TAG" || {
+                echo "❌ Error: Failed to tag image from $LOADED_TAG to $TARGET_TAG"
+                echo "Available images:"
+                docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
+                exit 1
+              }
+            else
+              # Fallback: try common tag patterns
+              PR_NUMBER="${{ github.event.pull_request.number }}"
+              echo "Could not detect loaded tag, trying fallback patterns..."
+              
+              # Try pr-86 format first
+              if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:pr-${PR_NUMBER}"; then
+                docker tag "maigie-soprano-tts-preview:pr-${PR_NUMBER}" "$TARGET_TAG" || exit 1
+              # Try just the number
+              elif docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:${PR_NUMBER}"; then
+                docker tag "maigie-soprano-tts-preview:${PR_NUMBER}" "$TARGET_TAG" || exit 1
+              else
+                echo "❌ Error: Could not find loaded soprano image to tag"
+                echo "Available images:"
+                docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
+                exit 1
+              fi
+            fi
+            
+            # Clean up the tar.gz file to free space
+            rm -f soprano-preview-image.tar.gz
+            
+            echo "✓ Soprano TTS image loaded and tagged"
           else
             echo "❌ Error: Soprano TTS image artifact not found"
             echo "The soprano-tts-service image is required for preview deployment."
@@ -281,6 +384,8 @@ jobs:
             echo "Expected tag: maigie-soprano-tts-preview:${PREVIEW_ID}"
             exit 1
           fi
+          
+          echo "✓ Verified Soprano TTS image exists with tag: maigie-soprano-tts-preview:${PREVIEW_ID}"
 
       - name: Save Docker Images
         run: |
