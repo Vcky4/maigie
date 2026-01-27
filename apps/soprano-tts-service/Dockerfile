@@ -18,10 +18,7 @@
 # ================================
 FROM python:3.11-slim
 
-# ----------------
-# Build arguments
-# ----------------
-# ----------------
+# ----------------  
 # System deps (minimal)
 # ----------------
 ENV DEBIAN_FRONTEND=noninteractive
@@ -29,13 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
-    ca-certificates \
- && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get install -y --no-install-recommends nodejs \
+    build-essential \
  && rm -rf /var/lib/apt/lists/* \
- && apt-get clean
+ && apt-get clean \
+ && apt-get autoremove -y
 
-# ----------------
+# ----------------  
 # Python tooling
 # ----------------
 RUN pip install --no-cache-dir --upgrade pip poetry
@@ -43,27 +39,47 @@ RUN poetry config virtualenvs.create false
 
 WORKDIR /app
 
-# ----------------
+# ----------------  
 # Prevent heavy builds
 # ----------------
 ENV PIP_NO_CACHE_DIR=1
 ENV POETRY_NO_INTERACTION=1
 
-# ----------------
+# ----------------  
 # Copy deps first (cache-friendly)
 # ----------------
-COPY pyproject.toml poetry.lock ./
+COPY pyproject.toml ./
 
-# ----------------
+# ----------------  
 # Install app deps with poetry
 # ----------------
 RUN poetry install --no-root --without dev && \
     # Clean up poetry + pip caches (best-effort)
     (poetry cache clear pypi --all -n || true) && \
     (pip cache purge || true) && \
-    rm -rf /root/.cache/pypoetry /root/.cache/pip /tmp/* /var/tmp/* 2>/dev/null || true
+    rm -rf /root/.cache/pypoetry /root/.cache/pip /tmp/* /var/tmp/* 2>/dev/null || true && \
+    # Remove build tools after installation to save space
+    # Keep git and curl as they might be needed at runtime
+    apt-get remove -y build-essential gcc g++ make && \
+    apt-get autoremove -y && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
+# ----------------  
+# Copy app
 # ----------------
+COPY . .
+
+# ----------------  
+# Generate gRPC code from proto files
+# ----------------
+RUN python -m grpc_tools.protoc \
+    --proto_path=src/proto \
+    --python_out=src/proto \
+    --grpc_python_out=src/proto \
+    src/proto/tts.proto
+
+# ----------------  
 # Final cleanup to reduce image size
 # ----------------
 RUN (pip cache purge || true) && \
@@ -71,41 +87,25 @@ RUN (pip cache purge || true) && \
     find /usr/local/lib/python3.11/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
     find /usr/local/lib/python3.11/site-packages -type f -name "*.pyc" -delete 2>/dev/null || true && \
     find /usr/local/lib/python3.11/site-packages -type f -name "*.pyo" -delete 2>/dev/null || true && \
+    # Remove test directories (not needed in production)
+    find /usr/local/lib/python3.11/site-packages -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type d -name "*test*" -exec rm -rf {} + 2>/dev/null || true && \
     # Remove documentation files (reduce size)
     find /usr/local/lib/python3.11/site-packages -type f -name "*.md" -delete 2>/dev/null || true && \
     find /usr/local/lib/python3.11/site-packages -type f -name "LICENSE*" -delete 2>/dev/null || true && \
     find /usr/local/lib/python3.11/site-packages -type f -name "CHANGELOG*" -delete 2>/dev/null || true && \
+    # Remove PyTorch JIT cache and other unnecessary files
+    find /usr/local/lib/python3.11/site-packages/torch -name "*.a" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -name "*.so.debug" -delete 2>/dev/null || true && \
     # Clean up any temporary build artifacts
     rm -rf /tmp/* /var/tmp/* ~/.cache 2>/dev/null || true && \
     # Show disk usage for debugging
-    df -h || true
+    df -h || true && \
+    du -sh /usr/local/lib/python3.11/site-packages || true
 
-# ----------------
-# Install Prisma CLI globally
-# ----------------
-RUN npm install -g prisma@latest
-
-# ----------------
-# Copy app
-# ----------------
-COPY . .
-
-# ----------------
-# Generate gRPC code from proto files
-# ----------------
-RUN python -m grpc_tools.protoc \
-    --proto_path=src/proto \
-    --python_out=src/proto \
-    --grpc_python_out=src/proto \
-    src/proto/tts.proto || true
-
-# ----------------
-# Generate Prisma Client
-# ----------------
-RUN prisma generate || echo "Warning: Prisma generate failed, will retry at runtime"
-
-# ----------------
+# ----------------  
 # Run
 # ----------------
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 50051
+CMD ["python", "-m", "src.main"]

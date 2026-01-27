@@ -12,16 +12,28 @@ import json
 import os
 from typing import Any
 
-import google.generativeai as genai
 from fastapi import HTTPException
+from google import genai
 
 from src.core.database import db
 
-# Configure API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Initialize client
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """Get or create the Gemini client (lazy initialization)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _client = genai.Client(api_key=api_key)
+    return _client
+
 
 # Use text-embedding-004 model for embeddings
-EMBEDDING_MODEL = "models/text-embedding-004"
+EMBEDDING_MODEL = "text-embedding-004"
 
 
 class EmbeddingService:
@@ -43,13 +55,14 @@ class EmbeddingService:
         """
         try:
             # Use Gemini's embedding model
-            result = genai.embed_content(
+            client = _get_client()
+            result = client.models.embed_content(
                 model=EMBEDDING_MODEL,
                 content=text,
                 task_type="retrieval_document",  # Use retrieval_document for documents
             )
 
-            embedding = result["embedding"]
+            embedding = result.embedding if hasattr(result, "embedding") else result["embedding"]
             return embedding
 
         except Exception as e:
@@ -67,13 +80,14 @@ class EmbeddingService:
             List of floats representing the embedding vector
         """
         try:
-            result = genai.embed_content(
+            client = _get_client()
+            result = client.models.embed_content(
                 model=EMBEDDING_MODEL,
                 content=text,
                 task_type="retrieval_query",  # Use retrieval_query for queries
             )
 
-            embedding = result["embedding"]
+            embedding = result.embedding if hasattr(result, "embedding") else result["embedding"]
             return embedding
 
         except Exception as e:

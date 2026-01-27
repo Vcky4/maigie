@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package tts;
+
+// TTS Service for generating speech from text
+service TTSService {
+  // Generate speech from text, streaming audio chunks
+  rpc GenerateSpeech(GenerateSpeechRequest) returns (stream AudioChunk);
+  
+  // Health check endpoint
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// Request to generate speech
+message GenerateSpeechRequest {
+  string text = 1;
+  optional string voice = 2;
+}
+
+// Audio chunk response
+message AudioChunk {
+  bytes audio_data = 1;
+  bool is_final = 2;
+}
+
+// Health check request
+message HealthCheckRequest {
+}
+
+// Health check response
+message HealthCheckResponse {
+  bool healthy = 1;
+  string message = 2;
+}

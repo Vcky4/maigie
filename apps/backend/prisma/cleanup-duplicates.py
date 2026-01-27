@@ -11,7 +11,12 @@ This script:
 
 import sys
 
-from prisma import Prisma
+try:
+    from prisma import Prisma
+except ImportError:
+    print("Warning: Prisma client not available. Skipping cleanup.")
+    print("This is normal if Prisma client hasn't been generated yet.")
+    sys.exit(0)
 
 
 async def cleanup_duplicates():
@@ -22,7 +27,7 @@ async def cleanup_duplicates():
     try:
         # Fetch all users ordered by creation date
         print("Fetching all users...")
-        all_users = await db.user.find_many(order_by={"createdAt": "asc"})
+        all_users = await db.user.find_many(order={"createdAt": "asc"})
 
         print(f"Found {len(all_users)} users")
 

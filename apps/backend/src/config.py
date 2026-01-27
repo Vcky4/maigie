@@ -151,6 +151,14 @@ class Settings(BaseSettings):
     BUNNY_STORAGE_ZONE: str | None = None
     BUNNY_CDN_HOSTNAME: str = "cdn.maigie.com"
 
+    # --- Gemini Live API ---
+    GEMINI_API_KEY: str = ""  # Already exists, but ensuring it's here
+    GEMINI_LIVE_ENABLED: bool = True
+    DAILY_API_KEY: str | None = None  # Daily.co API key for WebRTC rooms
+
+    # --- Soprano TTS Service ---
+    SOPRANO_TTS_SERVICE_URL: str = "soprano-tts-service:50051"  # gRPC service URL for TTS
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",

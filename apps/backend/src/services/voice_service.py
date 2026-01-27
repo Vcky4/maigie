@@ -5,17 +5,35 @@ Handles Audio Transcription using Google Gemini.
 
 import os
 
-import google.generativeai as genai
 from fastapi import HTTPException, UploadFile
+from google import genai
 
-# Reuse the API key from your environment
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Initialize client
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """Get or create the Gemini client (lazy initialization)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 
 class VoiceService:
     def __init__(self):
-        # We use Flash because it's fast and supports audio
-        self.model = genai.GenerativeModel("models/gemini-flash-latest")
+        self._client = None  # Lazy initialization
+        self.model_name = "gemini-2.0-flash-exp"
+
+    @property
+    def client(self):
+        """Get client with lazy initialization."""
+        if self._client is None:
+            self._client = _get_client()
+        return self._client
 
     async def transcribe_audio(self, file: UploadFile) -> str:
         """
@@ -32,18 +50,33 @@ class VoiceService:
             audio_part = {"mime_type": mime_type, "data": content}
 
             # 3. Prompt Gemini to transcribe with better instructions
-            response = await self.model.generate_content_async(
-                [
-                    "Transcribe ONLY the actual spoken words in this audio. "
-                    "If there is silence, background noise, or no clear speech, respond with an empty string. "
-                    "Do not add any commentary, markdown, or descriptions. "
-                    "Do not transcribe silence as words. "
-                    "Only output the exact words that were spoken, nothing else.",
-                    audio_part,
-                ]
-            )
+            from google.genai import types
 
-            return response.text.strip()
+            # Create audio part using inline_data
+            audio_part = types.Part(inline_data=types.Blob(data=content, mime_type=mime_type))
+
+            prompt = [
+                "Transcribe ONLY the actual spoken words in this audio. "
+                "If there is silence, background noise, or no clear speech, respond with an empty string. "
+                "Do not add any commentary, markdown, or descriptions. "
+                "Do not transcribe silence as words. "
+                "Only output the exact words that were spoken, nothing else.",
+                audio_part,
+            ]
+
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+
+            def _generate_content():
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                )
+
+            response = await loop.run_in_executor(None, _generate_content)
+            response_text = response.text if hasattr(response, "text") else str(response)
+            return response_text.strip()
 
         except Exception as e:
             print(f"Gemini Voice Error: {e}")

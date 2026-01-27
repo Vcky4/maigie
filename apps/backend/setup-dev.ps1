@@ -16,14 +16,22 @@ foreach ($cmd in $pythonPaths) {
             $pythonCmd = $cmd
             Write-Host "[OK] Found: $version" -ForegroundColor Green
             
-            # Check if Python 3.11+
+            # Check if Python 3.11-3.14 (supported versions)
             $versionMatch = $version -match "Python (\d+)\.(\d+)"
             if ($versionMatch) {
                 $major = [int]$matches[1]
                 $minor = [int]$matches[2]
                 if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 11)) {
                     $versionString = "$major.$minor"
-                    Write-Host "[WARNING] Python 3.11+ is recommended. Current version: $versionString" -ForegroundColor Yellow
+                    Write-Host "[WARNING] Python 3.11-3.14 is required. Current version: $versionString" -ForegroundColor Yellow
+                    Write-Host "  Please install Python 3.11-3.14 from https://www.python.org/downloads/" -ForegroundColor Cyan
+                } elseif ($major -eq 3 -and $minor -ge 15) {
+                    $versionString = "$major.$minor"
+                    Write-Host "[ERROR] Python 3.15+ is not yet supported." -ForegroundColor Red
+                    Write-Host "  Current version: $versionString" -ForegroundColor Yellow
+                    Write-Host "  Please install Python 3.11-3.14 from https://www.python.org/downloads/" -ForegroundColor Cyan
+                    Write-Host "  Or use pyenv to manage multiple Python versions." -ForegroundColor Cyan
+                    exit 1
                 }
             }
             break

@@ -14,6 +14,13 @@ on:
     paths:
       - 'apps/backend/**'
     types: [opened, synchronize, reopened, closed]
+  workflow_run:
+    workflows: ["Soprano TTS Service Deployment"]
+    types:
+      - completed
+    branches:
+      - main
+      - development
 
 permissions:
   contents: read
@@ -75,8 +82,18 @@ jobs:
               core.info(`Test workflow passed! Proceeding with deployment.`);
             }
 
+  build-soprano-preview:
+    uses: ./.github/workflows/soprano-tts-ci.yml
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    secrets: inherit
+    with:
+      environment: preview
+      preview_id: ${{ github.event.pull_request.number }}
+      image_tag: maigie-soprano-tts-preview:pr-${{ github.event.pull_request.number }}
+      output_file: soprano-preview-image.tar.gz
+
   deploy-preview:
-    needs: check-tests
+    needs: [check-tests, build-soprano-preview]
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     steps:
@@ -84,6 +101,30 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
+
+      - name: Clean up Docker system (before build)
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Cleanup unused resources (less aggressive, preserves cache)
+          docker system prune -f || true
+          docker buildx prune -f || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
 
       - name: List variables in .env.example
         run: |
@@ -158,6 +199,7 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DAILY_API_KEY: ${{ secrets.DAILY_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -172,24 +214,86 @@ jobs:
           echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
           echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
 
-      - name: Build Docker Image
+      - name: Verify Soprano image on VPS (already uploaded)
+        run: |
+          echo "=== Verifying Soprano image exists on VPS ==="
+          PREVIEW_ID="${{ steps.preview.outputs.id }}"
+          SOPRANO_TAG="maigie-soprano-tts-preview:${PREVIEW_ID}"
+          
+          # Setup SSH key temporarily for verification
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          # Check if Soprano image exists on VPS
+          if ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker images --format '{{.Repository}}:{{.Tag}}' | grep -Fxq '${SOPRANO_TAG}'"; then
+            echo "✓ Soprano image found on VPS: ${SOPRANO_TAG}"
+          else
+            echo "⚠️ Warning: Soprano image not found on VPS. It should have been uploaded by soprano-tts-ci workflow."
+            echo "This might be okay if the Soprano workflow is still running or failed."
+          fi
+
+      - name: Build Backend Docker Image
+        working-directory: ./apps/backend
+        env:
+          DOCKER_BUILDKIT: 1
+          BUILDKIT_PROGRESS: plain
+        run: |
+          # Build directly to a tar file (avoids --load + docker save disk spike)
+          # Use GitHub-hosted BuildKit cache (reduces runner disk + speeds rebuilds)
+          docker buildx build \
+            --builder builder \
+            --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
+            --platform linux/amd64 \
+            --cache-from type=gha,scope=maigie-backend-preview \
+            --cache-to type=gha,mode=max,scope=maigie-backend-preview \
+            --output type=docker,dest=preview-images.tar \
+            --progress=plain \
+            .
+
+      - name: Skip Soprano image loading (already on VPS)
         working-directory: ./apps/backend
         run: |
-          docker buildx build \
-            --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
-            --load \
-            --platform linux/amd64 \
-            .
-          docker images | grep maigie-backend-preview
+          if [ -f soprano-preview-image.tar.gz ]; then
+            echo "Soprano image artifact present; not loading on runner (image is expected on VPS)."
+            rm -f soprano-preview-image.tar.gz
+          else
+            echo "No Soprano image artifact in workspace (OK; it should already be on VPS)."
+          fi
 
-      - name: Save Docker Image
+      - name: Save Docker Images
         run: |
-          docker save maigie-backend-preview:${{ steps.preview.outputs.id }} | gzip > preview-image.tar.gz
-          ls -lh preview-image.tar.gz
-          if [ ! -f preview-image.tar.gz ] || [ ! -s preview-image.tar.gz ]; then
+          echo "=== Creating preview-images.tar.gz ==="
+          if [ ! -f preview-images.tar ]; then
+            echo "❌ Error: preview-images.tar not found (build step should have created it)"
+            ls -la
+            exit 1
+          fi
+
+          # Fast compression to reduce time; still validates with gzip -t
+          gzip -1 < preview-images.tar > preview-images.tar.gz
+          rm -f preview-images.tar
+          
+          echo "=== Validating saved image file ==="
+          ls -lh preview-images.tar.gz
+          if [ ! -f preview-images.tar.gz ] || [ ! -s preview-images.tar.gz ]; then
             echo "Error: Docker image file was not created or is empty"
             exit 1
           fi
+          
+          # Verify the gzip file is valid
+          if ! gzip -t preview-images.tar.gz 2>/dev/null; then
+            echo "Error: preview-images.tar.gz is not a valid gzip file"
+            exit 1
+          fi
+          
+          # Calculate checksum for verification
+          sha256sum preview-images.tar.gz > preview-images.tar.gz.sha256
+          cat preview-images.tar.gz.sha256
+          echo "✓ Image file validated successfully"
 
       - name: Setup SSH Key
         run: |
@@ -221,12 +325,58 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
+          if [ ! -f preview-images.tar.gz ]; then
+            echo "Error: preview-images.tar.gz not found"
+            exit 1
+          fi
+          
+          LOCAL_SIZE=$(stat -f%z preview-images.tar.gz 2>/dev/null || stat -c%s preview-images.tar.gz 2>/dev/null || du -b preview-images.tar.gz | cut -f1)
+          LOCAL_CHECKSUM=$(cat preview-images.tar.gz.sha256 | cut -d' ' -f1)
+          
+          echo "Uploading preview-images.tar.gz (Size: $(du -h preview-images.tar.gz | cut -f1), Checksum: $LOCAL_CHECKSUM)..."
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            preview-image.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
+            preview-images.tar.gz \
+            preview-images.tar.gz.sha256 \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          
+          if [ $? -eq 0 ]; then
+            echo "✓ Files uploaded successfully"
+            # Verify file exists and integrity on remote server
+            ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+              "ls -lh /tmp/preview-images.tar.gz && \
+               echo 'Verifying file integrity...' && \
+               if command -v gzip >/dev/null 2>&1; then \
+                 if gzip -t /tmp/preview-images.tar.gz 2>/dev/null; then \
+                   echo '✓ Gzip file is valid'; \
+                 else \
+                   echo '❌ Gzip file is corrupted'; \
+                   exit 1; \
+                 fi; \
+               else \
+                 echo 'Warning: gzip not available for validation'; \
+               fi && \
+               REMOTE_SIZE=\$(stat -c%s /tmp/preview-images.tar.gz 2>/dev/null || stat -f%z /tmp/preview-images.tar.gz 2>/dev/null || du -b /tmp/preview-images.tar.gz | cut -f1) && \
+               echo \"Local size: $LOCAL_SIZE bytes\" && \
+               echo \"Remote size: \$REMOTE_SIZE bytes\" && \
+               if [ \"\$REMOTE_SIZE\" -eq \"$LOCAL_SIZE\" ]; then \
+                 echo '✓ File sizes match'; \
+               else \
+                 echo '❌ File size mismatch - transfer may be incomplete'; \
+                 exit 1; \
+               fi"
+          else
+            echo "❌ File upload failed"
+            exit 1
+          fi
+          # Remove the tar.gz file immediately after upload to free up space
+          rm -f preview-images.tar.gz preview-images.tar.gz.sha256
+          echo "=== Disk usage after upload ==="
+          df -h
+          docker system df || true
 
       - name: Load Image and Deploy Preview
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.4
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -295,6 +445,7 @@ jobs:
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export DAILY_API_KEY="${{ secrets.DAILY_API_KEY }}"
             
             cd /opt/maigie/previews
             
@@ -348,9 +499,77 @@ jobs:
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
             
-            # Load Docker image
-            docker load < /tmp/preview-image.tar.gz
-            rm /tmp/preview-image.tar.gz
+            # Verify file exists before loading
+            if [ ! -f /tmp/preview-images.tar.gz ]; then
+              echo "❌ Error: /tmp/preview-images.tar.gz not found on server"
+              echo "Checking /tmp directory:"
+              ls -la /tmp/ | grep preview || echo "No preview files found"
+              exit 1
+            fi
+            
+            echo "=== Validating Docker image file before loading ==="
+            # Verify gzip integrity
+            if command -v gzip >/dev/null 2>&1; then
+              if ! gzip -t /tmp/preview-images.tar.gz 2>/dev/null; then
+                echo "❌ Error: /tmp/preview-images.tar.gz is corrupted (gzip test failed)"
+                exit 1
+              fi
+              echo "✓ Gzip file is valid"
+            fi
+            
+            # Check file size (should be > 0)
+            FILE_SIZE=$(stat -c%s /tmp/preview-images.tar.gz 2>/dev/null || stat -f%z /tmp/preview-images.tar.gz 2>/dev/null || du -b /tmp/preview-images.tar.gz | cut -f1)
+            if [ "$FILE_SIZE" -eq 0 ]; then
+              echo "❌ Error: /tmp/preview-images.tar.gz is empty"
+              exit 1
+            fi
+            echo "File size: $FILE_SIZE bytes"
+            
+            echo "=== Loading Docker images from /tmp/preview-images.tar.gz ==="
+            # Load backend image (Soprano is already on VPS, uploaded by soprano-tts-ci workflow)
+            if ! docker load < /tmp/preview-images.tar.gz; then
+              echo "❌ Error: Failed to load Docker images"
+              echo "Attempting to diagnose the issue..."
+              # Try to extract and inspect the tar file
+              if command -v gunzip >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+                echo "Extracting tar.gz to inspect contents..."
+                gunzip -c /tmp/preview-images.tar.gz | tar -t | head -20 || echo "Could not list tar contents"
+              fi
+              exit 1
+            fi
+            
+            echo "Loaded images:"
+            PREVIEW_ID="${{ steps.preview.outputs.id }}"
+            docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No maigie images found"
+            
+            rm /tmp/preview-images.tar.gz
+            
+            # Verify backend image exists
+            BACKEND_IMAGE="maigie-backend-preview:${PREVIEW_ID}"
+            if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
+              echo "❌ Error: Backend image not found after load"
+              echo "Available images:"
+              docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
+              exit 1
+            fi
+            
+            # Verify Soprano TTS image exists on VPS (it was uploaded directly by soprano-tts-ci workflow)
+            SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
+            if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
+              echo "✓ Soprano TTS image found on VPS"
+            else
+              echo "⚠️ Warning: Soprano TTS image ${SOPRANO_IMAGE} not found locally"
+              echo "Checking if it exists on VPS (it should have been uploaded by soprano-tts-ci workflow)..."
+              if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "maigie-soprano-tts-preview"; then
+                echo "Found other Soprano images, will use them"
+              else
+                echo "❌ Error: Soprano TTS image ${SOPRANO_IMAGE} not found on VPS"
+                echo "Available images:"
+                docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie|soprano)" || echo "No maigie images found"
+                echo "The soprano-tts-service image should have been uploaded to VPS by soprano-tts-ci workflow."
+                exit 1
+              fi
+            fi
             
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -373,7 +592,20 @@ jobs:
               cat .env
             fi
             
-            # Create docker-compose.yml
+            # Verify Soprano TTS image exists (it should have been uploaded by soprano-tts-ci workflow)
+            SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
+            if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
+              echo "✓ Soprano TTS image found on VPS (uploaded by soprano-tts-ci workflow)"
+            else
+              echo "❌ Error: Soprano TTS image ${SOPRANO_IMAGE} not found on VPS"
+              echo "It should have been uploaded by soprano-tts-ci workflow."
+              echo "Available Soprano images:"
+              docker images --format "{{.Repository}}:{{.Tag}}" | grep "maigie-soprano-tts-preview" || echo "No Soprano images found"
+              echo "Please check the soprano-tts-ci workflow logs."
+              exit 1
+            fi
+            
+            # Create docker-compose.yml (always include soprano-tts-service)
             cat > docker-compose.yml << EOF
             services:
               postgres:
@@ -404,6 +636,22 @@ jobs:
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
             
+              soprano-tts-service:
+                image: maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}
+                container_name: maigie-preview-soprano-tts-${{ steps.preview.outputs.id }}
+                environment:
+                  PORT: 50051
+                  ENVIRONMENT: preview
+                  PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import grpc; print('gRPC available')"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
+            
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
                 container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
@@ -411,6 +659,7 @@ jobs:
                   - .env
                 environment:
                   PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                  SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
                 ports:
                   - "0:8000"
                 depends_on:
@@ -418,10 +667,13 @@ jobs:
                     condition: service_healthy
                   redis:
                     condition: service_healthy
+                  soprano-tts-service:
+                    condition: service_started
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
+                    prisma generate || echo 'Warning: Prisma generate failed' &&
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
                     prisma db push --accept-data-loss &&
                     python prisma/seed.py &&
@@ -718,15 +970,50 @@ jobs:
               body: `🚀 **Preview deployment ready!**\n\n🔗 **Preview URL:** ${previewUrl}\n\n📝 **Preview ID:** ${{ steps.preview.outputs.id }}\n\n⚠️ This preview will be automatically cleaned up when the PR is closed, or after 3 days if the PR remains open.`
             });
 
+  build-soprano-production:
+    uses: ./.github/workflows/soprano-tts-ci.yml
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    secrets: inherit
+    with:
+      environment: production
+      preview_id: ''
+      image_tag: maigie-soprano-tts:latest
+      output_file: soprano-production-image.tar.gz
+
   deploy-production:
-    needs: check-tests
+    needs: [check-tests, build-soprano-production]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 
+      - name: Clean up Docker system aggressively
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Aggressive cleanup of all Docker resources
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          docker buildx prune -af || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
 
       - name: Generate .env from .env.example for production
         env:
@@ -792,17 +1079,53 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DAILY_API_KEY: ${{ secrets.DAILY_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
 
-      - name: Build Docker Image
-        working-directory: ./apps/backend
-        run: docker build -t maigie-backend:latest .
+      - name: Download Soprano TTS Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: soprano-tts-image-production
+          path: ./apps/backend
+        continue-on-error: true
 
-      - name: Save Docker Image
+      - name: Build Backend Docker Image
+        working-directory: ./apps/backend
+        env:
+          DOCKER_BUILDKIT: 1
         run: |
-          docker save maigie-backend:latest | gzip > production-image.tar.gz
+          # Build directly to a tar.gz (avoids --load + docker save disk spike)
+          # Use GitHub-hosted BuildKit cache (reduces runner disk + speeds rebuilds)
+          docker buildx build \
+            --builder builder \
+            --tag maigie-backend:latest \
+            --cache-from type=gha,scope=maigie-backend-production \
+            --cache-to type=gha,mode=max,scope=maigie-backend-production \
+            --output type=docker,dest=backend-production-image.tar \
+            .
+          gzip -1 < backend-production-image.tar > backend-production-image.tar.gz
+          rm -f backend-production-image.tar
+
+          echo "=== Validating backend-production-image.tar.gz ==="
+          ls -lh backend-production-image.tar.gz
+          gzip -t backend-production-image.tar.gz 2>/dev/null
+          sha256sum backend-production-image.tar.gz > backend-production-image.tar.gz.sha256
+          cat backend-production-image.tar.gz.sha256
+
+      - name: Verify Soprano TTS artifact (optional)
+        run: |
+          if [ -f soprano-production-image.tar.gz ]; then
+            echo "Found soprano-production-image.tar.gz; will upload and load it on VPS."
+            ls -lh soprano-production-image.tar.gz
+            gzip -t soprano-production-image.tar.gz 2>/dev/null || {
+              echo "❌ Error: soprano-production-image.tar.gz is not valid gzip"
+              exit 1
+            }
+          else
+            echo "No Soprano TTS artifact found; will keep existing image on VPS (if present)."
+          fi
 
       - name: Setup SSH
         run: |
@@ -826,12 +1149,28 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            production-image.tar.gz .env \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          if [ ! -f backend-production-image.tar.gz ]; then
+            echo "❌ Error: backend-production-image.tar.gz not found"
+            exit 1
+          fi
+
+          if [ -f soprano-production-image.tar.gz ]; then
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-production-image.tar.gz backend-production-image.tar.gz.sha256 \
+              soprano-production-image.tar.gz \
+              .env \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          else
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-production-image.tar.gz backend-production-image.tar.gz.sha256 \
+              .env \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          fi
+
+          rm -f backend-production-image.tar.gz backend-production-image.tar.gz.sha256 soprano-production-image.tar.gz
 
       - name: Load Image and Deploy Production
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.4
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -839,9 +1178,23 @@ jobs:
           script: |
             cd /opt/maigie/production
             
-            # Load Docker image
-            docker load < /tmp/production-image.tar.gz
-            rm /tmp/production-image.tar.gz
+            # Load backend image
+            if [ -f /tmp/backend-production-image.tar.gz ]; then
+              docker load < /tmp/backend-production-image.tar.gz
+              rm /tmp/backend-production-image.tar.gz
+              rm -f /tmp/backend-production-image.tar.gz.sha256
+            else
+              echo "❌ Error: /tmp/backend-production-image.tar.gz not found"
+              exit 1
+            fi
+
+            # Load Soprano image if uploaded (optional)
+            if [ -f /tmp/soprano-production-image.tar.gz ]; then
+              docker load < /tmp/soprano-production-image.tar.gz
+              rm /tmp/soprano-production-image.tar.gz
+            else
+              echo "No soprano-production-image.tar.gz uploaded; using existing image on VPS if present."
+            fi
 
             # Update .env from uploaded file
             if [ -f /tmp/.env ]; then
@@ -868,8 +1221,9 @@ jobs:
               echo "ENVIRONMENT=production" >> .env
             fi
             
-            # Tag the loaded image for docker-compose (if needed)
+            # Tag the loaded images for docker-compose (if needed)
             docker tag maigie-backend:latest maigie-backend:latest || true
+            docker tag maigie-soprano-tts:latest maigie-soprano-tts:latest || true
             
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
@@ -893,6 +1247,22 @@ jobs:
                   retries: 5
                 networks:
                   - maigie_network
+            
+              soprano-tts-service:
+                image: maigie-soprano-tts:latest
+                container_name: maigie-soprano-tts-prod
+                restart: unless-stopped
+                environment:
+                  PORT: 50051
+                  ENVIRONMENT: production
+                networks:
+                  - maigie_network
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import grpc; print('gRPC available')"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
             
               celery-worker:
                 image: maigie-backend:latest
@@ -924,14 +1294,20 @@ jobs:
                 restart: unless-stopped
                 env_file:
                   - .env
+                environment:
+                  SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
                 ports:
                   - "8000:8000"
                 depends_on:
-                  - redis
+                  redis:
+                    condition: service_healthy
+                  soprano-tts-service:
+                    condition: service_started
                 networks:
                   - maigie_network
                 command: >
                   sh -c "
+                    prisma generate || echo 'Warning: Prisma generate failed' &&
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
                     prisma db push --accept-data-loss &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
@@ -959,8 +1335,18 @@ jobs:
             
             echo "Production deployment complete!"
 
+  build-soprano-staging:
+    uses: ./.github/workflows/soprano-tts-ci.yml
+    if: github.ref == 'refs/heads/development' && github.event_name == 'push'
+    secrets: inherit
+    with:
+      environment: staging
+      preview_id: ''
+      image_tag: maigie-soprano-tts:staging
+      output_file: soprano-staging-image.tar.gz
+
   deploy-staging:
-    needs: check-tests
+    needs: [check-tests, build-soprano-staging]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/development' && github.event_name == 'push'
     steps:
@@ -968,6 +1354,26 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
+
+      - name: Clean up Docker system (before build)
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Cleanup unused resources (less aggressive, preserves cache)
+          docker system prune -f || true
+          docker buildx prune -f || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
 
       - name: Generate .env from .env.example for staging
         env:
@@ -1033,17 +1439,53 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DAILY_API_KEY: ${{ secrets.DAILY_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
 
-      - name: Build Docker Image
-        working-directory: ./apps/backend
-        run: docker build -t maigie-backend:staging .
+      - name: Download Soprano TTS Image Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: soprano-tts-image-staging
+          path: ./apps/backend
+        continue-on-error: true
 
-      - name: Save Docker Image
+      - name: Build Backend Docker Image
+        working-directory: ./apps/backend
+        env:
+          DOCKER_BUILDKIT: 1
         run: |
-          docker save maigie-backend:staging | gzip > staging-image.tar.gz
+          # Build directly to a tar.gz (avoids --load + docker save disk spike)
+          # Use GitHub-hosted BuildKit cache (reduces runner disk + speeds rebuilds)
+          docker buildx build \
+            --builder builder \
+            --tag maigie-backend:staging \
+            --cache-from type=gha,scope=maigie-backend-staging \
+            --cache-to type=gha,mode=max,scope=maigie-backend-staging \
+            --output type=docker,dest=backend-staging-image.tar \
+            .
+          gzip -1 < backend-staging-image.tar > backend-staging-image.tar.gz
+          rm -f backend-staging-image.tar
+
+          echo "=== Validating backend-staging-image.tar.gz ==="
+          ls -lh backend-staging-image.tar.gz
+          gzip -t backend-staging-image.tar.gz 2>/dev/null
+          sha256sum backend-staging-image.tar.gz > backend-staging-image.tar.gz.sha256
+          cat backend-staging-image.tar.gz.sha256
+
+      - name: Verify Soprano TTS artifact (optional)
+        run: |
+          if [ -f soprano-staging-image.tar.gz ]; then
+            echo "Found soprano-staging-image.tar.gz; will upload and load it on VPS."
+            ls -lh soprano-staging-image.tar.gz
+            gzip -t soprano-staging-image.tar.gz 2>/dev/null || {
+              echo "❌ Error: soprano-staging-image.tar.gz is not valid gzip"
+              exit 1
+            }
+          else
+            echo "No Soprano TTS artifact found; will keep existing image on VPS (if present)."
+          fi
 
       - name: Setup SSH
         run: |
@@ -1074,12 +1516,26 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            staging-image.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          if [ ! -f backend-staging-image.tar.gz ]; then
+            echo "❌ Error: backend-staging-image.tar.gz not found"
+            exit 1
+          fi
+
+          if [ -f soprano-staging-image.tar.gz ]; then
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-staging-image.tar.gz backend-staging-image.tar.gz.sha256 \
+              soprano-staging-image.tar.gz \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          else
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-staging-image.tar.gz backend-staging-image.tar.gz.sha256 \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          fi
+
+          rm -f backend-staging-image.tar.gz backend-staging-image.tar.gz.sha256 soprano-staging-image.tar.gz
 
       - name: Load Image and Deploy Staging
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.4
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -1147,12 +1603,27 @@ jobs:
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export DAILY_API_KEY="${{ secrets.DAILY_API_KEY }}"
             
             cd /opt/maigie/staging
             
-            # Load Docker image
-            docker load < /tmp/staging-image.tar.gz
-            rm /tmp/staging-image.tar.gz
+            # Load backend image
+            if [ -f /tmp/backend-staging-image.tar.gz ]; then
+              docker load < /tmp/backend-staging-image.tar.gz
+              rm /tmp/backend-staging-image.tar.gz
+              rm -f /tmp/backend-staging-image.tar.gz.sha256
+            else
+              echo "❌ Error: /tmp/backend-staging-image.tar.gz not found"
+              exit 1
+            fi
+
+            # Load Soprano image if uploaded (optional)
+            if [ -f /tmp/soprano-staging-image.tar.gz ]; then
+              docker load < /tmp/soprano-staging-image.tar.gz
+              rm /tmp/soprano-staging-image.tar.gz
+            else
+              echo "No soprano-staging-image.tar.gz uploaded; using existing image on VPS if present."
+            fi
 
             # Generate .env from template using generator script
             if [ -f ".env.example" ] && [ -f "scripts/generate-env-from-secrets.sh" ]; then
@@ -1185,8 +1656,9 @@ jobs:
               fi
             fi
             
-            # Tag the loaded image for docker-compose (if needed)
+            # Tag the loaded images for docker-compose (if needed)
             docker tag maigie-backend:staging maigie-backend:staging || true
+            docker tag maigie-soprano-tts:staging maigie-soprano-tts:staging || true
             
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
@@ -1210,6 +1682,22 @@ jobs:
                   retries: 5
                 networks:
                   - maigie_network
+            
+              soprano-tts-service:
+                image: maigie-soprano-tts:staging
+                container_name: maigie-soprano-tts-staging
+                restart: unless-stopped
+                environment:
+                  PORT: 50051
+                  ENVIRONMENT: staging
+                networks:
+                  - maigie_network
+                healthcheck:
+                  test: ["CMD", "python", "-c", "import grpc; print('gRPC available')"]
+                  interval: 30s
+                  timeout: 10s
+                  retries: 3
+                  start_period: 40s
             
               celery-worker:
                 image: maigie-backend:staging
@@ -1241,14 +1729,20 @@ jobs:
                 restart: unless-stopped
                 env_file:
                   - .env
+                environment:
+                  SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
                 ports:
                   - "8001:8000"
                 depends_on:
-                  - redis
+                  redis:
+                    condition: service_healthy
+                  soprano-tts-service:
+                    condition: service_started
                 networks:
                   - maigie_network
                 command: >
                   sh -c "
+                    prisma generate || echo 'Warning: Prisma generate failed' &&
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
                     prisma db push --accept-data-loss &&
                     python prisma/seed.py &&

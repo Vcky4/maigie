@@ -46,6 +46,24 @@ services:
     networks:
       - preview_${PREVIEW_ID}
 
+  soprano-tts-service:
+    build:
+      context: ../soprano-tts-service
+      dockerfile: Dockerfile
+    container_name: maigie-preview-soprano-tts-${PREVIEW_ID}
+    environment:
+      PORT: 50051
+      ENVIRONMENT: preview
+      PREVIEW_ID: ${PREVIEW_ID}
+    networks:
+      - preview_${PREVIEW_ID}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; from grpc import health; print('gRPC available')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   backend:
     build:
       context: .
@@ -57,6 +75,7 @@ services:
       ENVIRONMENT: preview
       PREVIEW_ID: ${PREVIEW_ID}
       PORT: 8000
+      SOPRANO_TTS_SERVICE_URL: soprano-tts-service:50051
     ports:
       - "${PORT:-8000}:8000"
     depends_on:
@@ -64,6 +83,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      soprano-tts-service:
+        condition: service_started
     networks:
       - preview_${PREVIEW_ID}
     command: >

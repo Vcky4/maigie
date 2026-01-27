@@ -4,18 +4,25 @@ Handles chat logic and tool execution.
 """
 
 import os
-import warnings
-
-# Suppress the Google Gemini deprecation warning temporarily
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    import google.generativeai as genai
 
 from fastapi import HTTPException
-from google.generativeai.types import HarmBlockThreshold, HarmCategory
+from google import genai
+from google.genai import types
 
-# Configure API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Initialize client
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """Get or create the Gemini client (lazy initialization)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _client = genai.Client(api_key=api_key)
+    return _client
+
 
 # System instruction to define Maigie's persona
 SYSTEM_INSTRUCTION = """
@@ -301,15 +308,28 @@ RULES:
 
 class GeminiService:
     def __init__(self):
-        self.model = genai.GenerativeModel(
-            model_name="models/gemini-flash-latest", system_instruction=SYSTEM_INSTRUCTION
-        )
+        self._client = None  # Lazy initialization
+        self.model_name = "gemini-2.0-flash-exp"
+        self.system_instruction = SYSTEM_INSTRUCTION
 
         # Safety settings (block hate speech, etc.)
-        self.safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        }
+        self.safety_settings = [
+            {
+                "category": types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                "threshold": types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+                "category": types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                "threshold": types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+        ]
+
+    @property
+    def client(self):
+        """Get client with lazy initialization."""
+        if self._client is None:
+            self._client = _get_client()
+        return self._client
 
     async def get_chat_response(
         self, history: list, user_message: str, context: dict = None
@@ -417,7 +437,9 @@ class GeminiService:
             if hasattr(response, "model"):
                 usage_info["model_name"] = response.model or usage_info["model_name"]
 
-            return response.text, usage_info
+            # Extract text from response
+            response_text = response.text if hasattr(response, "text") else str(response)
+            return response_text, usage_info
 
         except Exception as e:
             print(f"Gemini Error: {e}")
@@ -440,12 +462,26 @@ Content:
 
 Summary:"""
 
-            response = await self.model.generate_content_async(
-                summary_prompt, safety_settings=self.safety_settings
+            config = types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+                safety_settings=self.safety_settings,
             )
 
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+
+            def _generate_content():
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=summary_prompt,
+                    config=config,
+                )
+
+            response = await loop.run_in_executor(None, _generate_content)
+
             # Clean up any remaining conversational text that might have been added
-            summary_text = response.text.strip()
+            summary_text = (response.text if hasattr(response, "text") else str(response)).strip()
 
             # Remove common AI introductory phrases if they appear
             intro_phrases = [
@@ -544,11 +580,25 @@ Begin directly with the first heading or paragraph.
 
 Rewritten Content:"""
 
-            response = await self.model.generate_content_async(
-                rewrite_prompt, safety_settings=self.safety_settings
+            config = types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+                safety_settings=self.safety_settings,
             )
 
-            rewritten_text = response.text.strip()
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+
+            def _generate_content():
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=rewrite_prompt,
+                    config=config,
+                )
+
+            response = await loop.run_in_executor(None, _generate_content)
+
+            rewritten_text = (response.text if hasattr(response, "text") else str(response)).strip()
 
             # Clean up any conversational text that might have been added
             # Remove common AI introductory phrases if they appear
@@ -632,11 +682,25 @@ Just return the array, for example: ["Tag1", "Tag2", "Tag3"]
 
 Tags (JSON array):"""
 
-            response = await self.model.generate_content_async(
-                tag_prompt, safety_settings=self.safety_settings
+            config = types.GenerateContentConfig(
+                system_instruction=self.system_instruction,
+                safety_settings=self.safety_settings,
             )
 
-            tags_text = response.text.strip()
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+
+            def _generate_content():
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=tag_prompt,
+                    config=config,
+                )
+
+            response = await loop.run_in_executor(None, _generate_content)
+
+            tags_text = (response.text if hasattr(response, "text") else str(response)).strip()
 
             # Try to extract JSON array from the response
             import json

@@ -6,17 +6,17 @@ authors = [
     {name = "Maigie Team"}
 ]
 license = {text = "BUSL-1.1"}
-requires-python = ">=3.11,<4.0"
+requires-python = ">=3.11,<3.15"
 dynamic = ["dependencies"]
 
 [tool.poetry]
 package-mode = false
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.11,<3.15"
 fastapi = "^0.115.0"
 uvicorn = {extras = ["standard"], version = "^0.32.0"}
-pydantic = "^2.9.0"
+pydantic = ">=2.8.2,<3.0.0"
 pydantic-settings = "^2.5.0"
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
@@ -35,9 +35,14 @@ itsdangerous = "^2.2.0"
 fastapi-mail = "^1.5.8"
 bcrypt = "4.0.1"
 stripe = "^10.0.0"
-google-generativeai = "^0.8.6"
-google-genai = "^0.2.0"
+google-genai = ">=1.60.0,<2.0.0"
 duckduckgo-search = "^7.0.0"
+# soprano-tts moved to separate container service
+# soprano-tts = {version = "^0.0.2", markers = "sys_platform != 'win32'"}
+grpcio = "^1.76.0"
+grpcio-tools = {version = "^1.76.0", markers = "sys_platform != 'win32'"}
+# Note: torch, transformers, and numpy moved to voice-service (soprano-tts-service)
+# Voice processing (TTS/STT) is handled by the separate voice-service container
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
@@ -72,6 +77,21 @@ ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"]
 [tool.black]
 line-length = 100
 target-version = ["py312"]
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | __pycache__
+  | \.pytest_cache
+  | \.mypy_cache
+  | build
+  | dist
+  | \.eggs
+  | \*\.egg-info
+  | .*_pb2\.py
+  | .*_pb2_grpc\.py
+)/
+'''
 #NEW
 [tool.mypy]
 python_version = "3.12"
@@ -85,8 +105,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"  
 testpaths = ["tests"]
 filterwarnings = [
-    "ignore::DeprecationWarning:httplib2.*",
-    "ignore::FutureWarning:google.generativeai.*"
+    "ignore::DeprecationWarning:httplib2.*"
 ]
 
 
