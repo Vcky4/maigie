@@ -127,22 +127,9 @@ jobs:
           docker volume prune -af || true
           docker network prune -af || true
           
-          # Clean up buildkit cache directories directly
-          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
-          sudo rm -rf ~/.docker/buildx 2>/dev/null || true
-          
           echo "=== Disk space after cleanup ==="
           df -h
           docker system df || true
-
-      - name: Set up Docker layer cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-backend-preview-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-backend-preview-
-            ${{ runner.os }}-buildx-backend-
 
       - name: List variables in .env.example
         run: |
@@ -232,22 +219,6 @@ jobs:
           echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
           echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
 
-      - name: Clean up Docker to free space
-        run: |
-          # Clean up Docker system
-          docker system prune -af --volumes || true
-          docker builder prune -af || true
-          docker image prune -af || true
-          # Clean up buildkit cache (this is where the space issue occurs)
-          docker buildx prune -af || true
-          # Clean up any dangling resources
-          docker container prune -af || true
-          docker volume prune -af || true
-          docker network prune -af || true
-          # Show disk usage
-          df -h
-          docker system df
-
       - name: Verify Soprano image on VPS (already uploaded)
         run: |
           echo "=== Verifying Soprano image exists on VPS ==="
@@ -276,200 +247,40 @@ jobs:
           DOCKER_BUILDKIT: 1
           BUILDKIT_PROGRESS: plain
         run: |
-          # Use buildx builder with docker-container driver for cache support
+          # Build directly to a tar file (avoids --load + docker save disk spike)
+          # Use GitHub-hosted BuildKit cache (reduces runner disk + speeds rebuilds)
           docker buildx build \
             --builder builder \
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
-            --load \
             --platform linux/amd64 \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --cache-from type=gha,scope=maigie-backend-preview \
+            --cache-to type=gha,mode=max,scope=maigie-backend-preview \
+            --output type=docker,dest=preview-images.tar \
             --progress=plain \
             .
-          
-          # Replace old cache with new cache
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
-          
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
-          
-          echo "=== Cleaning up build cache immediately after build ==="
-          docker buildx prune -af --filter "until=1h" || true
-          docker builder prune -af || true
-          
-          docker system df
-
-      - name: Clean up Docker before saving backend image
-        run: |
-          echo "=== Disk space before cleanup ==="
-          df -h
-          docker system df || true
-          
-          echo "=== Aggressive cleanup before saving backend image ==="
-          # Remove all build cache (we've already saved what we need)
-          docker buildx prune -af || true
-          docker builder prune -af || true
-          
-          # Remove all unused images except the one we just built
-          BACKEND_IMAGE="maigie-backend-preview:${{ steps.preview.outputs.id }}"
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep -v "$BACKEND_IMAGE" | \
-            xargs -r docker rmi -f 2>/dev/null || true
-          
-          # Remove all stopped containers
-          docker container prune -af || true
-          
-          # Remove all unused volumes
-          docker volume prune -af || true
-          
-          # Remove all unused networks
-          docker network prune -af || true
-          
-          # Clean up buildkit cache directories
-          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
-          
-          echo "=== Disk space after cleanup ==="
-          df -h
-          docker system df || true
-          
-          # Check available disk space
-          AVAILABLE=$(df / | tail -1 | awk '{print $4}')
-          echo "Available disk space: ${AVAILABLE}KB"
-          if [ "$AVAILABLE" -lt 5242880 ]; then
-            echo "⚠️ Warning: Less than 5GB available."
-          fi
 
       - name: Skip Soprano image loading (already on VPS)
         working-directory: ./apps/backend
         run: |
           if [ -f soprano-preview-image.tar.gz ]; then
-            echo "=== Disk space before loading ==="
-            df -h
-            docker system df
-            
-            echo "Loading soprano-preview-image.tar.gz..."
-            # Load the image and capture output to see what tag was loaded
-            LOAD_OUTPUT=$(docker load < soprano-preview-image.tar.gz 2>&1)
-            LOAD_EXIT_CODE=$?
-            
-            if [ $LOAD_EXIT_CODE -ne 0 ]; then
-              echo "❌ Error: Failed to load Docker image"
-              echo "Load output: $LOAD_OUTPUT"
-              echo "=== Disk space after failed load ==="
-              df -h
-              docker system df
-              exit 1
-            fi
-            
-            echo "Load output: $LOAD_OUTPUT"
-            
-            # Extract the loaded image tag from the output
-            # The output format is: "Loaded image: maigie-soprano-tts-preview:86" or "Loaded image: maigie-soprano-tts-preview:pr-86"
-            LOADED_TAG=$(echo "$LOAD_OUTPUT" | grep "Loaded image:" | sed 's/.*Loaded image: //' | head -1)
-            
-            echo "Detected loaded image tag: $LOADED_TAG"
-            
-            # Show all soprano images before tagging
-            echo "Soprano images before tagging:"
-            docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
-            
-            PREVIEW_ID="${{ steps.preview.outputs.id }}"
-            TARGET_TAG="maigie-soprano-tts-preview:${PREVIEW_ID}"
-            
-            # Tag the loaded image to the expected tag
-            if [ -n "$LOADED_TAG" ]; then
-              echo "Tagging $LOADED_TAG to $TARGET_TAG"
-              docker tag "$LOADED_TAG" "$TARGET_TAG" || {
-                echo "❌ Error: Failed to tag image from $LOADED_TAG to $TARGET_TAG"
-                echo "Available images:"
-                docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
-                exit 1
-              }
-            else
-              # Fallback: try common tag patterns
-              PR_NUMBER="${{ github.event.pull_request.number }}"
-              echo "Could not detect loaded tag, trying fallback patterns..."
-              
-              # Try pr-86 format first
-              if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:pr-${PR_NUMBER}"; then
-                docker tag "maigie-soprano-tts-preview:pr-${PR_NUMBER}" "$TARGET_TAG" || exit 1
-              # Try just the number
-              elif docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:${PR_NUMBER}"; then
-                docker tag "maigie-soprano-tts-preview:${PR_NUMBER}" "$TARGET_TAG" || exit 1
-              else
-                echo "❌ Error: Could not find loaded soprano image to tag"
-                echo "Available images:"
-                docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
-                exit 1
-              fi
-            fi
-            
-            # Clean up the tar.gz file immediately to free space
+            echo "Soprano image artifact present; not loading on runner (image is expected on VPS)."
             rm -f soprano-preview-image.tar.gz
-            
-            echo "=== Disk space after loading ==="
-            df -h
-            docker system df || true
-            
-            echo "✓ Soprano TTS image loaded and tagged"
           else
-            echo "❌ Error: Soprano TTS image artifact not found"
-            echo "The soprano-tts-service image is required for preview deployment."
-            echo "Please ensure the build-soprano-preview job completed successfully."
-            echo ""
-            echo "Debugging information:"
-            echo "- Current directory: $(pwd)"
-            echo "- Files in current directory:"
-            ls -la | head -20
-            echo "- Looking for soprano artifacts:"
-            find . -name "*soprano*" -o -name "*preview*" 2>/dev/null || echo "No matching files found"
-            exit 1
+            echo "No Soprano image artifact in workspace (OK; it should already be on VPS)."
           fi
-          
-          # Verify the image exists after loading
-          PREVIEW_ID="${{ steps.preview.outputs.id }}"
-          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "maigie-soprano-tts-preview:${PREVIEW_ID}"; then
-            echo "❌ Error: Failed to load/tag Soprano TTS image"
-            echo "Loaded images:"
-            docker images --format "{{.Repository}}:{{.Tag}}" | grep soprano || echo "No soprano images found"
-            echo "Expected tag: maigie-soprano-tts-preview:${PREVIEW_ID}"
-            exit 1
-          fi
-          
-          echo "✓ Verified Soprano TTS image exists with tag: maigie-soprano-tts-preview:${PREVIEW_ID}"
-          
-          # Clean up any intermediate layers from loading
-          echo "=== Cleaning up intermediate layers after loading ==="
-          docker image prune -f || true
-          docker buildx prune -af || true
-          docker builder prune -af || true
-          
-          echo "=== Final disk space check ==="
-          df -h
-          docker system df || true
 
       - name: Save Docker Images
         run: |
-          echo "=== Checking available Docker images ==="
-          PREVIEW_ID="${{ steps.preview.outputs.id }}"
-          # Format docker images output to use colon format for easier checking
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend-preview|maigie-soprano-tts-preview)" || echo "No preview images found"
-          
-          # Verify backend image exists
-          BACKEND_IMAGE="maigie-backend-preview:${PREVIEW_ID}"
-          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
-            echo "❌ Error: ${BACKEND_IMAGE} not found"
-            echo "Available images:"
-            docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
+          echo "=== Creating preview-images.tar.gz ==="
+          if [ ! -f preview-images.tar ]; then
+            echo "❌ Error: preview-images.tar not found (build step should have created it)"
+            ls -la
             exit 1
           fi
-          
-          echo "=== Saving Docker images ==="
-          # Soprano image is already on VPS, so we only save backend image
-          echo "Saving backend image only (Soprano already uploaded to VPS)..."
-          if ! docker save "$BACKEND_IMAGE" | gzip > preview-images.tar.gz; then
-            echo "❌ Error: Failed to save Docker image"
-            exit 1
-          fi
+
+          # Fast compression to reduce time; still validates with gzip -t
+          gzip -1 < preview-images.tar > preview-images.tar.gz
+          rm -f preview-images.tar
           
           echo "=== Validating saved image file ==="
           ls -lh preview-images.tar.gz
@@ -565,21 +376,7 @@ jobs:
           fi
           # Remove the tar.gz file immediately after upload to free up space
           rm -f preview-images.tar.gz preview-images.tar.gz.sha256
-          
-          # Aggressive cleanup AFTER saving images
-          echo "=== Aggressive cleanup after saving images ==="
-          docker buildx prune -af || true
-          docker builder prune -af || true
-          # Keep only the images we need for deployment
-          BACKEND_IMAGE="maigie-backend-preview:${{ steps.preview.outputs.id }}"
-          SOPRANO_IMAGE="maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep -vE "($BACKEND_IMAGE|$SOPRANO_IMAGE)" | \
-            xargs -r docker rmi -f 2>/dev/null || true
-          docker container prune -af || true
-          docker volume prune -af || true
-          docker network prune -af || true
-          
-          # Show disk usage
+          echo "=== Disk usage after upload ==="
           df -h
           docker system df || true
 
@@ -1223,15 +1020,6 @@ jobs:
           docker buildx use builder || true
           docker buildx inspect --bootstrap || true
 
-      - name: Set up Docker layer cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-backend-production-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-backend-production-
-            ${{ runner.os }}-buildx-backend-
-
       - name: Generate .env from .env.example for production
         env:
           ENVIRONMENT: production
@@ -1305,7 +1093,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: soprano-tts-image-production
-          path: .
+          path: ./apps/backend
         continue-on-error: true
 
       - name: Build Backend Docker Image
@@ -1313,73 +1101,36 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
         run: |
-          # Use buildx builder with docker-container driver for cache support
+          # Build directly to a tar.gz (avoids --load + docker save disk spike)
+          # Use GitHub-hosted BuildKit cache (reduces runner disk + speeds rebuilds)
           docker buildx build \
             --builder builder \
             --tag maigie-backend:latest \
-            --load \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --cache-from type=gha,scope=maigie-backend-production \
+            --cache-to type=gha,mode=max,scope=maigie-backend-production \
+            --output type=docker,dest=backend-production-image.tar \
             .
-          
-          # Replace old cache with new cache
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
-          
-          # Clean up build cache immediately
-          docker buildx prune -af --filter "until=1h" || true
-          docker builder prune -af || true
+          gzip -1 < backend-production-image.tar > backend-production-image.tar.gz
+          rm -f backend-production-image.tar
 
-      - name: Load Soprano TTS Image if available
+          echo "=== Validating backend-production-image.tar.gz ==="
+          ls -lh backend-production-image.tar.gz
+          gzip -t backend-production-image.tar.gz 2>/dev/null
+          sha256sum backend-production-image.tar.gz > backend-production-image.tar.gz.sha256
+          cat backend-production-image.tar.gz.sha256
+
+      - name: Verify Soprano TTS artifact (optional)
         run: |
           if [ -f soprano-production-image.tar.gz ]; then
-            docker load < soprano-production-image.tar.gz
-            docker tag maigie-soprano-tts:latest maigie-soprano-tts:latest || true
-            # Remove tar.gz immediately after loading
-            rm -f soprano-production-image.tar.gz
-            # Clean up intermediate layers
-            docker image prune -f || true
-            echo "Soprano TTS image loaded"
+            echo "Found soprano-production-image.tar.gz; will upload and load it on VPS."
+            ls -lh soprano-production-image.tar.gz
+            gzip -t soprano-production-image.tar.gz 2>/dev/null || {
+              echo "❌ Error: soprano-production-image.tar.gz is not valid gzip"
+              exit 1
+            }
           else
-            echo "No Soprano TTS image found, will use existing or skip"
+            echo "No Soprano TTS artifact found; will keep existing image on VPS (if present)."
           fi
-
-      - name: Save Docker Images
-        run: |
-          echo "=== Checking available Docker images ==="
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend|maigie-soprano-tts)" || echo "No maigie images found"
-          
-          BACKEND_IMAGE="maigie-backend:latest"
-          SOPRANO_IMAGE="maigie-soprano-tts:latest"
-          
-          # Verify backend image exists
-          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
-            echo "❌ Error: ${BACKEND_IMAGE} not found"
-            docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend || echo "No backend images found"
-            exit 1
-          fi
-          
-          echo "=== Saving Docker images ==="
-          # Check for soprano image
-          if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
-            echo "Saving both backend and soprano-tts images..."
-            docker save "${BACKEND_IMAGE}" "${SOPRANO_IMAGE}" | gzip > production-images.tar.gz
-          else
-            echo "Saving backend image only (soprano-tts not found)..."
-            docker save "${BACKEND_IMAGE}" | gzip > production-images.tar.gz
-            echo "Warning: Soprano TTS image not included"
-          fi
-          
-          echo "=== Validating saved image file ==="
-          ls -lh production-images.tar.gz
-          if [ ! -f production-images.tar.gz ] || [ ! -s production-images.tar.gz ]; then
-            echo "❌ Error: Docker image file was not created or is empty"
-            exit 1
-          fi
-          
-          # Clean up build cache after saving
-          docker buildx prune -af || true
-          docker builder prune -af || true
 
       - name: Setup SSH
         run: |
@@ -1403,16 +1154,25 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            production-images.tar.gz .env \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
-          
-          # Remove tar.gz immediately after upload
-          rm -f production-images.tar.gz
-          
-          # Final cleanup
-          docker system prune -af --volumes || true
-          docker buildx prune -af || true
+          if [ ! -f backend-production-image.tar.gz ]; then
+            echo "❌ Error: backend-production-image.tar.gz not found"
+            exit 1
+          fi
+
+          if [ -f soprano-production-image.tar.gz ]; then
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-production-image.tar.gz backend-production-image.tar.gz.sha256 \
+              soprano-production-image.tar.gz \
+              .env \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          else
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-production-image.tar.gz backend-production-image.tar.gz.sha256 \
+              .env \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          fi
+
+          rm -f backend-production-image.tar.gz backend-production-image.tar.gz.sha256 soprano-production-image.tar.gz
 
       - name: Load Image and Deploy Production
         uses: appleboy/ssh-action@v1.0.0
@@ -1423,9 +1183,23 @@ jobs:
           script: |
             cd /opt/maigie/production
             
-            # Load Docker images
-            docker load < /tmp/production-images.tar.gz
-            rm /tmp/production-images.tar.gz
+            # Load backend image
+            if [ -f /tmp/backend-production-image.tar.gz ]; then
+              docker load < /tmp/backend-production-image.tar.gz
+              rm /tmp/backend-production-image.tar.gz
+              rm -f /tmp/backend-production-image.tar.gz.sha256
+            else
+              echo "❌ Error: /tmp/backend-production-image.tar.gz not found"
+              exit 1
+            fi
+
+            # Load Soprano image if uploaded (optional)
+            if [ -f /tmp/soprano-production-image.tar.gz ]; then
+              docker load < /tmp/soprano-production-image.tar.gz
+              rm /tmp/soprano-production-image.tar.gz
+            else
+              echo "No soprano-production-image.tar.gz uploaded; using existing image on VPS if present."
+            fi
 
             # Update .env from uploaded file
             if [ -f /tmp/.env ]; then
@@ -1611,15 +1385,6 @@ jobs:
           docker buildx use builder || true
           docker buildx inspect --bootstrap || true
 
-      - name: Set up Docker layer cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-backend-staging-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-backend-staging-
-            ${{ runner.os }}-buildx-backend-
-
       - name: Generate .env from .env.example for staging
         env:
           ENVIRONMENT: staging
@@ -1693,7 +1458,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: soprano-tts-image-staging
-          path: .
+          path: ./apps/backend
         continue-on-error: true
 
       - name: Build Backend Docker Image
@@ -1701,68 +1466,35 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
         run: |
-          # Use buildx builder with docker-container driver for cache support
+          # Build directly to a tar.gz (avoids --load + docker save disk spike)
+          # Use GitHub-hosted BuildKit cache (reduces runner disk + speeds rebuilds)
           docker buildx build \
             --builder builder \
             --tag maigie-backend:staging \
-            --load \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --cache-from type=gha,scope=maigie-backend-staging \
+            --cache-to type=gha,mode=max,scope=maigie-backend-staging \
+            --output type=docker,dest=backend-staging-image.tar \
             .
-          
-          # Replace old cache with new cache
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
-          
-          # Clean up build cache immediately
-          docker buildx prune -af --filter "until=1h" || true
-          docker builder prune -af || true
+          gzip -1 < backend-staging-image.tar > backend-staging-image.tar.gz
+          rm -f backend-staging-image.tar
 
-      - name: Load Soprano TTS Image if available
+          echo "=== Validating backend-staging-image.tar.gz ==="
+          ls -lh backend-staging-image.tar.gz
+          gzip -t backend-staging-image.tar.gz 2>/dev/null
+          sha256sum backend-staging-image.tar.gz > backend-staging-image.tar.gz.sha256
+          cat backend-staging-image.tar.gz.sha256
+
+      - name: Verify Soprano TTS artifact (optional)
         run: |
           if [ -f soprano-staging-image.tar.gz ]; then
-            docker load < soprano-staging-image.tar.gz
-            docker tag maigie-soprano-tts:staging maigie-soprano-tts:staging || true
-            # Remove tar.gz immediately after loading
-            rm -f soprano-staging-image.tar.gz
-            # Clean up intermediate layers
-            docker image prune -f || true
-            echo "Soprano TTS image loaded"
+            echo "Found soprano-staging-image.tar.gz; will upload and load it on VPS."
+            ls -lh soprano-staging-image.tar.gz
+            gzip -t soprano-staging-image.tar.gz 2>/dev/null || {
+              echo "❌ Error: soprano-staging-image.tar.gz is not valid gzip"
+              exit 1
+            }
           else
-            echo "No Soprano TTS image found, will use existing or skip"
-          fi
-
-      - name: Save Docker Images
-        run: |
-          echo "=== Checking available Docker images ==="
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie-backend|maigie-soprano-tts)" || echo "No maigie images found"
-          
-          BACKEND_IMAGE="maigie-backend:staging"
-          SOPRANO_IMAGE="maigie-soprano-tts:staging"
-          
-          # Verify backend image exists
-          if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
-            echo "❌ Error: ${BACKEND_IMAGE} not found"
-            docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend || echo "No backend images found"
-            exit 1
-          fi
-          
-          echo "=== Saving Docker images ==="
-          # Check for soprano image
-          if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
-            echo "Saving both backend and soprano-tts images..."
-            docker save "${BACKEND_IMAGE}" "${SOPRANO_IMAGE}" | gzip > staging-images.tar.gz
-          else
-            echo "Saving backend image only (soprano-tts not found)..."
-            docker save "${BACKEND_IMAGE}" | gzip > staging-images.tar.gz
-            echo "Warning: Soprano TTS image not included"
-          fi
-          
-          echo "=== Validating saved image file ==="
-          ls -lh staging-images.tar.gz
-          if [ ! -f staging-images.tar.gz ] || [ ! -s staging-images.tar.gz ]; then
-            echo "❌ Error: Docker image file was not created or is empty"
-            exit 1
+            echo "No Soprano TTS artifact found; will keep existing image on VPS (if present)."
           fi
 
       - name: Setup SSH
@@ -1794,16 +1526,23 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            staging-images.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
-          
-          # Remove tar.gz immediately after upload
-          rm -f staging-images.tar.gz
-          
-          # Final cleanup
-          docker system prune -af --volumes || true
-          docker buildx prune -af || true
+          if [ ! -f backend-staging-image.tar.gz ]; then
+            echo "❌ Error: backend-staging-image.tar.gz not found"
+            exit 1
+          fi
+
+          if [ -f soprano-staging-image.tar.gz ]; then
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-staging-image.tar.gz backend-staging-image.tar.gz.sha256 \
+              soprano-staging-image.tar.gz \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          else
+            scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+              backend-staging-image.tar.gz backend-staging-image.tar.gz.sha256 \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          fi
+
+          rm -f backend-staging-image.tar.gz backend-staging-image.tar.gz.sha256 soprano-staging-image.tar.gz
 
       - name: Load Image and Deploy Staging
         uses: appleboy/ssh-action@v1.2.4
@@ -1878,9 +1617,23 @@ jobs:
             
             cd /opt/maigie/staging
             
-            # Load Docker images
-            docker load < /tmp/staging-images.tar.gz
-            rm /tmp/staging-images.tar.gz
+            # Load backend image
+            if [ -f /tmp/backend-staging-image.tar.gz ]; then
+              docker load < /tmp/backend-staging-image.tar.gz
+              rm /tmp/backend-staging-image.tar.gz
+              rm -f /tmp/backend-staging-image.tar.gz.sha256
+            else
+              echo "❌ Error: /tmp/backend-staging-image.tar.gz not found"
+              exit 1
+            fi
+
+            # Load Soprano image if uploaded (optional)
+            if [ -f /tmp/soprano-staging-image.tar.gz ]; then
+              docker load < /tmp/soprano-staging-image.tar.gz
+              rm /tmp/soprano-staging-image.tar.gz
+            else
+              echo "No soprano-staging-image.tar.gz uploaded; using existing image on VPS if present."
+            fi
 
             # Generate .env from template using generator script
             if [ -f ".env.example" ] && [ -f "scripts/generate-env-from-secrets.sh" ]; then
