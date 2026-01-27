@@ -220,6 +220,10 @@ jobs:
       - name: Save Docker Image
         if: steps.build.outputs.built == 'true'
         run: |
+          echo "=== Disk space before saving image ==="
+          df -h
+          docker system df || true
+          
           docker save ${{ steps.build.outputs.tag }} | gzip > ${{ steps.build.outputs.output_file }}
           ls -lh ${{ steps.build.outputs.output_file }}
           if [ ! -f ${{ steps.build.outputs.output_file }} ] || [ ! -s ${{ steps.build.outputs.output_file }} ]; then
@@ -227,9 +231,8 @@ jobs:
             exit 1
           fi
           
-          # Clean up build cache after saving
-          docker buildx prune -af || true
-          docker builder prune -af || true
+          echo "=== Disk space after saving image ==="
+          df -h
 
       - name: Upload image artifact
         if: steps.build.outputs.built == 'true'
@@ -238,6 +241,104 @@ jobs:
           name: soprano-tts-image-${{ steps.build.outputs.environment }}
           path: ${{ steps.build.outputs.output_file }}
           retention-days: 1
+
+      - name: Setup SSH Key (for direct VPS upload)
+        if: steps.build.outputs.built == 'true' && steps.build.outputs.environment == 'preview' && steps.build.outputs.preview_id != ''
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+
+      - name: Upload Soprano image directly to VPS (preview only)
+        if: steps.build.outputs.built == 'true' && steps.build.outputs.environment == 'preview' && steps.build.outputs.preview_id != ''
+        run: |
+          PREVIEW_ID="${{ steps.build.outputs.preview_id }}"
+          SOPRANO_TAG="maigie-soprano-tts-preview:${PREVIEW_ID}"
+          
+          echo "=== Uploading Soprano image directly to VPS ==="
+          echo "Preview ID: ${PREVIEW_ID}"
+          echo "Image file: ${{ steps.build.outputs.output_file }}"
+          
+          # Remove old Soprano image on VPS before uploading new one
+          echo "=== Removing old Soprano image on VPS ==="
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker rmi -f ${SOPRANO_TAG} 2>/dev/null || true && \
+             docker rmi -f maigie-soprano-tts-preview:pr-${PREVIEW_ID} 2>/dev/null || true && \
+             docker rmi -f maigie-soprano-tts-preview:${PREVIEW_ID} 2>/dev/null || true && \
+             docker image prune -f || true && \
+             echo '✓ Cleaned up old Soprano images'"
+          
+          # Upload the image file
+          echo "=== Uploading Soprano image to VPS ==="
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ steps.build.outputs.output_file }} \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/soprano-preview-image-${PREVIEW_ID}.tar.gz
+          
+          # Load image on VPS and tag it correctly
+          echo "=== Loading and tagging Soprano image on VPS ==="
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker load < /tmp/soprano-preview-image-${PREVIEW_ID}.tar.gz && \
+             # Tag the loaded image to the expected tag
+             LOADED_TAG=\$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'maigie-soprano-tts-preview' | head -1) && \
+             if [ -n \"\$LOADED_TAG\" ] && [ \"\$LOADED_TAG\" != \"${SOPRANO_TAG}\" ]; then \
+               docker tag \"\$LOADED_TAG\" \"${SOPRANO_TAG}\" && \
+               docker rmi \"\$LOADED_TAG\" 2>/dev/null || true; \
+             fi && \
+             rm -f /tmp/soprano-preview-image-${PREVIEW_ID}.tar.gz && \
+             docker image prune -f || true && \
+             echo '✓ Soprano image loaded and tagged on VPS: ${SOPRANO_TAG}'"
+          
+          echo "✓ Soprano image uploaded directly to VPS"
+
+      - name: Clean up Docker image and files after upload
+        if: steps.build.outputs.built == 'true'
+        run: |
+          echo "=== Aggressive cleanup after uploading artifact ==="
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Remove the Docker image we just built (it's now in the artifact)
+          docker rmi ${{ steps.build.outputs.tag }} || true
+          
+          # Remove the tar.gz file (already uploaded)
+          rm -f ${{ steps.build.outputs.output_file }} || true
+          
+          # Clean up all build cache and intermediate layers
+          docker buildx prune -af || true
+          docker builder prune -af || true
+          docker system prune -af --volumes || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          # Clean up buildkit cache directories
+          rm -rf /tmp/.buildx-cache* 2>/dev/null || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
+          
+          AVAILABLE=$(df / | tail -1 | awk '{print $4}')
+          echo "Available disk space: ${AVAILABLE}KB"
+          if [ "$AVAILABLE" -lt 5242880 ]; then
+            echo "⚠️ Warning: Less than 5GB available after cleanup"
+          else
+            echo "✓ Sufficient disk space freed up"
+          fi
 
   skip-build:
     needs: check-changes

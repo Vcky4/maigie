@@ -248,28 +248,26 @@ jobs:
           df -h
           docker system df
 
-      - name: Download Soprano TTS Image Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: soprano-tts-image-preview
-          path: ./apps/backend
-        continue-on-error: true
-
-      - name: Debug Artifact Download
-        working-directory: ./apps/backend
+      - name: Verify Soprano image on VPS (already uploaded)
         run: |
-          echo "=== Checking for downloaded artifact ==="
-          ls -la | grep -E "(soprano|tar\.gz)" || echo "No soprano artifacts found"
-          echo "=== Listing all files in current directory ==="
-          ls -la
-          echo "=== Checking if artifact file exists ==="
-          if [ -f soprano-preview-image.tar.gz ]; then
-            echo "✓ Found soprano-preview-image.tar.gz"
-            ls -lh soprano-preview-image.tar.gz
+          echo "=== Verifying Soprano image exists on VPS ==="
+          PREVIEW_ID="${{ steps.preview.outputs.id }}"
+          SOPRANO_TAG="maigie-soprano-tts-preview:${PREVIEW_ID}"
+          
+          # Setup SSH key temporarily for verification
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          
+          # Check if Soprano image exists on VPS
+          if ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker images --format '{{.Repository}}:{{.Tag}}' | grep -Fxq '${SOPRANO_TAG}'"; then
+            echo "✓ Soprano image found on VPS: ${SOPRANO_TAG}"
           else
-            echo "❌ soprano-preview-image.tar.gz not found"
-            echo "Checking for alternative names..."
-            find . -name "*soprano*" -o -name "*preview*" | head -10 || echo "No matching files found"
+            echo "⚠️ Warning: Soprano image not found on VPS. It should have been uploaded by soprano-tts-ci workflow."
+            echo "This might be okay if the Soprano workflow is still running or failed."
           fi
 
       - name: Build Backend Docker Image
@@ -301,13 +299,13 @@ jobs:
           
           docker system df
 
-      - name: Clean up Docker before loading Soprano image
+      - name: Clean up Docker before saving backend image
         run: |
           echo "=== Disk space before cleanup ==="
           df -h
           docker system df || true
           
-          echo "=== Aggressive cleanup before loading Soprano image ==="
+          echo "=== Aggressive cleanup before saving backend image ==="
           # Remove all build cache (we've already saved what we need)
           docker buildx prune -af || true
           docker builder prune -af || true
@@ -337,10 +335,10 @@ jobs:
           AVAILABLE=$(df / | tail -1 | awk '{print $4}')
           echo "Available disk space: ${AVAILABLE}KB"
           if [ "$AVAILABLE" -lt 5242880 ]; then
-            echo "⚠️ Warning: Less than 5GB available. May have issues loading image."
+            echo "⚠️ Warning: Less than 5GB available."
           fi
 
-      - name: Load Soprano TTS Image
+      - name: Skip Soprano image loading (already on VPS)
         working-directory: ./apps/backend
         run: |
           if [ -f soprano-preview-image.tar.gz ]; then
@@ -408,8 +406,9 @@ jobs:
             # Clean up the tar.gz file immediately to free space
             rm -f soprano-preview-image.tar.gz
             
-            # Clean up any intermediate layers from loading
-            docker image prune -f || true
+            echo "=== Disk space after loading ==="
+            df -h
+            docker system df || true
             
             echo "✓ Soprano TTS image loaded and tagged"
           else
@@ -437,6 +436,16 @@ jobs:
           fi
           
           echo "✓ Verified Soprano TTS image exists with tag: maigie-soprano-tts-preview:${PREVIEW_ID}"
+          
+          # Clean up any intermediate layers from loading
+          echo "=== Cleaning up intermediate layers after loading ==="
+          docker image prune -f || true
+          docker buildx prune -af || true
+          docker builder prune -af || true
+          
+          echo "=== Final disk space check ==="
+          df -h
+          docker system df || true
 
       - name: Save Docker Images
         run: |
@@ -455,24 +464,11 @@ jobs:
           fi
           
           echo "=== Saving Docker images ==="
-          SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
-          
-          # Check for soprano image
-          if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
-            echo "Saving both backend and soprano-tts images..."
-            # Save both images and verify the command succeeded
-            if ! docker save "$BACKEND_IMAGE" "$SOPRANO_IMAGE" | gzip > preview-images.tar.gz; then
-              echo "❌ Error: Failed to save Docker images"
-              exit 1
-            fi
-          else
-            echo "Saving backend image only (soprano-tts not found)..."
-            # Save single image and verify the command succeeded
-            if ! docker save "$BACKEND_IMAGE" | gzip > preview-images.tar.gz; then
-              echo "❌ Error: Failed to save Docker image"
-              exit 1
-            fi
-            echo "Warning: Soprano TTS image not included"
+          # Soprano image is already on VPS, so we only save backend image
+          echo "Saving backend image only (Soprano already uploaded to VPS)..."
+          if ! docker save "$BACKEND_IMAGE" | gzip > preview-images.tar.gz; then
+            echo "❌ Error: Failed to save Docker image"
+            exit 1
           fi
           
           echo "=== Validating saved image file ==="
@@ -738,7 +734,7 @@ jobs:
             echo "File size: $FILE_SIZE bytes"
             
             echo "=== Loading Docker images from /tmp/preview-images.tar.gz ==="
-            # Load Docker images with better error handling
+            # Load backend image (Soprano is already on VPS, uploaded by soprano-tts-ci workflow)
             if ! docker load < /tmp/preview-images.tar.gz; then
               echo "❌ Error: Failed to load Docker images"
               echo "Attempting to diagnose the issue..."
@@ -756,8 +752,7 @@ jobs:
             
             rm /tmp/preview-images.tar.gz
             
-            # Tag images for docker-compose (images should already have correct tags from save)
-            # Just verify they exist
+            # Verify backend image exists
             BACKEND_IMAGE="maigie-backend-preview:${PREVIEW_ID}"
             if ! docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${BACKEND_IMAGE}"; then
               echo "❌ Error: Backend image not found after load"
@@ -766,17 +761,22 @@ jobs:
               exit 1
             fi
             
-            # Verify Soprano TTS image exists (required for deployment)
+            # Verify Soprano TTS image exists on VPS (it was uploaded directly by soprano-tts-ci workflow)
             SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
             if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
-              echo "✓ Soprano TTS image loaded"
+              echo "✓ Soprano TTS image found on VPS"
             else
-              echo "❌ Error: Soprano TTS image ${SOPRANO_IMAGE} not found"
-              echo "Available images:"
-              docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie|soprano)" || echo "No maigie images found"
-              echo "The soprano-tts-service image is required for preview deployment."
-              echo "Please ensure the soprano-tts-service was included in the saved images."
-              exit 1
+              echo "⚠️ Warning: Soprano TTS image ${SOPRANO_IMAGE} not found locally"
+              echo "Checking if it exists on VPS (it should have been uploaded by soprano-tts-ci workflow)..."
+              if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "maigie-soprano-tts-preview"; then
+                echo "Found other Soprano images, will use them"
+              else
+                echo "❌ Error: Soprano TTS image ${SOPRANO_IMAGE} not found on VPS"
+                echo "Available images:"
+                docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(maigie|soprano)" || echo "No maigie images found"
+                echo "The soprano-tts-service image should have been uploaded to VPS by soprano-tts-ci workflow."
+                exit 1
+              fi
             fi
             
             # Generate random password for preview database
@@ -800,22 +800,17 @@ jobs:
               cat .env
             fi
             
-            # Check if Soprano TTS image was loaded, build if missing
+            # Verify Soprano TTS image exists (it should have been uploaded by soprano-tts-ci workflow)
             SOPRANO_IMAGE="maigie-soprano-tts-preview:${PREVIEW_ID}"
             if docker images --format "{{.Repository}}:{{.Tag}}" | grep -Fxq "${SOPRANO_IMAGE}"; then
-              echo "✓ Soprano TTS image loaded"
+              echo "✓ Soprano TTS image found on VPS (uploaded by soprano-tts-ci workflow)"
             else
-              echo "⚠ Soprano TTS image not found, building locally..."
-              # Build the image locally if it wasn't included in the saved images
-              cd /opt/maigie/previews/${PREVIEW_ID}
-              if [ -d "../soprano-tts-service" ]; then
-                cd ../soprano-tts-service
-                docker build -t ${SOPRANO_IMAGE} .
-                echo "✓ Soprano TTS image built locally"
-              else
-                echo "❌ Error: Cannot build Soprano TTS image - source directory not found"
-                exit 1
-              fi
+              echo "❌ Error: Soprano TTS image ${SOPRANO_IMAGE} not found on VPS"
+              echo "It should have been uploaded by soprano-tts-ci workflow."
+              echo "Available Soprano images:"
+              docker images --format "{{.Repository}}:{{.Tag}}" | grep "maigie-soprano-tts-preview" || echo "No Soprano images found"
+              echo "Please check the soprano-tts-ci workflow logs."
+              exit 1
             fi
             
             # Create docker-compose.yml (always include soprano-tts-service)
