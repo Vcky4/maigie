@@ -10,15 +10,26 @@ import os
 import uuid
 from typing import Callable, Optional
 
-import google.generativeai as genai
+from google import genai
 
 from src.services.stt_client import get_stt_client
 from src.services.tts_client import get_tts_client
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Initialize client
+_client: genai.Client | None = None
+
+
+def _get_client() -> genai.Client:
+    """Get or create the Gemini client (lazy initialization)."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 
 class LiveVoiceConversationService:
@@ -35,8 +46,8 @@ class LiveVoiceConversationService:
         self._tts_client = None
         # STT client for communicating with Voice Service
         self._stt_client = None
-        # Gemini model for chat (will be initialized per session with system instruction)
-        self._chat_models: dict[str, genai.GenerativeModel] = {}
+        # Gemini client (lazy initialization)
+        self._client = None
 
     def _get_tts_client(self):
         """Get or initialize TTS gRPC client."""
@@ -67,6 +78,12 @@ class LiveVoiceConversationService:
                 logger.error(f"Failed to initialize STT client: {e}", exc_info=True)
                 raise
         return self._stt_client
+
+    def _get_genai_client(self):
+        """Get or initialize Gemini client (lazy initialization)."""
+        if self._client is None:
+            self._client = _get_client()
+        return self._client
 
     async def start_conversation(
         self,
@@ -114,13 +131,7 @@ class LiveVoiceConversationService:
         )
 
         system_instruction_text = system_instruction or default_instruction
-
-        # Initialize Gemini chat model for this session
-        chat_model = genai.GenerativeModel(
-            model_name="models/gemini-flash-latest",
-            system_instruction=system_instruction_text,
-        )
-        self._chat_models[session_id] = chat_model
+        self._system_instructions[session_id] = system_instruction_text
 
         # Store session info
         session_info = {
@@ -132,7 +143,6 @@ class LiveVoiceConversationService:
             "on_transcription": on_transcription,
             "on_audio": on_audio,
             "on_session_closed": on_session_closed,
-            "chat_model": chat_model,
             "conversation_history": [],  # Store conversation history for context
             "audio_buffer": bytearray(),  # Buffer for accumulating audio chunks
             "is_processing": False,  # Flag to prevent concurrent processing
@@ -242,8 +252,8 @@ class LiveVoiceConversationService:
                     on_user_message(transcribed_text)
 
             # Step 2: Get AI response using Gemini chat
-            chat_model = session_info["chat_model"]
             conversation_history = session_info["conversation_history"]
+            system_instruction = self._system_instructions.get(session_id, "")
 
             # Format history for Gemini
             formatted_history = []
@@ -260,18 +270,35 @@ class LiveVoiceConversationService:
             response_parts = []
 
             # Use streaming for real-time feel
-            response_stream = await chat_model.generate_content_async(
-                formatted_history,
-                stream=True,
+            from google.genai import types
+
+            config = types.GenerateContentConfig(
+                system_instruction=system_instruction,
             )
+
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+
+            # Get client with lazy initialization
+            client = self._get_genai_client()
+
+            def _generate_content_stream():
+                return client.models.generate_content_stream(
+                    model="gemini-2.0-flash-exp",
+                    contents=formatted_history,
+                    config=config,
+                )
+
+            response_stream = await loop.run_in_executor(None, _generate_content_stream)
 
             on_assistant_message = session_info.get("on_assistant_message")
             on_audio = session_info.get("on_audio")
 
-            # Process streamed response
-            async for chunk in response_stream:
-                if chunk.text:
-                    chunk_text = chunk.text
+            # Process streamed response (synchronous iterator from executor)
+            for chunk in response_stream:
+                chunk_text = chunk.text if hasattr(chunk, "text") else str(chunk)
+                if chunk_text:
                     response_text += chunk_text
                     response_parts.append(chunk_text)
 
@@ -363,7 +390,7 @@ class LiveVoiceConversationService:
 
         # Clean up
         self.active_sessions.pop(session_id, None)
-        self._chat_models.pop(session_id, None)
+        self._system_instructions.pop(session_id, None)
 
         logger.info(f"Stopped conversation session {session_id}")
         return True

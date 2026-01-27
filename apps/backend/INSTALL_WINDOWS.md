@@ -1,5 +1,17 @@
 # Windows Development Setup
 
+## Python Version Requirements
+
+**Important**: This project supports Python 3.11 through 3.14.
+
+- ✅ **Python 3.11** (recommended, matches Docker)
+- ✅ **Python 3.12** (supported)
+- ✅ **Python 3.13** (supported)
+- ✅ **Python 3.14** (supported - uses `google-genai` SDK)
+- ❌ **Python 3.15+** (not yet supported)
+
+**Note**: Python 3.14 is fully supported. The project uses the modern `google-genai` SDK (v1.60.0+) which supports Python 3.14. The deprecated `google-generativeai` package is still used in some legacy code but doesn't affect Python 3.14 compatibility.
+
 ## Quick Install (Skip CUDA Dependencies)
 
 Since CUDA packages (`nvidia-nccl-cu11`, etc.) are not available on Windows, use one of these methods:
@@ -70,6 +82,20 @@ poetry run pip install torch --index-url https://download.pytorch.org/whl/cpu
 - These dependencies don't have Windows wheels
 - Poetry tries to resolve them anyway during `poetry install`
 - **Solution**: Use `--no-extras` on Windows, or ignore the errors
+
+## grpcio-tools on Windows
+
+`grpcio-tools` requires Microsoft Visual C++ 14.0+ Build Tools to compile on Windows. It's configured to skip installation on Windows (similar to `soprano-tts`).
+
+**Options:**
+
+1. **Skip locally (Recommended)**: Proto files are generated in Docker. For local development, you can skip `grpcio-tools` installation.
+
+2. **Install Build Tools**: If you need to generate proto files locally:
+   - Download and install [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+   - Then run: `poetry add grpcio-tools`
+
+3. **Use Docker**: Generate proto files in Docker where build tools are available.
 
 ## Production (Docker)
 
