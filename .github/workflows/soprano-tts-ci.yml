@@ -68,30 +68,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Clean up Docker to free disk space
+      - name: Clean up Docker system aggressively
         run: |
           echo "=== Disk space before cleanup ==="
           df -h
-          docker system df
+          docker system df || true
           
-          echo "=== Cleaning up Docker resources ==="
-          # Remove all stopped containers
-          docker container prune -f || true
-          # Remove all unused images (not just dangling)
-          docker image prune -a -f || true
-          # Remove all unused build cache
-          docker builder prune -a -f || true
-          # Remove all unused volumes
-          docker volume prune -f || true
-          # Remove all unused networks
-          docker network prune -f || true
+          # Aggressive cleanup of all Docker resources
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          docker buildx prune -af || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          # Clean up buildkit cache directories directly
+          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
+          sudo rm -rf ~/.docker/buildx 2>/dev/null || true
           
           echo "=== Disk space after cleanup ==="
           df -h
-          docker system df
+          docker system df || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+
+      - name: Set up Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-soprano-${{ steps.build.outputs.environment }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-soprano-${{ steps.build.outputs.environment }}-
+            ${{ runner.os }}-buildx-soprano-
 
       - name: Determine image tag and output file
         id: build
@@ -149,24 +163,28 @@ jobs:
         working-directory: ./apps/soprano-tts-service
         env:
           DOCKER_BUILDKIT: 1
+          BUILDKIT_PROGRESS: plain
         run: |
-          if [ "${{ steps.build.outputs.environment }}" == "preview" ]; then
-            docker buildx build \
-              --tag ${{ steps.build.outputs.tag }} \
-              --load \
-              --platform linux/amd64 \
-              --progress=plain \
-              .
-          else
-            DOCKER_BUILDKIT=1 docker build \
-              -t ${{ steps.build.outputs.tag }} .
-          fi
+          docker buildx build \
+            --tag ${{ steps.build.outputs.tag }} \
+            --load \
+            --platform linux/amd64 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --progress=plain \
+            .
+          
+          # Replace old cache with new cache
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+          
           docker images | grep maigie-soprano-tts
-          docker system df
+          docker system df || true
           
           # Clean up build cache after successful build
           echo "=== Cleaning up build cache after build ==="
-          docker builder prune -f || true
+          docker buildx prune -af --filter "until=1h" || true
+          docker builder prune -af || true
           df -h
 
       - name: Save Docker Image
@@ -178,6 +196,10 @@ jobs:
             echo "Error: Docker image file was not created or is empty"
             exit 1
           fi
+          
+          # Clean up build cache after saving
+          docker buildx prune -af || true
+          docker builder prune -af || true
 
       - name: Upload image artifact
         if: steps.build.outputs.built == 'true'

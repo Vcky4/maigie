@@ -101,14 +101,42 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
 
-      - name: Clean up buildkit cache before build
+      - name: Clean up Docker system aggressively
         run: |
-          # Clean up buildkit cache (this is critical for disk space)
-          docker buildx prune -af --filter "until=1h" || true
-          # Also try to clean up buildkit's internal cache
-          docker buildx du || true
+          echo "=== Disk space before cleanup ==="
           df -h
+          docker system df || true
+          
+          # Aggressive cleanup of all Docker resources
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          docker buildx prune -af || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          # Clean up buildkit cache directories directly
+          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
+          sudo rm -rf ~/.docker/buildx 2>/dev/null || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
+
+      - name: Set up Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-backend-preview-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-backend-preview-
+            ${{ runner.os }}-buildx-backend-
 
       - name: List variables in .env.example
         run: |
@@ -240,13 +268,23 @@ jobs:
 
       - name: Build Backend Docker Image
         working-directory: ./apps/backend
+        env:
+          DOCKER_BUILDKIT: 1
+          BUILDKIT_PROGRESS: plain
         run: |
           docker buildx build \
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
             --load \
             --platform linux/amd64 \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
             --progress=plain \
             .
+          
+          # Replace old cache with new cache
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+          
           docker images --format "{{.Repository}}:{{.Tag}}" | grep maigie-backend-preview || echo "No backend preview images found"
           
           echo "=== Cleaning up build cache immediately after build ==="
@@ -259,31 +297,33 @@ jobs:
         run: |
           echo "=== Disk space before cleanup ==="
           df -h
-          docker system df
+          docker system df || true
           
-          echo "=== Cleaning up Docker build cache and intermediate layers ==="
-          # Clean up buildkit cache aggressively (this is critical for disk space)
-          docker buildx prune -af --filter "until=1h" || true
+          echo "=== Aggressive cleanup before loading Soprano image ==="
+          # Remove all build cache (we've already saved what we need)
           docker buildx prune -af || true
-          
-          # Remove all unused images except the one we just built
-          docker image prune -af --filter "until=1h" || true
-          
-          # Remove all unused build cache
           docker builder prune -af || true
           
+          # Remove all unused images except the one we just built
+          BACKEND_IMAGE="maigie-backend-preview:${{ steps.preview.outputs.id }}"
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep -v "$BACKEND_IMAGE" | \
+            xargs -r docker rmi -f 2>/dev/null || true
+          
           # Remove all stopped containers
-          docker container prune -f || true
+          docker container prune -af || true
           
           # Remove all unused volumes
-          docker volume prune -f || true
+          docker volume prune -af || true
           
           # Remove all unused networks
-          docker network prune -f || true
+          docker network prune -af || true
+          
+          # Clean up buildkit cache directories
+          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
           
           echo "=== Disk space after cleanup ==="
           df -h
-          docker system df
+          docker system df || true
           
           # Check available disk space
           AVAILABLE=$(df / | tail -1 | awk '{print $4}')
@@ -357,8 +397,11 @@ jobs:
               fi
             fi
             
-            # Clean up the tar.gz file to free space
+            # Clean up the tar.gz file immediately to free space
             rm -f soprano-preview-image.tar.gz
+            
+            # Clean up any intermediate layers from loading
+            docker image prune -f || true
             
             echo "✓ Soprano TTS image loaded and tagged"
           else
@@ -516,17 +559,25 @@ jobs:
             echo "❌ File upload failed"
             exit 1
           fi
-          # Remove the tar.gz file after upload to free up space
+          # Remove the tar.gz file immediately after upload to free up space
           rm -f preview-images.tar.gz preview-images.tar.gz.sha256
           
-          # Clean up intermediate build layers AFTER saving images
-          echo "=== Cleaning up Docker resources after saving images ==="
+          # Aggressive cleanup AFTER saving images
+          echo "=== Aggressive cleanup after saving images ==="
+          docker buildx prune -af || true
           docker builder prune -af || true
-          # Only remove dangling (untagged) images, not all unused images
-          docker image prune -f || true
+          # Keep only the images we need for deployment
+          BACKEND_IMAGE="maigie-backend-preview:${{ steps.preview.outputs.id }}"
+          SOPRANO_IMAGE="maigie-soprano-tts-preview:${{ steps.preview.outputs.id }}"
+          docker images --format "{{.Repository}}:{{.Tag}}" | grep -vE "($BACKEND_IMAGE|$SOPRANO_IMAGE)" | \
+            xargs -r docker rmi -f 2>/dev/null || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
           # Show disk usage
           df -h
-          docker system df
+          docker system df || true
 
       - name: Load Image and Deploy Preview
         uses: appleboy/ssh-action@v1.2.4
@@ -1141,8 +1192,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Clean up Docker system aggressively
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Aggressive cleanup of all Docker resources
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          docker buildx prune -af || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Set up Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-backend-production-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-backend-production-
+            ${{ runner.os }}-buildx-backend-
 
       - name: Generate .env from .env.example for production
         env:
@@ -1222,15 +1301,33 @@ jobs:
 
       - name: Build Backend Docker Image
         working-directory: ./apps/backend
+        env:
+          DOCKER_BUILDKIT: 1
         run: |
-          docker build \
-            -t maigie-backend:latest .
+          docker buildx build \
+            --tag maigie-backend:latest \
+            --load \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            .
+          
+          # Replace old cache with new cache
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+          
+          # Clean up build cache immediately
+          docker buildx prune -af --filter "until=1h" || true
+          docker builder prune -af || true
 
       - name: Load Soprano TTS Image if available
         run: |
           if [ -f soprano-production-image.tar.gz ]; then
             docker load < soprano-production-image.tar.gz
             docker tag maigie-soprano-tts:latest maigie-soprano-tts:latest || true
+            # Remove tar.gz immediately after loading
+            rm -f soprano-production-image.tar.gz
+            # Clean up intermediate layers
+            docker image prune -f || true
             echo "Soprano TTS image loaded"
           else
             echo "No Soprano TTS image found, will use existing or skip"
@@ -1268,6 +1365,10 @@ jobs:
             echo "❌ Error: Docker image file was not created or is empty"
             exit 1
           fi
+          
+          # Clean up build cache after saving
+          docker buildx prune -af || true
+          docker builder prune -af || true
 
       - name: Setup SSH
         run: |
@@ -1294,6 +1395,13 @@ jobs:
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             production-images.tar.gz .env \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          
+          # Remove tar.gz immediately after upload
+          rm -f production-images.tar.gz
+          
+          # Final cleanup
+          docker system prune -af --volumes || true
+          docker buildx prune -af || true
 
       - name: Load Image and Deploy Production
         uses: appleboy/ssh-action@v1.0.0
@@ -1464,8 +1572,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Clean up Docker system aggressively
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Aggressive cleanup of all Docker resources
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          docker buildx prune -af || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Set up Docker layer cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-backend-staging-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-backend-staging-
+            ${{ runner.os }}-buildx-backend-
 
       - name: Generate .env from .env.example for staging
         env:
@@ -1545,15 +1681,33 @@ jobs:
 
       - name: Build Backend Docker Image
         working-directory: ./apps/backend
+        env:
+          DOCKER_BUILDKIT: 1
         run: |
-          docker build \
-            -t maigie-backend:staging .
+          docker buildx build \
+            --tag maigie-backend:staging \
+            --load \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            .
+          
+          # Replace old cache with new cache
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
+          
+          # Clean up build cache immediately
+          docker buildx prune -af --filter "until=1h" || true
+          docker builder prune -af || true
 
       - name: Load Soprano TTS Image if available
         run: |
           if [ -f soprano-staging-image.tar.gz ]; then
             docker load < soprano-staging-image.tar.gz
             docker tag maigie-soprano-tts:staging maigie-soprano-tts:staging || true
+            # Remove tar.gz immediately after loading
+            rm -f soprano-staging-image.tar.gz
+            # Clean up intermediate layers
+            docker image prune -f || true
             echo "Soprano TTS image loaded"
           else
             echo "No Soprano TTS image found, will use existing or skip"
@@ -1624,6 +1778,13 @@ jobs:
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             staging-images.tar.gz \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          
+          # Remove tar.gz immediately after upload
+          rm -f staging-images.tar.gz
+          
+          # Final cleanup
+          docker system prune -af --volumes || true
+          docker buildx prune -af || true
 
       - name: Load Image and Deploy Staging
         uses: appleboy/ssh-action@v1.2.4
