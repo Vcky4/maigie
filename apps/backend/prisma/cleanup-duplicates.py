@@ -27,7 +27,7 @@ async def cleanup_duplicates():
     try:
         # Fetch all users ordered by creation date
         print("Fetching all users...")
-        all_users = await db.user.find_many(order_by={"createdAt": "asc"})
+        all_users = await db.user.find_many(order={"createdAt": "asc"})
 
         print(f"Found {len(all_users)} users")
 
