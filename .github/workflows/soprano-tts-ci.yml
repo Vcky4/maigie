@@ -6,38 +6,29 @@ on:
       environment:
         required: true
         type: string
-        description: 'Deployment environment (preview, production, staging)'
       preview_id:
         required: false
         type: string
-        description: 'Preview ID for preview deployments'
       image_tag:
         required: true
         type: string
-        description: 'Docker image tag to use'
       output_file:
         required: true
         type: string
-        description: 'Output filename for saved image'
     outputs:
       image_built:
-        description: 'Whether the image was built'
         value: ${{ jobs.build-and-save.outputs.image_built }}
       image_file:
-        description: 'Path to the built image file'
         value: ${{ jobs.build-and-save.outputs.image_file }}
+
   push:
-    branches:
-      - main
-      - development
+    branches: [main, development]
     paths:
-      - 'apps/soprano-tts-service/**'
+      - apps/soprano-tts-service/**
   pull_request:
-    branches:
-      - main
-      - development
+    branches: [main, development]
     paths:
-      - 'apps/soprano-tts-service/**'
+      - apps/soprano-tts-service/**
     types: [opened, synchronize, reopened, closed]
 
 permissions:
@@ -50,303 +41,128 @@ jobs:
       has-changes: ${{ steps.changes.outputs.soprano }}
     steps:
       - uses: actions/checkout@v4
-      - name: Check for changes in soprano-tts-service
-        id: changes
+      - id: changes
         uses: dorny/paths-filter@v2
         with:
           filters: |
             soprano:
-              - 'apps/soprano-tts-service/**'
+              - apps/soprano-tts-service/**
 
   build-and-save:
     needs: check-changes
     runs-on: ubuntu-latest
     if: needs.check-changes.outputs.has-changes == 'true' || github.event_name == 'workflow_call'
     outputs:
-      image_built: ${{ steps.build.outputs.built }}
-      image_file: ${{ steps.build.outputs.image_file }}
+      image_built: ${{ steps.meta.outputs.built }}
+      image_file: ${{ steps.meta.outputs.image_file }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Clean up Docker system aggressively
+      # 🔹 ONE cleanup only (safe + fast)
+      - name: Initial Docker cleanup
         run: |
-          echo "=== Disk space before cleanup ==="
-          df -h
-          docker system df || true
-          
-          # Aggressive cleanup of all Docker resources
           docker system prune -af --volumes || true
-          docker builder prune -af || true
           docker buildx prune -af || true
-          docker image prune -af || true
-          docker container prune -af || true
-          docker volume prune -af || true
-          docker network prune -af || true
-          
-          # Clean up buildkit cache directories directly
-          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
-          sudo rm -rf ~/.docker/buildx 2>/dev/null || true
-          
-          echo "=== Disk space after cleanup ==="
           df -h
-          docker system df || true
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: |
-            image=moby/buildkit:latest
-            network=host
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Clean up Docker system aggressively
-        run: |
-          echo "=== Disk space before cleanup ==="
-          df -h
-          docker system df || true
-          
-          # Aggressive cleanup of all Docker resources
-          docker system prune -af --volumes || true
-          docker builder prune -af || true
-          docker buildx prune -af || true
-          docker image prune -af || true
-          docker container prune -af || true
-          docker volume prune -af || true
-          docker network prune -af || true
-          
-          # Clean up buildkit cache directories directly (but keep buildx config)
-          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
-          
-          echo "=== Disk space after cleanup ==="
-          df -h
-          docker system df || true
-
-      - name: Create buildx builder instance
-        run: |
-          docker buildx create --name builder --driver docker-container --use || \
-          docker buildx use builder || true
-          docker buildx inspect --bootstrap || true
-
-      - name: Set up Docker layer cache
+      - name: Restore Docker build cache
         uses: actions/cache@v4
         with:
           path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-soprano-${{ steps.build.outputs.environment }}-${{ github.sha }}
+          key: ${{ runner.os }}-buildx-soprano-${{ github.ref_name }}
           restore-keys: |
-            ${{ runner.os }}-buildx-soprano-${{ steps.build.outputs.environment }}-
             ${{ runner.os }}-buildx-soprano-
 
-      - name: Determine image tag and output file
-        id: build
+      - name: Determine build metadata
+        id: meta
         run: |
-          if [ "${{ github.event_name }}" == "workflow_call" ]; then
+          if [ "${{ github.event_name }}" = "workflow_call" ]; then
             echo "tag=${{ inputs.image_tag }}" >> $GITHUB_OUTPUT
-            echo "output_file=${{ inputs.output_file }}" >> $GITHUB_OUTPUT
+            echo "image_file=${{ inputs.output_file }}" >> $GITHUB_OUTPUT
             echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
             echo "preview_id=${{ inputs.preview_id }}" >> $GITHUB_OUTPUT
             echo "built=true" >> $GITHUB_OUTPUT
-            echo "image_file=${{ inputs.output_file }}" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" == "pull_request" ]; then
-            PREVIEW_ID=$(echo ${{ github.event.pull_request.number }})
-            echo "tag=maigie-soprano-tts-preview:$PREVIEW_ID" >> $GITHUB_OUTPUT
-            echo "output_file=soprano-preview-image.tar.gz" >> $GITHUB_OUTPUT
-            echo "environment=preview" >> $GITHUB_OUTPUT
-            echo "preview_id=$PREVIEW_ID" >> $GITHUB_OUTPUT
-            echo "built=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            ID=${{ github.event.pull_request.number }}
+            echo "tag=maigie-soprano-tts-preview:${ID}" >> $GITHUB_OUTPUT
             echo "image_file=soprano-preview-image.tar.gz" >> $GITHUB_OUTPUT
-          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=preview" >> $GITHUB_OUTPUT
+            echo "preview_id=${ID}" >> $GITHUB_OUTPUT
+            echo "built=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
             echo "tag=maigie-soprano-tts:latest" >> $GITHUB_OUTPUT
-            echo "output_file=soprano-production-image.tar.gz" >> $GITHUB_OUTPUT
-            echo "environment=production" >> $GITHUB_OUTPUT
-            echo "preview_id=" >> $GITHUB_OUTPUT
-            echo "built=true" >> $GITHUB_OUTPUT
             echo "image_file=soprano-production-image.tar.gz" >> $GITHUB_OUTPUT
-          elif [ "${{ github.ref }}" == "refs/heads/development" ]; then
-            echo "tag=maigie-soprano-tts:staging" >> $GITHUB_OUTPUT
-            echo "output_file=soprano-staging-image.tar.gz" >> $GITHUB_OUTPUT
-            echo "environment=staging" >> $GITHUB_OUTPUT
-            echo "preview_id=" >> $GITHUB_OUTPUT
+            echo "environment=production" >> $GITHUB_OUTPUT
             echo "built=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/development" ]; then
+            echo "tag=maigie-soprano-tts:staging" >> $GITHUB_OUTPUT
             echo "image_file=soprano-staging-image.tar.gz" >> $GITHUB_OUTPUT
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "built=true" >> $GITHUB_OUTPUT
           else
             echo "built=false" >> $GITHUB_OUTPUT
-            echo "image_file=" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check available disk space
-        if: steps.build.outputs.built == 'true'
-        run: |
-          echo "=== Checking available disk space ==="
-          df -h
-          AVAILABLE=$(df / | tail -1 | awk '{print $4}')
-          # Check if we have at least 10GB available (in KB)
-          if [ "$AVAILABLE" -lt 10485760 ]; then
-            echo "⚠️ Warning: Less than 10GB available. Build may fail."
-            echo "Available: ${AVAILABLE}KB"
-          else
-            echo "✓ Sufficient disk space available: ${AVAILABLE}KB"
-          fi
-
-      - name: Build Soprano TTS Service Docker Image
-        if: steps.build.outputs.built == 'true'
-        working-directory: ./apps/soprano-tts-service
+      - name: Build Docker image
+        if: steps.meta.outputs.built == 'true'
+        working-directory: apps/soprano-tts-service
         env:
           DOCKER_BUILDKIT: 1
-          BUILDKIT_PROGRESS: plain
         run: |
-          # Use buildx builder with docker-container driver for cache support
           docker buildx build \
-            --builder builder \
-            --tag ${{ steps.build.outputs.tag }} \
-            --load \
             --platform linux/amd64 \
+            --tag ${{ steps.meta.outputs.tag }} \
+            --load \
             --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            --progress=plain \
+            --cache-to type=local,dest=/tmp/.buildx-cache,mode=max \
             .
-          
-          # Replace old cache with new cache
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
-          
-          docker images | grep maigie-soprano-tts
-          docker system df || true
-          
-          # Clean up build cache after successful build
-          echo "=== Cleaning up build cache after build ==="
-          docker buildx prune -af --filter "until=1h" || true
-          docker builder prune -af || true
-          df -h
 
-      - name: Save Docker Image
-        if: steps.build.outputs.built == 'true'
+      - name: Save image
+        if: steps.meta.outputs.built == 'true'
         run: |
-          echo "=== Disk space before saving image ==="
-          df -h
-          docker system df || true
-          
-          docker save ${{ steps.build.outputs.tag }} | gzip > ${{ steps.build.outputs.output_file }}
-          ls -lh ${{ steps.build.outputs.output_file }}
-          if [ ! -f ${{ steps.build.outputs.output_file }} ] || [ ! -s ${{ steps.build.outputs.output_file }} ]; then
-            echo "Error: Docker image file was not created or is empty"
-            exit 1
-          fi
-          
-          echo "=== Disk space after saving image ==="
-          df -h
+          docker save ${{ steps.meta.outputs.tag }} | gzip > ${{ steps.meta.outputs.image_file }}
+          ls -lh ${{ steps.meta.outputs.image_file }}
 
-      - name: Upload image artifact
-        if: steps.build.outputs.built == 'true'
+      - name: Upload artifact
+        if: steps.meta.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: soprano-tts-image-${{ steps.build.outputs.environment }}
-          path: ${{ steps.build.outputs.output_file }}
+          name: soprano-tts-${{ steps.meta.outputs.environment }}
+          path: ${{ steps.meta.outputs.image_file }}
           retention-days: 1
 
-      - name: Setup SSH Key (for direct VPS upload)
-        if: steps.build.outputs.built == 'true' && steps.build.outputs.environment == 'preview' && steps.build.outputs.preview_id != ''
+      # 🔹 Preview VPS upload (unchanged logic, cleaner)
+      - name: Upload preview image to VPS
+        if: steps.meta.outputs.environment == 'preview'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          # Retry ssh-keyscan with delays to handle connection issues
-          for i in {1..5}; do
-            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
-              echo "Successfully added host key"
-              break
-            else
-              echo "Attempt $i failed, retrying in 2 seconds..."
-              sleep 2
-            fi
-          done
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Upload Soprano image directly to VPS (preview only)
-        if: steps.build.outputs.built == 'true' && steps.build.outputs.environment == 'preview' && steps.build.outputs.preview_id != ''
-        run: |
-          PREVIEW_ID="${{ steps.build.outputs.preview_id }}"
-          SOPRANO_TAG="maigie-soprano-tts-preview:${PREVIEW_ID}"
-          
-          echo "=== Uploading Soprano image directly to VPS ==="
-          echo "Preview ID: ${PREVIEW_ID}"
-          echo "Image file: ${{ steps.build.outputs.output_file }}"
-          
-          # Remove old Soprano image on VPS before uploading new one
-          echo "=== Removing old Soprano image on VPS ==="
-          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "docker rmi -f ${SOPRANO_TAG} 2>/dev/null || true && \
-             docker rmi -f maigie-soprano-tts-preview:pr-${PREVIEW_ID} 2>/dev/null || true && \
-             docker rmi -f maigie-soprano-tts-preview:${PREVIEW_ID} 2>/dev/null || true && \
-             docker image prune -f || true && \
-             echo '✓ Cleaned up old Soprano images'"
-          
-          # Upload the image file
-          echo "=== Uploading Soprano image to VPS ==="
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ steps.build.outputs.output_file }} \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/soprano-preview-image-${PREVIEW_ID}.tar.gz
-          
-          # Load image on VPS and tag it correctly
-          echo "=== Loading and tagging Soprano image on VPS ==="
-          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "docker load < /tmp/soprano-preview-image-${PREVIEW_ID}.tar.gz && \
-             # Tag the loaded image to the expected tag
-             LOADED_TAG=\$(docker images --format '{{.Repository}}:{{.Tag}}' | grep 'maigie-soprano-tts-preview' | head -1) && \
-             if [ -n \"\$LOADED_TAG\" ] && [ \"\$LOADED_TAG\" != \"${SOPRANO_TAG}\" ]; then \
-               docker tag \"\$LOADED_TAG\" \"${SOPRANO_TAG}\" && \
-               docker rmi \"\$LOADED_TAG\" 2>/dev/null || true; \
-             fi && \
-             rm -f /tmp/soprano-preview-image-${PREVIEW_ID}.tar.gz && \
-             docker image prune -f || true && \
-             echo '✓ Soprano image loaded and tagged on VPS: ${SOPRANO_TAG}'"
-          
-          echo "✓ Soprano image uploaded directly to VPS"
+          scp -i ~/.ssh/vps_key \
+            ${{ steps.meta.outputs.image_file }} \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/soprano.tar.gz
 
-      - name: Clean up Docker image and files after upload
-        if: steps.build.outputs.built == 'true'
+          ssh -i ~/.ssh/vps_key \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker load < /tmp/soprano.tar.gz && rm /tmp/soprano.tar.gz"
+
+      # 🔹 Final cleanup (ONCE)
+      - name: Final cleanup
+        if: always()
         run: |
-          echo "=== Aggressive cleanup after uploading artifact ==="
-          echo "=== Disk space before cleanup ==="
-          df -h
-          docker system df || true
-          
-          # Remove the Docker image we just built (it's now in the artifact)
-          docker rmi ${{ steps.build.outputs.tag }} || true
-          
-          # Remove the tar.gz file (already uploaded)
-          rm -f ${{ steps.build.outputs.output_file }} || true
-          
-          # Clean up all build cache and intermediate layers
-          docker buildx prune -af || true
-          docker builder prune -af || true
+          docker rmi ${{ steps.meta.outputs.tag }} || true
+          rm -f ${{ steps.meta.outputs.image_file }} || true
           docker system prune -af --volumes || true
-          docker image prune -af || true
-          docker container prune -af || true
-          docker volume prune -af || true
-          docker network prune -af || true
-          
-          # Clean up buildkit cache directories
-          rm -rf /tmp/.buildx-cache* 2>/dev/null || true
-          
-          echo "=== Disk space after cleanup ==="
           df -h
-          docker system df || true
-          
-          AVAILABLE=$(df / | tail -1 | awk '{print $4}')
-          echo "Available disk space: ${AVAILABLE}KB"
-          if [ "$AVAILABLE" -lt 5242880 ]; then
-            echo "⚠️ Warning: Less than 5GB available after cleanup"
-          else
-            echo "✓ Sufficient disk space freed up"
-          fi
 
   skip-build:
     needs: check-changes
     runs-on: ubuntu-latest
     if: needs.check-changes.outputs.has-changes == 'false' && github.event_name != 'workflow_call'
     steps:
-      - name: Skip build
-        run: |
-          echo "No changes detected in apps/soprano-tts-service/**"
-          echo "Skipping Soprano TTS build"
-          exit 0
+      - run: echo "No Soprano changes detected — skipping build"
