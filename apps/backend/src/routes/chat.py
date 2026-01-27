@@ -5,6 +5,7 @@ Handles real-time messaging with Gemini AI and Action Execution.
 
 import json
 import re
+from datetime import datetime, timedelta, UTC
 
 from fastapi import (
     APIRouter,
@@ -23,6 +24,10 @@ from jose import JWTError, jwt
 from prisma import Prisma
 from src.config import settings
 from src.services.action_service import action_service
+from src.services.component_response_service import (
+    format_action_component_response,
+    format_list_component_response,
+)
 from src.services.credit_service import (
     check_credit_availability,
     consume_credits,
@@ -587,12 +592,148 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 await websocket.close()
                 return
 
-            # 6. Check if user is asking for a summary
+            # 6. Detect list/query requests and return component responses
+            # Check for queries like "show my courses", "list my goals", etc.
+            user_text_lower = user_text.lower()
+            is_list_query = False
+            list_component_response = None
+            
+            # Detect course list queries
+            if any(phrase in user_text_lower for phrase in ["show my courses", "list my courses", "my courses", "all courses", "courses"]):
+                if "create" not in user_text_lower and "new" not in user_text_lower:
+                    is_list_query = True
+                    courses = await db.course.find_many(
+                        where={"userId": user.id, "archived": False},
+                        include={"modules": {"include": {"topics": True}}},
+                        order={"updatedAt": "desc"},
+                        take=20,
+                    )
+                    courses_data = []
+                    for course in courses:
+                        # Calculate progress
+                        total_topics = sum(len(m.topics) for m in course.modules)
+                        completed_topics = sum(
+                            sum(1 for t in m.topics if t.completed) for m in course.modules
+                        )
+                        progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+                        
+                        courses_data.append({
+                            "courseId": course.id,
+                            "id": course.id,
+                            "title": course.title,
+                            "description": course.description or "",
+                            "progress": progress,
+                            "difficulty": course.difficulty,
+                            "completedTopics": completed_topics,
+                            "totalTopics": total_topics,
+                        })
+                    list_component_response = format_list_component_response(
+                        "CourseListMessage",
+                        courses_data,
+                        f"Here are your {len(courses_data)} course{'s' if len(courses_data) != 1 else ''}:"
+                    )
+            
+            # Detect goal list queries
+            elif any(phrase in user_text_lower for phrase in ["show my goals", "list my goals", "my goals", "all goals", "goals"]):
+                if "create" not in user_text_lower and "new" not in user_text_lower:
+                    is_list_query = True
+                    goals = await db.goal.find_many(
+                        where={"userId": user.id, "status": "ACTIVE"},
+                        order={"updatedAt": "desc"},
+                        take=20,
+                    )
+                    goals_data = []
+                    for goal in goals:
+                        goals_data.append({
+                            "goalId": goal.id,
+                            "id": goal.id,
+                            "title": goal.title,
+                            "description": goal.description or "",
+                            "targetDate": goal.targetDate.isoformat() if goal.targetDate else None,
+                            "progress": goal.progress,
+                        })
+                    list_component_response = format_list_component_response(
+                        "GoalListMessage",
+                        goals_data,
+                        f"Here are your {len(goals_data)} active goal{'s' if len(goals_data) != 1 else ''}:"
+                    )
+            
+            # Detect schedule queries
+            elif any(phrase in user_text_lower for phrase in ["show my schedule", "my schedule", "what's my schedule", "schedule"]):
+                if "create" not in user_text_lower and "new" not in user_text_lower and "add" not in user_text_lower:
+                    is_list_query = True
+                    now = datetime.now(UTC)
+                    # Get schedules for next 30 days
+                    end_date = now + timedelta(days=30)
+                    schedules = await db.scheduleblock.find_many(
+                        where={
+                            "userId": user.id,
+                            "startAt": {"gte": now, "lte": end_date},
+                        },
+                        order={"startAt": "asc"},
+                        take=50,
+                    )
+                    schedules_data = []
+                    for schedule in schedules:
+                        schedules_data.append({
+                            "scheduleId": schedule.id,
+                            "id": schedule.id,
+                            "title": schedule.title,
+                            "startAt": schedule.startAt.isoformat() if schedule.startAt else None,
+                            "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
+                            "description": schedule.description or "",
+                        })
+                    list_component_response = format_list_component_response(
+                        "ScheduleViewMessage",
+                        schedules_data,
+                        f"Here's your schedule with {len(schedules_data)} upcoming item{'s' if len(schedules_data) != 1 else ''}:"
+                    )
+            
+            # Detect notes queries
+            elif any(phrase in user_text_lower for phrase in ["show my notes", "list my notes", "my notes", "all notes", "notes"]):
+                if "create" not in user_text_lower and "new" not in user_text_lower:
+                    is_list_query = True
+                    notes = await db.note.find_many(
+                        where={"userId": user.id, "archived": False},
+                        order={"updatedAt": "desc"},
+                        take=20,
+                    )
+                    notes_data = []
+                    for note in notes:
+                        notes_data.append({
+                            "noteId": note.id,
+                            "id": note.id,
+                            "title": note.title,
+                            "content": note.content or "",
+                            "createdAt": note.createdAt.isoformat() if note.createdAt else None,
+                        })
+                    list_component_response = format_list_component_response(
+                        "NoteListMessage",
+                        notes_data,
+                        f"Here are your {len(notes_data)} note{'s' if len(notes_data) != 1 else ''}:"
+                    )
+            
+            # If list query detected, send component response and skip AI
+            if is_list_query and list_component_response:
+                await manager.send_json(list_component_response, user.id)
+                # Also save a simple text message for history
+                await db.chatmessage.create(
+                    data={
+                        "sessionId": session.id,
+                        "userId": user.id,
+                        "role": "ASSISTANT",
+                        "content": list_component_response.get("text", "Here's what you asked for"),
+                        "tokenCount": 0,  # No AI tokens used for list queries
+                    }
+                )
+                continue  # Skip to next message
+            
+            # 6.5. Check if user is asking for a summary
             # Simple detection: check if message contains "summary" or "summarize"
             is_summary_request = (
-                "summary" in user_text.lower()
-                or "summarize" in user_text.lower()
-                or "summarise" in user_text.lower()
+                "summary" in user_text_lower
+                or "summarize" in user_text_lower
+                or "summarise" in user_text_lower
             )
 
             # If summary requested and we have context with content, generate summary
@@ -688,11 +829,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         )
                         print(f"📤 Action result: {action_result}")
 
-                        # Store result
+                        # Store result with original action_data for component formatting
                         action_results.append(
                             {
                                 "type": action_type,
                                 "result": action_result,
+                                "action_data": action_data.copy() if action_data else {},
                             }
                         )
 
@@ -847,20 +989,36 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 9. Send text back to Client
-            await manager.send_personal_message(clean_response, user.id)
+            # 9. Send text back to Client (if there's text to send)
+            if clean_response:
+                await manager.send_personal_message(clean_response, user.id)
 
-            # 10. (Optional) If actions happened, send separate events to refresh the Frontend
-            # Send each action result separately so frontend can add buttons for each
+            # 10. Send component responses for successful actions
             if action_results:
                 for action_result_item in action_results:
+                    action_type_item = action_result_item.get("type")
                     result = action_result_item.get("result")
-                    if result:
-                        # Include the action type in the payload for frontend processing
+                    action_data_item = action_result_item.get("action_data", {})
+                    
+                    if result and result.get("status") == "success":
+                        # Format as component response
+                        component_response = await format_action_component_response(
+                            action_type=action_type_item,
+                            action_result=result,
+                            action_data=action_data_item,
+                            user_id=user.id,
+                            db=db,
+                        )
+                        
+                        if component_response:
+                            # Send component response as JSON
+                            await manager.send_json(component_response, user.id)
+                        
+                        # Also send event for backward compatibility and frontend refresh
                         await manager.send_json(
                             {
                                 "type": "event",
-                                "payload": {**result, "action": action_result_item.get("type")},
+                                "payload": {**result, "action": action_type_item},
                             },
                             user.id,
                         )
