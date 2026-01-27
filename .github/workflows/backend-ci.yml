@@ -106,6 +106,12 @@ jobs:
             image=moby/buildkit:latest
             network=host
 
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
+
       - name: Clean up Docker system aggressively
         run: |
           echo "=== Disk space before cleanup ==="
@@ -272,7 +278,9 @@ jobs:
           DOCKER_BUILDKIT: 1
           BUILDKIT_PROGRESS: plain
         run: |
+          # Use buildx builder with docker-container driver for cache support
           docker buildx build \
+            --builder builder \
             --tag maigie-backend-preview:${{ steps.preview.outputs.id }} \
             --load \
             --platform linux/amd64 \
@@ -1214,6 +1222,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
+
       - name: Set up Docker layer cache
         uses: actions/cache@v4
         with:
@@ -1304,7 +1318,9 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
         run: |
+          # Use buildx builder with docker-container driver for cache support
           docker buildx build \
+            --builder builder \
             --tag maigie-backend:latest \
             --load \
             --cache-from type=local,src=/tmp/.buildx-cache \
@@ -1594,6 +1610,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
+
       - name: Set up Docker layer cache
         uses: actions/cache@v4
         with:
@@ -1684,7 +1706,9 @@ jobs:
         env:
           DOCKER_BUILDKIT: 1
         run: |
+          # Use buildx builder with docker-container driver for cache support
           docker buildx build \
+            --builder builder \
             --tag maigie-backend:staging \
             --load \
             --cache-from type=local,src=/tmp/.buildx-cache \

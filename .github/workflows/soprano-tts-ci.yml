@@ -98,6 +98,34 @@ jobs:
             image=moby/buildkit:latest
             network=host
 
+      - name: Clean up Docker system aggressively
+        run: |
+          echo "=== Disk space before cleanup ==="
+          df -h
+          docker system df || true
+          
+          # Aggressive cleanup of all Docker resources
+          docker system prune -af --volumes || true
+          docker builder prune -af || true
+          docker buildx prune -af || true
+          docker image prune -af || true
+          docker container prune -af || true
+          docker volume prune -af || true
+          docker network prune -af || true
+          
+          # Clean up buildkit cache directories directly (but keep buildx config)
+          sudo rm -rf /tmp/.buildx-cache 2>/dev/null || true
+          
+          echo "=== Disk space after cleanup ==="
+          df -h
+          docker system df || true
+
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
+
       - name: Set up Docker layer cache
         uses: actions/cache@v4
         with:
@@ -165,7 +193,9 @@ jobs:
           DOCKER_BUILDKIT: 1
           BUILDKIT_PROGRESS: plain
         run: |
+          # Use buildx builder with docker-container driver for cache support
           docker buildx build \
+            --builder builder \
             --tag ${{ steps.build.outputs.tag }} \
             --load \
             --platform linux/amd64 \
