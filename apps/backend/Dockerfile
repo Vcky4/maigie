@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     curl \
+    ca-certificates \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* \
  && apt-get clean
 
@@ -82,6 +85,11 @@ RUN (pip cache purge || true) && \
     df -h || true
 
 # ----------------
+# Install Prisma CLI globally
+# ----------------
+RUN npm install -g prisma@latest
+
+# ----------------
 # Copy app
 # ----------------
 COPY . .
@@ -94,6 +102,11 @@ RUN python -m grpc_tools.protoc \
     --python_out=src/proto \
     --grpc_python_out=src/proto \
     src/proto/tts.proto || true
+
+# ----------------
+# Generate Prisma Client
+# ----------------
+RUN prisma generate || echo "Warning: Prisma generate failed, will retry at runtime"
 
 # ----------------
 # Run

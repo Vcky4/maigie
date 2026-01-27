@@ -827,6 +827,7 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
+                    prisma generate || echo 'Warning: Prisma generate failed' &&
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
                     prisma db push --accept-data-loss &&
                     python prisma/seed.py &&
@@ -1418,6 +1419,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
+                    prisma generate || echo 'Warning: Prisma generate failed' &&
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
                     prisma db push --accept-data-loss &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
@@ -1817,6 +1819,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
+                    prisma generate || echo 'Warning: Prisma generate failed' &&
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
                     prisma db push --accept-data-loss &&
                     python prisma/seed.py &&

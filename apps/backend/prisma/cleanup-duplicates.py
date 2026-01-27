@@ -11,7 +11,12 @@ This script:
 
 import sys
 
-from prisma import Prisma
+try:
+    from prisma import Prisma
+except ImportError:
+    print("Warning: Prisma client not available. Skipping cleanup.")
+    print("This is normal if Prisma client hasn't been generated yet.")
+    sys.exit(0)
 
 
 async def cleanup_duplicates():
