@@ -518,81 +518,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
 
-            # 4.5. Check credits before processing AI response (after context/history are built)
-            # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
-            estimated_input_tokens = (
-                len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
-            ) // 4
-            # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 1000  # Conservative estimate for response
-            estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
-
-            # Get user object for credit check
-            user_obj = await db.user.find_unique(where={"id": user.id})
-            if not user_obj:
-                await websocket.close()
-                return
-
-            try:
-                # Check if credits are available (will raise if hard cap reached)
-                is_available, warning_message = await check_credit_availability(
-                    user_obj, estimated_total_tokens
-                )
-                if not is_available:
-                    credit_usage = await get_credit_usage(user_obj)
-
-                    # Determine if it's daily or monthly limit
-                    tier = str(user_obj.tier) if user_obj.tier else "FREE"
-                    daily_limit = credit_usage.get("daily_limit", 0)
-                    used_today = credit_usage.get("credits_used_today", 0)
-
-                    if (
-                        tier == "FREE"
-                        and daily_limit > 0
-                        and (used_today + estimated_total_tokens > daily_limit)
-                    ):
-                        error_message = (
-                            f"Daily credit limit exceeded. You've used {used_today:,} "
-                            f"of {daily_limit:,} daily credits. "
-                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
-                        )
-                    else:
-                        error_message = (
-                            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-                            f"of {credit_usage['hard_cap']:,} credits. "
-                            f"Period resets: {credit_usage['period_end']}"
-                        )
-
-                    # Send error message with tier information as JSON for frontend handling
-                    error_data = {
-                        "type": "credit_limit_error",
-                        "message": error_message,
-                        "tier": tier,
-                        "is_daily_limit": (
-                            tier == "FREE"
-                            and daily_limit > 0
-                            and (used_today + estimated_total_tokens > daily_limit)
-                        ),
-                    }
-                    await manager.send_personal_message(json.dumps(error_data), user.id)
-                    await websocket.close()
-                    return
-            except SubscriptionLimitError as e:
-                # Get user tier for error message
-                user_obj = await db.user.find_unique(where={"id": user.id})
-                tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
-
-                error_data = {
-                    "type": "credit_limit_error",
-                    "message": e.message,
-                    "tier": tier,
-                    "is_daily_limit": False,
-                }
-                await manager.send_personal_message(json.dumps(error_data), user.id)
-                await websocket.close()
-                return
-
-            # 6. Detect list/query requests and return component responses
+            # 6. Detect list/query requests and return component responses BEFORE credit check
+            # These queries are FREE and don't consume AI tokens
             # Check for queries like "show my courses", "list my goals", etc.
             user_text_lower = user_text.lower()
             is_list_query = False
@@ -749,7 +676,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         f"Here are your {len(notes_data)} note{'s' if len(notes_data) != 1 else ''}:",
                     )
 
-            # If list query detected, send component response and skip AI
+            # If list query detected, send component response and skip AI (NO CREDIT CHECK!)
             if is_list_query and list_component_response:
                 await manager.send_json(list_component_response, user.id)
                 # Also save a simple text message for history
@@ -764,7 +691,81 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 )
                 continue  # Skip to next message
 
-            # 6.5. Check if user is asking for a summary
+            # 6.5. Check credits ONLY for AI queries (after confirming it's not a free list query)
+            # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
+            estimated_input_tokens = (
+                len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
+            ) // 4
+            # Reserve credits for response (estimate max response size)
+            estimated_output_tokens = 1000  # Conservative estimate for response
+            estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
+
+            # Get user object for credit check
+            user_obj = await db.user.find_unique(where={"id": user.id})
+            if not user_obj:
+                await websocket.close()
+                return
+
+            try:
+                # Check if credits are available (will raise if hard cap reached)
+                is_available, warning_message = await check_credit_availability(
+                    user_obj, estimated_total_tokens
+                )
+                if not is_available:
+                    credit_usage = await get_credit_usage(user_obj)
+
+                    # Determine if it's daily or monthly limit
+                    tier = str(user_obj.tier) if user_obj.tier else "FREE"
+                    daily_limit = credit_usage.get("daily_limit", 0)
+                    used_today = credit_usage.get("credits_used_today", 0)
+
+                    if (
+                        tier == "FREE"
+                        and daily_limit > 0
+                        and (used_today + estimated_total_tokens > daily_limit)
+                    ):
+                        error_message = (
+                            f"Daily credit limit exceeded. You've used {used_today:,} "
+                            f"of {daily_limit:,} daily credits. "
+                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
+                        )
+                    else:
+                        error_message = (
+                            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+                            f"of {credit_usage['hard_cap']:,} credits. "
+                            f"Period resets: {credit_usage['period_end']}"
+                        )
+
+                    # Send error message with tier information as JSON for frontend handling
+                    error_data = {
+                        "type": "credit_limit_error",
+                        "message": error_message,
+                        "tier": tier,
+                        "is_daily_limit": (
+                            tier == "FREE"
+                            and daily_limit > 0
+                            and (used_today + estimated_total_tokens > daily_limit)
+                        ),
+                    }
+                    await manager.send_personal_message(json.dumps(error_data), user.id)
+                    await websocket.close()
+                    return
+            except SubscriptionLimitError as e:
+                # Get user tier for error message
+                user_obj = await db.user.find_unique(where={"id": user.id})
+                tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
+
+                error_data = {
+                    "type": "credit_limit_error",
+                    "message": e.message,
+                    "tier": tier,
+                    "is_daily_limit": False,
+                }
+                await manager.send_personal_message(json.dumps(error_data), user.id)
+                await websocket.close()
+                return
+
+            # 7. Check if user is asking for a summary
             # Simple detection: check if message contains "summary" or "summarize"
             is_summary_request = (
                 "summary" in user_text_lower
