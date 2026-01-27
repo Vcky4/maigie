@@ -64,6 +64,23 @@ RUN poetry install --no-root --without dev && \
     rm -rf /root/.cache/pypoetry /root/.cache/pip /tmp/* /var/tmp/* 2>/dev/null || true
 
 # ----------------
+# Final cleanup to reduce image size
+# ----------------
+RUN (pip cache purge || true) && \
+    # Remove Python cache files (safe to remove)
+    find /usr/local/lib/python3.11/site-packages -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type f -name "*.pyc" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type f -name "*.pyo" -delete 2>/dev/null || true && \
+    # Remove documentation files (reduce size)
+    find /usr/local/lib/python3.11/site-packages -type f -name "*.md" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type f -name "LICENSE*" -delete 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages -type f -name "CHANGELOG*" -delete 2>/dev/null || true && \
+    # Clean up any temporary build artifacts
+    rm -rf /tmp/* /var/tmp/* ~/.cache 2>/dev/null || true && \
+    # Show disk usage for debugging
+    df -h || true
+
+# ----------------
 # Install Prisma CLI globally
 # ----------------
 RUN npm install -g prisma@latest

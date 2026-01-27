@@ -59,22 +59,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 🔹 ONE cleanup only (safe + fast)
+      # 🔹 ONE cleanup only (safe + fast, preserves cache)
       - name: Initial Docker cleanup
         run: |
-          docker system prune -af --volumes || true
-          docker buildx prune -af || true
+          docker system prune -f || true
+          docker buildx prune -f || true
           df -h
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Restore Docker build cache
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-soprano-${{ github.ref_name }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-soprano-
+      - name: Create buildx builder instance
+        run: |
+          docker buildx create --name builder --driver docker-container --use || \
+          docker buildx use builder || true
+          docker buildx inspect --bootstrap || true
 
       - name: Determine build metadata
         id: meta
@@ -111,13 +109,16 @@ jobs:
         working-directory: apps/soprano-tts-service
         env:
           DOCKER_BUILDKIT: 1
+          BUILDKIT_PROGRESS: plain
         run: |
           docker buildx build \
+            --builder builder \
             --platform linux/amd64 \
             --tag ${{ steps.meta.outputs.tag }} \
             --load \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache,mode=max \
+            --cache-from type=gha,scope=soprano-tts-${{ steps.meta.outputs.environment }} \
+            --cache-to type=gha,mode=max,scope=soprano-tts-${{ steps.meta.outputs.environment }} \
+            --progress=plain \
             .
 
       - name: Save image
@@ -134,22 +135,55 @@ jobs:
           path: ${{ steps.meta.outputs.image_file }}
           retention-days: 1
 
-      # 🔹 Preview VPS upload (unchanged logic, cleaner)
+      # 🔹 Preview VPS upload with retry logic and validation
       - name: Upload preview image to VPS
         if: steps.meta.outputs.environment == 'preview'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          
+          # Retry ssh-keyscan with delays to handle connection issues
+          for i in {1..5}; do
+            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "Successfully added host key"
+              break
+            else
+              echo "Attempt $i failed, retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
+          
+          # Verify known_hosts was populated
+          if [ ! -s ~/.ssh/known_hosts ]; then
+            echo "Warning: Could not add host key, but continuing since StrictHostKeyChecking=no is used"
+          fi
 
-          scp -i ~/.ssh/vps_key \
+          # Upload image with validation
+          echo "Uploading ${{ steps.meta.outputs.image_file }} to VPS..."
+          LOCAL_SIZE=$(stat -c%s "${{ steps.meta.outputs.image_file }}" 2>/dev/null || stat -f%z "${{ steps.meta.outputs.image_file }}" 2>/dev/null || du -b "${{ steps.meta.outputs.image_file }}" | cut -f1)
+          
+          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ steps.meta.outputs.image_file }} \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/soprano.tar.gz
 
-          ssh -i ~/.ssh/vps_key \
+          # Verify upload and load image
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "docker load < /tmp/soprano.tar.gz && rm /tmp/soprano.tar.gz"
+            "REMOTE_SIZE=\$(stat -c%s /tmp/soprano.tar.gz 2>/dev/null || stat -f%z /tmp/soprano.tar.gz 2>/dev/null || du -b /tmp/soprano.tar.gz | cut -f1) && \
+             echo \"Local size: $LOCAL_SIZE bytes\" && \
+             echo \"Remote size: \$REMOTE_SIZE bytes\" && \
+             if [ \"\$REMOTE_SIZE\" -eq \"$LOCAL_SIZE\" ]; then \
+               echo '✓ File sizes match'; \
+               docker load < /tmp/soprano.tar.gz && \
+               rm /tmp/soprano.tar.gz && \
+               echo '✓ Image loaded successfully' && \
+               docker images --format '{{.Repository}}:{{.Tag}}' | grep '${{ steps.meta.outputs.tag }}' || echo 'Warning: Image tag not found after load'; \
+             else \
+               echo '❌ File size mismatch - transfer may be incomplete'; \
+               rm -f /tmp/soprano.tar.gz; \
+               exit 1; \
+             fi"
 
       # 🔹 Final cleanup (ONCE)
       - name: Final cleanup
@@ -157,7 +191,7 @@ jobs:
         run: |
           docker rmi ${{ steps.meta.outputs.tag }} || true
           rm -f ${{ steps.meta.outputs.image_file }} || true
-          docker system prune -af --volumes || true
+          docker system prune -f || true
           df -h
 
   skip-build:
