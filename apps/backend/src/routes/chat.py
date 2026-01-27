@@ -597,9 +597,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             user_text_lower = user_text.lower()
             is_list_query = False
             list_component_response = None
-            
+
             # Detect course list queries
-            if any(phrase in user_text_lower for phrase in ["show my courses", "list my courses", "my courses", "all courses", "courses"]):
+            if any(
+                phrase in user_text_lower
+                for phrase in [
+                    "show my courses",
+                    "list my courses",
+                    "my courses",
+                    "all courses",
+                    "courses",
+                ]
+            ):
                 if "create" not in user_text_lower and "new" not in user_text_lower:
                     is_list_query = True
                     courses = await db.course.find_many(
@@ -615,26 +624,33 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         completed_topics = sum(
                             sum(1 for t in m.topics if t.completed) for m in course.modules
                         )
-                        progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
-                        
-                        courses_data.append({
-                            "courseId": course.id,
-                            "id": course.id,
-                            "title": course.title,
-                            "description": course.description or "",
-                            "progress": progress,
-                            "difficulty": course.difficulty,
-                            "completedTopics": completed_topics,
-                            "totalTopics": total_topics,
-                        })
+                        progress = (
+                            (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+                        )
+
+                        courses_data.append(
+                            {
+                                "courseId": course.id,
+                                "id": course.id,
+                                "title": course.title,
+                                "description": course.description or "",
+                                "progress": progress,
+                                "difficulty": course.difficulty,
+                                "completedTopics": completed_topics,
+                                "totalTopics": total_topics,
+                            }
+                        )
                     list_component_response = format_list_component_response(
                         "CourseListMessage",
                         courses_data,
-                        f"Here are your {len(courses_data)} course{'s' if len(courses_data) != 1 else ''}:"
+                        f"Here are your {len(courses_data)} course{'s' if len(courses_data) != 1 else ''}:",
                     )
-            
+
             # Detect goal list queries
-            elif any(phrase in user_text_lower for phrase in ["show my goals", "list my goals", "my goals", "all goals", "goals"]):
+            elif any(
+                phrase in user_text_lower
+                for phrase in ["show my goals", "list my goals", "my goals", "all goals", "goals"]
+            ):
                 if "create" not in user_text_lower and "new" not in user_text_lower:
                     is_list_query = True
                     goals = await db.goal.find_many(
@@ -644,23 +660,34 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
                     goals_data = []
                     for goal in goals:
-                        goals_data.append({
-                            "goalId": goal.id,
-                            "id": goal.id,
-                            "title": goal.title,
-                            "description": goal.description or "",
-                            "targetDate": goal.targetDate.isoformat() if goal.targetDate else None,
-                            "progress": goal.progress,
-                        })
+                        goals_data.append(
+                            {
+                                "goalId": goal.id,
+                                "id": goal.id,
+                                "title": goal.title,
+                                "description": goal.description or "",
+                                "targetDate": (
+                                    goal.targetDate.isoformat() if goal.targetDate else None
+                                ),
+                                "progress": goal.progress,
+                            }
+                        )
                     list_component_response = format_list_component_response(
                         "GoalListMessage",
                         goals_data,
-                        f"Here are your {len(goals_data)} active goal{'s' if len(goals_data) != 1 else ''}:"
+                        f"Here are your {len(goals_data)} active goal{'s' if len(goals_data) != 1 else ''}:",
                     )
-            
+
             # Detect schedule queries
-            elif any(phrase in user_text_lower for phrase in ["show my schedule", "my schedule", "what's my schedule", "schedule"]):
-                if "create" not in user_text_lower and "new" not in user_text_lower and "add" not in user_text_lower:
+            elif any(
+                phrase in user_text_lower
+                for phrase in ["show my schedule", "my schedule", "what's my schedule", "schedule"]
+            ):
+                if (
+                    "create" not in user_text_lower
+                    and "new" not in user_text_lower
+                    and "add" not in user_text_lower
+                ):
                     is_list_query = True
                     now = datetime.now(UTC)
                     # Get schedules for next 30 days
@@ -675,22 +702,29 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
                     schedules_data = []
                     for schedule in schedules:
-                        schedules_data.append({
-                            "scheduleId": schedule.id,
-                            "id": schedule.id,
-                            "title": schedule.title,
-                            "startAt": schedule.startAt.isoformat() if schedule.startAt else None,
-                            "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
-                            "description": schedule.description or "",
-                        })
+                        schedules_data.append(
+                            {
+                                "scheduleId": schedule.id,
+                                "id": schedule.id,
+                                "title": schedule.title,
+                                "startAt": (
+                                    schedule.startAt.isoformat() if schedule.startAt else None
+                                ),
+                                "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
+                                "description": schedule.description or "",
+                            }
+                        )
                     list_component_response = format_list_component_response(
                         "ScheduleViewMessage",
                         schedules_data,
-                        f"Here's your schedule with {len(schedules_data)} upcoming item{'s' if len(schedules_data) != 1 else ''}:"
+                        f"Here's your schedule with {len(schedules_data)} upcoming item{'s' if len(schedules_data) != 1 else ''}:",
                     )
-            
+
             # Detect notes queries
-            elif any(phrase in user_text_lower for phrase in ["show my notes", "list my notes", "my notes", "all notes", "notes"]):
+            elif any(
+                phrase in user_text_lower
+                for phrase in ["show my notes", "list my notes", "my notes", "all notes", "notes"]
+            ):
                 if "create" not in user_text_lower and "new" not in user_text_lower:
                     is_list_query = True
                     notes = await db.note.find_many(
@@ -700,19 +734,21 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
                     notes_data = []
                     for note in notes:
-                        notes_data.append({
-                            "noteId": note.id,
-                            "id": note.id,
-                            "title": note.title,
-                            "content": note.content or "",
-                            "createdAt": note.createdAt.isoformat() if note.createdAt else None,
-                        })
+                        notes_data.append(
+                            {
+                                "noteId": note.id,
+                                "id": note.id,
+                                "title": note.title,
+                                "content": note.content or "",
+                                "createdAt": note.createdAt.isoformat() if note.createdAt else None,
+                            }
+                        )
                     list_component_response = format_list_component_response(
                         "NoteListMessage",
                         notes_data,
-                        f"Here are your {len(notes_data)} note{'s' if len(notes_data) != 1 else ''}:"
+                        f"Here are your {len(notes_data)} note{'s' if len(notes_data) != 1 else ''}:",
                     )
-            
+
             # If list query detected, send component response and skip AI
             if is_list_query and list_component_response:
                 await manager.send_json(list_component_response, user.id)
@@ -727,7 +763,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     }
                 )
                 continue  # Skip to next message
-            
+
             # 6.5. Check if user is asking for a summary
             # Simple detection: check if message contains "summary" or "summarize"
             is_summary_request = (
@@ -999,7 +1035,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     action_type_item = action_result_item.get("type")
                     result = action_result_item.get("result")
                     action_data_item = action_result_item.get("action_data", {})
-                    
+
                     if result and result.get("status") == "success":
                         # Format as component response
                         component_response = await format_action_component_response(
@@ -1009,11 +1045,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             user_id=user.id,
                             db=db,
                         )
-                        
+
                         if component_response:
                             # Send component response as JSON
                             await manager.send_json(component_response, user.id)
-                        
+
                         # Also send event for backward compatibility and frontend refresh
                         await manager.send_json(
                             {
