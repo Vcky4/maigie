@@ -524,6 +524,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             list_component_response = None
             detected_intent = None
             intent_tokens = 0
+            user_text_lower = user_text.lower()  # Define early for use throughout
 
             try:
                 # Use AI to detect if this is a list query (minimal tokens ~30-50)
@@ -538,8 +539,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             except Exception as e:
                 print(f"⚠️ AI intent detection failed, falling back to keywords: {e}")
                 # Fallback to keyword matching if AI fails
-                user_text_lower = user_text.lower()
-
                 # Quick keyword check as fallback
                 if any(
                     kw in user_text_lower for kw in ["my courses", "courses", "what am i learning"]
@@ -816,10 +815,17 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                 total_ai_tokens = intent_tokens + insight_tokens
                 if total_ai_tokens > 0:
                     try:
-                        await consume_credits(user.id, total_ai_tokens, "smart_list_query")
-                        print(
-                            f"💳 Consumed {total_ai_tokens} tokens for smart list query (intent: {intent_tokens}, insight: {insight_tokens})"
-                        )
+                        # Fetch user object for credit consumption
+                        user_obj_for_credits = await db.user.find_unique(where={"id": user.id})
+                        if user_obj_for_credits:
+                            await consume_credits(
+                                user_obj_for_credits,
+                                total_ai_tokens,
+                                "smart_list_query",
+                            )
+                            print(
+                                f"💳 Consumed {total_ai_tokens} tokens for smart list query (intent: {intent_tokens}, insight: {insight_tokens})"
+                            )
                     except Exception as e:
                         print(f"⚠️ Credit consumption failed for smart list query: {e}")
 
