@@ -593,10 +593,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "totalTopics": total_topics,
                             }
                         )
+                    # Format text naturally based on count
+                    courses_count = len(courses_data)
+                    if courses_count == 0:
+                        courses_text = "You don't have any courses yet."
+                    elif courses_count == 1:
+                        courses_text = "Here is your course:"
+                    else:
+                        courses_text = f"Here are your {courses_count} courses:"
+
                     list_component_response = format_list_component_response(
                         "CourseListMessage",
                         courses_data,
-                        f"Here are your {len(courses_data)} course{'s' if len(courses_data) != 1 else ''}:",
+                        courses_text,
                     )
 
                 elif detected_intent == "goals":
@@ -622,10 +631,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "topicId": goal.topicId,
                             }
                         )
+                    # Format text naturally based on count
+                    goals_count = len(goals_data)
+                    if goals_count == 0:
+                        goals_text = "You don't have any active goals yet."
+                    elif goals_count == 1:
+                        goals_text = "Here is your active goal:"
+                    else:
+                        goals_text = f"Here are your {goals_count} active goals:"
+
                     list_component_response = format_list_component_response(
                         "GoalListMessage",
                         goals_data,
-                        f"Here are your {len(goals_data)} active goal{'s' if len(goals_data) != 1 else ''}:",
+                        goals_text,
                     )
 
                 elif detected_intent == "schedule":
@@ -656,10 +674,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "goalId": schedule.goalId,
                             }
                         )
+                    # Format text naturally based on count
+                    schedules_count = len(schedules_data)
+                    if schedules_count == 0:
+                        schedules_text = "You don't have any upcoming items in your schedule."
+                    elif schedules_count == 1:
+                        schedules_text = "Here is your upcoming item:"
+                    else:
+                        schedules_text = f"Here are your {schedules_count} upcoming items:"
+
                     list_component_response = format_list_component_response(
                         "ScheduleViewMessage",
                         schedules_data,
-                        f"Here's your schedule with {len(schedules_data)} upcoming item{'s' if len(schedules_data) != 1 else ''}:",
+                        schedules_text,
                     )
 
                 elif detected_intent == "notes":
@@ -683,10 +710,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "topicId": note.topicId,
                             }
                         )
+                    # Format text naturally based on count
+                    notes_count = len(notes_data)
+                    if notes_count == 0:
+                        notes_text = "You don't have any notes yet."
+                    elif notes_count == 1:
+                        notes_text = "Here is your note:"
+                    else:
+                        notes_text = f"Here are your {notes_count} notes:"
+
                     list_component_response = format_list_component_response(
                         "NoteListMessage",
                         notes_data,
-                        f"Here are your {len(notes_data)} note{'s' if len(notes_data) != 1 else ''}:",
+                        notes_text,
                     )
 
                 elif detected_intent == "resources":
@@ -709,10 +745,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "topicId": resource.topicId,
                             }
                         )
+                    # Format text naturally based on count
+                    resources_count = len(resources_data)
+                    if resources_count == 0:
+                        resources_text = "You don't have any saved resources yet."
+                    elif resources_count == 1:
+                        resources_text = "Here is your saved resource:"
+                    else:
+                        resources_text = f"Here are your {resources_count} saved resources:"
+
                     list_component_response = format_list_component_response(
                         "ResourceListMessage",
                         resources_data,
-                        f"Here are your {len(resources_data)} saved resource{'s' if len(resources_data) != 1 else ''}:",
+                        resources_text,
                     )
 
             # If list query detected, send component response with optional AI insight
