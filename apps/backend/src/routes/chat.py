@@ -791,7 +791,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # Generate brief AI insight if we have context (uses minimal tokens ~50-100)
                     if insight_context and items_count > 0:
                         insight_prompt = f"""Based on this data: {insight_context}
-                        
+
 Provide a brief, helpful one-sentence observation or tip (max 20 words). Be encouraging and actionable. Don't repeat the numbers."""
 
                         insight_response = await llm_service.generate_minimal_response(
