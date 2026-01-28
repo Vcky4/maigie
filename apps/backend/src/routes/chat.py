@@ -348,15 +348,21 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # If not JSON, treat as plain text
                 pass
 
-            # 4. Save User Message to DB
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": user.id,
-                    "role": "USER",
-                    "content": user_text,
-                }
-            )
+            # 4. Extract fileUrls from context (if any)
+            file_urls = context.get("fileUrls") if context else None
+
+            # 4.1 Save User Message to DB (with imageUrl if provided)
+            user_message_data = {
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "USER",
+                "content": user_text,
+            }
+            if file_urls:
+                user_message_data["imageUrl"] = file_urls
+                print(f"🖼️ Message includes image: {file_urls}")
+
+            await db.chatmessage.create(data=user_message_data)
 
             # 5. Build History for Context (Last 6 messages to reduce token usage)
             history_records = await db.chatmessage.find_many(
@@ -1007,9 +1013,20 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                     )
             else:
                 # 6. Get AI Response (with optional enriched context)
-                ai_response_text, usage_info = await llm_service.get_chat_response(
-                    history=formatted_history, user_message=user_text, context=enriched_context
-                )
+                # Check if there's an image to analyze
+                if file_urls:
+                    print(f"🖼️ Analyzing image with Gemini Vision: {file_urls}")
+                    ai_response_text = await llm_service.analyze_image(user_text, file_urls)
+                    # Estimate token usage for image analysis
+                    usage_info = {
+                        "input_tokens": 500,  # Image analysis uses ~500 tokens for input
+                        "output_tokens": len(ai_response_text) // 4,
+                        "model_name": "gemini-1.5-flash",
+                    }
+                else:
+                    ai_response_text, usage_info = await llm_service.get_chat_response(
+                        history=formatted_history, user_message=user_text, context=enriched_context
+                    )
 
             # --- NEW: Action Detection Logic ---
             # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
@@ -1350,67 +1367,13 @@ async def delete_chat_image(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-# 👇 ENDPOINT: Send message with pre-uploaded image
-@router.post("/image/send", summary="Send a message with a pre-uploaded image")
-async def send_image_message(
-    imageUrl: str = Form(...),
-    text: str = Form(default="Explain this image"),
-    sessionId: str = Form(...),
-    userId: str = Form(...),
-):
-    """
-    Send a message with a pre-uploaded image URL.
-    This is used after eager upload - the image is already uploaded.
-    """
-    # Ensure DB is connected
-    if not db.is_connected():
-        await db.connect()
-
-    try:
-        # Save User Message (with Image URL)
-        user_message = await db.chatmessage.create(
-            data={
-                "sessionId": sessionId,
-                "userId": userId,
-                "role": "USER",
-                "content": text,
-                "imageUrl": imageUrl,
-                "modelName": "user-upload",
-            }
-        )
-
-        # Get AI Analysis (Gemini Vision)
-        print("🔵 Asking Gemini to analyze pre-uploaded image...")
-        ai_response_text = await llm_service.analyze_image(text, imageUrl)
-
-        # Save AI Response
-        ai_message = await db.chatmessage.create(
-            data={
-                "sessionId": sessionId,
-                "userId": userId,
-                "role": "ASSISTANT",
-                "content": ai_response_text,
-                "modelName": "gemini-1.5-flash",
-            }
-        )
-
-        return {"status": "success", "userMessage": user_message, "aiMessage": ai_message}
-
-    except Exception as e:
-        print(f"❌ Error in /chat/image/send: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
-
-
 # 👇 LEGACY ENDPOINT: Image Analysis Chat (upload + analyze in one call)
+# NOTE: Deprecated - prefer using eager upload (/image/upload) + WebSocket with fileUrls context
 @router.post("/image", summary="Upload an image and get AI analysis")
 async def handle_image_chat(
     file: UploadFile = File(...),
     text: str = Form(default="Explain this image"),
-    sessionId: str = Form(...),
-    userId: str = Form(...),
+    token: str = Form(...),
 ):
     """
     Handles multimodal chat:
@@ -1419,6 +1382,10 @@ async def handle_image_chat(
     3. Sends Image + Text to Gemini AI via llm_service
     4. Saves ASSISTANT response to DB
     """
+    # Validate user from token
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     # 1. Validate Image Type
     if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
@@ -1432,8 +1399,14 @@ async def handle_image_chat(
         await db.connect()
 
     try:
+        # Find or create an active chat session
+        session = await db.chatsession.find_first(
+            where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
+        )
+        if not session:
+            session = await db.chatsession.create(data={"userId": user.id, "title": "New Chat"})
+
         # 2. Upload to BunnyCDN
-        # We use your existing storage_service
         upload_result = await storage_service.upload_file(file, path="chat-images")
         image_url = upload_result["url"]
 
@@ -1442,8 +1415,8 @@ async def handle_image_chat(
         # 3. Save User Message (with Image URL)
         user_message = await db.chatmessage.create(
             data={
-                "sessionId": sessionId,
-                "userId": userId,
+                "sessionId": session.id,
+                "userId": user.id,
                 "role": "USER",
                 "content": text,
                 "imageUrl": image_url,
@@ -1458,8 +1431,8 @@ async def handle_image_chat(
         # 5. Save AI Response
         ai_message = await db.chatmessage.create(
             data={
-                "sessionId": sessionId,
-                "userId": userId,
+                "sessionId": session.id,
+                "userId": user.id,
                 "role": "ASSISTANT",
                 "content": ai_response_text,
                 "modelName": "gemini-1.5-flash",
