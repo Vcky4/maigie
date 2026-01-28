@@ -1286,7 +1286,125 @@ async def handle_voice_upload(file: UploadFile = File(...), token: str = Query(.
     return {"text": transcript}
 
 
-# 👇 NEW ENDPOINT: Image Analysis Chat
+# 👇 ENDPOINT: Upload image only (for eager upload)
+@router.post("/image/upload", summary="Upload an image and return URL")
+async def upload_chat_image(
+    file: UploadFile = File(...),
+    token: str = Query(...),
+):
+    """
+    Upload an image to storage and return the URL.
+    Used for eager upload - upload immediately when user selects image.
+    """
+    # Validate user
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # Validate Image Type
+    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG, PNG, or WebP images are allowed.",
+        )
+
+    try:
+        # Upload to BunnyCDN
+        upload_result = await storage_service.upload_file(file, path="chat-images")
+        image_url = upload_result["url"]
+
+        print(f"🔵 Image pre-uploaded: {image_url}")
+
+        return {"url": image_url, "filename": upload_result["filename"]}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/upload: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 ENDPOINT: Delete uploaded image (if user cancels)
+@router.delete("/image/delete", summary="Delete an uploaded image")
+async def delete_chat_image(
+    url: str = Query(...),
+    token: str = Query(...),
+):
+    """
+    Delete a previously uploaded image from storage.
+    Used when user removes an image before sending.
+    """
+    # Validate user
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    try:
+        success = await storage_service.delete_file(url)
+        if success:
+            print(f"🗑️ Image deleted: {url}")
+            return {"status": "deleted"}
+        else:
+            return {"status": "not_found"}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/delete: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 ENDPOINT: Send message with pre-uploaded image
+@router.post("/image/send", summary="Send a message with a pre-uploaded image")
+async def send_image_message(
+    imageUrl: str = Form(...),
+    text: str = Form(default="Explain this image"),
+    sessionId: str = Form(...),
+    userId: str = Form(...),
+):
+    """
+    Send a message with a pre-uploaded image URL.
+    This is used after eager upload - the image is already uploaded.
+    """
+    # Ensure DB is connected
+    if not db.is_connected():
+        await db.connect()
+
+    try:
+        # Save User Message (with Image URL)
+        user_message = await db.chatmessage.create(
+            data={
+                "sessionId": sessionId,
+                "userId": userId,
+                "role": "USER",
+                "content": text,
+                "imageUrl": imageUrl,
+                "modelName": "user-upload",
+            }
+        )
+
+        # Get AI Analysis (Gemini Vision)
+        print("🔵 Asking Gemini to analyze pre-uploaded image...")
+        ai_response_text = await llm_service.analyze_image(text, imageUrl)
+
+        # Save AI Response
+        ai_message = await db.chatmessage.create(
+            data={
+                "sessionId": sessionId,
+                "userId": userId,
+                "role": "ASSISTANT",
+                "content": ai_response_text,
+                "modelName": "gemini-1.5-flash",
+            }
+        )
+
+        return {"status": "success", "userMessage": user_message, "aiMessage": ai_message}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/send: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 LEGACY ENDPOINT: Image Analysis Chat (upload + analyze in one call)
 @router.post("/image", summary="Upload an image and get AI analysis")
 async def handle_image_chat(
     file: UploadFile = File(...),
