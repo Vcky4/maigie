@@ -269,7 +269,7 @@ C) **REQUESTING AN ACTION** - Wants you to create/modify something
 
 **QUERY examples (DO NOT create actions for these - just answer conversationally):**
 - "What courses do I have?" → Just answer with what you know from context, NO action
-- "Show my goals" → Answer conversationally, NO action  
+- "Show my goals" → Answer conversationally, NO action
 - "Do I have any notes?" → Answer the question, NO action
 - "What's on my schedule?" → Answer conversationally, NO action
 - "Tell me about X" → Explain X, NO action
@@ -308,7 +308,7 @@ C) **REQUESTING AN ACTION** - Wants you to create/modify something
 **BEING PROACTIVE - Suggesting Actions:**
 While you should NOT take action without explicit intent, you SHOULD proactively SUGGEST helpful actions based on context. Examples:
 
-- User: "I'm stressed about my exams" 
+- User: "I'm stressed about my exams"
   → Respond supportively, then suggest: "Would you like me to create a study schedule to help you prepare?"
 
 - User: "I need to get better at Python"
