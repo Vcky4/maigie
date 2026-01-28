@@ -639,6 +639,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 ),
                                 "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
                                 "description": schedule.description or "",
+                                "courseId": schedule.courseId,
+                                "topicId": schedule.topicId,
+                                "goalId": schedule.goalId,
                             }
                         )
                     list_component_response = format_list_component_response(
