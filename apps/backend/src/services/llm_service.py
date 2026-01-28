@@ -497,6 +497,126 @@ Summary:"""
             print(f"Gemini Summary Error: {e}")
             raise HTTPException(status_code=500, detail="Summary generation failed")
 
+    async def generate_minimal_response(self, prompt: str, max_tokens: int = 50) -> dict:
+        """
+        Generate a minimal AI response with strict token limits.
+        Used for brief insights and tips that don't require full conversation context.
+
+        Args:
+            prompt: The prompt to generate a response for
+            max_tokens: Maximum tokens for the response (default 50)
+
+        Returns:
+            Dictionary with 'text' and 'total_tokens' keys, or None if failed
+        """
+        try:
+            # Use Flash model for minimal responses (faster and cheaper)
+            minimal_model = genai.GenerativeModel(
+                "gemini-2.0-flash-lite",
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.7,
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            response = await minimal_model.generate_content_async(
+                prompt, safety_settings=self.safety_settings
+            )
+
+            # Calculate tokens used
+            input_tokens = len(prompt) // 4  # Rough estimate
+            output_tokens = len(response.text) // 4 if response.text else 0
+            total_tokens = input_tokens + output_tokens
+
+            return {
+                "text": response.text.strip() if response.text else "",
+                "total_tokens": total_tokens,
+            }
+
+        except Exception as e:
+            print(f"Minimal response generation error: {e}")
+            return None
+
+    async def detect_list_query_intent(self, user_message: str) -> dict:
+        """
+        Use AI to detect if the user is asking to view/list their data.
+        Returns the detected intent type or None if not a list query.
+
+        This allows natural language like:
+        - "what courses am I taking?" -> courses
+        - "do I have anything scheduled?" -> schedule
+        - "what have I saved?" -> resources
+        - "any goals I should focus on?" -> goals
+        - "what notes do I have on python?" -> notes
+
+        Args:
+            user_message: The user's message to analyze
+
+        Returns:
+            Dictionary with 'intent' (courses|goals|schedule|notes|resources|none),
+            'is_list_query' (bool), and 'total_tokens' (int)
+        """
+        try:
+            classification_prompt = f"""Classify this user message. Is the user asking to VIEW or LIST their existing data?
+
+User message: "{user_message}"
+
+IMPORTANT: Only classify as a list query if the user wants to SEE/VIEW/LIST existing items.
+Do NOT classify as list query if user wants to CREATE, ADD, RECOMMEND, FIND NEW, or MODIFY something.
+
+Respond with ONLY one word from this list:
+- courses (viewing/listing courses, subjects, classes, what they're learning)
+- goals (viewing/listing goals, objectives, targets, milestones)
+- schedule (viewing/listing schedule, calendar, upcoming events, what's planned)
+- notes (viewing/listing notes, writings, documentation)
+- resources (viewing/listing saved resources, materials, links, videos, articles)
+- none (not a list query, or wants to create/add/modify something)
+
+Answer:"""
+
+            minimal_model = genai.GenerativeModel(
+                "gemini-2.0-flash-lite",
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=10,
+                    temperature=0.1,  # Low temperature for consistent classification
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            response = await minimal_model.generate_content_async(
+                classification_prompt, safety_settings=self.safety_settings
+            )
+
+            # Parse the response
+            intent = response.text.strip().lower() if response.text else "none"
+
+            # Validate intent is one of expected values
+            valid_intents = ["courses", "goals", "schedule", "notes", "resources", "none"]
+            if intent not in valid_intents:
+                # Try to extract a valid intent from the response
+                for valid in valid_intents:
+                    if valid in intent:
+                        intent = valid
+                        break
+                else:
+                    intent = "none"
+
+            # Calculate tokens
+            input_tokens = len(classification_prompt) // 4
+            output_tokens = len(response.text) // 4 if response.text else 0
+            total_tokens = input_tokens + output_tokens
+
+            return {
+                "intent": intent,
+                "is_list_query": intent != "none",
+                "total_tokens": total_tokens,
+            }
+
+        except Exception as e:
+            print(f"Intent detection error: {e}")
+            return {"intent": "none", "is_list_query": False, "total_tokens": 0}
+
     async def rewrite_note_content(
         self, content: str, title: str = None, context: dict = None
     ) -> str:

@@ -518,26 +518,55 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
 
-            # 6. Detect list/query requests and return component responses BEFORE credit check
-            # These queries are FREE and don't consume AI tokens
-            # Check for queries like "show my courses", "list my goals", etc.
-            user_text_lower = user_text.lower()
+            # 6. Smart list/query detection using AI intent classification
+            # Allows natural language like "what am I studying?", "any goals?", etc.
             is_list_query = False
             list_component_response = None
+            detected_intent = None
+            intent_tokens = 0
 
-            # Detect course list queries
-            if any(
-                phrase in user_text_lower
-                for phrase in [
-                    "show my courses",
-                    "list my courses",
-                    "my courses",
-                    "all courses",
-                    "courses",
-                ]
-            ):
-                if "create" not in user_text_lower and "new" not in user_text_lower:
-                    is_list_query = True
+            try:
+                # Use AI to detect if this is a list query (minimal tokens ~30-50)
+                intent_result = await llm_service.detect_list_query_intent(user_text)
+                detected_intent = intent_result.get("intent", "none")
+                is_list_query = intent_result.get("is_list_query", False)
+                intent_tokens = intent_result.get("total_tokens", 0)
+
+                if is_list_query:
+                    print(f"🧠 AI detected list query intent: {detected_intent}")
+
+            except Exception as e:
+                print(f"⚠️ AI intent detection failed, falling back to keywords: {e}")
+                # Fallback to keyword matching if AI fails
+                user_text_lower = user_text.lower()
+
+                # Quick keyword check as fallback
+                if any(
+                    kw in user_text_lower for kw in ["my courses", "courses", "what am i learning"]
+                ):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "courses"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["my goals", "goals", "objectives"]):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "goals"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["schedule", "calendar", "upcoming"]):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "schedule"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["my notes", "notes"]):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "notes"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["resources", "saved", "materials"]):
+                    if "create" not in user_text_lower and "recommend" not in user_text_lower:
+                        detected_intent = "resources"
+                        is_list_query = True
+
+            # Fetch data based on detected intent
+            if is_list_query and detected_intent:
+                if detected_intent == "courses":
                     courses = await db.course.find_many(
                         where={"userId": user.id, "archived": False},
                         include={"modules": {"include": {"topics": True}}},
@@ -546,7 +575,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
                     courses_data = []
                     for course in courses:
-                        # Calculate progress
                         total_topics = sum(len(m.topics) for m in course.modules)
                         completed_topics = sum(
                             sum(1 for t in m.topics if t.completed) for m in course.modules
@@ -554,7 +582,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         progress = (
                             (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
                         )
-
                         courses_data.append(
                             {
                                 "courseId": course.id,
@@ -573,13 +600,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         f"Here are your {len(courses_data)} course{'s' if len(courses_data) != 1 else ''}:",
                     )
 
-            # Detect goal list queries
-            elif any(
-                phrase in user_text_lower
-                for phrase in ["show my goals", "list my goals", "my goals", "all goals", "goals"]
-            ):
-                if "create" not in user_text_lower and "new" not in user_text_lower:
-                    is_list_query = True
+                elif detected_intent == "goals":
                     goals = await db.goal.find_many(
                         where={"userId": user.id, "status": "ACTIVE"},
                         order={"updatedAt": "desc"},
@@ -608,19 +629,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         f"Here are your {len(goals_data)} active goal{'s' if len(goals_data) != 1 else ''}:",
                     )
 
-            # Detect schedule queries
-            elif any(
-                phrase in user_text_lower
-                for phrase in ["show my schedule", "my schedule", "what's my schedule", "schedule"]
-            ):
-                if (
-                    "create" not in user_text_lower
-                    and "new" not in user_text_lower
-                    and "add" not in user_text_lower
-                ):
-                    is_list_query = True
+                elif detected_intent == "schedule":
                     now = datetime.now(UTC)
-                    # Get schedules for next 30 days
                     end_date = now + timedelta(days=30)
                     schedules = await db.scheduleblock.find_many(
                         where={
@@ -653,13 +663,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         f"Here's your schedule with {len(schedules_data)} upcoming item{'s' if len(schedules_data) != 1 else ''}:",
                     )
 
-            # Detect notes queries
-            elif any(
-                phrase in user_text_lower
-                for phrase in ["show my notes", "list my notes", "my notes", "all notes", "notes"]
-            ):
-                if "create" not in user_text_lower and "new" not in user_text_lower:
-                    is_list_query = True
+                elif detected_intent == "notes":
                     notes = await db.note.find_many(
                         where={"userId": user.id, "archived": False},
                         order={"updatedAt": "desc"},
@@ -686,17 +690,147 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         f"Here are your {len(notes_data)} note{'s' if len(notes_data) != 1 else ''}:",
                     )
 
-            # If list query detected, send component response and skip AI (NO CREDIT CHECK!)
+                elif detected_intent == "resources":
+                    resources = await db.resource.find_many(
+                        where={"userId": user.id},
+                        order={"createdAt": "desc"},
+                        take=20,
+                    )
+                    resources_data = []
+                    for resource in resources:
+                        resources_data.append(
+                            {
+                                "resourceId": resource.id,
+                                "id": resource.id,
+                                "title": resource.title,
+                                "url": resource.url or "",
+                                "description": resource.description or "",
+                                "type": resource.type,
+                                "courseId": resource.courseId,
+                                "topicId": resource.topicId,
+                            }
+                        )
+                    list_component_response = format_list_component_response(
+                        "ResourceListMessage",
+                        resources_data,
+                        f"Here are your {len(resources_data)} saved resource{'s' if len(resources_data) != 1 else ''}:",
+                    )
+
+            # If list query detected, send component response with optional AI insight
             if is_list_query and list_component_response:
+                # Generate a brief AI insight about the data (minimal tokens)
+                ai_insight = None
+                insight_tokens = 0
+
+                try:
+                    # Build a minimal prompt for AI insight
+                    component_type = list_component_response.get("componentType", "")
+                    items_count = 0
+                    insight_context = ""
+
+                    if component_type == "CourseListMessage":
+                        items = list_component_response.get("courseListData", {}).get("courses", [])
+                        items_count = len(items)
+                        if items:
+                            # Get some context about courses
+                            in_progress = sum(1 for c in items if 0 < c.get("progress", 0) < 100)
+                            completed = sum(1 for c in items if c.get("progress", 0) >= 100)
+                            insight_context = f"User has {items_count} courses: {completed} completed, {in_progress} in progress, {items_count - completed - in_progress} not started."
+
+                    elif component_type == "GoalListMessage":
+                        items = list_component_response.get("goalListData", {}).get("goals", [])
+                        items_count = len(items)
+                        if items:
+                            with_deadlines = sum(1 for g in items if g.get("targetDate"))
+                            insight_context = f"User has {items_count} active goals, {with_deadlines} with deadlines set."
+
+                    elif component_type == "ScheduleViewMessage":
+                        items = list_component_response.get("scheduleViewData", {}).get(
+                            "schedules", []
+                        )
+                        items_count = len(items)
+                        if items:
+                            # Check for today's items
+                            today = datetime.now(UTC).date()
+                            today_items = sum(
+                                1
+                                for s in items
+                                if s.get("startAt")
+                                and datetime.fromisoformat(
+                                    s["startAt"].replace("Z", "+00:00")
+                                ).date()
+                                == today
+                            )
+                            insight_context = f"User has {items_count} scheduled items, {today_items} scheduled for today."
+
+                    elif component_type == "NoteListMessage":
+                        items = list_component_response.get("noteListData", {}).get("notes", [])
+                        items_count = len(items)
+                        if items:
+                            with_summary = sum(1 for n in items if n.get("summary"))
+                            insight_context = (
+                                f"User has {items_count} notes, {with_summary} have AI summaries."
+                            )
+
+                    elif component_type == "ResourceListMessage":
+                        items = list_component_response.get("resourceListData", {}).get(
+                            "resources", []
+                        )
+                        items_count = len(items)
+                        if items:
+                            # Count by type
+                            type_counts = {}
+                            for r in items:
+                                rtype = r.get("type", "OTHER")
+                                type_counts[rtype] = type_counts.get(rtype, 0) + 1
+                            most_common_type = (
+                                max(type_counts, key=type_counts.get) if type_counts else "OTHER"
+                            )
+                            insight_context = f"User has {items_count} saved resources, mostly {most_common_type.lower()}s. Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}."
+
+                    # Generate brief AI insight if we have context (uses minimal tokens ~50-100)
+                    if insight_context and items_count > 0:
+                        insight_prompt = f"""Based on this data: {insight_context}
+                        
+Provide a brief, helpful one-sentence observation or tip (max 20 words). Be encouraging and actionable. Don't repeat the numbers."""
+
+                        insight_response = await llm_service.generate_minimal_response(
+                            prompt=insight_prompt, max_tokens=50
+                        )
+                        if insight_response:
+                            ai_insight = insight_response.get("text", "").strip()
+                            insight_tokens = insight_response.get("total_tokens", 0)
+
+                except Exception as e:
+                    print(f"⚠️ AI insight generation failed (non-critical): {e}")
+                    # Continue without AI insight - not critical
+
+                # Update the response text with AI insight if available
+                original_text = list_component_response.get("text", "Here's what you asked for")
+                if ai_insight:
+                    list_component_response["text"] = f"{original_text}\n\n💡 {ai_insight}"
+
                 await manager.send_json(list_component_response, user.id)
-                # Also save a simple text message for history
+
+                # Consume minimal credits for AI (intent detection + insight)
+                total_ai_tokens = intent_tokens + insight_tokens
+                if total_ai_tokens > 0:
+                    try:
+                        await consume_credits(user.id, total_ai_tokens, "smart_list_query")
+                        print(
+                            f"💳 Consumed {total_ai_tokens} tokens for smart list query (intent: {intent_tokens}, insight: {insight_tokens})"
+                        )
+                    except Exception as e:
+                        print(f"⚠️ Credit consumption failed for smart list query: {e}")
+
+                # Save message for history
                 await db.chatmessage.create(
                     data={
                         "sessionId": session.id,
                         "userId": user.id,
                         "role": "ASSISTANT",
                         "content": list_component_response.get("text", "Here's what you asked for"),
-                        "tokenCount": 0,  # No AI tokens used for list queries
+                        "tokenCount": total_ai_tokens,
                     }
                 )
                 continue  # Skip to next message
@@ -728,22 +862,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     tier = str(user_obj.tier) if user_obj.tier else "FREE"
                     daily_limit = credit_usage.get("daily_limit", 0)
                     used_today = credit_usage.get("credits_used_today", 0)
-
-                    if (
+                    is_daily = (
                         tier == "FREE"
                         and daily_limit > 0
                         and (used_today + estimated_total_tokens > daily_limit)
-                    ):
+                    )
+
+                    if is_daily:
                         error_message = (
                             f"Daily credit limit exceeded. You've used {used_today:,} "
                             f"of {daily_limit:,} daily credits. "
-                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
+                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
+                            f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
                         )
                     else:
                         error_message = (
                             f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
                             f"of {credit_usage['hard_cap']:,} credits. "
-                            f"Period resets: {credit_usage['period_end']}"
+                            f"Period resets: {credit_usage['period_end']}. "
+                            f"Upgrade to Premium for unlimited usage, or refer friends to earn bonus credits!"
                         )
 
                     # Send error message with tier information as JSON for frontend handling
@@ -751,11 +888,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "type": "credit_limit_error",
                         "message": error_message,
                         "tier": tier,
-                        "is_daily_limit": (
-                            tier == "FREE"
-                            and daily_limit > 0
-                            and (used_today + estimated_total_tokens > daily_limit)
-                        ),
+                        "is_daily_limit": is_daily,
+                        "show_referral_option": True,
                     }
                     await manager.send_personal_message(json.dumps(error_data), user.id)
                     await websocket.close()
@@ -765,11 +899,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_obj = await db.user.find_unique(where={"id": user.id})
                 tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
 
+                # Enhance error message with referral option
+                enhanced_message = (
+                    f"{e.message} "
+                    f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
+                )
+
                 error_data = {
                     "type": "credit_limit_error",
-                    "message": e.message,
+                    "message": enhanced_message,
                     "tier": tier,
                     "is_daily_limit": False,
+                    "show_referral_option": True,
                 }
                 await manager.send_personal_message(json.dumps(error_data), user.id)
                 await websocket.close()
