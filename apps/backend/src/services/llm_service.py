@@ -353,10 +353,10 @@ class GeminiService:
                     if context.get("moduleTitle"):
                         context_parts.append(f"Module: {context['moduleTitle']}")
                     if context.get("topicContent"):
-                        # Include topic content for context (truncated if too long)
+                        # Include topic content for context (truncated for cost savings)
                         topic_content = context["topicContent"]
-                        if len(topic_content) > 500:
-                            topic_content = topic_content[:500] + "..."
+                        if len(topic_content) > 300:
+                            topic_content = topic_content[:300] + "..."
                         context_parts.append(f"Topic Content: {topic_content}")
                 elif context.get("topicId"):
                     context_parts.append(f"Current Topic ID: {context['topicId']}")
@@ -365,10 +365,10 @@ class GeminiService:
                 if context.get("noteTitle"):
                     context_parts.append(f"Current Note: {context['noteTitle']}")
                     if context.get("noteContent"):
-                        # Include note content for context (truncated if too long)
+                        # Include note content for context (truncated for cost savings)
                         note_content = context["noteContent"]
-                        if len(note_content) > 500:
-                            note_content = note_content[:500] + "..."
+                        if len(note_content) > 300:
+                            note_content = note_content[:300] + "..."
                         context_parts.append(f"Note Content: {note_content}")
                     if context.get("noteSummary"):
                         context_parts.append(f"Note Summary: {context['noteSummary']}")

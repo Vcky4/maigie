@@ -49,11 +49,11 @@ CREDIT_LIMITS = {
     },
 }
 
-# Credit costs for different operations (in tokens)
+# Credit costs for different operations (in tokens) - Reduced for cost optimization
 CREDIT_COSTS = {
-    "ai_course_generation": 1000,  # 1k tokens per AI course generation
+    "ai_course_generation": 500,  # 500 tokens per AI course generation (reduced from 1000)
     "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
-    "ai_action": 500,  # 500 tokens per AI action (e.g., create goal)
+    "ai_action": 250,  # 250 tokens per AI action (reduced from 500)
 }
 
 

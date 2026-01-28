@@ -358,9 +358,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 5. Build History for Context (Last 10 messages)
+            # 5. Build History for Context (Last 6 messages to reduce token usage)
             history_records = await db.chatmessage.find_many(
-                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=10
+                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=6
             )
 
             # Format history for Gemini
@@ -596,7 +596,10 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "targetDate": (
                                     goal.targetDate.isoformat() if goal.targetDate else None
                                 ),
-                                "progress": goal.progress,
+                                "progress": goal.progress or 0,
+                                "status": goal.status,
+                                "courseId": goal.courseId,
+                                "topicId": goal.topicId,
                             }
                         )
                     list_component_response = format_list_component_response(
@@ -670,7 +673,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "id": note.id,
                                 "title": note.title,
                                 "content": note.content or "",
+                                "summary": note.summary,
                                 "createdAt": note.createdAt.isoformat() if note.createdAt else None,
+                                "updatedAt": note.updatedAt.isoformat() if note.updatedAt else None,
+                                "courseId": note.courseId,
+                                "topicId": note.topicId,
                             }
                         )
                     list_component_response = format_list_component_response(
@@ -699,8 +706,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             estimated_input_tokens = (
                 len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
             ) // 4
-            # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 1000  # Conservative estimate for response
+            # Reserve credits for response (reduced estimate for cost savings)
+            estimated_output_tokens = 500  # Reduced from 1000 for cost optimization
             estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
 
             # Get user object for credit check
