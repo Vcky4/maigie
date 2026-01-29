@@ -32,7 +32,7 @@ DEFAULT_OUTPUT_COST = GEMINI_15_PRO_OUTPUT_COST_PER_MILLION
 def calculate_ai_cost(
     input_tokens: int,
     output_tokens: int,
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
 ) -> float:
     """
     Calculate the cost of an AI API call in USD.

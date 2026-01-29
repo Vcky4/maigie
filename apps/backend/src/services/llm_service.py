@@ -6,10 +6,14 @@ Handles chat logic and tool execution.
 import os
 import warnings
 
+import httpx  # <--- Added for image download
+
 # Suppress the Google Gemini deprecation warning temporarily
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     import google.generativeai as genai
+
+from datetime import UTC
 
 from fastapi import HTTPException
 from google.generativeai.types import HarmBlockThreshold, HarmCategory
@@ -242,8 +246,90 @@ AVAILABLE ACTIONS:
 }
 <<<ACTION_END>>>
 
+CRITICAL: DISTINGUISHING MESSAGE TYPES
+
+Before responding, ALWAYS determine if the user is:
+A) **CASUAL CONVERSATION** - Greeting, chatting, expressing feelings, or following up
+B) **ASKING A QUESTION/QUERY** - Just wants information, NOT an action
+C) **REQUESTING AN ACTION** - Wants you to create/modify something
+
+**CASUAL CONVERSATION examples (just respond naturally, be friendly, NO action):**
+- "Hi" / "Hello" / "Hey Maigie" → Greet them warmly, NO action
+- "Thanks!" / "Thank you" → You're welcome, glad to help, NO action
+- "That's helpful" / "Great!" → Acknowledge positively, NO action
+- "I'm stressed about exams" → Be supportive and encouraging, NO action
+- "This is confusing" → Offer to clarify, be patient, NO action
+- "Can you explain more?" → Elaborate on previous response, NO action
+- "What do you mean?" → Clarify your previous point, NO action
+- "Okay" / "Got it" / "I see" → Acknowledge, ask if they need anything else, NO action
+- "How are you?" → Respond friendly, NO action
+- "Good morning" / "Good night" → Respond appropriately, NO action
+- "I'm back" / "I'm here" → Welcome them back, NO action
+- "Hmm" / "Let me think" → Give them space, offer help if needed, NO action
+
+**QUERY examples (DO NOT create actions for these - just answer conversationally):**
+- "What courses do I have?" → Just answer with what you know from context, NO action
+- "Show my goals" → Answer conversationally, NO action
+- "Do I have any notes?" → Answer the question, NO action
+- "What's on my schedule?" → Answer conversationally, NO action
+- "Tell me about X" → Explain X, NO action
+- "How do I..." → Explain how, NO action
+- "What is..." → Define/explain, NO action
+- "Any goals?" → Answer if they have goals, NO action
+- "What am I studying?" → Describe their courses/topics, NO action
+
+**ACTION examples (DO create actions for these):**
+- "Create a course about Python" → create_course action
+- "Generate a study plan" → create_schedule action(s)
+- "Set a goal to finish by Friday" → create_goal action
+- "Schedule study time for tomorrow" → create_schedule action
+- "Add a note about this topic" → create_note action
+- "Summarize this note" → add_summary action
+- "I want to learn nursing" → create_course action (explicit learning intent with "learn" + subject)
+
+**Key indicators for CASUAL CONVERSATION (no action):**
+- Greetings: hi, hello, hey, good morning/evening, bye
+- Acknowledgments: thanks, okay, got it, I see, great, cool
+- Emotions: I'm stressed, excited, confused, worried, happy
+- Follow-ups: can you explain, what do you mean, tell me more
+- Reactions: wow, interesting, hmm, nice
+
+**Key indicators for QUERIES (no action):**
+- Question words: what, how, which, when, where, why, do I, can I, is there
+- Showing/listing: show, list, display, what are my, do I have
+- Information seeking: tell me, explain, describe, help me understand
+
+**Key indicators for ACTIONS (create action):**
+- Creation verbs: create, make, generate, add, new, set up, build
+- Modification verbs: update, change, edit, modify, retake, rewrite
+- Scheduling verbs: schedule, plan, block out, reserve time
+- Goal setting: I want to learn [specific subject], my goal is, help me achieve
+
+**BEING PROACTIVE - Suggesting Actions:**
+While you should NOT take action without explicit intent, you SHOULD proactively SUGGEST helpful actions based on context. Examples:
+
+- User: "I'm stressed about my exams"
+  → Respond supportively, then suggest: "Would you like me to create a study schedule to help you prepare?"
+
+- User: "I need to get better at Python"
+  → Acknowledge, then offer: "I can create a Python course tailored to your level if you'd like!"
+
+- User: "This topic is really interesting"
+  → Engage with them, then suggest: "Would you like me to add a note so you can reference this later?"
+
+- User: "I keep forgetting to study"
+  → Be understanding, then offer: "I can set up recurring study reminders on your schedule. Want me to do that?"
+
+- User: "I have an exam next week"
+  → Empathize, then suggest: "Would you like me to create a goal to track your preparation, or schedule some study sessions?"
+
+- User asks about a topic without context:
+  → Answer their question, then offer: "If you want to dive deeper, I can create a course on this subject."
+
+The key is: **respond to their message first**, then **offer a helpful suggestion** without assuming they want it. Wait for their confirmation (like "yes please", "sure", "do it") before taking action.
+
 RULES:
-1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, *add tags*, *recommend resources*, *set goal*, or *schedule* for something.
+1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, *add tags*, *recommend resources*, *set goal*, or *schedule* for something. Questions and queries should be answered conversationally WITHOUT actions.
 2. For note creation:
    - Use the topicId from the context if available
    - Use the courseId from the context if available (optional)
@@ -263,12 +349,23 @@ RULES:
    - Tags should be concise, relevant, and use PascalCase or camelCase (e.g., "CommunityHealthNursing", "PublicHealth")
    - Include tags in the "tags" array in the action data
 6. For recommend_resources action:
-   - Use when user asks for "resources", "recommendations", "suggestions", "links", "videos", "articles", "books", etc.
-   - Extract the query from what the user is asking for
-   - Use topicId from context if user is viewing a topic
-   - Use courseId from context if user is viewing a course
-   - Set limit to 5-10 resources (default 10)
-   - The system will generate personalized recommendations using RAG
+   - IMPORTANT: Distinguish between SAVED resources vs NEW recommendations:
+     * CLEARLY SAVED: "show my resources", "what resources have I saved", "my saved resources", "resources I've saved" -> LIST QUERY, NOT an action
+     * CLEARLY NEW: "find NEW resources for X", "recommend resources", "suggest resources", "search for resources about Y" -> ACTION (recommend_resources)
+   - AMBIGUOUS cases - ASK for clarification (do NOT assume):
+     * "get me resources on sewing" - Could be saved OR new, ASK!
+     * "resources for programming" - Could be saved OR new, ASK!
+     * "show resources about cooking" - Could be saved OR new, ASK!
+     * Just "resources" or "show resources" - ASK!
+   - When AMBIGUOUS, respond with something like:
+     "Are you looking for resources you've already saved about [topic], or would you like me to find new resource recommendations for [topic]?"
+   - Only trigger recommend_resources action when user CLEARLY wants NEW recommendations (uses words like "find", "search", "recommend", "suggest", "new")
+   - When recommending NEW resources:
+     * Extract the query from what the user is asking for
+     * Use topicId from context if user is viewing a topic
+     * Use courseId from context if user is viewing a course
+     * Set limit to 5-10 resources (default 10)
+     * The system will generate personalized recommendations using web search
 7. For create_goal action:
    - Use when user asks to "set a goal", "create a goal", "I want to learn X", "my goal is to Y", etc.
    - Extract a clear, actionable goal title from the user's request
@@ -296,13 +393,14 @@ RULES:
 12. When creating notes, use the topic/course information from context to make the note relevant and contextual.
 13. When recommending resources, explain why you're recommending them and how they relate to the user's learning goals.
 14. When creating goals, make them specific, measurable, and aligned with the user's current learning context.
+15. NEVER create an action when the user is just chatting, greeting, asking a question, or expressing feelings. If uncertain, err on the side of responding conversationally rather than taking action. Only take action when there's clear, explicit intent to create/modify something. Be a friendly, supportive study companion first - actions are secondary to good conversation.
 """
 
 
 class GeminiService:
     def __init__(self):
         self.model = genai.GenerativeModel(
-            model_name="models/gemini-flash-latest", system_instruction=SYSTEM_INSTRUCTION
+            model_name="models/gemini-3-flash-preview", system_instruction=SYSTEM_INSTRUCTION
         )
 
         # Safety settings (block hate speech, etc.)
@@ -326,7 +424,7 @@ class GeminiService:
             # Always add current date/time context
             from datetime import datetime, timezone
 
-            current_datetime = datetime.now(timezone.utc)
+            current_datetime = datetime.now(UTC)
             current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
 
             context_parts = [f"Current Date & Time: {current_date_str}"]
@@ -349,10 +447,10 @@ class GeminiService:
                     if context.get("moduleTitle"):
                         context_parts.append(f"Module: {context['moduleTitle']}")
                     if context.get("topicContent"):
-                        # Include topic content for context (truncated if too long)
+                        # Include topic content for context (truncated for cost savings)
                         topic_content = context["topicContent"]
-                        if len(topic_content) > 500:
-                            topic_content = topic_content[:500] + "..."
+                        if len(topic_content) > 300:
+                            topic_content = topic_content[:300] + "..."
                         context_parts.append(f"Topic Content: {topic_content}")
                 elif context.get("topicId"):
                     context_parts.append(f"Current Topic ID: {context['topicId']}")
@@ -361,10 +459,10 @@ class GeminiService:
                 if context.get("noteTitle"):
                     context_parts.append(f"Current Note: {context['noteTitle']}")
                     if context.get("noteContent"):
-                        # Include note content for context (truncated if too long)
+                        # Include note content for context (truncated for cost savings)
                         note_content = context["noteContent"]
-                        if len(note_content) > 500:
-                            note_content = note_content[:500] + "..."
+                        if len(note_content) > 300:
+                            note_content = note_content[:300] + "..."
                         context_parts.append(f"Note Content: {note_content}")
                     if context.get("noteSummary"):
                         context_parts.append(f"Note Summary: {context['noteSummary']}")
@@ -492,6 +590,139 @@ Summary:"""
         except Exception as e:
             print(f"Gemini Summary Error: {e}")
             raise HTTPException(status_code=500, detail="Summary generation failed")
+
+    async def generate_minimal_response(self, prompt: str, max_tokens: int = 50) -> dict:
+        """
+        Generate a minimal AI response with strict token limits.
+        Used for brief insights and tips that don't require full conversation context.
+
+        Args:
+            prompt: The prompt to generate a response for
+            max_tokens: Maximum tokens for the response (default 50)
+
+        Returns:
+            Dictionary with 'text' and 'total_tokens' keys, or None if failed
+        """
+        try:
+            # Use Flash model for minimal responses (faster and cheaper)
+            minimal_model = genai.GenerativeModel(
+                "gemini-2.0-flash-lite",
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.7,
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            response = await minimal_model.generate_content_async(
+                prompt, safety_settings=self.safety_settings
+            )
+
+            # Calculate tokens used
+            input_tokens = len(prompt) // 4  # Rough estimate
+            output_tokens = len(response.text) // 4 if response.text else 0
+            total_tokens = input_tokens + output_tokens
+
+            return {
+                "text": response.text.strip() if response.text else "",
+                "total_tokens": total_tokens,
+            }
+
+        except Exception as e:
+            print(f"Minimal response generation error: {e}")
+            return None
+
+    async def detect_list_query_intent(self, user_message: str) -> dict:
+        """
+        Use AI to detect if the user is asking to view/list their data.
+        Returns the detected intent type or None if not a list query.
+
+        This allows natural language like:
+        - "what courses am I taking?" -> courses
+        - "do I have anything scheduled?" -> schedule
+        - "what have I saved?" -> resources
+        - "any goals I should focus on?" -> goals
+        - "what notes do I have on python?" -> notes
+
+        Args:
+            user_message: The user's message to analyze
+
+        Returns:
+            Dictionary with 'intent' (courses|goals|schedule|notes|resources|none),
+            'is_list_query' (bool), and 'total_tokens' (int)
+        """
+        try:
+            classification_prompt = f"""Classify this user message. Is the user asking to VIEW or LIST their existing SAVED data?
+
+User message: "{user_message}"
+
+IMPORTANT: Only classify as a list query if the user CLEARLY wants to SEE/VIEW/LIST their SAVED/EXISTING items.
+Do NOT classify as list query if user wants to:
+- CREATE, ADD, GENERATE, or MODIFY something
+- FIND NEW, RECOMMEND, SUGGEST, or SEARCH for something
+- Get RECOMMENDATIONS or SUGGESTIONS
+
+CRITICAL for resources - be STRICT:
+- CLEARLY SAVED: "show my resources", "my saved resources", "what resources do I have", "resources I saved" -> resources
+- CLEARLY NEW: "find resources", "recommend resources", "suggest resources", "search for resources" -> none
+- AMBIGUOUS (could be saved OR new):
+  * "get me resources on X" -> none (ambiguous!)
+  * "resources for Y" -> none (ambiguous!)
+  * "show resources about Z" -> none (ambiguous!)
+  * Just "resources" -> none (ambiguous!)
+- When in doubt, respond with "none" to let the AI ask for clarification
+
+Respond with ONLY one word from this list:
+- courses (viewing/listing courses, subjects, classes, what they're learning)
+- goals (viewing/listing goals, objectives, targets, milestones)
+- schedule (viewing/listing schedule, calendar, upcoming events, what's planned)
+- notes (viewing/listing notes, writings, documentation)
+- resources (ONLY when user CLEARLY wants their SAVED resources - use words like "my", "saved", "I have")
+- none (not a list query, wants new recommendations, or AMBIGUOUS - let AI ask for clarification)
+
+Answer:"""
+
+            minimal_model = genai.GenerativeModel(
+                "gemini-2.0-flash-lite",
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=10,
+                    temperature=0.1,  # Low temperature for consistent classification
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            response = await minimal_model.generate_content_async(
+                classification_prompt, safety_settings=self.safety_settings
+            )
+
+            # Parse the response
+            intent = response.text.strip().lower() if response.text else "none"
+
+            # Validate intent is one of expected values
+            valid_intents = ["courses", "goals", "schedule", "notes", "resources", "none"]
+            if intent not in valid_intents:
+                # Try to extract a valid intent from the response
+                for valid in valid_intents:
+                    if valid in intent:
+                        intent = valid
+                        break
+                else:
+                    intent = "none"
+
+            # Calculate tokens
+            input_tokens = len(classification_prompt) // 4
+            output_tokens = len(response.text) // 4 if response.text else 0
+            total_tokens = input_tokens + output_tokens
+
+            return {
+                "intent": intent,
+                "is_list_query": intent != "none",
+                "total_tokens": total_tokens,
+            }
+
+        except Exception as e:
+            print(f"Intent detection error: {e}")
+            return {"intent": "none", "is_list_query": False, "total_tokens": 0}
 
     async def rewrite_note_content(
         self, content: str, title: str = None, context: dict = None
@@ -664,6 +895,41 @@ Tags (JSON array):"""
 
             traceback.print_exc()
             raise HTTPException(status_code=500, detail="Tag generation failed")
+
+    async def analyze_image(self, prompt: str, image_url: str) -> str:
+        """
+        Analyze an image from a URL using Gemini Vision capabilities.
+        """
+        print(f"👁️ Gemini analyzing image: {image_url}")
+
+        try:
+            # 1. Download the image bytes from the URL
+            async with httpx.AsyncClient() as client:
+                response = await client.get(image_url)
+                if response.status_code != 200:
+                    print(f"❌ Failed to download image: {response.status_code}")
+                    return "I'm sorry, I couldn't access the image URL."
+
+                image_data = response.content
+                mime_type = response.headers.get("content-type", "image/jpeg")
+
+            # 2. Prepare the content for Gemini
+            # Gemini treats images as a distinct part of the prompt content
+            content = [prompt, {"mime_type": mime_type, "data": image_data}]
+
+            # 3. Generate response
+            response = await self.model.generate_content_async(
+                content, safety_settings=self.safety_settings
+            )
+
+            return response.text
+
+        except Exception as e:
+            print(f"❌ Gemini Vision Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return "I'm sorry, I encountered an error analyzing that image."
 
 
 # Global instance

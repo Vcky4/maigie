@@ -35,25 +35,30 @@ settings = get_settings()
 # For yearly subscriptions, multiply by 12
 CREDIT_LIMITS = {
     "FREE": {
-        "hard_cap": 10000,  # 10k tokens/month
-        "soft_cap": 8000,  # 80% warning threshold
-        "daily_limit": 5000,  # 5000 tokens/day (resets daily)
+        "hard_cap": 50000,  # 50k tokens/month (increased from 10k)
+        "soft_cap": 40000,  # 80% warning threshold
+        "daily_limit": 15000,  # 15k tokens/day (increased from 5k)
     },
     "PREMIUM_MONTHLY": {
-        "hard_cap": 100000,  # 100k tokens/month
-        "soft_cap": 80000,  # 80% warning threshold
+        "hard_cap": 200000,  # 200k tokens/month (increased from 100k)
+        "soft_cap": 160000,  # 80% warning threshold
     },
     "PREMIUM_YEARLY": {
-        "hard_cap": 1200000,  # 1.2M tokens/year (100k/month * 12)
-        "soft_cap": 960000,  # 80% warning threshold
+        "hard_cap": 2400000,  # 2.4M tokens/year (200k/month * 12)
+        "soft_cap": 1920000,  # 80% warning threshold
     },
 }
 
-# Credit costs for different operations (in tokens)
+# Token multiplier - we charge users less than actual tokens consumed
+# This makes the service more affordable while still tracking usage
+# 0.5 = charge 50% of actual tokens (users get 2x the conversations)
+TOKEN_MULTIPLIER = 0.5
+
+# Credit costs for different operations (in tokens) - Reduced for cost optimization
 CREDIT_COSTS = {
-    "ai_course_generation": 1000,  # 1k tokens per AI course generation
+    "ai_course_generation": 250,  # 250 tokens per AI course generation (reduced from 500)
     "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
-    "ai_action": 500,  # 500 tokens per AI action (e.g., create goal)
+    "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
 }
 
 
@@ -251,7 +256,7 @@ async def check_credit_availability(
 
     Args:
         user: User model instance
-        credits_needed: Number of credits required
+        credits_needed: Number of credits required (raw tokens - multiplier will be applied)
         db_client: Optional Prisma client (defaults to global db)
 
     Returns:
@@ -261,6 +266,9 @@ async def check_credit_availability(
     """
     if db_client is None:
         db_client = db
+
+    # Apply token multiplier to get actual credits that will be consumed
+    credits_needed = apply_token_multiplier(credits_needed)
 
     # Ensure credit period is active
     user = await ensure_credit_period(user, db_client)
@@ -310,6 +318,22 @@ async def check_credit_availability(
     return True, warning_message
 
 
+def apply_token_multiplier(tokens: int) -> int:
+    """
+    Apply token multiplier to reduce the credits charged to users.
+    This makes the service more affordable.
+
+    Args:
+        tokens: Raw token count
+
+    Returns:
+        Adjusted token count after applying multiplier
+    """
+    adjusted = int(tokens * TOKEN_MULTIPLIER)
+    # Minimum of 1 credit if there were any tokens
+    return max(1, adjusted) if tokens > 0 else 0
+
+
 async def consume_credits(
     user: User, credits: int, operation: str = "unknown", db_client: Prisma | None = None
 ) -> User:
@@ -318,7 +342,7 @@ async def consume_credits(
 
     Args:
         user: User model instance
-        credits: Number of credits to consume
+        credits: Number of credits to consume (raw tokens - multiplier will be applied)
         operation: Description of the operation (for logging)
         db_client: Optional Prisma client (defaults to global db)
 
@@ -330,6 +354,9 @@ async def consume_credits(
     """
     if db_client is None:
         db_client = db
+
+    # Apply token multiplier to reduce credits charged
+    credits = apply_token_multiplier(credits)
 
     # Ensure credit period is active
     user = await ensure_credit_period(user, db_client)

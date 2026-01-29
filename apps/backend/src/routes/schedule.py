@@ -585,10 +585,11 @@ async def connect_google_calendar(
                      Google redirects directly to backend callback.
     """
     try:
-        from src.core.oauth import OAuthProviderFactory
         import base64
         import json
         import secrets
+
+        from src.core.oauth import OAuthProviderFactory
 
         oauth_provider = OAuthProviderFactory.get_provider("google")
 
