@@ -1,12 +1,12 @@
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from prisma import Client as PrismaClient
 
+from prisma import Client as PrismaClient
 from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.auth import UserResponse
@@ -79,8 +79,8 @@ class UsageOverview(BaseModel):
     totalMessages: int
     totalOperations: int
     averageTokensPerMessage: float
-    periodStart: Optional[str]
-    periodEnd: Optional[str]
+    periodStart: str | None
+    periodEnd: str | None
 
 
 class UsageResponse(BaseModel):
@@ -96,12 +96,12 @@ class UsageResponse(BaseModel):
     isHardCapReached: bool
 
     # Daily usage (for FREE tier)
-    creditsUsedToday: Optional[int]
-    creditsRemainingToday: Optional[int]
-    dailyLimit: Optional[int]
-    dailyUsagePercentage: Optional[float]
-    isDailyLimitReached: Optional[bool]
-    nextDailyReset: Optional[str]
+    creditsUsedToday: int | None
+    creditsRemainingToday: int | None
+    dailyLimit: int | None
+    dailyUsagePercentage: float | None
+    isDailyLimitReached: bool | None
+    nextDailyReset: str | None
 
     # Overview stats
     overview: UsageOverview
@@ -134,7 +134,7 @@ async def get_usage(
         credit_usage = await get_credit_usage(user, db_client=db)
 
         # Get chat messages for token usage history
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         thirty_days_ago = now - timedelta(days=30)
 
         # Get all chat messages in the last 30 days

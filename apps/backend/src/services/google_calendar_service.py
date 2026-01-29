@@ -9,7 +9,7 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -330,7 +330,7 @@ class GoogleCalendarService:
             # Check if token needs refresh
             if (
                 user.googleCalendarTokenExpiresAt
-                and user.googleCalendarTokenExpiresAt > datetime.now(timezone.utc)
+                and user.googleCalendarTokenExpiresAt > datetime.now(UTC)
             ):
                 # Token is still valid
                 return user.googleCalendarAccessToken
@@ -378,7 +378,7 @@ class GoogleCalendarService:
                 expires_in = token_data.get("expires_in", 3600)  # Default 1 hour
 
                 # Calculate expiration time
-                expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+                expires_at = datetime.now(UTC).replace(microsecond=0) + timedelta(
                     seconds=expires_in
                 )
 
@@ -539,7 +539,7 @@ class GoogleCalendarService:
                     where={"id": schedule_id},
                     data={
                         "googleCalendarEventId": event_id,
-                        "googleCalendarSyncedAt": datetime.now(timezone.utc),
+                        "googleCalendarSyncedAt": datetime.now(UTC),
                     },
                 )
 
@@ -643,7 +643,7 @@ class GoogleCalendarService:
                 # Update sync timestamp
                 await db.scheduleblock.update(
                     where={"id": schedule_id},
-                    data={"googleCalendarSyncedAt": datetime.now(timezone.utc)},
+                    data={"googleCalendarSyncedAt": datetime.now(UTC)},
                 )
 
                 logger.info(f"Updated Google Calendar event {event_id} for schedule {schedule_id}")

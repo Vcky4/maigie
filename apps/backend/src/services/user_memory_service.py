@@ -9,7 +9,7 @@ See LICENSE file in the repository root for details.
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -229,7 +229,7 @@ class UserMemoryService:
                 where_clause["entityType"] = entity_type
 
             # Calculate date threshold (use timezone-aware datetime)
-            threshold_date = datetime.now(timezone.utc) - timedelta(days=days)
+            threshold_date = datetime.now(UTC) - timedelta(days=days)
 
             interactions = await db.userinteractionmemory.find_many(
                 where=where_clause,

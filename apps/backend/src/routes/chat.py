@@ -5,22 +5,29 @@ Handles real-time messaging with Gemini AI and Action Execution.
 
 import json
 import re
+from datetime import datetime, timedelta, UTC
 
 from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,  # <--- Added
     HTTPException,
     Query,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
+    status,
 )
 from jose import JWTError, jwt
 
 from prisma import Prisma
 from src.config import settings
 from src.services.action_service import action_service
+from src.services.component_response_service import (
+    format_action_component_response,
+    format_list_component_response,
+)
 from src.services.credit_service import (
     check_credit_availability,
     consume_credits,
@@ -29,6 +36,7 @@ from src.services.credit_service import (
 from src.services.llm_service import llm_service
 from src.services.rag_service import rag_service
 from src.services.socket_manager import manager
+from src.services.storage_service import storage_service  # <--- Added
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
 
@@ -340,19 +348,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # If not JSON, treat as plain text
                 pass
 
-            # 4. Save User Message to DB
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": user.id,
-                    "role": "USER",
-                    "content": user_text,
-                }
-            )
+            # 4. Extract fileUrls from context (if any)
+            file_urls = context.get("fileUrls") if context else None
 
-            # 5. Build History for Context (Last 10 messages)
+            # 4.1 Save User Message to DB (with imageUrl if provided)
+            user_message_data = {
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "USER",
+                "content": user_text,
+            }
+            if file_urls:
+                user_message_data["imageUrl"] = file_urls
+                print(f"🖼️ Message includes image: {file_urls}")
+
+            await db.chatmessage.create(data=user_message_data)
+
+            # 5. Build History for Context (Last 6 messages to reduce token usage)
             history_records = await db.chatmessage.find_many(
-                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=10
+                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=6
             )
 
             # Format history for Gemini
@@ -510,13 +524,381 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
 
-            # 4.5. Check credits before processing AI response (after context/history are built)
+            # 6. Smart list/query detection using AI intent classification
+            # Allows natural language like "what am I studying?", "any goals?", etc.
+            is_list_query = False
+            list_component_response = None
+            detected_intent = None
+            intent_tokens = 0
+            user_text_lower = user_text.lower()  # Define early for use throughout
+
+            try:
+                # Use AI to detect if this is a list query (minimal tokens ~30-50)
+                intent_result = await llm_service.detect_list_query_intent(user_text)
+                detected_intent = intent_result.get("intent", "none")
+                is_list_query = intent_result.get("is_list_query", False)
+                intent_tokens = intent_result.get("total_tokens", 0)
+
+                if is_list_query:
+                    print(f"🧠 AI detected list query intent: {detected_intent}")
+
+            except Exception as e:
+                print(f"⚠️ AI intent detection failed, falling back to keywords: {e}")
+                # Fallback to keyword matching if AI fails
+                # Quick keyword check as fallback
+                if any(
+                    kw in user_text_lower for kw in ["my courses", "courses", "what am i learning"]
+                ):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "courses"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["my goals", "goals", "objectives"]):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "goals"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["schedule", "calendar", "upcoming"]):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "schedule"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["my notes", "notes"]):
+                    if "create" not in user_text_lower and "new" not in user_text_lower:
+                        detected_intent = "notes"
+                        is_list_query = True
+                elif any(kw in user_text_lower for kw in ["resources", "saved", "materials"]):
+                    if "create" not in user_text_lower and "recommend" not in user_text_lower:
+                        detected_intent = "resources"
+                        is_list_query = True
+
+            # Fetch data based on detected intent
+            if is_list_query and detected_intent:
+                if detected_intent == "courses":
+                    courses = await db.course.find_many(
+                        where={"userId": user.id, "archived": False},
+                        include={"modules": {"include": {"topics": True}}},
+                        order={"updatedAt": "desc"},
+                        take=20,
+                    )
+                    courses_data = []
+                    for course in courses:
+                        total_topics = sum(len(m.topics) for m in course.modules)
+                        completed_topics = sum(
+                            sum(1 for t in m.topics if t.completed) for m in course.modules
+                        )
+                        progress = (
+                            (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+                        )
+                        courses_data.append(
+                            {
+                                "courseId": course.id,
+                                "id": course.id,
+                                "title": course.title,
+                                "description": course.description or "",
+                                "progress": progress,
+                                "difficulty": course.difficulty,
+                                "completedTopics": completed_topics,
+                                "totalTopics": total_topics,
+                            }
+                        )
+                    # Format text naturally based on count
+                    courses_count = len(courses_data)
+                    if courses_count == 0:
+                        courses_text = "You don't have any courses yet."
+                    elif courses_count == 1:
+                        courses_text = "Here is your course:"
+                    else:
+                        courses_text = f"Here are your {courses_count} courses:"
+
+                    list_component_response = format_list_component_response(
+                        "CourseListMessage",
+                        courses_data,
+                        courses_text,
+                    )
+
+                elif detected_intent == "goals":
+                    goals = await db.goal.find_many(
+                        where={"userId": user.id, "status": "ACTIVE"},
+                        order={"updatedAt": "desc"},
+                        take=20,
+                    )
+                    goals_data = []
+                    for goal in goals:
+                        goals_data.append(
+                            {
+                                "goalId": goal.id,
+                                "id": goal.id,
+                                "title": goal.title,
+                                "description": goal.description or "",
+                                "targetDate": (
+                                    goal.targetDate.isoformat() if goal.targetDate else None
+                                ),
+                                "progress": goal.progress or 0,
+                                "status": goal.status,
+                                "courseId": goal.courseId,
+                                "topicId": goal.topicId,
+                            }
+                        )
+                    # Format text naturally based on count
+                    goals_count = len(goals_data)
+                    if goals_count == 0:
+                        goals_text = "You don't have any active goals yet."
+                    elif goals_count == 1:
+                        goals_text = "Here is your active goal:"
+                    else:
+                        goals_text = f"Here are your {goals_count} active goals:"
+
+                    list_component_response = format_list_component_response(
+                        "GoalListMessage",
+                        goals_data,
+                        goals_text,
+                    )
+
+                elif detected_intent == "schedule":
+                    now = datetime.now(UTC)
+                    end_date = now + timedelta(days=30)
+                    schedules = await db.scheduleblock.find_many(
+                        where={
+                            "userId": user.id,
+                            "startAt": {"gte": now, "lte": end_date},
+                        },
+                        order={"startAt": "asc"},
+                        take=50,
+                    )
+                    schedules_data = []
+                    for schedule in schedules:
+                        schedules_data.append(
+                            {
+                                "scheduleId": schedule.id,
+                                "id": schedule.id,
+                                "title": schedule.title,
+                                "startAt": (
+                                    schedule.startAt.isoformat() if schedule.startAt else None
+                                ),
+                                "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
+                                "description": schedule.description or "",
+                                "courseId": schedule.courseId,
+                                "topicId": schedule.topicId,
+                                "goalId": schedule.goalId,
+                            }
+                        )
+                    # Format text naturally based on count
+                    schedules_count = len(schedules_data)
+                    if schedules_count == 0:
+                        schedules_text = "You don't have any upcoming items in your schedule."
+                    elif schedules_count == 1:
+                        schedules_text = "Here is your upcoming item:"
+                    else:
+                        schedules_text = f"Here are your {schedules_count} upcoming items:"
+
+                    list_component_response = format_list_component_response(
+                        "ScheduleViewMessage",
+                        schedules_data,
+                        schedules_text,
+                    )
+
+                elif detected_intent == "notes":
+                    notes = await db.note.find_many(
+                        where={"userId": user.id, "archived": False},
+                        order={"updatedAt": "desc"},
+                        take=20,
+                    )
+                    notes_data = []
+                    for note in notes:
+                        notes_data.append(
+                            {
+                                "noteId": note.id,
+                                "id": note.id,
+                                "title": note.title,
+                                "content": note.content or "",
+                                "summary": note.summary,
+                                "createdAt": note.createdAt.isoformat() if note.createdAt else None,
+                                "updatedAt": note.updatedAt.isoformat() if note.updatedAt else None,
+                                "courseId": note.courseId,
+                                "topicId": note.topicId,
+                            }
+                        )
+                    # Format text naturally based on count
+                    notes_count = len(notes_data)
+                    if notes_count == 0:
+                        notes_text = "You don't have any notes yet."
+                    elif notes_count == 1:
+                        notes_text = "Here is your note:"
+                    else:
+                        notes_text = f"Here are your {notes_count} notes:"
+
+                    list_component_response = format_list_component_response(
+                        "NoteListMessage",
+                        notes_data,
+                        notes_text,
+                    )
+
+                elif detected_intent == "resources":
+                    resources = await db.resource.find_many(
+                        where={"userId": user.id},
+                        order={"createdAt": "desc"},
+                        take=20,
+                    )
+                    resources_data = []
+                    for resource in resources:
+                        resources_data.append(
+                            {
+                                "resourceId": resource.id,
+                                "id": resource.id,
+                                "title": resource.title,
+                                "url": resource.url or "",
+                                "description": resource.description or "",
+                                "type": resource.type,
+                                "courseId": resource.courseId,
+                                "topicId": resource.topicId,
+                            }
+                        )
+                    # Format text naturally based on count
+                    resources_count = len(resources_data)
+                    if resources_count == 0:
+                        resources_text = "You don't have any saved resources yet."
+                    elif resources_count == 1:
+                        resources_text = "Here is your saved resource:"
+                    else:
+                        resources_text = f"Here are your {resources_count} saved resources:"
+
+                    list_component_response = format_list_component_response(
+                        "ResourceListMessage",
+                        resources_data,
+                        resources_text,
+                    )
+
+            # If list query detected, send component response with optional AI insight
+            if is_list_query and list_component_response:
+                # Generate a brief AI insight about the data (minimal tokens)
+                ai_insight = None
+                insight_tokens = 0
+
+                try:
+                    # Build a minimal prompt for AI insight
+                    component_type = list_component_response.get("componentType", "")
+                    items_count = 0
+                    insight_context = ""
+
+                    if component_type == "CourseListMessage":
+                        items = list_component_response.get("courseListData", {}).get("courses", [])
+                        items_count = len(items)
+                        if items:
+                            # Get some context about courses
+                            in_progress = sum(1 for c in items if 0 < c.get("progress", 0) < 100)
+                            completed = sum(1 for c in items if c.get("progress", 0) >= 100)
+                            insight_context = f"User has {items_count} courses: {completed} completed, {in_progress} in progress, {items_count - completed - in_progress} not started."
+
+                    elif component_type == "GoalListMessage":
+                        items = list_component_response.get("goalListData", {}).get("goals", [])
+                        items_count = len(items)
+                        if items:
+                            with_deadlines = sum(1 for g in items if g.get("targetDate"))
+                            insight_context = f"User has {items_count} active goals, {with_deadlines} with deadlines set."
+
+                    elif component_type == "ScheduleViewMessage":
+                        items = list_component_response.get("scheduleViewData", {}).get(
+                            "schedules", []
+                        )
+                        items_count = len(items)
+                        if items:
+                            # Check for today's items
+                            today = datetime.now(UTC).date()
+                            today_items = sum(
+                                1
+                                for s in items
+                                if s.get("startAt")
+                                and datetime.fromisoformat(
+                                    s["startAt"].replace("Z", "+00:00")
+                                ).date()
+                                == today
+                            )
+                            insight_context = f"User has {items_count} scheduled items, {today_items} scheduled for today."
+
+                    elif component_type == "NoteListMessage":
+                        items = list_component_response.get("noteListData", {}).get("notes", [])
+                        items_count = len(items)
+                        if items:
+                            with_summary = sum(1 for n in items if n.get("summary"))
+                            insight_context = (
+                                f"User has {items_count} notes, {with_summary} have AI summaries."
+                            )
+
+                    elif component_type == "ResourceListMessage":
+                        items = list_component_response.get("resourceListData", {}).get(
+                            "resources", []
+                        )
+                        items_count = len(items)
+                        if items:
+                            # Count by type
+                            type_counts = {}
+                            for r in items:
+                                rtype = r.get("type", "OTHER")
+                                type_counts[rtype] = type_counts.get(rtype, 0) + 1
+                            most_common_type = (
+                                max(type_counts, key=type_counts.get) if type_counts else "OTHER"
+                            )
+                            insight_context = f"User has {items_count} saved resources, mostly {most_common_type.lower()}s. Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}."
+
+                    # Generate brief AI insight if we have context (uses minimal tokens ~50-100)
+                    if insight_context and items_count > 0:
+                        insight_prompt = f"""Based on this data: {insight_context}
+
+Provide a brief, helpful one-sentence observation or tip (max 20 words). Be encouraging and actionable. Don't repeat the numbers."""
+
+                        insight_response = await llm_service.generate_minimal_response(
+                            prompt=insight_prompt, max_tokens=50
+                        )
+                        if insight_response:
+                            ai_insight = insight_response.get("text", "").strip()
+                            insight_tokens = insight_response.get("total_tokens", 0)
+
+                except Exception as e:
+                    print(f"⚠️ AI insight generation failed (non-critical): {e}")
+                    # Continue without AI insight - not critical
+
+                # Update the response text with AI insight if available
+                original_text = list_component_response.get("text", "Here's what you asked for")
+                if ai_insight:
+                    list_component_response["text"] = f"{original_text}\n\n💡 {ai_insight}"
+
+                await manager.send_json(list_component_response, user.id)
+
+                # Consume minimal credits for AI (intent detection + insight)
+                total_ai_tokens = intent_tokens + insight_tokens
+                if total_ai_tokens > 0:
+                    try:
+                        # Fetch user object for credit consumption
+                        user_obj_for_credits = await db.user.find_unique(where={"id": user.id})
+                        if user_obj_for_credits:
+                            await consume_credits(
+                                user_obj_for_credits,
+                                total_ai_tokens,
+                                "smart_list_query",
+                            )
+                            print(
+                                f"💳 Consumed {total_ai_tokens} tokens for smart list query (intent: {intent_tokens}, insight: {insight_tokens})"
+                            )
+                    except Exception as e:
+                        print(f"⚠️ Credit consumption failed for smart list query: {e}")
+
+                # Save message for history
+                await db.chatmessage.create(
+                    data={
+                        "sessionId": session.id,
+                        "userId": user.id,
+                        "role": "ASSISTANT",
+                        "content": list_component_response.get("text", "Here's what you asked for"),
+                        "tokenCount": total_ai_tokens,
+                    }
+                )
+                continue  # Skip to next message
+
+            # 6.5. Check credits ONLY for AI queries (after confirming it's not a free list query)
             # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
             estimated_input_tokens = (
                 len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
             ) // 4
-            # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 1000  # Conservative estimate for response
+            # Reserve credits for response (reduced estimate for cost savings)
+            estimated_output_tokens = 500  # Reduced from 1000 for cost optimization
             estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
 
             # Get user object for credit check
@@ -537,22 +919,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     tier = str(user_obj.tier) if user_obj.tier else "FREE"
                     daily_limit = credit_usage.get("daily_limit", 0)
                     used_today = credit_usage.get("credits_used_today", 0)
-
-                    if (
+                    is_daily = (
                         tier == "FREE"
                         and daily_limit > 0
                         and (used_today + estimated_total_tokens > daily_limit)
-                    ):
+                    )
+
+                    if is_daily:
                         error_message = (
                             f"Daily credit limit exceeded. You've used {used_today:,} "
                             f"of {daily_limit:,} daily credits. "
-                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
+                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
+                            f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
                         )
                     else:
                         error_message = (
                             f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
                             f"of {credit_usage['hard_cap']:,} credits. "
-                            f"Period resets: {credit_usage['period_end']}"
+                            f"Period resets: {credit_usage['period_end']}. "
+                            f"Upgrade to Premium for unlimited usage, or refer friends to earn bonus credits!"
                         )
 
                     # Send error message with tier information as JSON for frontend handling
@@ -560,11 +945,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "type": "credit_limit_error",
                         "message": error_message,
                         "tier": tier,
-                        "is_daily_limit": (
-                            tier == "FREE"
-                            and daily_limit > 0
-                            and (used_today + estimated_total_tokens > daily_limit)
-                        ),
+                        "is_daily_limit": is_daily,
+                        "show_referral_option": True,
                     }
                     await manager.send_personal_message(json.dumps(error_data), user.id)
                     await websocket.close()
@@ -574,22 +956,29 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_obj = await db.user.find_unique(where={"id": user.id})
                 tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
 
+                # Enhance error message with referral option
+                enhanced_message = (
+                    f"{e.message} "
+                    f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
+                )
+
                 error_data = {
                     "type": "credit_limit_error",
-                    "message": e.message,
+                    "message": enhanced_message,
                     "tier": tier,
                     "is_daily_limit": False,
+                    "show_referral_option": True,
                 }
                 await manager.send_personal_message(json.dumps(error_data), user.id)
                 await websocket.close()
                 return
 
-            # 6. Check if user is asking for a summary
+            # 7. Check if user is asking for a summary
             # Simple detection: check if message contains "summary" or "summarize"
             is_summary_request = (
-                "summary" in user_text.lower()
-                or "summarize" in user_text.lower()
-                or "summarise" in user_text.lower()
+                "summary" in user_text_lower
+                or "summarize" in user_text_lower
+                or "summarise" in user_text_lower
             )
 
             # If summary requested and we have context with content, generate summary
@@ -624,9 +1013,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
             else:
                 # 6. Get AI Response (with optional enriched context)
-                ai_response_text, usage_info = await llm_service.get_chat_response(
-                    history=formatted_history, user_message=user_text, context=enriched_context
-                )
+                # Check if there's an image to analyze
+                if file_urls:
+                    print(f"🖼️ Analyzing image with Gemini Vision: {file_urls}")
+                    ai_response_text = await llm_service.analyze_image(user_text, file_urls)
+                    # Estimate token usage for image analysis
+                    usage_info = {
+                        "input_tokens": 500,  # Image analysis uses ~500 tokens for input
+                        "output_tokens": len(ai_response_text) // 4,
+                        "model_name": "gemini-1.5-flash",
+                    }
+                else:
+                    ai_response_text, usage_info = await llm_service.get_chat_response(
+                        history=formatted_history, user_message=user_text, context=enriched_context
+                    )
 
             # --- NEW: Action Detection Logic ---
             # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
@@ -685,11 +1085,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         )
                         print(f"📤 Action result: {action_result}")
 
-                        # Store result
+                        # Store result with original action_data for component formatting
                         action_results.append(
                             {
                                 "type": action_type,
                                 "result": action_result,
+                                "action_data": action_data.copy() if action_data else {},
                             }
                         )
 
@@ -844,20 +1245,36 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 9. Send text back to Client
-            await manager.send_personal_message(clean_response, user.id)
+            # 9. Send text back to Client (if there's text to send)
+            if clean_response:
+                await manager.send_personal_message(clean_response, user.id)
 
-            # 10. (Optional) If actions happened, send separate events to refresh the Frontend
-            # Send each action result separately so frontend can add buttons for each
+            # 10. Send component responses for successful actions
             if action_results:
                 for action_result_item in action_results:
+                    action_type_item = action_result_item.get("type")
                     result = action_result_item.get("result")
-                    if result:
-                        # Include the action type in the payload for frontend processing
+                    action_data_item = action_result_item.get("action_data", {})
+
+                    if result and result.get("status") == "success":
+                        # Format as component response
+                        component_response = await format_action_component_response(
+                            action_type=action_type_item,
+                            action_result=result,
+                            action_data=action_data_item,
+                            user_id=user.id,
+                            db=db,
+                        )
+
+                        if component_response:
+                            # Send component response as JSON
+                            await manager.send_json(component_response, user.id)
+
+                        # Also send event for backward compatibility and frontend refresh
                         await manager.send_json(
                             {
                                 "type": "event",
-                                "payload": {**result, "action": action_result_item.get("type")},
+                                "payload": {**result, "action": action_type_item},
                             },
                             user.id,
                         )
@@ -884,3 +1301,149 @@ async def handle_voice_upload(file: UploadFile = File(...), token: str = Query(.
     transcript = await voice_service.transcribe_audio(file)
 
     return {"text": transcript}
+
+
+# 👇 ENDPOINT: Upload image only (for eager upload)
+@router.post("/image/upload", summary="Upload an image and return URL")
+async def upload_chat_image(
+    file: UploadFile = File(...),
+    token: str = Query(...),
+):
+    """
+    Upload an image to storage and return the URL.
+    Used for eager upload - upload immediately when user selects image.
+    """
+    # Validate user
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # Validate Image Type
+    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG, PNG, or WebP images are allowed.",
+        )
+
+    try:
+        # Upload to BunnyCDN
+        upload_result = await storage_service.upload_file(file, path="chat-images")
+        image_url = upload_result["url"]
+
+        print(f"🔵 Image pre-uploaded: {image_url}")
+
+        return {"url": image_url, "filename": upload_result["filename"]}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/upload: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 ENDPOINT: Delete uploaded image (if user cancels)
+@router.delete("/image/delete", summary="Delete an uploaded image")
+async def delete_chat_image(
+    url: str = Query(...),
+    token: str = Query(...),
+):
+    """
+    Delete a previously uploaded image from storage.
+    Used when user removes an image before sending.
+    """
+    # Validate user
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    try:
+        success = await storage_service.delete_file(url)
+        if success:
+            print(f"🗑️ Image deleted: {url}")
+            return {"status": "deleted"}
+        else:
+            return {"status": "not_found"}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/delete: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 LEGACY ENDPOINT: Image Analysis Chat (upload + analyze in one call)
+# NOTE: Deprecated - prefer using eager upload (/image/upload) + WebSocket with fileUrls context
+@router.post("/image", summary="Upload an image and get AI analysis")
+async def handle_image_chat(
+    file: UploadFile = File(...),
+    text: str = Form(default="Explain this image"),
+    token: str = Form(...),
+):
+    """
+    Handles multimodal chat:
+    1. Uploads image to Storage (BunnyCDN)
+    2. Saves USER message with image URL to DB
+    3. Sends Image + Text to Gemini AI via llm_service
+    4. Saves ASSISTANT response to DB
+    """
+    # Validate user from token
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # 1. Validate Image Type
+    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG, PNG, or WebP images are allowed.",
+        )
+
+    # Ensure DB is connected
+    if not db.is_connected():
+        await db.connect()
+
+    try:
+        # Find or create an active chat session
+        session = await db.chatsession.find_first(
+            where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
+        )
+        if not session:
+            session = await db.chatsession.create(data={"userId": user.id, "title": "New Chat"})
+
+        # 2. Upload to BunnyCDN
+        upload_result = await storage_service.upload_file(file, path="chat-images")
+        image_url = upload_result["url"]
+
+        print(f"🔵 Image uploaded: {image_url}")
+
+        # 3. Save User Message (with Image URL)
+        user_message = await db.chatmessage.create(
+            data={
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "USER",
+                "content": text,
+                "imageUrl": image_url,
+                "modelName": "user-upload",
+            }
+        )
+
+        # 4. Get AI Analysis (Gemini Vision)
+        print("🔵 Asking Gemini to analyze...")
+        ai_response_text = await llm_service.analyze_image(text, image_url)
+
+        # 5. Save AI Response
+        ai_message = await db.chatmessage.create(
+            data={
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "ASSISTANT",
+                "content": ai_response_text,
+                "modelName": "gemini-1.5-flash",
+            }
+        )
+
+        return {"status": "success", "user_message": user_message, "ai_message": ai_message}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

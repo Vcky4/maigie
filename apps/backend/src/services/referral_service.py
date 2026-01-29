@@ -84,7 +84,7 @@ async def get_or_create_referral_code(user: User, db_client: Prisma | None = Non
 
 async def track_referral_signup(
     referred_user: User, referral_code: str, db_client: Prisma | None = None
-) -> Optional[User]:
+) -> User | None:
     """
     Track when a user signs up with a referral code and award the referrer.
 

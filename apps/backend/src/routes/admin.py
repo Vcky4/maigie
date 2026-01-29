@@ -34,10 +34,10 @@ from ..models.analytics import (
     UserDetailAnalyticsResponse,
     UserProgressSummary,
 )
+from ..services.audit_service import log_admin_action
 from ..services.credit_service import initialize_user_credits
 from ..services.email import send_bulk_email
 from ..services.subscription_service import update_user_subscription_from_stripe
-from ..services.audit_service import log_admin_action
 from ..utils.exceptions import ResourceNotFoundError
 
 logger = logging.getLogger(__name__)

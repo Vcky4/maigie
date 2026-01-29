@@ -8,7 +8,6 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
-import asyncio
 import json
 import os
 import re
@@ -22,19 +21,13 @@ from src.core.database import db
 from src.services.embedding_service import embedding_service
 from src.services.web_search_service import web_search_service
 
-# Lazy client initialization
-_client: genai.Client | None = None
+# Configure the google-genai client
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    print("⚠️ GEMINI_API_KEY not found in environment variables.")
 
-
-def _get_client() -> genai.Client:
-    """Get or create the Gemini client (lazy initialization)."""
-    global _client
-    if _client is None:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
-        _client = genai.Client(api_key=api_key)
-    return _client
+# Create client for google-genai SDK
+genai_client = genai.Client(api_key=api_key) if api_key else None
 
 
 class RAGService:
@@ -42,7 +35,7 @@ class RAGService:
 
     def __init__(self):
         """Initialize the RAG service."""
-        pass
+        pass  # No initialization needed - using google-genai client
 
     async def retrieve_relevant_context(
         self,
@@ -53,15 +46,6 @@ class RAGService:
     ) -> list[dict[str, Any]]:
         """
         Retrieve relevant context from user's data using semantic search.
-
-        Args:
-            query: The search query
-            user_id: ID of the user
-            object_types: Types of objects to search ("resource", "note", "course", "topic")
-            limit: Maximum number of results
-
-        Returns:
-            List of relevant objects with their content and metadata
         """
         try:
             # Find similar embeddings
@@ -102,14 +86,6 @@ class RAGService:
     ) -> dict[str, Any] | None:
         """
         Fetch an object from the database based on type and ID.
-
-        Args:
-            object_type: Type of object
-            object_id: ID of the object
-            user_id: User ID for ownership verification
-
-        Returns:
-            Object data or None if not found or not owned by user
         """
         try:
             if object_type == "resource":
@@ -174,16 +150,7 @@ class RAGService:
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """
-        Generate personalized recommendations using RAG.
-
-        Args:
-            query: The user's query or intent
-            user_id: ID of the user
-            user_context: Additional user context (courses, goals, recent activity)
-            limit: Maximum number of recommendations
-
-        Returns:
-            List of recommended resources with scores and explanations
+        Generate personalized recommendations using RAG with Google Search Grounding.
         """
         try:
             # 1. Retrieve relevant context from user's data
@@ -217,7 +184,7 @@ class RAGService:
                 "\n".join(context_parts) if context_parts else "No specific context available."
             )
 
-            # 3. Use Gemini with Google Search Grounding to find real resources
+            # 3. Use Gemini with Google Search Grounding (google-genai SDK)
             recommendation_prompt = f"""You are an AI assistant helping a student find educational resources.
 
 User Query: {query}
@@ -233,12 +200,6 @@ For each recommendation, provide:
 - Resource type (VIDEO, ARTICLE, BOOK, COURSE, DOCUMENT, WEBSITE, PODCAST, or OTHER)
 - Relevance explanation (why this resource is relevant to the user)
 
-IMPORTANT RULES:
-- Use ONLY real URLs from your web search. DO NOT use placeholder URLs like "https://example.com"
-- Infer resource type based on URL domain and content (e.g., youtube.com = VIDEO, coursera.org = COURSE)
-- Select the {limit} most relevant resources for the user's query and context
-- Focus on high-quality educational resources that align with the user's learning goals
-
 Format your response as a JSON array with this structure:
 [
   {{
@@ -252,40 +213,39 @@ Format your response as a JSON array with this structure:
 
 Return exactly {limit} high-quality recommendations with real URLs from your web search."""
 
-            # Call LLM with Google Search Grounding enabled
-            # Google Search Grounding allows Gemini to search the web and return real URLs
-            # Use the new SDK format for Google Search tool
+            if not genai_client:
+                raise HTTPException(status_code=500, detail="Gemini API key not configured")
+
+            # Use google-genai SDK with Google Search grounding
             grounding_tool = types.Tool(google_search=types.GoogleSearch())
+            config = types.GenerateContentConfig(
+                tools=[grounding_tool],
+                system_instruction="You are a helpful educational assistant that recommends learning resources.",
+            )
 
-            config = types.GenerateContentConfig(tools=[grounding_tool])
+            # Call generation with Google Search grounding
+            response = await genai_client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=recommendation_prompt,
+                config=config,
+            )
 
-            client = _get_client()
-
-            # Run synchronous generate_content in executor since new SDK doesn't have async method
-            def _generate_content():
-                return client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=recommendation_prompt,
-                    config=config,
-                )
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, _generate_content)
-            response_text = response
+            response_text = response.text
 
             # Extract JSON from response
-            response_text_str = (
-                response_text.text if hasattr(response_text, "text") else str(response_text)
-            )
-            json_match = re.search(r"\[.*?\]", response_text_str, re.DOTALL)
+            # Ensure json is imported locally if needed, though it's at top level
+
+            json_match = re.search(r"\[.*?\]", response_text, re.DOTALL)
+
             if json_match:
                 recommendations = json.loads(json_match.group(0))
             else:
                 # Fallback: try to parse entire response
                 try:
-                    recommendations = json.loads(response_text_str)
+                    recommendations = json.loads(response_text)
                 except json.JSONDecodeError:
                     # If JSON parsing fails, return empty list
+                    print("JSON Parse failed for recommendations")
                     recommendations = []
 
             # 4. Validate URLs are real (not example.com) and infer resource types
@@ -322,6 +282,7 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
 
         except Exception as e:
             print(f"RAG recommendation generation error: {e}")
+            # Do not re-raise traceback here to keep logs clean in prod, just return empty or 500
             import traceback
 
             traceback.print_exc()
@@ -335,13 +296,6 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
     ) -> float:
         """
         Calculate a relevance score for a recommendation.
-
-        Args:
-            recommendation: The recommendation object
-            relevant_context: Relevant context from user's data
-
-        Returns:
-            Score from 0.0 to 1.0
         """
         score = 0.5  # Base score
 
@@ -356,14 +310,12 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
         desc_words = set(desc_lower.split())
 
         # Title matches are more important
-        title_overlap = len(query_words & title_words) / max(len(query_words), 1)
-        desc_overlap = len(query_words & desc_words) / max(len(query_words), 1)
+        if query_words:
+            title_overlap = len(query_words & title_words) / max(len(query_words), 1)
+            desc_overlap = len(query_words & desc_words) / max(len(query_words), 1)
 
-        score += title_overlap * 0.3
-        score += desc_overlap * 0.2
-
-        # Boost if recommendation type matches user's preferences (could be enhanced with user memory)
-        # For now, we'll keep it simple
+            score += title_overlap * 0.3
+            score += desc_overlap * 0.2
 
         return min(1.0, max(0.0, score))
 

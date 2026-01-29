@@ -288,6 +288,7 @@ model ChatMessage {
 
   // Voice features
   audioUrl String? // S3 URL if this was a voice message
+  imageUrl     String?  // <--- ADDED: Field for uploaded image URL`
   duration Float? // Duration in seconds
 
   // Usage tracking (Critical for Free Tier limits)

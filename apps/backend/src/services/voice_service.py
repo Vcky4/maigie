@@ -15,7 +15,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 class VoiceService:
     def __init__(self):
         # We use Flash because it's fast and supports audio
-        self.model = genai.GenerativeModel("models/gemini-flash-latest")
+        self.model = genai.GenerativeModel("models/gemini-3-flash-preview")
 
     async def transcribe_audio(self, file: UploadFile) -> str:
         """

@@ -76,5 +76,39 @@ class StorageService:
         finally:
             await file.seek(0)  # Reset file pointer if needed elsewhere
 
+    async def delete_file(self, url: str) -> bool:
+        """
+        Delete a file from BunnyCDN storage by its public URL.
+
+        Args:
+            url: The public CDN URL of the file to delete.
+
+        Returns:
+            bool: True if deleted successfully, False otherwise.
+        """
+        if not self.api_key or not self.storage_zone:
+            return False
+
+        try:
+            # Extract the path from the URL
+            # URL format: https://cdn_hostname/path/to/file.jpg
+            # We need: /path/to/file.jpg
+            cdn_prefix = f"https://{self.cdn_hostname}/"
+            if not url.startswith(cdn_prefix):
+                return False
+
+            file_path = url[len(cdn_prefix) :]
+            delete_url = f"{self.base_url}/{file_path}"
+
+            headers = {"AccessKey": self.api_key}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.delete(delete_url, headers=headers)
+                return response.status_code == 200
+
+        except Exception as e:
+            print(f"Failed to delete file from storage: {e}")
+            return False
+
 
 storage_service = StorageService()

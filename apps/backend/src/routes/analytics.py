@@ -9,21 +9,22 @@ See LICENSE file in the repository root for details.
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated, Optional, Union
 
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel
+
 from prisma import Client as PrismaClient
 
 from ..dependencies import AdminUser, CurrentUser
 from ..models.analytics import (
     AchievementBadge,
+    AIFeatureUsage,
     AIGeneratedContentStats,
     AIMessageStats,
-    AIUsageAnalytics,
-    AIFeatureUsage,
     AIMetrics,
+    AIUsageAnalytics,
     CourseAnalyticsItem,
     EnhancedAdminAnalyticsResponse,
     EnhancedUserAnalyticsResponse,
@@ -31,9 +32,9 @@ from ..models.analytics import (
     InsightsAndReports,
     LearningPaceTrend,
     MonthlyReport,
-    ProgressAnalytics,
     PlatformStatistics,
     ProductiveTimeSlot,
+    ProgressAnalytics,
     Recommendation,
     RetentionMetrics,
     ScheduleAdherence,
@@ -63,14 +64,14 @@ router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
 
 class StartSessionRequest(BaseModel):
-    courseId: Optional[str] = None
-    topicId: Optional[str] = None
+    courseId: str | None = None
+    topicId: str | None = None
 
 
 @router.post("/sessions/start")
 async def start_study_session(
     current_user: CurrentUser,
-    request: Optional[StartSessionRequest] = Body(default=None),
+    request: StartSessionRequest | None = Body(default=None),
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Start a new study session."""
@@ -108,7 +109,7 @@ async def start_study_session(
         session = await db.studysession.create(
             data={
                 "userId": current_user.id,
-                "startTime": datetime.now(timezone.utc),
+                "startTime": datetime.now(UTC),
                 "duration": 0.0,  # Will be updated when session ends
                 "courseId": course_id,
                 "topicId": topic_id,
@@ -160,11 +161,11 @@ async def stop_study_session(
             }
 
         # Calculate duration
-        end_time = datetime.now(timezone.utc)
+        end_time = datetime.now(UTC)
         # Ensure startTime is timezone-aware (Prisma may return naive datetime)
         start_time = session.startTime
         if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=timezone.utc)
+            start_time = start_time.replace(tzinfo=UTC)
         duration_minutes = (end_time - start_time).total_seconds() / 60
 
         # Update session
@@ -407,7 +408,7 @@ async def _update_streak(db: PrismaClient, user_id: str, study_datetime: datetim
 async def _get_study_analytics(db: PrismaClient, user_id: str) -> StudyAnalytics:
     """Get comprehensive study analytics."""
     try:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Get all completed sessions
         sessions = await db.studysession.find_many(
@@ -762,7 +763,7 @@ async def _get_insights_and_reports(db: PrismaClient, user_id: str) -> InsightsA
                         if isinstance(a.unlockedAt, str)
                         else a.unlockedAt
                     )
-                    if (datetime.now(timezone.utc) - unlocked_dt).days <= 7:
+                    if (datetime.now(UTC) - unlocked_dt).days <= 7:
                         recent_achievements_count += 1
                 except Exception:
                     continue
@@ -842,12 +843,12 @@ Format as JSON array:
         logger.error(
             f"Error in _get_insights_and_reports for user {user_id}: {str(e)}", exc_info=True
         )
-        from ..models.analytics import WeeklyReport, MonthlyReport
+        from ..models.analytics import MonthlyReport, WeeklyReport
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         week_start = now - timedelta(days=now.weekday())
         week_end = week_start + timedelta(days=6)
-        month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+        month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
         return InsightsAndReports(
             weeklyReport=WeeklyReport(
                 weekStart=week_start.date().isoformat(),
@@ -1071,7 +1072,7 @@ async def get_enhanced_admin_analytics(
     active_users = [u for u in all_users if u.isActive]
 
     # Calculate DAU/MAU (simplified)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     daily_active = len(set([u.id for u in active_users]))  # Simplified
     monthly_active = len(active_users)
 
@@ -1360,10 +1361,10 @@ async def _check_and_unlock_achievements(db: PrismaClient, user_id: str, session
 
 async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyReport:
     """Generate weekly study report with AI insights."""
-    from datetime import timezone
+
     from ..services.llm_service import GeminiService
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     week_start = now - timedelta(days=now.weekday())
     week_end = week_start + timedelta(days=6)
 
@@ -1391,7 +1392,7 @@ async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyRepor
                     # Ensure timezone-aware comparison
                     topic_updated = topic.updatedAt
                     if topic_updated.tzinfo is None:
-                        topic_updated = topic_updated.replace(tzinfo=timezone.utc)
+                        topic_updated = topic_updated.replace(tzinfo=UTC)
                     if topic_updated >= week_start:
                         topics_completed_this_week.append(topic)
 
@@ -1404,7 +1405,7 @@ async def _generate_weekly_report(db: PrismaClient, user_id: str) -> WeeklyRepor
         # Ensure timezone-aware comparison
         goal_updated = g.updatedAt
         if goal_updated.tzinfo is None:
-            goal_updated = goal_updated.replace(tzinfo=timezone.utc)
+            goal_updated = goal_updated.replace(tzinfo=UTC)
         if goal_updated >= week_start:
             goals_this_week.append(g)
 
@@ -1494,12 +1495,12 @@ async def _generate_monthly_report(db: PrismaClient, user_id: str) -> MonthlyRep
     """Generate monthly progress summary with AI insights."""
     from ..services.llm_service import GeminiService
 
-    now = datetime.now(timezone.utc)
-    month_start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    now = datetime.now(UTC)
+    month_start = datetime(now.year, now.month, 1, tzinfo=UTC)
     month_end = (
-        datetime(now.year, now.month + 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+        datetime(now.year, now.month + 1, 1, tzinfo=UTC) - timedelta(days=1)
         if now.month < 12
-        else datetime(now.year + 1, 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+        else datetime(now.year + 1, 1, 1, tzinfo=UTC) - timedelta(days=1)
     )
 
     # Get study sessions for the month
