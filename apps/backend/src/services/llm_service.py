@@ -349,12 +349,23 @@ RULES:
    - Tags should be concise, relevant, and use PascalCase or camelCase (e.g., "CommunityHealthNursing", "PublicHealth")
    - Include tags in the "tags" array in the action data
 6. For recommend_resources action:
-   - Use when user asks for "resources", "recommendations", "suggestions", "links", "videos", "articles", "books", etc.
-   - Extract the query from what the user is asking for
-   - Use topicId from context if user is viewing a topic
-   - Use courseId from context if user is viewing a course
-   - Set limit to 5-10 resources (default 10)
-   - The system will generate personalized recommendations using RAG
+   - IMPORTANT: Distinguish between SAVED resources vs NEW recommendations:
+     * CLEARLY SAVED: "show my resources", "what resources have I saved", "my saved resources", "resources I've saved" -> LIST QUERY, NOT an action
+     * CLEARLY NEW: "find NEW resources for X", "recommend resources", "suggest resources", "search for resources about Y" -> ACTION (recommend_resources)
+   - AMBIGUOUS cases - ASK for clarification (do NOT assume):
+     * "get me resources on sewing" - Could be saved OR new, ASK!
+     * "resources for programming" - Could be saved OR new, ASK!
+     * "show resources about cooking" - Could be saved OR new, ASK!
+     * Just "resources" or "show resources" - ASK!
+   - When AMBIGUOUS, respond with something like:
+     "Are you looking for resources you've already saved about [topic], or would you like me to find new resource recommendations for [topic]?"
+   - Only trigger recommend_resources action when user CLEARLY wants NEW recommendations (uses words like "find", "search", "recommend", "suggest", "new")
+   - When recommending NEW resources:
+     * Extract the query from what the user is asking for
+     * Use topicId from context if user is viewing a topic
+     * Use courseId from context if user is viewing a course
+     * Set limit to 5-10 resources (default 10)
+     * The system will generate personalized recommendations using web search
 7. For create_goal action:
    - Use when user asks to "set a goal", "create a goal", "I want to learn X", "my goal is to Y", etc.
    - Extract a clear, actionable goal title from the user's request
@@ -641,20 +652,33 @@ Summary:"""
             'is_list_query' (bool), and 'total_tokens' (int)
         """
         try:
-            classification_prompt = f"""Classify this user message. Is the user asking to VIEW or LIST their existing data?
+            classification_prompt = f"""Classify this user message. Is the user asking to VIEW or LIST their existing SAVED data?
 
 User message: "{user_message}"
 
-IMPORTANT: Only classify as a list query if the user wants to SEE/VIEW/LIST existing items.
-Do NOT classify as list query if user wants to CREATE, ADD, RECOMMEND, FIND NEW, or MODIFY something.
+IMPORTANT: Only classify as a list query if the user CLEARLY wants to SEE/VIEW/LIST their SAVED/EXISTING items.
+Do NOT classify as list query if user wants to:
+- CREATE, ADD, GENERATE, or MODIFY something
+- FIND NEW, RECOMMEND, SUGGEST, or SEARCH for something
+- Get RECOMMENDATIONS or SUGGESTIONS
+
+CRITICAL for resources - be STRICT:
+- CLEARLY SAVED: "show my resources", "my saved resources", "what resources do I have", "resources I saved" -> resources
+- CLEARLY NEW: "find resources", "recommend resources", "suggest resources", "search for resources" -> none
+- AMBIGUOUS (could be saved OR new): 
+  * "get me resources on X" -> none (ambiguous!)
+  * "resources for Y" -> none (ambiguous!)
+  * "show resources about Z" -> none (ambiguous!)
+  * Just "resources" -> none (ambiguous!)
+- When in doubt, respond with "none" to let the AI ask for clarification
 
 Respond with ONLY one word from this list:
 - courses (viewing/listing courses, subjects, classes, what they're learning)
 - goals (viewing/listing goals, objectives, targets, milestones)
 - schedule (viewing/listing schedule, calendar, upcoming events, what's planned)
 - notes (viewing/listing notes, writings, documentation)
-- resources (viewing/listing saved resources, materials, links, videos, articles)
-- none (not a list query, or wants to create/add/modify something)
+- resources (ONLY when user CLEARLY wants their SAVED resources - use words like "my", "saved", "I have")
+- none (not a list query, wants new recommendations, or AMBIGUOUS - let AI ask for clarification)
 
 Answer:"""
 

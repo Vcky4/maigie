@@ -232,20 +232,40 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
 
             response_text = response.text
 
-            # Extract JSON from response
-            # Ensure json is imported locally if needed, though it's at top level
+            # Extract JSON from response - use greedy match to get complete array
+            # The non-greedy \[.*?\] can cut off mid-string, so use greedy with proper boundary
+            json_match = re.search(r"\[\s*\{.*\}\s*\]", response_text, re.DOTALL)
 
-            json_match = re.search(r"\[.*?\]", response_text, re.DOTALL)
-
+            recommendations = []
             if json_match:
-                recommendations = json.loads(json_match.group(0))
+                try:
+                    recommendations = json.loads(json_match.group(0))
+                except json.JSONDecodeError as e:
+                    print(f"JSON Parse failed for recommendations: {e}")
+                    # Try to extract individual objects and build array
+                    try:
+                        # Find all JSON objects in the response
+                        objects = re.findall(r"\{[^{}]*\}", response_text)
+                        for obj_str in objects:
+                            try:
+                                obj = json.loads(obj_str)
+                                if "url" in obj and "title" in obj:
+                                    recommendations.append(obj)
+                            except json.JSONDecodeError:
+                                continue
+                    except Exception:
+                        recommendations = []
             else:
                 # Fallback: try to parse entire response
                 try:
-                    recommendations = json.loads(response_text)
+                    parsed = json.loads(response_text)
+                    if isinstance(parsed, list):
+                        recommendations = parsed
+                    elif isinstance(parsed, dict) and "recommendations" in parsed:
+                        recommendations = parsed["recommendations"]
                 except json.JSONDecodeError:
                     # If JSON parsing fails, return empty list
-                    print("JSON Parse failed for recommendations")
+                    print("JSON Parse failed for recommendations - no valid JSON found")
                     recommendations = []
 
             # 4. Validate URLs are real (not example.com) and infer resource types
@@ -280,13 +300,17 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
 
             return scored_recommendations
 
+        except HTTPException:
+            # Re-raise HTTP exceptions (like API key not configured)
+            raise
         except Exception as e:
             print(f"RAG recommendation generation error: {e}")
-            # Do not re-raise traceback here to keep logs clean in prod, just return empty or 500
             import traceback
 
             traceback.print_exc()
-            raise HTTPException(status_code=500, detail="Failed to generate recommendations")
+            # Return empty list instead of raising exception for graceful degradation
+            # This allows the action service to return a helpful message
+            return []
 
     def _calculate_recommendation_score(
         self,

@@ -540,10 +540,16 @@ class ActionService:
             # Ensure user_id is a string
             user_id = str(user_id)
 
-            if not recommendations or not isinstance(recommendations, list):
+            if (
+                not recommendations
+                or not isinstance(recommendations, list)
+                or len(recommendations) == 0
+            ):
                 return {
-                    "status": "error",
-                    "message": "No recommendations generated",
+                    "status": "success",
+                    "message": f"I couldn't find specific resources for '{query}' at the moment. Try being more specific with your query, or I can help you search for different topics.",
+                    "resources": [],
+                    "action": "recommend_resources",
                 }
 
             # Store recommendations as resources
