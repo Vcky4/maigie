@@ -83,6 +83,7 @@ jobs:
             }
 
   build-soprano-preview:
+    needs: [check-tests]
     uses: ./.github/workflows/soprano-tts-ci.yml
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     secrets: inherit
@@ -971,6 +972,7 @@ jobs:
             });
 
   build-soprano-production:
+    needs: [check-tests]
     uses: ./.github/workflows/soprano-tts-ci.yml
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     secrets: inherit
@@ -1336,6 +1338,7 @@ jobs:
             echo "Production deployment complete!"
 
   build-soprano-staging:
+    needs: [check-tests]
     uses: ./.github/workflows/soprano-tts-ci.yml
     if: github.ref == 'refs/heads/development' && github.event_name == 'push'
     secrets: inherit

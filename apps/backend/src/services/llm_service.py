@@ -8,29 +8,24 @@ import warnings
 
 import httpx  # <--- Added for image download
 
-# Suppress the Google Gemini deprecation warning temporarily
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    import google.generativeai as genai
-
 from datetime import UTC
 
 from fastapi import HTTPException
-from google import genai
-from google.genai import types
+from google import genai as genai_new
+from google.genai import types as genai_types
 
-# Initialize client
-_client: genai.Client | None = None
+# Initialize client for new SDK
+_client: genai_new.Client | None = None
 
 
-def _get_client() -> genai.Client:
+def _get_client() -> genai_new.Client:
     """Get or create the Gemini client (lazy initialization)."""
     global _client
     if _client is None:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY environment variable is not set")
-        _client = genai.Client(api_key=api_key)
+        _client = genai_new.Client(api_key=api_key)
     return _client
 
 
@@ -412,20 +407,19 @@ RULES:
 
 class GeminiService:
     def __init__(self):
-        self.model = genai.GenerativeModel(
-            model_name="models/gemini-3-flash-preview", system_instruction=SYSTEM_INSTRUCTION
-        )
+        self.model_name = "gemini-3-flash-preview"
+        self._client = None
 
         # Safety settings (block hate speech, etc.)
         self.safety_settings = [
-            {
-                "category": types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-                "threshold": types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            },
-            {
-                "category": types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                "threshold": types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            },
+            genai_types.SafetySetting(
+                category=genai_types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold=genai_types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            ),
+            genai_types.SafetySetting(
+                category=genai_types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold=genai_types.HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            ),
         ]
 
     @property
@@ -506,13 +500,35 @@ class GeminiService:
             if context_parts:
                 context_str = "\n".join(context_parts)
                 enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
+            else:
+                enhanced_message = user_message
 
-            # Start a chat session with history
-            chat = self.model.start_chat(history=history)
+            # Format history for new SDK (list of Content objects)
+            contents = []
 
-            # Send the enhanced message
-            response = await chat.send_message_async(
-                enhanced_message, safety_settings=self.safety_settings
+            # Add history if provided
+            if history:
+                for msg in history:
+                    role = "user" if msg.get("role") == "user" else "model"
+                    content_text = msg.get(
+                        "content",
+                        msg.get("parts", [""])[0] if isinstance(msg.get("parts"), list) else "",
+                    )
+                    contents.append({"role": role, "parts": [content_text]})
+
+            # Add current user message
+            contents.append({"role": "user", "parts": [enhanced_message]})
+
+            # Generate response using new SDK
+            config = genai_types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                safety_settings=self.safety_settings,
+            )
+
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
             )
 
             # Extract token usage from response
@@ -566,23 +582,16 @@ Content:
 
 Summary:"""
 
-            config = types.GenerateContentConfig(
+            config = genai_types.GenerateContentConfig(
                 system_instruction=self.system_instruction,
                 safety_settings=self.safety_settings,
             )
 
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-
-            def _generate_content():
-                return self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=summary_prompt,
-                    config=config,
-                )
-
-            response = await loop.run_in_executor(None, _generate_content)
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=summary_prompt,
+                config=config,
+            )
 
             # Clean up any remaining conversational text that might have been added
             summary_text = (response.text if hasattr(response, "text") else str(response)).strip()
@@ -647,17 +656,16 @@ Summary:"""
         """
         try:
             # Use Flash model for minimal responses (faster and cheaper)
-            minimal_model = genai.GenerativeModel(
-                "gemini-2.0-flash-lite",
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=max_tokens,
-                    temperature=0.7,
-                ),
+            config = genai_types.GenerateContentConfig(
+                max_output_tokens=max_tokens,
+                temperature=0.7,
                 safety_settings=self.safety_settings,
             )
 
-            response = await minimal_model.generate_content_async(
-                prompt, safety_settings=self.safety_settings
+            response = await self.client.aio.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt,
+                config=config,
             )
 
             # Calculate tokens used
@@ -724,17 +732,16 @@ Respond with ONLY one word from this list:
 
 Answer:"""
 
-            minimal_model = genai.GenerativeModel(
-                "gemini-2.0-flash-lite",
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=10,
-                    temperature=0.1,  # Low temperature for consistent classification
-                ),
+            config = genai_types.GenerateContentConfig(
+                max_output_tokens=10,
+                temperature=0.1,  # Low temperature for consistent classification
                 safety_settings=self.safety_settings,
             )
 
-            response = await minimal_model.generate_content_async(
-                classification_prompt, safety_settings=self.safety_settings
+            response = await self.client.aio.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=classification_prompt,
+                config=config,
             )
 
             # Parse the response
@@ -817,23 +824,16 @@ Begin directly with the first heading or paragraph.
 
 Rewritten Content:"""
 
-            config = types.GenerateContentConfig(
+            config = genai_types.GenerateContentConfig(
                 system_instruction=self.system_instruction,
                 safety_settings=self.safety_settings,
             )
 
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-
-            def _generate_content():
-                return self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=rewrite_prompt,
-                    config=config,
-                )
-
-            response = await loop.run_in_executor(None, _generate_content)
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=rewrite_prompt,
+                config=config,
+            )
 
             rewritten_text = (response.text if hasattr(response, "text") else str(response)).strip()
 
@@ -919,23 +919,16 @@ Just return the array, for example: ["Tag1", "Tag2", "Tag3"]
 
 Tags (JSON array):"""
 
-            config = types.GenerateContentConfig(
+            config = genai_types.GenerateContentConfig(
                 system_instruction=self.system_instruction,
                 safety_settings=self.safety_settings,
             )
 
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-
-            def _generate_content():
-                return self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=tag_prompt,
-                    config=config,
-                )
-
-            response = await loop.run_in_executor(None, _generate_content)
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=tag_prompt,
+                config=config,
+            )
 
             tags_text = (response.text if hasattr(response, "text") else str(response)).strip()
 
@@ -983,13 +976,26 @@ Tags (JSON array):"""
                 image_data = response.content
                 mime_type = response.headers.get("content-type", "image/jpeg")
 
-            # 2. Prepare the content for Gemini
-            # Gemini treats images as a distinct part of the prompt content
-            content = [prompt, {"mime_type": mime_type, "data": image_data}]
+            # 2. Prepare the content for Gemini using new SDK
+            # Create image part using new SDK types
+            image_part = genai_types.Part(
+                inline_data=genai_types.Blob(data=image_data, mime_type=mime_type)
+            )
+
+            contents = [
+                prompt,
+                image_part,
+            ]
+
+            config = genai_types.GenerateContentConfig(
+                safety_settings=self.safety_settings,
+            )
 
             # 3. Generate response
-            response = await self.model.generate_content_async(
-                content, safety_settings=self.safety_settings
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
             )
 
             return response.text
@@ -1002,5 +1008,24 @@ Tags (JSON array):"""
             return "I'm sorry, I encountered an error analyzing that image."
 
 
-# Global instance
-llm_service = GeminiService()
+# Global instance (lazy initialization to avoid import-time errors)
+_llm_service_instance = None
+
+
+def get_llm_service() -> GeminiService:
+    """Get or create the global LLM service instance (lazy initialization)."""
+    global _llm_service_instance
+    if _llm_service_instance is None:
+        _llm_service_instance = GeminiService()
+    return _llm_service_instance
+
+
+# For backward compatibility, create a property-like accessor
+class _LLMServiceProxy:
+    """Proxy object that lazily initializes the service when accessed."""
+
+    def __getattr__(self, name):
+        return getattr(get_llm_service(), name)
+
+
+llm_service = _LLMServiceProxy()
