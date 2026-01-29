@@ -65,104 +65,57 @@ INTENT_PROMPTS = {
 If the user seems to need help, proactively suggest actions you can take (like creating courses, schedules, or goals).
 Wait for their confirmation before taking action.""",
     # Course generation prompt (~400 tokens)
-    "course_generation": """When creating a course, output a JSON action block:
+    "course_generation": """Create courses using ONLY the action tags below. Do NOT use markdown code blocks.
 
 <<<ACTION_START>>>
-{
-  "type": "create_course",
-  "data": {
-    "title": "Course Title",
-    "description": "Brief description",
-    "difficulty": "BEGINNER|INTERMEDIATE|ADVANCED",
-    "modules": [
-      {"title": "Module Name", "topics": ["Topic 1", "Topic 2"]}
-    ]
-  }
-}
+{"type": "create_course", "data": {"title": "Course Title", "description": "Brief description", "difficulty": "BEGINNER", "modules": [{"title": "Module 1", "topics": ["Topic 1", "Topic 2"]}, {"title": "Module 2", "topics": ["Topic 3", "Topic 4"]}]}}
 <<<ACTION_END>>>
 
-Create comprehensive courses with 3-6 modules and 3-5 topics per module.
-For multiple actions, use: {"actions": [{...}, {...}]} format.
-Use "$courseId", "$goalId" to reference IDs from previous actions in the same batch.""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags. NEVER use markdown ```json blocks.
+Create 3-6 modules with 3-5 topics each. For multiple actions: {"actions": [{...}, {...}]}.""",
     # Schedule creation prompt (~350 tokens)
-    "schedule_creation": """When creating schedules, output JSON action blocks:
+    "schedule_creation": """Create schedule blocks using ONLY the action tags below. Do NOT use markdown code blocks.
+
+For multiple schedules, wrap them in an actions array:
 
 <<<ACTION_START>>>
-{
-  "type": "create_schedule",
-  "data": {
-    "title": "Schedule Title",
-    "startAt": "ISO date (e.g., '2026-01-15T10:00:00Z')",
-    "endAt": "ISO date (e.g., '2026-01-15T12:00:00Z')",
-    "description": "Optional description",
-    "recurringRule": "DAILY|WEEKLY|RRULE format (optional)",
-    "courseId": "optional", "topicId": "optional", "goalId": "optional"
-  }
-}
+{"actions": [
+  {"type": "create_schedule", "data": {"title": "Session 1", "startAt": "2026-01-30T18:00:00Z", "endAt": "2026-01-30T20:00:00Z", "courseId": "$courseId"}},
+  {"type": "create_schedule", "data": {"title": "Session 2", "startAt": "2026-01-31T18:00:00Z", "endAt": "2026-01-31T20:00:00Z", "courseId": "$courseId"}}
+]}
 <<<ACTION_END>>>
 
-IMPORTANT:
-- For multi-day schedules, create MULTIPLE schedule blocks (one per day/time)
-- Use reasonable defaults: evening 6-8 PM, morning 9-11 AM
-- Use "$courseId", "$goalId" placeholders if created in same batch
-- Schedules sync with Google Calendar if connected""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags. NEVER use markdown ```json blocks.
+Use $courseId, $goalId placeholders if created in same batch. Default: evenings 6-8 PM.""",
     # Note actions prompt (~300 tokens)
-    "note_actions": """For note actions, use these formats:
+    "note_actions": """Use ONLY the action tags below. NEVER use markdown code blocks.
 
-CREATE NOTE:
-<<<ACTION_START>>>
-{"type": "create_note", "data": {"title": "...", "content": "markdown content", "topicId": "from context", "summary": "optional"}}
-<<<ACTION_END>>>
+CREATE NOTE: <<<ACTION_START>>>{"type": "create_note", "data": {"title": "...", "content": "markdown content", "topicId": "from context"}}<<<ACTION_END>>>
 
-RETAKE/REWRITE NOTE:
-<<<ACTION_START>>>
-{"type": "retake_note", "data": {"noteId": "from context"}}
-<<<ACTION_END>>>
+RETAKE NOTE: <<<ACTION_START>>>{"type": "retake_note", "data": {"noteId": "from context"}}<<<ACTION_END>>>
 
-ADD SUMMARY:
-<<<ACTION_START>>>
-{"type": "add_summary", "data": {"noteId": "from context"}}
-<<<ACTION_END>>>
+ADD SUMMARY: <<<ACTION_START>>>{"type": "add_summary", "data": {"noteId": "from context"}}<<<ACTION_END>>>
 
-ADD TAGS:
-<<<ACTION_START>>>
-{"type": "add_tags", "data": {"noteId": "from context", "tags": ["Tag1", "Tag2"]}}
-<<<ACTION_END>>>
+ADD TAGS: <<<ACTION_START>>>{"type": "add_tags", "data": {"noteId": "from context", "tags": ["Tag1", "Tag2"]}}<<<ACTION_END>>>
 
-Use PascalCase for tags. Get IDs from the provided context.""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags only. Get IDs from context.""",
     # Goal creation prompt (~200 tokens)
-    "goal_creation": """When creating goals, output:
+    "goal_creation": """Create goals using ONLY the action tags below. NEVER use markdown code blocks.
 
 <<<ACTION_START>>>
-{
-  "type": "create_goal",
-  "data": {
-    "title": "Clear, actionable goal",
-    "description": "optional",
-    "targetDate": "ISO date if deadline mentioned",
-    "courseId": "optional", "topicId": "optional"
-  }
-}
+{"type": "create_goal", "data": {"title": "Clear, actionable goal", "description": "optional", "targetDate": "ISO date if deadline", "courseId": "from context"}}
 <<<ACTION_END>>>
 
-Make goals specific and measurable. Use context IDs if viewing a course/topic.""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags only. Make goals specific and measurable.""",
     # Resource recommendation prompt (~250 tokens)
-    "resource_recommendation": """For NEW resource recommendations (not saved resources), output:
+    "resource_recommendation": """Create resource recommendations using ONLY the action tags. NEVER use markdown code blocks.
 
 <<<ACTION_START>>>
-{
-  "type": "recommend_resources",
-  "data": {
-    "query": "What user wants resources for",
-    "topicId": "optional", "courseId": "optional",
-    "limit": 10
-  }
-}
+{"type": "recommend_resources", "data": {"query": "topic from user message or context", "courseId": "from context", "limit": 10}}
 <<<ACTION_END>>>
 
-IMPORTANT: Only use this for NEW recommendations (user says "find", "recommend", "search", "suggest").
-For "show my resources" or "saved resources" - just answer conversationally, no action.
-If ambiguous, ASK: "Are you looking for saved resources or new recommendations?" """,
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags only.
+Extract query from user message or use course/topic context. DO NOT ask for clarification.""",
     # List query prompt (~100 tokens) - handled by code, minimal prompt needed
     "list_query": """Answer the user's question about their data (courses, goals, schedule, notes, resources) conversationally.
 The system will provide the data - just format it nicely for the user.""",
