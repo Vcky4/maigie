@@ -734,10 +734,24 @@ Summary:"""
 User message: "{user_message}"
 
 IMPORTANT: Only classify as a list query if the user CLEARLY wants to SEE/VIEW/LIST their SAVED/EXISTING items.
-Do NOT classify as list query if user wants to:
-- CREATE, ADD, GENERATE, or MODIFY something
-- FIND NEW, RECOMMEND, SUGGEST, or SEARCH for something
-- Get RECOMMENDATIONS or SUGGESTIONS
+
+CRITICAL - NEVER classify as list query if the message contains these ACTION words:
+- "create", "make", "generate", "build", "add", "new", "write", "set up"
+- "schedule", "plan", "block time"
+- "summarize", "explain", "describe"
+- Any request to DO something with content (like an image)
+
+Examples that are NOT list queries (respond "none"):
+- "create a note" -> none (action: create)
+- "create a note explaining this image" -> none (action: create)
+- "make me a schedule" -> none (action: create)
+- "generate a course on farming" -> none (action: create)
+- "add a goal" -> none (action: create)
+
+Examples that ARE list queries:
+- "show my notes" -> notes
+- "what courses do I have?" -> courses
+- "my goals" -> goals
 
 CRITICAL for resources - be STRICT:
 - CLEARLY SAVED: "show my resources", "my saved resources", "what resources do I have", "resources I saved" -> resources

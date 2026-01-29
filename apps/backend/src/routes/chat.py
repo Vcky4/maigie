@@ -532,42 +532,64 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             intent_tokens = 0
             user_text_lower = user_text.lower()  # Define early for use throughout
 
-            try:
-                # Use AI to detect if this is a list query (minimal tokens ~30-50)
-                intent_result = await llm_service.detect_list_query_intent(user_text)
-                detected_intent = intent_result.get("intent", "none")
-                is_list_query = intent_result.get("is_list_query", False)
-                intent_tokens = intent_result.get("total_tokens", 0)
+            # Skip list query detection if:
+            # 1. Message has an image attached (likely action request)
+            # 2. Message contains action keywords (create, make, generate, etc.)
+            action_keywords = [
+                "create",
+                "make",
+                "generate",
+                "add",
+                "new",
+                "build",
+                "set up",
+                "schedule",
+                "write",
+            ]
+            has_action_keyword = any(kw in user_text_lower for kw in action_keywords)
 
-                if is_list_query:
-                    print(f"🧠 AI detected list query intent: {detected_intent}")
+            if file_urls:
+                print("🖼️ Skipping list query detection - image attached")
+            elif has_action_keyword:
+                print("⚡ Skipping list query detection - action keyword detected")
+            else:
+                try:
+                    # Use AI to detect if this is a list query (minimal tokens ~30-50)
+                    intent_result = await llm_service.detect_list_query_intent(user_text)
+                    detected_intent = intent_result.get("intent", "none")
+                    is_list_query = intent_result.get("is_list_query", False)
+                    intent_tokens = intent_result.get("total_tokens", 0)
 
-            except Exception as e:
-                print(f"⚠️ AI intent detection failed, falling back to keywords: {e}")
-                # Fallback to keyword matching if AI fails
-                # Quick keyword check as fallback
-                if any(
-                    kw in user_text_lower for kw in ["my courses", "courses", "what am i learning"]
-                ):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "courses"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["my goals", "goals", "objectives"]):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "goals"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["schedule", "calendar", "upcoming"]):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "schedule"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["my notes", "notes"]):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "notes"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["resources", "saved", "materials"]):
-                    if "create" not in user_text_lower and "recommend" not in user_text_lower:
-                        detected_intent = "resources"
-                        is_list_query = True
+                    if is_list_query:
+                        print(f"🧠 AI detected list query intent: {detected_intent}")
+
+                except Exception as e:
+                    print(f"⚠️ AI intent detection failed, falling back to keywords: {e}")
+                    # Fallback to keyword matching if AI fails
+                    # Quick keyword check as fallback
+                    if any(
+                        kw in user_text_lower
+                        for kw in ["my courses", "courses", "what am i learning"]
+                    ):
+                        if "create" not in user_text_lower and "new" not in user_text_lower:
+                            detected_intent = "courses"
+                            is_list_query = True
+                    elif any(kw in user_text_lower for kw in ["my goals", "goals", "objectives"]):
+                        if "create" not in user_text_lower and "new" not in user_text_lower:
+                            detected_intent = "goals"
+                            is_list_query = True
+                    elif any(kw in user_text_lower for kw in ["schedule", "calendar", "upcoming"]):
+                        if "create" not in user_text_lower and "new" not in user_text_lower:
+                            detected_intent = "schedule"
+                            is_list_query = True
+                    elif any(kw in user_text_lower for kw in ["my notes", "notes"]):
+                        if "create" not in user_text_lower and "new" not in user_text_lower:
+                            detected_intent = "notes"
+                            is_list_query = True
+                    elif any(kw in user_text_lower for kw in ["resources", "saved", "materials"]):
+                        if "create" not in user_text_lower and "recommend" not in user_text_lower:
+                            detected_intent = "resources"
+                            is_list_query = True
 
             # Fetch data based on detected intent
             if is_list_query and detected_intent:
@@ -1032,8 +1054,11 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                     )
 
                     # Use streaming for real-time response
+                    # Buffer to detect and filter action blocks
                     ai_response_text = ""
                     usage_info = None
+                    action_block_started = False
+                    pending_buffer = ""  # Buffer for potential action block detection
 
                     async for chunk, is_final, chunk_usage in llm_service.stream_chat_response(
                         history=formatted_history,
@@ -1042,11 +1067,49 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                         intent=classified_intent,
                     ):
                         if not is_final:
-                            # Send chunk to client
-                            await manager.send_stream_chunk(chunk, user.id, is_final=False)
                             ai_response_text += chunk
+                            pending_buffer += chunk
+
+                            # Check if we're entering an action block
+                            if "<<<ACTION_START>>>" in pending_buffer:
+                                action_block_started = True
+                                # Send everything before the action block
+                                pre_action = pending_buffer.split("<<<ACTION_START>>>")[0]
+                                if pre_action.strip():
+                                    await manager.send_stream_chunk(
+                                        pre_action, user.id, is_final=False
+                                    )
+                                pending_buffer = ""  # Clear buffer, stop sending until action ends
+                            elif action_block_started:
+                                # Inside action block - check if it ended
+                                if "<<<ACTION_END>>>" in pending_buffer:
+                                    action_block_started = False
+                                    # Get any text after the action block
+                                    post_action = pending_buffer.split("<<<ACTION_END>>>")[-1]
+                                    pending_buffer = post_action
+                                # Don't send anything while inside action block
+                            else:
+                                # Normal streaming - send chunks
+                                # But buffer a bit in case action block starts mid-chunk
+                                if len(pending_buffer) > 20 and "<<<" not in pending_buffer:
+                                    # Safe to send - no action block starting
+                                    await manager.send_stream_chunk(
+                                        pending_buffer, user.id, is_final=False
+                                    )
+                                    pending_buffer = ""
                         else:
-                            # Final chunk - capture usage info
+                            # Final chunk - send any remaining buffer (if not in action block)
+                            if pending_buffer.strip() and not action_block_started:
+                                # Clean any partial action markers
+                                clean_buffer = pending_buffer
+                                if "<<<ACTION" in clean_buffer:
+                                    clean_buffer = clean_buffer.split("<<<ACTION")[0]
+                                if clean_buffer.strip():
+                                    await manager.send_stream_chunk(
+                                        clean_buffer, user.id, is_final=False
+                                    )
+
+                            # Capture usage info
                             usage_info = chunk_usage or {
                                 "input_tokens": len(user_text) // 4,
                                 "output_tokens": len(ai_response_text) // 4,
