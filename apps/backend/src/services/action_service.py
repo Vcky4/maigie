@@ -38,11 +38,11 @@ class ActionService:
 
     async def create_course(self, data: dict, user_id: str):
         """
-        Creates a course with modules and topics in the DB.
+        Creates a course with modules and topics in the DB using batch inserts.
         Expected data: { "title": "...", "modules": [ { "title": "...", "topics": [...] } ] }
         """
         try:
-            # 1. Create the Course
+            # 1. Create the Course (single insert)
             course = await db.course.create(
                 data={
                     "userId": user_id,
@@ -53,29 +53,45 @@ class ActionService:
                 }
             )
 
-            # 2. Create Modules and Topics (Nested loop)
             modules_data = data.get("modules", [])
-            for i, mod_data in enumerate(modules_data):
-                module = await db.module.create(
-                    data={
+            if modules_data:
+                # 2. Prepare all modules for batch insert
+                modules_to_create = [
+                    {
                         "courseId": course.id,
                         "title": mod_data.get("title", f"Module {i+1}"),
                         "order": float(i),
                     }
+                    for i, mod_data in enumerate(modules_data)
+                ]
+
+                # Batch create modules
+                await db.module.create_many(data=modules_to_create)
+
+                # 3. Fetch created modules to get IDs (ordered by creation order)
+                modules = await db.module.find_many(
+                    where={"courseId": course.id},
+                    order={"order": "asc"},
                 )
 
-                # Create Topics for this Module
-                topics_data = mod_data.get("topics", [])
-                for j, top_data in enumerate(topics_data):
-                    await db.topic.create(
-                        data={
-                            "moduleId": module.id,
-                            "title": (
-                                top_data if isinstance(top_data, str) else top_data.get("title")
-                            ),
-                            "order": float(j),
-                        }
-                    )
+                # 4. Prepare all topics for batch insert
+                topics_to_create = []
+                for module, mod_data in zip(modules, modules_data):
+                    topics_data = mod_data.get("topics", [])
+                    for j, top_data in enumerate(topics_data):
+                        topics_to_create.append(
+                            {
+                                "moduleId": module.id,
+                                "title": (
+                                    top_data if isinstance(top_data, str) else top_data.get("title")
+                                ),
+                                "order": float(j),
+                            }
+                        )
+
+                # Batch create topics
+                if topics_to_create:
+                    await db.topic.create_many(data=topics_to_create)
 
             return {
                 "status": "success",
