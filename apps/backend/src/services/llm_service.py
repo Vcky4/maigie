@@ -665,7 +665,7 @@ Do NOT classify as list query if user wants to:
 CRITICAL for resources - be STRICT:
 - CLEARLY SAVED: "show my resources", "my saved resources", "what resources do I have", "resources I saved" -> resources
 - CLEARLY NEW: "find resources", "recommend resources", "suggest resources", "search for resources" -> none
-- AMBIGUOUS (could be saved OR new): 
+- AMBIGUOUS (could be saved OR new):
   * "get me resources on X" -> none (ambiguous!)
   * "resources for Y" -> none (ambiguous!)
   * "show resources about Z" -> none (ambiguous!)
