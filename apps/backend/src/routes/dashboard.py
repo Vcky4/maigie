@@ -8,10 +8,11 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+
 from prisma import Client as PrismaClient
 
 from ..dependencies import CurrentUser
@@ -41,7 +42,7 @@ async def get_dashboard(
     """
     try:
         user_id = current_user.id
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # ========================================================================
         # Calculate Stats

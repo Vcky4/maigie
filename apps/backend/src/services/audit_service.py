@@ -13,7 +13,7 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Optional
 
 from prisma import Prisma
@@ -27,9 +27,9 @@ async def log_admin_action(
     admin_user_id: str,
     action: str,
     resource_type: str,
-    resource_id: Optional[str] = None,
-    details: Optional[dict] = None,
-    db_client: Optional[Prisma] = None,
+    resource_id: str | None = None,
+    details: dict | None = None,
+    db_client: Prisma | None = None,
 ) -> None:
     """
     Log an admin action for audit purposes.
@@ -47,7 +47,7 @@ async def log_admin_action(
 
     try:
         # Store in database for production audit trail
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
         await db_client.auditlog.create(
             data={
                 "adminUserId": admin_user_id,
@@ -87,8 +87,8 @@ async def log_admin_action(
 async def log_user_activity(
     user_id: str,
     activity_type: str,
-    details: Optional[dict] = None,
-    db_client: Optional[Prisma] = None,
+    details: dict | None = None,
+    db_client: Prisma | None = None,
 ) -> None:
     """
     Log user activity for monitoring purposes.
@@ -106,7 +106,7 @@ async def log_user_activity(
     if details:
         log_message += f", details={details}"
 
-    timestamp = datetime.now(timezone.utc)
+    timestamp = datetime.now(UTC)
     logger.info(
         log_message,
         extra={

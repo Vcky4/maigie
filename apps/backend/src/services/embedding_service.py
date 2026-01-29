@@ -33,6 +33,7 @@ def _get_client() -> genai.Client:
 
 
 # Use text-embedding-004 model for embeddings
+# Note: The embed_content function adds the "models/" prefix automatically
 EMBEDDING_MODEL = "text-embedding-004"
 
 

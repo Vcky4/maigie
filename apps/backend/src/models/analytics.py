@@ -8,10 +8,9 @@ See LICENSE file in the repository root for details.
 """
 
 from datetime import datetime
-from typing import Optional, Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
-
 
 # ============================================================================
 # User Analytics Models
@@ -88,7 +87,7 @@ class UserAnalyticsItem(BaseModel):
 
     userId: str
     email: str
-    name: Optional[str]
+    name: str | None
     tier: str
     totalCourses: int
     activeCourses: int
@@ -106,7 +105,7 @@ class CourseAnalyticsItem(BaseModel):
     title: str
     userId: str
     userEmail: str
-    userName: Optional[str]
+    userName: str | None
     progress: float
     totalTopics: int
     completedTopics: int
@@ -171,7 +170,7 @@ class StudyStreak(BaseModel):
 
     currentStreak: int
     longestStreak: int
-    lastStudyDate: Optional[str]
+    lastStudyDate: str | None
 
 
 class ProductiveTimeSlot(BaseModel):
@@ -298,7 +297,7 @@ class AIFeatureUsage(BaseModel):
 
     featureName: str
     usageCount: int
-    lastUsed: Optional[str]
+    lastUsed: str | None
 
 
 class AIGeneratedContentStats(BaseModel):
@@ -369,15 +368,15 @@ class AchievementBadge(BaseModel):
     type: str
     title: str
     description: str
-    icon: Optional[str]
+    icon: str | None
     unlockedAt: str
-    metadata: Optional[dict]
+    metadata: dict | None
 
 
 class GoalComparison(BaseModel):
     """Comparison to goals."""
 
-    goalId: Optional[str]
+    goalId: str | None
     goalTitle: str
     targetValue: float
     currentValue: float
@@ -388,8 +387,8 @@ class GoalComparison(BaseModel):
 class InsightsAndReports(BaseModel):
     """Comprehensive insights and reports."""
 
-    weeklyReport: Optional[WeeklyReport]
-    monthlyReport: Optional[MonthlyReport]
+    weeklyReport: WeeklyReport | None
+    monthlyReport: MonthlyReport | None
     recommendations: list[Recommendation]
     achievements: list[AchievementBadge]
     goalComparisons: list[GoalComparison]
@@ -436,7 +435,7 @@ class AIMetrics(BaseModel):
     averageTokensPerRequest: float
     voiceInteractions: int
     voiceInteractionDuration: float  # Minutes
-    intentDetectionAccuracy: Optional[float]  # If tracked
+    intentDetectionAccuracy: float | None  # If tracked
     averageResponseTime: float  # Seconds
 
 
@@ -454,7 +453,7 @@ class SubscriptionFunnelMetrics(BaseModel):
     """Subscription funnel metrics."""
 
     freeToPremiumConversionRate: float
-    trialConversionRate: Optional[float]
+    trialConversionRate: float | None
     upgradePromptEffectiveness: float
     cancellationReasons: dict[str, int]
     averageLifetimeValue: float  # In dollars
@@ -509,9 +508,9 @@ class DashboardGoalItem(BaseModel):
 
     goalId: str
     title: str
-    description: Optional[str]
+    description: str | None
     progress: float
-    targetDate: Optional[str]
+    targetDate: str | None
     status: str
     createdAt: str
 
@@ -521,12 +520,12 @@ class DashboardScheduleItem(BaseModel):
 
     scheduleId: str
     title: str
-    description: Optional[str]
+    description: str | None
     startAt: str
     endAt: str
-    courseId: Optional[str]
-    topicId: Optional[str]
-    goalId: Optional[str]
+    courseId: str | None
+    topicId: str | None
+    goalId: str | None
 
 
 class DashboardResponse(BaseModel):
@@ -536,4 +535,4 @@ class DashboardResponse(BaseModel):
     recentCourses: list[DashboardCourseItem]  # Latest 5 courses
     activeGoals: list[DashboardGoalItem]  # Active goals (limit 5)
     upcomingSchedules: list[DashboardScheduleItem]  # Next 7 days
-    dailyGoalProgress: Optional[float]  # Progress towards daily study goal (0-100)
+    dailyGoalProgress: float | None  # Progress towards daily study goal (0-100)

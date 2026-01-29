@@ -26,7 +26,7 @@ def _get_client() -> genai.Client:
 class VoiceService:
     def __init__(self):
         self._client = None  # Lazy initialization
-        self.model_name = "gemini-2.0-flash-exp"
+        self.model_name = "gemini-3-flash-preview"
 
     @property
     def client(self):
