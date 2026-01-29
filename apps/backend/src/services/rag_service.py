@@ -13,21 +13,21 @@ import os
 import re
 from typing import Any
 
-import google.generativeai as genai  # <--- FIXED IMPORT
 from fastapi import HTTPException
-from google.generativeai.types import HarmBlockThreshold, HarmCategory
+from google import genai
+from google.genai import types
 
 from src.core.database import db
 from src.services.embedding_service import embedding_service
 from src.services.web_search_service import web_search_service
 
-# Configure API globally to match llm_service
+# Configure the google-genai client
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    # Optional: Log warning, though llm_service usually handles the config
     print("⚠️ GEMINI_API_KEY not found in environment variables.")
-else:
-    genai.configure(api_key=api_key)
+
+# Create client for google-genai SDK
+genai_client = genai.Client(api_key=api_key) if api_key else None
 
 
 class RAGService:
@@ -35,11 +35,7 @@ class RAGService:
 
     def __init__(self):
         """Initialize the RAG service."""
-        # Safety settings
-        self.safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        }
+        pass  # No initialization needed - using google-genai client
 
     async def retrieve_relevant_context(
         self,
@@ -188,7 +184,7 @@ class RAGService:
                 "\n".join(context_parts) if context_parts else "No specific context available."
             )
 
-            # 3. Use Gemini with Google Search Grounding
+            # 3. Use Gemini with Google Search Grounding (google-genai SDK)
             recommendation_prompt = f"""You are an AI assistant helping a student find educational resources.
 
 User Query: {query}
@@ -217,19 +213,21 @@ Format your response as a JSON array with this structure:
 
 Return exactly {limit} high-quality recommendations with real URLs from your web search."""
 
-            # <--- FIXED: Use standard SDK syntax for Tools --->
-            tools = [{"google_search": {}}]  # Enables Google Search Grounding
+            if not genai_client:
+                raise HTTPException(status_code=500, detail="Gemini API key not configured")
 
-            # Use a model that supports tools (gemini-1.5-flash or gemini-1.5-pro)
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                tools=tools,
-                system_instruction="You are a helpful educational assistant.",
+            # Use google-genai SDK with Google Search grounding
+            grounding_tool = types.Tool(google_search=types.GoogleSearch())
+            config = types.GenerateContentConfig(
+                tools=[grounding_tool],
+                system_instruction="You are a helpful educational assistant that recommends learning resources.",
             )
 
-            # Call async generation directly
-            response = await model.generate_content_async(
-                recommendation_prompt, safety_settings=self.safety_settings
+            # Call generation with Google Search grounding
+            response = await genai_client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=recommendation_prompt,
+                config=config,
             )
 
             response_text = response.text
