@@ -503,7 +503,7 @@ class GeminiService:
             else:
                 enhanced_message = user_message
 
-            # Format history for new SDK (list of Content objects)
+            # Format history for new SDK (list of Content objects with roles)
             contents = []
 
             # Add history if provided
@@ -514,10 +514,15 @@ class GeminiService:
                         "content",
                         msg.get("parts", [""])[0] if isinstance(msg.get("parts"), list) else "",
                     )
-                    contents.append({"role": role, "parts": [content_text]})
+                    # Create Content object with role and Part
+                    contents.append(
+                        genai_types.Content(role=role, parts=[genai_types.Part(text=content_text)])
+                    )
 
             # Add current user message
-            contents.append({"role": "user", "parts": [enhanced_message]})
+            contents.append(
+                genai_types.Content(role="user", parts=[genai_types.Part(text=enhanced_message)])
+            )
 
             # Generate response using new SDK
             config = genai_types.GenerateContentConfig(
@@ -977,15 +982,13 @@ Tags (JSON array):"""
                 mime_type = response.headers.get("content-type", "image/jpeg")
 
             # 2. Prepare the content for Gemini using new SDK
-            # Create image part using new SDK types
+            # Create image part
             image_part = genai_types.Part(
                 inline_data=genai_types.Blob(data=image_data, mime_type=mime_type)
             )
 
-            contents = [
-                prompt,
-                image_part,
-            ]
+            # Contents can be a list mixing strings and Part objects
+            contents = [prompt, image_part]
 
             config = genai_types.GenerateContentConfig(
                 safety_settings=self.safety_settings,
