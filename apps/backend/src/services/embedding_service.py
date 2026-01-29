@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from google import genai
+from google.genai import types
 
 from src.core.database import db
 
@@ -59,11 +60,14 @@ class EmbeddingService:
             client = _get_client()
             result = client.models.embed_content(
                 model=EMBEDDING_MODEL,
-                content=text,
-                task_type="retrieval_document",  # Use retrieval_document for documents
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_DOCUMENT",  # Use RETRIEVAL_DOCUMENT for documents
+                ),
             )
 
-            embedding = result.embedding if hasattr(result, "embedding") else result["embedding"]
+            # Access the first embedding from the embeddings list
+            embedding = result.embeddings[0].values if result.embeddings else []
             return embedding
 
         except Exception as e:
@@ -84,11 +88,14 @@ class EmbeddingService:
             client = _get_client()
             result = client.models.embed_content(
                 model=EMBEDDING_MODEL,
-                content=text,
-                task_type="retrieval_query",  # Use retrieval_query for queries
+                contents=text,
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_QUERY",  # Use RETRIEVAL_QUERY for queries
+                ),
             )
 
-            embedding = result.embedding if hasattr(result, "embedding") else result["embedding"]
+            # Access the first embedding from the embeddings list
+            embedding = result.embeddings[0].values if result.embeddings else []
             return embedding
 
         except Exception as e:
