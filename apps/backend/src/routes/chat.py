@@ -535,7 +535,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Skip list query detection if:
             # 1. Message has an image attached (likely action request)
             # 2. Message contains action keywords (create, make, generate, etc.)
-            # Note: "schedule" alone is ambiguous (noun vs verb), so we use specific phrases
             action_keywords = [
                 "create",
                 "make",
@@ -544,9 +543,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 "new",
                 "build",
                 "set up",
-                "schedule a",  # "schedule a meeting" (verb)
-                "schedule time",  # "schedule time for" (verb)
-                "block time",  # "block time for" (verb)
+                "schedule",
                 "write",
                 "recommend",
                 "suggest",
@@ -807,7 +804,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     insight_context = ""
 
                     if component_type == "CourseListMessage":
-                        items = list_component_response.get("data", {}).get("courses", [])
+                        items = list_component_response.get("courseListData", {}).get("courses", [])
                         items_count = len(items)
                         if items:
                             # Get some context about courses
@@ -816,14 +813,16 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             insight_context = f"User has {items_count} courses: {completed} completed, {in_progress} in progress, {items_count - completed - in_progress} not started."
 
                     elif component_type == "GoalListMessage":
-                        items = list_component_response.get("data", {}).get("goals", [])
+                        items = list_component_response.get("goalListData", {}).get("goals", [])
                         items_count = len(items)
                         if items:
                             with_deadlines = sum(1 for g in items if g.get("targetDate"))
                             insight_context = f"User has {items_count} active goals, {with_deadlines} with deadlines set."
 
                     elif component_type == "ScheduleViewMessage":
-                        items = list_component_response.get("data", {}).get("schedules", [])
+                        items = list_component_response.get("scheduleViewData", {}).get(
+                            "schedules", []
+                        )
                         items_count = len(items)
                         if items:
                             # Check for today's items
@@ -840,7 +839,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             insight_context = f"User has {items_count} scheduled items, {today_items} scheduled for today."
 
                     elif component_type == "NoteListMessage":
-                        items = list_component_response.get("data", {}).get("notes", [])
+                        items = list_component_response.get("noteListData", {}).get("notes", [])
                         items_count = len(items)
                         if items:
                             with_summary = sum(1 for n in items if n.get("summary"))
@@ -849,7 +848,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             )
 
                     elif component_type == "ResourceListMessage":
-                        items = list_component_response.get("data", {}).get("resources", [])
+                        items = list_component_response.get("resourceListData", {}).get(
+                            "resources", []
+                        )
                         items_count = len(items)
                         if items:
                             # Count by type
