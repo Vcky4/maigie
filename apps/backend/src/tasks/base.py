@@ -60,8 +60,9 @@ class BaseTask(Task):
             extra={
                 "task_id": task_id,
                 "task_name": self.name,
-                "args": args,
-                "kwargs": kwargs,
+                # Avoid LogRecord collisions: "args" is reserved by logging.
+                "task_args": args,
+                "task_kwargs": kwargs,
                 "exception": str(exc),
                 "exception_type": type(exc).__name__,
             },

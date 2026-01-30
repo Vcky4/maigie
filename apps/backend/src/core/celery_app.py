@@ -71,6 +71,11 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         # Worker settings
         worker_max_tasks_per_child=1000,  # Restart worker after N tasks
         worker_disable_rate_limits=False,
+        # Prisma spawns an engine subprocess; Celery's stdout redirection replaces
+        # sys.stdout/sys.stderr with a LoggingProxy (no .fileno), which breaks
+        # subprocess.Popen in prisma-engine spawn.
+        worker_redirect_stdouts=False,
+        worker_hijack_root_logger=False,
     )
 
     # Configure logging
