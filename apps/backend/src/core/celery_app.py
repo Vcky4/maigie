@@ -92,9 +92,12 @@ celery_app = create_celery_app()
 # task modules here to make them discoverable without requiring autodiscovery.
 try:
     from ..tasks import course_generation  # noqa: F401
-except Exception:
-    # Avoid crashing the app if optional modules are unavailable at import time.
-    pass
+    from ..tasks import resource_recommendations  # noqa: F401
+    from ..tasks import schedule_generation  # noqa: F401
+except Exception as e:
+    # Avoid crashing the app if optional modules are unavailable at import time,
+    # but do log so worker/task registration issues are visible.
+    logger.exception("Failed to import Celery task modules: %s", e)
 
 
 def get_celery_app() -> Celery:

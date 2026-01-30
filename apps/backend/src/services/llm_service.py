@@ -8,18 +8,29 @@ import warnings
 
 import httpx  # <--- Added for image download
 
+genai = None
 # Suppress the Google Gemini deprecation warning temporarily
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    import google.generativeai as genai
+    try:
+        import google.generativeai as _genai
+
+        genai = _genai
+    except Exception:
+        # Keep module importable even if the dependency isn't installed.
+        # We'll raise a clearer error when the service is actually used.
+        genai = None
 
 from datetime import UTC
 
 from fastapi import HTTPException
-from google.generativeai.types import HarmBlockThreshold, HarmCategory
 
-# Configure API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+try:
+    # Only available when google-generativeai is installed
+    from google.generativeai.types import HarmBlockThreshold, HarmCategory
+except Exception:  # pragma: no cover - depends on optional dependency
+    HarmBlockThreshold = None  # type: ignore[assignment]
+    HarmCategory = None  # type: ignore[assignment]
 
 # System instruction to define Maigie's persona
 SYSTEM_INSTRUCTION = """
@@ -399,11 +410,23 @@ RULES:
 
 class GeminiService:
     def __init__(self):
+        if genai is None:
+            raise RuntimeError(
+                "google-generativeai is not installed. Install it to enable Gemini features."
+            )
+
+        # Configure API lazily (prevents import-time failures in worker contexts)
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
         self.model = genai.GenerativeModel(
             model_name="models/gemini-3-flash-preview", system_instruction=SYSTEM_INSTRUCTION
         )
 
         # Safety settings (block hate speech, etc.)
+        if HarmCategory is None or HarmBlockThreshold is None:
+            raise RuntimeError(
+                "google-generativeai types are unavailable; cannot configure safety settings."
+            )
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -1037,5 +1060,19 @@ Tags (JSON array):"""
             return "I'm sorry, I encountered an error analyzing that image."
 
 
-# Global instance
-llm_service = GeminiService()
+class _LazyGeminiService:
+    """Lazy proxy to avoid import-time side effects/crashes."""
+
+    _instance: "GeminiService | None" = None
+
+    def _get(self) -> "GeminiService":
+        if self._instance is None:
+            self._instance = GeminiService()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        return getattr(self._get(), name)
+
+
+# Backwards-compatible global proxy
+llm_service = _LazyGeminiService()

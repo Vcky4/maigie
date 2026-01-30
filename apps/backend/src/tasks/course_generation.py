@@ -12,9 +12,6 @@ import asyncio
 import logging
 from typing import Any
 
-from src.core.database import db
-from src.services.llm_service import llm_service
-from src.services.ws_event_bus import publish_ws_event
 from src.tasks.base import task
 from src.tasks.registry import register_task
 
@@ -24,11 +21,15 @@ TASK_NAME = "course.generate_from_chat"
 
 
 async def _ensure_db_connected() -> None:
+    from src.core.database import db
+
     if not db.is_connected():
         await db.connect()
 
 
 async def _delete_existing_course_content(course_id: str) -> None:
+    from src.core.database import db
+
     # Delete topics first, then modules (to satisfy FK constraints).
     modules = await db.module.find_many(where={"courseId": course_id})
     module_ids = [m.id for m in modules]
@@ -38,6 +39,8 @@ async def _delete_existing_course_content(course_id: str) -> None:
 
 
 async def _persist_course_outline(course_id: str, outline: dict[str, Any]) -> None:
+    from src.core.database import db
+
     modules = outline.get("modules") or []
 
     for i, mod in enumerate(modules):
@@ -96,6 +99,9 @@ def generate_course_from_chat_task(  # type: ignore[misc]
     """
 
     async def _run() -> dict[str, Any]:
+        from src.services.llm_service import llm_service
+        from src.services.ws_event_bus import publish_ws_event
+
         await _ensure_db_connected()
 
         # Started

@@ -1253,13 +1253,64 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                             created_ids=created_ids,
                         )
 
-                        # 3. Execute Action
+                        # 3. Execute Action (or enqueue for background execution)
                         print(f"🚀 Executing {action_type} with action_data: {action_data}")
-                        action_result = await action_service.execute_action(
-                            action_type=action_type,
-                            action_data=action_data,
-                            user_id=user.id,
-                        )
+
+                        # Offload expensive actions to Celery so chat stays fast
+                        if action_type == "recommend_resources":
+                            try:
+                                celery_app.send_task(
+                                    "resources.recommend_from_chat",
+                                    kwargs={
+                                        "user_id": user.id,
+                                        "query": action_data.get("query", ""),
+                                        "topic_id": action_data.get("topicId"),
+                                        "course_id": action_data.get("courseId"),
+                                        "limit": int(action_data.get("limit", 10)),
+                                    },
+                                    ignore_result=True,
+                                )
+                                action_result = {
+                                    "status": "queued",
+                                    "action": "recommend_resources",
+                                    "message": "Finding resources... I’ll share them when they’re ready.",
+                                }
+                            except Exception as e:
+                                action_result = {
+                                    "status": "error",
+                                    "action": "recommend_resources",
+                                    "message": f"Failed to enqueue resource recommendation: {e}",
+                                }
+
+                        elif action_type == "create_schedule":
+                            try:
+                                celery_app.send_task(
+                                    "schedule.create_from_chat",
+                                    kwargs={
+                                        "user_id": user.id,
+                                        "schedule_blocks": [action_data],
+                                    },
+                                    ignore_result=True,
+                                )
+                                action_result = {
+                                    "status": "queued",
+                                    "action": "create_schedule",
+                                    "message": "Scheduling that now... I’ll confirm once it’s saved.",
+                                }
+                            except Exception as e:
+                                action_result = {
+                                    "status": "error",
+                                    "action": "create_schedule",
+                                    "message": f"Failed to enqueue schedule creation: {e}",
+                                }
+
+                        else:
+                            action_result = await action_service.execute_action(
+                                action_type=action_type,
+                                action_data=action_data,
+                                user_id=user.id,
+                            )
+
                         print(f"📤 Action result: {action_result}")
 
                         # Store result with original action_data for component formatting

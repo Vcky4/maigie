@@ -21,7 +21,6 @@ import json
 import logging
 from typing import Any
 
-from src.services.socket_manager import manager as chat_ws_manager
 from src.utils.dependencies import initialize_redis_client
 
 logger = logging.getLogger(__name__)
@@ -46,6 +45,10 @@ async def ws_event_forwarder(stop_event: asyncio.Event) -> None:
 
     This runs inside the API process.
     """
+    # Import lazily to avoid pulling WebSocket/server-only dependencies into
+    # Celery workers (which only need `publish_ws_event`).
+    from src.services.socket_manager import manager as chat_ws_manager
+
     redis_client = await initialize_redis_client()
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(WS_EVENT_CHANNEL)
