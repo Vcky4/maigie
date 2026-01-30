@@ -98,7 +98,7 @@ def generate_course_from_chat_task(  # type: ignore[misc]
     async def _run() -> dict[str, Any]:
         await _ensure_db_connected()
 
-        # Started (optional; frontend currently reacts mainly to success)
+        # Started
         await publish_ws_event(
             user_id,
             {
@@ -106,6 +106,8 @@ def generate_course_from_chat_task(  # type: ignore[misc]
                 "action": "ai_course_generation",
                 "course_id": course_id,
                 "courseId": course_id,
+                "progress": 10,
+                "stage": "generating_outline",
                 "message": "Generating your course outline...",
             },
         )
@@ -116,8 +118,87 @@ def generate_course_from_chat_task(  # type: ignore[misc]
             user_message=user_message,
         )
 
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 35,
+                "stage": "outline_ready",
+                "message": "Outline ready. Preparing your course...",
+            },
+        )
+
         await _delete_existing_course_content(course_id)
-        await _persist_course_outline(course_id, outline)
+
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 45,
+                "stage": "writing_modules",
+                "message": "Creating modules and topics...",
+            },
+        )
+
+        # Persist and emit coarse-grained progress (1 event per module).
+        modules = outline.get("modules") or []
+        total = max(1, len(modules)) if modules else 1
+
+        if modules:
+            for idx, mod in enumerate(modules):
+                # Create module
+                module_title = (mod.get("title") or f"Module {idx+1}").strip()
+                topics = mod.get("topics") or []
+
+                module = await db.module.create(
+                    data={
+                        "courseId": course_id,
+                        "title": module_title,
+                        "order": float(idx),
+                        "description": mod.get("description") or None,
+                    }
+                )
+
+                # Create topics
+                for j, topic_item in enumerate(topics):
+                    if isinstance(topic_item, str):
+                        topic_title = topic_item.strip()
+                    else:
+                        topic_title = str(topic_item.get("title") or f"Topic {j+1}").strip()
+
+                    if not topic_title:
+                        continue
+
+                    await db.topic.create(
+                        data={
+                            "moduleId": module.id,
+                            "title": topic_title,
+                            "order": float(j),
+                        }
+                    )
+
+                # Emit progress after each module
+                await publish_ws_event(
+                    user_id,
+                    {
+                        "status": "processing",
+                        "action": "ai_course_generation",
+                        "course_id": course_id,
+                        "courseId": course_id,
+                        "progress": 45 + int(((idx + 1) / total) * 40),
+                        "stage": "writing_modules",
+                        "message": f"Created module {idx + 1} of {total}...",
+                    },
+                )
+        else:
+            # Fallback if model returned no modules
+            await _persist_course_outline(course_id, outline)
 
         # Update course description if provided
         description = outline.get("description") or f"A course about {topic}."
@@ -127,6 +208,19 @@ def generate_course_from_chat_task(  # type: ignore[misc]
                 "description": description,
                 "isAIGenerated": True,
                 "progress": 0.0,
+            },
+        )
+
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 95,
+                "stage": "finalizing",
+                "message": "Finalizing...",
             },
         )
 

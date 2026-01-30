@@ -512,6 +512,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             "action": "ai_course_generation",
                             "course_id": placeholder_course.id,
                             "courseId": placeholder_course.id,
+                            "progress": 0,
+                            "stage": "queued",
                             "message": "Course generation queued",
                         },
                     },

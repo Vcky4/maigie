@@ -728,7 +728,11 @@ JSON:"""
                     },
                     {
                         "title": "Module 2: Practice",
-                        "topics": ["Core techniques", "Exercises and drills", "Review and next steps"],
+                        "topics": [
+                            "Core techniques",
+                            "Exercises and drills",
+                            "Review and next steps",
+                        ],
                     },
                 ],
             }
