@@ -144,7 +144,7 @@ Example:
 {"type": "recommend_resources", "data": {"query": "topic from user message or context", "courseId": "actual_id_from_context", "limit": 10}}
 <<<ACTION_END>>>
 
-IMPORTANT: 
+IMPORTANT:
 - Extract query from user message or use course/topic from context
 - If courseId is provided, it MUST be an actual ID (starts with 'c'), NOT a course title
 - If no valid courseId is available in context, OMIT the courseId field entirely
