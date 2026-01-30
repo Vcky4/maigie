@@ -7,11 +7,10 @@ and reports progress/results back to the UI via Redis pubsub -> API websocket fo
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
-from src.tasks.base import task
+from src.tasks.base import run_async_in_celery, task
 from src.tasks.registry import register_task
 
 logger = logging.getLogger(__name__)
@@ -101,14 +100,14 @@ def create_schedule_from_chat_task(  # type: ignore[misc]
         return {"status": "success", "results": results}
 
     try:
-        return asyncio.run(_run())
+        return run_async_in_celery(_run())
     except Exception as e:
         logger.error(f"Schedule creation task failed: {e}", exc_info=True)
         try:
             from src.services.ws_event_bus import publish_ws_event
 
-            asyncio.run(
-                publish_ws_event(
+            async def _notify_error() -> None:
+                await publish_ws_event(
                     user_id,
                     {
                         "status": "error",
@@ -116,7 +115,8 @@ def create_schedule_from_chat_task(  # type: ignore[misc]
                         "message": "Schedule creation failed. Please try again.",
                     },
                 )
-            )
+
+            run_async_in_celery(_notify_error())
         except Exception:
             pass
         raise

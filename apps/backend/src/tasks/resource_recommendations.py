@@ -7,11 +7,10 @@ via Redis pubsub -> API websocket forwarder.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
-from src.tasks.base import task
+from src.tasks.base import run_async_in_celery, task
 from src.tasks.registry import register_task
 
 logger = logging.getLogger(__name__)
@@ -89,14 +88,14 @@ def recommend_resources_from_chat_task(  # type: ignore[misc]
         return result
 
     try:
-        return asyncio.run(_run())
+        return run_async_in_celery(_run())
     except Exception as e:
         logger.error(f"Resource recommendation task failed: {e}", exc_info=True)
         try:
             from src.services.ws_event_bus import publish_ws_event
 
-            asyncio.run(
-                publish_ws_event(
+            async def _notify_error() -> None:
+                await publish_ws_event(
                     user_id,
                     {
                         "status": "error",
@@ -104,7 +103,8 @@ def recommend_resources_from_chat_task(  # type: ignore[misc]
                         "message": "Resource recommendation failed. Please try again.",
                     },
                 )
-            )
+
+            run_async_in_celery(_notify_error())
         except Exception:
             pass
         raise

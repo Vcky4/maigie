@@ -15,8 +15,9 @@ Usage:
     ```
 """
 
+import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any, TypeVar
 
@@ -207,3 +208,60 @@ def retry_task(
         countdown = task_instance.default_retry_delay
 
     raise Retry(exc=exc, countdown=countdown)
+
+
+def run_async_in_celery(coro: Awaitable[T]) -> T:
+    """Run an async coroutine in a Celery worker process.
+
+    This helper function properly handles event loop creation in Celery's
+    prefork pool, where the parent process's event loop is closed after forking.
+    It creates a fresh event loop for each task execution.
+
+    Args:
+        coro: The async coroutine to run
+
+    Returns:
+        The result of the coroutine
+
+    Example:
+        ```python
+        @task(name="my_task")
+        def my_task(user_id: str):
+            async def _run():
+                # Async operations here
+                return {"status": "success"}
+
+            return run_async_in_celery(_run())
+        ```
+    """
+    # In Celery's prefork pool, the parent process's event loop is closed
+    # when the process forks. We need to create a fresh event loop.
+    try:
+        # Try to get the current event loop
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            # If the loop is closed, create a new one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        # No event loop exists, create a new one
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        # Clean up: close the loop and remove it
+        try:
+            # Cancel any remaining tasks
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            # Run until all tasks are cancelled
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except Exception:
+            pass
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)

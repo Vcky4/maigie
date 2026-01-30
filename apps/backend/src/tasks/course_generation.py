@@ -8,11 +8,10 @@ WebSocket clients.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
-from src.tasks.base import task
+from src.tasks.base import run_async_in_celery, task
 from src.tasks.registry import register_task
 
 logger = logging.getLogger(__name__)
@@ -94,7 +93,7 @@ def generate_course_from_chat_task(  # type: ignore[misc]
     Generate a course outline in the background and store it in the DB.
 
     Notes:
-    - This is a synchronous Celery task wrapper that runs async logic using asyncio.run().
+    - This is a synchronous Celery task wrapper that runs async logic using run_async_in_celery().
     - Emits websocket events via Redis pubsub so the API server can forward updates.
     """
 
@@ -256,7 +255,7 @@ def generate_course_from_chat_task(  # type: ignore[misc]
         return {"status": "success", "course_id": course_id}
 
     try:
-        return asyncio.run(_run())
+        return run_async_in_celery(_run())
     except Exception as e:
         logger.error(f"Course generation task failed: {e}", exc_info=True)
 
@@ -264,8 +263,8 @@ def generate_course_from_chat_task(  # type: ignore[misc]
         try:
             from src.services.ws_event_bus import publish_ws_event
 
-            asyncio.run(
-                publish_ws_event(
+            async def _notify_error() -> None:
+                await publish_ws_event(
                     user_id,
                     {
                         "status": "error",
@@ -275,7 +274,8 @@ def generate_course_from_chat_task(  # type: ignore[misc]
                         "message": "Course generation failed. Please try again.",
                     },
                 )
-            )
+
+            run_async_in_celery(_notify_error())
         except Exception:
             pass
 
