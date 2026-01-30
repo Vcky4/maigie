@@ -3,10 +3,14 @@ LLM Service using Google Gemini.
 Handles chat logic and tool execution.
 """
 
+from __future__ import annotations
+
 import os
 import warnings
+from datetime import UTC
 
 import httpx  # <--- Added for image download
+from fastapi import HTTPException
 
 genai = None
 # Suppress the Google Gemini deprecation warning temporarily
@@ -20,10 +24,6 @@ with warnings.catch_warnings():
         # Keep module importable even if the dependency isn't installed.
         # We'll raise a clearer error when the service is actually used.
         genai = None
-
-from datetime import UTC
-
-from fastapi import HTTPException
 
 try:
     # Only available when google-generativeai is installed

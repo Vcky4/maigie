@@ -99,6 +99,7 @@ def generate_course_from_chat_task(  # type: ignore[misc]
     """
 
     async def _run() -> dict[str, Any]:
+        from src.core.database import db
         from src.services.llm_service import llm_service
         from src.services.ws_event_bus import publish_ws_event
 
@@ -250,6 +251,8 @@ def generate_course_from_chat_task(  # type: ignore[misc]
 
         # Best-effort notify user
         try:
+            from src.services.ws_event_bus import publish_ws_event
+
             asyncio.run(
                 publish_ws_event(
                     user_id,
