@@ -285,28 +285,6 @@ async def enrich_action_data(
                     print(f"⚠️ Removing invalid {id_field} placeholder: {action_id}")
                     action_data.pop(id_field, None)
 
-    # Final cleanup: Remove any unresolved placeholders ($courseId, $goalId, etc.)
-    # These are placeholders that weren't resolved by created_ids
-    fields_to_check = ["courseId", "topicId", "goalId", "noteId", "scheduleId"]
-    for field in fields_to_check:
-        value = action_data.get(field)
-        if value and isinstance(value, str):
-            # Remove unresolved placeholders
-            if value.startswith("$"):
-                print(f"⚠️ Removing unresolved placeholder {field}: {value}")
-                action_data.pop(field, None)
-            # Validate courseId is not a title (has spaces or is too long)
-            elif field == "courseId" and (" " in value or len(value) > 30):
-                print(f"⚠️ courseId appears to be a title, not an ID: {value}")
-                # Try to look up the course by title
-                try:
-                    # Get user_id from enriched_context or context to look up course
-                    # For now, just remove it since we don't have user context here
-                    print(f"⚠️ Removing invalid courseId (title instead of ID): {value}")
-                    action_data.pop(field, None)
-                except Exception:
-                    pass
-
     return action_data
 
 
@@ -1187,11 +1165,19 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                                     created_ids["noteId"] = note_id
                                     print(f"💾 Stored noteId: {note_id}")
 
-                    # 4. Clean the response (remove action block from text shown to user)
+                    # 4. Clean the response (remove ALL instances of action markers and content)
                     clean_response = re.sub(
                         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
                         "",
                         ai_response_text,
+                        flags=re.DOTALL,
+                    ).strip()
+
+                    # Also remove any stray markdown JSON code blocks (in case AI used wrong format)
+                    clean_response = re.sub(
+                        r"\s*```json\s*\{.*?\}\s*```\s*",
+                        "",
+                        clean_response,
                         flags=re.DOTALL,
                     ).strip()
 
@@ -1235,7 +1221,6 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                         ai_response_text,
                         flags=re.DOTALL,
                     ).strip()
-                    clean_response += "\n\n⚠️ **System:** I tried to execute the action, but the format was invalid."
                 except Exception as e:
                     print(f"❌ Action Execution Error: {e}")
                     import traceback

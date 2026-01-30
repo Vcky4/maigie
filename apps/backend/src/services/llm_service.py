@@ -34,20 +34,19 @@ MODELS = {
 }
 
 # Intent to model mapping
-# Using Flash for all action-related intents to ensure strict format compliance
 INTENT_MODEL_MAP = {
-    # Simple intents -> Flash Lite (no actions needed)
+    # Simple intents -> Flash Lite
     "greeting": "lite",
     "list_query": "lite",
     "clarification": "lite",
-    # ALL action intents -> Flash (requires strict format compliance)
+    # Complex intents -> Flash
     "course_generation": "flash",
     "note_creation": "flash",
     "note_actions": "flash",
     "schedule_creation": "flash",
     "goal_creation": "flash",
     "resource_recommendation": "flash",
-    "conversation": "flash",  # Default for unknown - may contain actions
+    "conversation": "flash",  # Default for unknown
 }
 
 # Base prompt (~300 tokens) - always included
@@ -66,28 +65,16 @@ INTENT_PROMPTS = {
 If the user seems to need help, proactively suggest actions you can take (like creating courses, schedules, or goals).
 Wait for their confirmation before taking action.""",
     # Course generation prompt (~400 tokens)
-    "course_generation": """Create courses using ONLY the action tags below.
+    "course_generation": """Create courses using ONLY the action tags below. Do NOT use markdown code blocks.
 
-CRITICAL FORMAT REQUIREMENTS:
-- You MUST wrap ALL action JSON in <<<ACTION_START>>> and <<<ACTION_END>>> tags
-- NEVER use markdown code blocks like ```json or ```
-- NEVER output raw JSON without the tags
-- The JSON must be valid and properly formatted
-
-Example format:
 <<<ACTION_START>>>
 {"type": "create_course", "data": {"title": "Course Title", "description": "Brief description", "difficulty": "BEGINNER", "modules": [{"title": "Module 1", "topics": ["Topic 1", "Topic 2"]}, {"title": "Module 2", "topics": ["Topic 3", "Topic 4"]}]}}
 <<<ACTION_END>>>
 
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags. NEVER use markdown ```json blocks.
 Create 3-6 modules with 3-5 topics each. For multiple actions: {"actions": [{...}, {...}]}.""",
     # Schedule creation prompt (~350 tokens)
-    "schedule_creation": """Create schedule blocks using ONLY the action tags below.
-
-CRITICAL FORMAT REQUIREMENTS:
-- You MUST wrap ALL action JSON in <<<ACTION_START>>> and <<<ACTION_END>>> tags
-- NEVER use markdown code blocks like ```json or ```
-- NEVER output raw JSON without the tags
-- The JSON must be valid and properly formatted
+    "schedule_creation": """Create schedule blocks using ONLY the action tags below. Do NOT use markdown code blocks.
 
 For multiple schedules, wrap them in an actions array:
 
@@ -98,17 +85,10 @@ For multiple schedules, wrap them in an actions array:
 ]}
 <<<ACTION_END>>>
 
-IMPORTANT: Use $courseId, $goalId placeholders ONLY if creating the course/goal in the SAME batch (before the schedule).
-If NOT creating a course in the batch, OMIT the courseId field entirely (don't use placeholder).
-Default schedule time: evenings 6-8 PM.""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags. NEVER use markdown ```json blocks.
+Use $courseId, $goalId placeholders if created in same batch. Default: evenings 6-8 PM.""",
     # Note actions prompt (~300 tokens)
-    "note_actions": """CRITICAL FORMAT REQUIREMENTS:
-- You MUST wrap ALL action JSON in <<<ACTION_START>>> and <<<ACTION_END>>> tags
-- NEVER use markdown code blocks like ```json or ```
-- NEVER output raw JSON without the tags
-- The JSON must be valid and properly formatted
-
-Examples:
+    "note_actions": """Use ONLY the action tags below. NEVER use markdown code blocks.
 
 CREATE NOTE: <<<ACTION_START>>>{"type": "create_note", "data": {"title": "...", "content": "markdown content", "topicId": "from context"}}<<<ACTION_END>>>
 
@@ -118,37 +98,24 @@ ADD SUMMARY: <<<ACTION_START>>>{"type": "add_summary", "data": {"noteId": "from 
 
 ADD TAGS: <<<ACTION_START>>>{"type": "add_tags", "data": {"noteId": "from context", "tags": ["Tag1", "Tag2"]}}<<<ACTION_END>>>
 
-Get IDs from the context provided in the message.""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags only. Get IDs from context.""",
     # Goal creation prompt (~200 tokens)
-    "goal_creation": """CRITICAL FORMAT REQUIREMENTS:
-- You MUST wrap ALL action JSON in <<<ACTION_START>>> and <<<ACTION_END>>> tags
-- NEVER use markdown code blocks like ```json or ```
-- NEVER output raw JSON without the tags
-- The JSON must be valid and properly formatted
+    "goal_creation": """Create goals using ONLY the action tags below. NEVER use markdown code blocks.
 
-Example:
 <<<ACTION_START>>>
 {"type": "create_goal", "data": {"title": "Clear, actionable goal", "description": "optional", "targetDate": "ISO date if deadline", "courseId": "from context"}}
 <<<ACTION_END>>>
 
-Make goals specific and measurable.""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags only. Make goals specific and measurable.""",
     # Resource recommendation prompt (~250 tokens)
-    "resource_recommendation": """CRITICAL FORMAT REQUIREMENTS:
-- You MUST wrap ALL action JSON in <<<ACTION_START>>> and <<<ACTION_END>>> tags
-- NEVER use markdown code blocks like ```json or ```
-- NEVER output raw JSON without the tags
-- The JSON must be valid and properly formatted
+    "resource_recommendation": """Create resource recommendations using ONLY the action tags. NEVER use markdown code blocks.
 
-Example:
 <<<ACTION_START>>>
-{"type": "recommend_resources", "data": {"query": "topic from user message or context", "courseId": "actual_id_from_context", "limit": 10}}
+{"type": "recommend_resources", "data": {"query": "topic from user message or context", "courseId": "from context", "limit": 10}}
 <<<ACTION_END>>>
 
-IMPORTANT: 
-- Extract query from user message or use course/topic from context
-- If courseId is provided, it MUST be an actual ID (starts with 'c'), NOT a course title
-- If no valid courseId is available in context, OMIT the courseId field entirely
-- DO NOT ask for clarification, DO NOT use course titles as IDs""",
+CRITICAL: Use <<<ACTION_START>>> and <<<ACTION_END>>> tags only.
+Extract query from user message or use course/topic context. DO NOT ask for clarification.""",
     # List query prompt (~100 tokens) - handled by code, minimal prompt needed
     "list_query": """Answer the user's question about their data (courses, goals, schedule, notes, resources) conversationally.
 The system will provide the data - just format it nicely for the user.""",
@@ -167,13 +134,9 @@ IMPORTANT DATE CONTEXT:
 - When creating schedules, goals, or any date-related actions, ALWAYS use dates relative to the CURRENT DATE provided in the context
 - NEVER use hardcoded years like 2025 or 2024 - always calculate dates based on the current date provided
 
-CRITICAL FORMAT REQUIREMENTS FOR ACTIONS:
-When the user requests actions (create, generate, schedule, etc.), you MUST:
-1. Output JSON wrapped in <<<ACTION_START>>> and <<<ACTION_END>>> tags
-2. NEVER use markdown code blocks like ```json or ```
-3. NEVER output raw JSON without the tags
-4. The JSON must be valid and properly formatted
-5. Place the action block at the end of your response
+CRITICAL INSTRUCTION FOR ACTIONS:
+If the user asks to generate a course, study plan, schedule, or create a note, you must NOT just describe it.
+You MUST output a strict JSON block at the very end of your response inside specific tags.
 
 MULTIPLE ACTIONS:
 When a user request involves multiple related actions, use an array format:
@@ -188,10 +151,7 @@ When a user request involves multiple related actions, use an array format:
 }
 <<<ACTION_END>>>
 
-PLACEHOLDER USAGE:
-- Use "$courseId", "$goalId", "$topicId", "$noteId" ONLY to reference IDs from previous actions in the SAME batch
-- If NOT creating a course/goal in the batch, OMIT the courseId/goalId field (don't use placeholder)
-- NEVER use course/goal titles as IDs - only use actual IDs (starting with 'c')
+Use "$courseId", "$goalId", "$topicId", "$noteId" to reference IDs from previous actions in the same batch.
 
 AVAILABLE ACTIONS:
 1. create_course: {"title", "description", "difficulty", "modules": [{"title", "topics": [...]}]}
