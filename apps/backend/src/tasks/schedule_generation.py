@@ -11,9 +11,6 @@ import asyncio
 import logging
 from typing import Any
 
-from src.core.database import db
-from src.services.action_service import action_service
-from src.services.ws_event_bus import publish_ws_event
 from src.tasks.base import task
 from src.tasks.registry import register_task
 
@@ -23,6 +20,8 @@ TASK_NAME = "schedule.create_from_chat"
 
 
 async def _ensure_db_connected() -> None:
+    from src.core.database import db
+
     if not db.is_connected():
         await db.connect()
 
@@ -41,6 +40,9 @@ def create_schedule_from_chat_task(  # type: ignore[misc]
     schedule_blocks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     async def _run() -> dict[str, Any]:
+        from src.services.action_service import action_service
+        from src.services.ws_event_bus import publish_ws_event
+
         await _ensure_db_connected()
 
         total = max(1, len(schedule_blocks))
@@ -103,6 +105,8 @@ def create_schedule_from_chat_task(  # type: ignore[misc]
     except Exception as e:
         logger.error(f"Schedule creation task failed: {e}", exc_info=True)
         try:
+            from src.services.ws_event_bus import publish_ws_event
+
             asyncio.run(
                 publish_ws_event(
                     user_id,

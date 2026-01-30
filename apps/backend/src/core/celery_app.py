@@ -98,6 +98,8 @@ except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,
     # but do log so worker/task registration issues are visible.
     logger.exception("Failed to import Celery task modules: %s", e)
+    # Celery boot logs can miss python logger output early; print ensures visibility.
+    print(f"[celery_app] Failed to import Celery task modules: {e}")
 
 
 def get_celery_app() -> Celery:
