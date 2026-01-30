@@ -545,9 +545,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 "set up",
                 "schedule",
                 "write",
-                "recommend",
-                "suggest",
-                "find",
             ]
             has_action_keyword = any(kw in user_text_lower for kw in action_keywords)
 
@@ -1056,16 +1053,76 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                         f"🎯 Classified intent: {classified_intent} -> {intent_result.get('model_name')}"
                     )
 
-                    # Use intent-based response (non-streaming for reliability)
-                    ai_response_text, usage_info = await llm_service.get_chat_response_with_intent(
+                    # Use streaming for real-time response
+                    # Buffer to detect and filter action blocks
+                    ai_response_text = ""
+                    usage_info = None
+                    action_block_started = False
+                    pending_buffer = ""  # Buffer for potential action block detection
+
+                    async for chunk, is_final, chunk_usage in llm_service.stream_chat_response(
                         history=formatted_history,
                         user_message=user_text,
                         context=enriched_context,
                         intent=classified_intent,
+                    ):
+                        if not is_final:
+                            ai_response_text += chunk
+                            pending_buffer += chunk
+
+                            # Check if we're entering an action block
+                            if "<<<ACTION_START>>>" in pending_buffer:
+                                action_block_started = True
+                                # Send everything before the action block
+                                pre_action = pending_buffer.split("<<<ACTION_START>>>")[0]
+                                if pre_action.strip():
+                                    await manager.send_stream_chunk(
+                                        pre_action, user.id, is_final=False
+                                    )
+                                pending_buffer = ""  # Clear buffer, stop sending until action ends
+                            elif action_block_started:
+                                # Inside action block - check if it ended
+                                if "<<<ACTION_END>>>" in pending_buffer:
+                                    action_block_started = False
+                                    # Get any text after the action block
+                                    post_action = pending_buffer.split("<<<ACTION_END>>>")[-1]
+                                    pending_buffer = post_action
+                                # Don't send anything while inside action block
+                            else:
+                                # Normal streaming - send chunks
+                                # But buffer a bit in case action block starts mid-chunk
+                                if len(pending_buffer) > 20 and "<<<" not in pending_buffer:
+                                    # Safe to send - no action block starting
+                                    await manager.send_stream_chunk(
+                                        pending_buffer, user.id, is_final=False
+                                    )
+                                    pending_buffer = ""
+                        else:
+                            # Final chunk - send any remaining buffer (if not in action block)
+                            if pending_buffer.strip() and not action_block_started:
+                                # Clean any partial action markers
+                                clean_buffer = pending_buffer
+                                if "<<<ACTION" in clean_buffer:
+                                    clean_buffer = clean_buffer.split("<<<ACTION")[0]
+                                if clean_buffer.strip():
+                                    await manager.send_stream_chunk(
+                                        clean_buffer, user.id, is_final=False
+                                    )
+
+                            # Capture usage info
+                            usage_info = chunk_usage or {
+                                "input_tokens": len(user_text) // 4,
+                                "output_tokens": len(ai_response_text) // 4,
+                                "model_name": intent_result.get("model_name", "gemini-2.0-flash"),
+                            }
+                            # Add intent classification tokens to usage
+                            if usage_info:
+                                usage_info["input_tokens"] += intent_result.get("total_tokens", 0)
+
+                    # Send final stream marker
+                    await manager.send_stream_chunk(
+                        "", user.id, is_final=True, usage_info=usage_info
                     )
-                    # Add intent classification tokens to usage
-                    if usage_info:
-                        usage_info["input_tokens"] += intent_result.get("total_tokens", 0)
 
             # --- NEW: Action Detection Logic ---
             # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
@@ -1171,14 +1228,6 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
                         "",
                         ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-
-                    # Also remove any stray markdown JSON code blocks (in case AI used wrong format)
-                    clean_response = re.sub(
-                        r"\s*```json\s*\{.*?\}\s*```\s*",
-                        "",
-                        clean_response,
                         flags=re.DOTALL,
                     ).strip()
 
