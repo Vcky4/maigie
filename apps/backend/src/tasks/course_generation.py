@@ -207,12 +207,23 @@ def generate_course_from_chat_task(  # type: ignore[misc]
             # Fallback if model returned no modules
             await _persist_course_outline(course_id, outline)
 
-        # Update course description if provided
-        description = outline.get("description") or f"A course about {topic}."
+        # Update course details from outline (otherwise the placeholder title/difficulty remain)
+        title = str(outline.get("title") or f"Learning {topic}").strip()
+        description = str(outline.get("description") or f"A course about {topic}.").strip()
+
+        outline_difficulty = str(outline.get("difficulty") or difficulty or "BEGINNER").upper()
+        allowed = {"BEGINNER", "INTERMEDIATE", "ADVANCED"}
+        final_difficulty = (
+            outline_difficulty
+            if outline_difficulty in allowed
+            else str(difficulty or "BEGINNER").upper()
+        )
         await db.course.update(
             where={"id": course_id},
             data={
+                "title": title,
                 "description": description,
+                "difficulty": final_difficulty,
                 "isAIGenerated": True,
                 "progress": 0.0,
             },

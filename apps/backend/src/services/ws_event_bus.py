@@ -21,7 +21,7 @@ import json
 import logging
 from typing import Any
 
-from src.utils.dependencies import initialize_redis_client
+from src.utils.dependencies import get_redis_connection_url, initialize_redis_client, redis
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +34,27 @@ async def publish_ws_event(user_id: str, payload: dict[str, Any]) -> None:
 
     API instances will subscribe and forward to connected clients.
     """
-    redis_client = await initialize_redis_client()
-    message = {"userId": user_id, "message": {"type": "event", "payload": payload}}
-    await redis_client.publish(WS_EVENT_CHANNEL, json.dumps(message))
+    # IMPORTANT: Celery tasks frequently wrap async logic with `asyncio.run()`,
+    # which creates/closes an event loop per task invocation. A cached/global
+    # `redis.asyncio` client can become bound to a different loop and will then
+    # throw errors like:
+    # - "got Future attached to a different loop"
+    # - "Event loop is closed"
+    #
+    # To avoid cross-loop issues in worker processes, use a short-lived client.
+    redis_client = redis.from_url(
+        get_redis_connection_url(),
+        encoding="utf-8",
+        decode_responses=True,
+    )
+    try:
+        message = {"userId": user_id, "message": {"type": "event", "payload": payload}}
+        await redis_client.publish(WS_EVENT_CHANNEL, json.dumps(message))
+    finally:
+        try:
+            await redis_client.close()
+        except Exception:
+            pass
 
 
 async def ws_event_forwarder(stop_event: asyncio.Event) -> None:
