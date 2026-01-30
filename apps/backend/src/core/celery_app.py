@@ -86,6 +86,15 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
 # Global Celery app instance
 celery_app = create_celery_app()
 
+# Ensure feature tasks are imported so Celery registers them.
+# Celery worker entrypoint is `-A src.core.celery_app:celery_app`, so we import
+# task modules here to make them discoverable without requiring autodiscovery.
+try:
+    from ..tasks import course_generation  # noqa: F401
+except Exception:
+    # Avoid crashing the app if optional modules are unavailable at import time.
+    pass
+
 
 def get_celery_app() -> Celery:
     """Get Celery application instance for dependency injection.

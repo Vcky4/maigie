@@ -632,6 +632,107 @@ Summary:"""
             print(f"Minimal response generation error: {e}")
             return None
 
+    async def generate_course_outline(
+        self,
+        *,
+        topic: str,
+        difficulty: str = "BEGINNER",
+        user_message: str | None = None,
+        max_modules: int = 6,
+        max_topics_per_module: int = 6,
+    ) -> dict:
+        """
+        Generate a course outline (modules + topic titles) as JSON.
+
+        This is designed to be run in a background job and MUST return valid JSON.
+        It intentionally avoids generating long topic content to keep costs low.
+        """
+        try:
+            difficulty_norm = (difficulty or "BEGINNER").upper()
+
+            # Use a fast/cheap model for structured outline generation.
+            outline_model = genai.GenerativeModel(
+                "gemini-2.0-flash",
+                system_instruction=SYSTEM_INSTRUCTION,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=900,
+                    temperature=0.2,
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            user_msg = user_message or ""
+            prompt = f"""Generate a course outline for the topic below.
+
+Topic: {topic}
+Difficulty: {difficulty_norm}
+
+Constraints:
+- Return ONLY valid JSON (no markdown, no code fences, no commentary).
+- Keep it concise and structured for a learning app.
+- Use at most {max_modules} modules.
+- Each module should have at most {max_topics_per_module} topic titles.
+- Topics should be short titles (no paragraphs).
+
+Output JSON schema:
+{{
+  "title": "string",
+  "description": "string",
+  "difficulty": "BEGINNER|INTERMEDIATE|ADVANCED",
+  "modules": [
+    {{
+      "title": "string",
+      "description": "string (optional)",
+      "topics": ["string", "string"]
+    }}
+  ]
+}}
+
+If the user message includes constraints (timeframe, focus areas), reflect them:
+User message: {user_msg}
+
+JSON:"""
+
+            response = await outline_model.generate_content_async(
+                prompt, safety_settings=self.safety_settings
+            )
+            text = (response.text or "").strip()
+
+            # Parse JSON robustly (extract first {...} block if needed)
+            import json
+            import re
+
+            try:
+                return json.loads(text)
+            except Exception:
+                match = re.search(r"\{[\s\S]*\}", text)
+                if not match:
+                    raise ValueError("No JSON object found in outline response")
+                return json.loads(match.group(0))
+        except Exception as e:
+            print(f"Course outline generation error: {e}")
+            # Fallback minimal outline (ensures task can still succeed)
+            safe_topic = topic.strip() or "Your Topic"
+            return {
+                "title": f"Learning {safe_topic}",
+                "description": f"A structured course on {safe_topic}.",
+                "difficulty": (difficulty or "BEGINNER").upper(),
+                "modules": [
+                    {
+                        "title": "Module 1: Foundations",
+                        "topics": [
+                            f"Introduction to {safe_topic}",
+                            "Key concepts and terminology",
+                            "Common pitfalls",
+                        ],
+                    },
+                    {
+                        "title": "Module 2: Practice",
+                        "topics": ["Core techniques", "Exercises and drills", "Review and next steps"],
+                    },
+                ],
+            }
+
     async def detect_list_query_intent(self, user_message: str) -> dict:
         """
         Use AI to detect if the user is asking to view/list their data.

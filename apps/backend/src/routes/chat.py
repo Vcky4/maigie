@@ -22,6 +22,7 @@ from fastapi import (
 from jose import JWTError, jwt
 
 from prisma import Prisma
+from src.core.celery_app import celery_app
 from src.config import settings
 from src.services.action_service import action_service
 from src.services.component_response_service import (
@@ -29,6 +30,7 @@ from src.services.component_response_service import (
     format_list_component_response,
 )
 from src.services.credit_service import (
+    CREDIT_COSTS,
     check_credit_availability,
     consume_credits,
     get_credit_usage,
@@ -42,6 +44,74 @@ from src.utils.exceptions import SubscriptionLimitError
 
 router = APIRouter()
 db = Prisma()
+
+
+def _extract_course_request(user_text: str) -> tuple[str, str]:
+    """
+    Best-effort extraction of (topic, difficulty) from a free-form message.
+    Kept intentionally cheap to avoid extra LLM calls before replying.
+    """
+    text = (user_text or "").strip()
+    lower = text.lower()
+
+    # Difficulty
+    difficulty = "BEGINNER"
+    if "intermediate" in lower:
+        difficulty = "INTERMEDIATE"
+    elif "advanced" in lower:
+        difficulty = "ADVANCED"
+    elif "expert" in lower:
+        difficulty = "EXPERT"
+
+    # Topic patterns
+    patterns = [
+        r"(?:create|make|build|generate)\s+(?:me\s+)?(?:a\s+)?course\s+(?:about|on)\s+(?P<topic>.+)",
+        r"(?:i\s+want\s+to\s+learn|i\s+would\s+like\s+to\s+learn|help\s+me\s+learn)\s+(?P<topic>.+)",
+        r"(?:i\s+want\s+to\s+study|help\s+me\s+study)\s+(?P<topic>.+)",
+        r"(?:course\s+on)\s+(?P<topic>.+)",
+    ]
+    topic = ""
+    for pat in patterns:
+        m = re.search(pat, lower, re.IGNORECASE)
+        if m:
+            topic = (m.group("topic") or "").strip()
+            break
+
+    # Clean topic
+    if topic:
+        topic = re.split(r"[.?!]", topic)[0].strip()
+        topic = re.sub(r"\b(for|please|thanks|thank you)\b", "", topic, flags=re.IGNORECASE).strip()
+
+    if not topic:
+        # Fallback: use first ~8 words from user text
+        words = re.findall(r"[A-Za-z0-9#+\-]+", text)
+        topic = " ".join(words[:8]).strip()
+
+    return topic or "a new topic", difficulty
+
+
+def _looks_like_course_generation_intent(user_text: str) -> bool:
+    lower = (user_text or "").lower()
+    if not lower.strip():
+        return False
+
+    # Exclude obvious non-generation queries
+    if any(x in lower for x in ["what courses", "my courses", "list courses", "show my courses"]):
+        return False
+
+    triggers = [
+        "create a course",
+        "make a course",
+        "generate a course",
+        "build a course",
+        "course on",
+        "course about",
+        "i want to learn",
+        "help me learn",
+        "i want to study",
+        "help me study",
+    ]
+    return any(t in lower for t in triggers)
 
 
 async def enrich_action_data(
@@ -363,6 +433,92 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 print(f"🖼️ Message includes image: {file_urls}")
 
             await db.chatmessage.create(data=user_message_data)
+
+            # Fast-path: course generation via background worker
+            # Goal: respond immediately, then generate/persist course in Celery and notify UI via events.
+            if _looks_like_course_generation_intent(user_text):
+                topic, difficulty = _extract_course_request(user_text)
+
+                # Check & consume fixed credits for AI course generation
+                user_obj = await db.user.find_unique(where={"id": user.id})
+                if not user_obj:
+                    await websocket.close()
+                    return
+
+                try:
+                    await consume_credits(
+                        user_obj,
+                        CREDIT_COSTS["ai_course_generation"],
+                        operation="ai_course_generation",
+                        db_client=db,
+                    )
+                except SubscriptionLimitError as e:
+                    await manager.send_json(
+                        {
+                            "type": "credit_limit_error",
+                            "message": e.message,
+                            "detail": e.detail,
+                        },
+                        user.id,
+                    )
+                    continue
+
+                # Create placeholder course
+                placeholder_course = await db.course.create(
+                    data={
+                        "userId": user.id,
+                        "title": f"Learning {topic}",
+                        "description": "Generating your course...",
+                        "difficulty": difficulty,
+                        "isAIGenerated": True,
+                        "progress": 0.0,
+                    }
+                )
+
+                # Send immediate acknowledgement (no LLM wait)
+                ack_text = (
+                    f"Got it — I’m generating a {difficulty.lower()} course on **{topic}** now. "
+                    "I’ll let you know when it’s ready."
+                )
+                await manager.send_personal_message(ack_text, user.id)
+                await db.chatmessage.create(
+                    data={
+                        "sessionId": session.id,
+                        "userId": user.id,
+                        "role": "ASSISTANT",
+                        "content": ack_text,
+                        "tokenCount": 0,
+                    }
+                )
+
+                # Queue Celery job
+                celery_app.send_task(
+                    "course.generate_from_chat",
+                    kwargs={
+                        "user_id": user.id,
+                        "course_id": placeholder_course.id,
+                        "user_message": user_text,
+                        "topic": topic,
+                        "difficulty": difficulty,
+                    },
+                )
+
+                # Optional queued event (frontend mainly reacts to success)
+                await manager.send_json(
+                    {
+                        "type": "event",
+                        "payload": {
+                            "status": "queued",
+                            "action": "ai_course_generation",
+                            "course_id": placeholder_course.id,
+                            "courseId": placeholder_course.id,
+                            "message": "Course generation queued",
+                        },
+                    },
+                    user.id,
+                )
+
+                continue
 
             # 5. Build History for Context (Last 6 messages to reduce token usage)
             history_records = await db.chatmessage.find_many(
