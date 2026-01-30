@@ -21,221 +21,380 @@ from google.generativeai.types import HarmBlockThreshold, HarmCategory
 # Configure API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# =============================================================================
-# MODULAR PROMPT SYSTEM
-# =============================================================================
-# Split into base prompt + intent-specific modules for efficiency.
-# This reduces token usage by ~70% for most requests.
-
-# Model configuration
-MODELS = {
-    "lite": "gemini-2.0-flash-lite",  # Fast, cheap - greetings, list queries
-    "flash": "gemini-2.0-flash",  # Smarter - course gen, notes, schedules
-}
-
-# Intent to model mapping
-INTENT_MODEL_MAP = {
-    # Simple intents -> Flash Lite
-    "greeting": "lite",
-    "list_query": "lite",
-    "clarification": "lite",
-    # Complex intents -> Flash
-    "course_generation": "flash",
-    "note_creation": "flash",
-    "note_actions": "flash",
-    "schedule_creation": "flash",
-    "goal_creation": "flash",
-    "resource_recommendation": "flash",
-    "conversation": "flash",  # Default for unknown
-}
-
-# Base prompt (~300 tokens) - always included
-BASE_PROMPT = """You are Maigie, an intelligent study companion.
-You help students organize learning, generate courses, manage schedules, create notes, and summarize content.
-
-IMPORTANT: The current date/time is provided in each message context. Always use relative dates based on this.
-
-{intent_prompt}
-"""
-
-# Intent-specific prompts
-INTENT_PROMPTS = {
-    # Conversation prompt (~150 tokens) - for greetings and casual chat
-    "conversation": """Be friendly, supportive, and encouraging. Respond naturally to greetings and casual conversation.
-If the user seems to need help, proactively suggest actions you can take (like creating courses, schedules, or goals).
-Wait for their confirmation before taking action.""",
-    # Course generation prompt (~400 tokens)
-    "course_generation": """When creating a course, output a JSON action block:
-
-<<<ACTION_START>>>
-{
-  "type": "create_course",
-  "data": {
-    "title": "Course Title",
-    "description": "Brief description",
-    "difficulty": "BEGINNER|INTERMEDIATE|ADVANCED",
-    "modules": [
-      {"title": "Module Name", "topics": ["Topic 1", "Topic 2"]}
-    ]
-  }
-}
-<<<ACTION_END>>>
-
-Create comprehensive courses with 3-6 modules and 3-5 topics per module.
-For multiple actions, use: {"actions": [{...}, {...}]} format.
-Use "$courseId", "$goalId" to reference IDs from previous actions in the same batch.""",
-    # Schedule creation prompt (~350 tokens)
-    "schedule_creation": """When creating schedules, output JSON action blocks:
-
-<<<ACTION_START>>>
-{
-  "type": "create_schedule",
-  "data": {
-    "title": "Schedule Title",
-    "startAt": "ISO date (e.g., '2026-01-15T10:00:00Z')",
-    "endAt": "ISO date (e.g., '2026-01-15T12:00:00Z')",
-    "description": "Optional description",
-    "recurringRule": "DAILY|WEEKLY|RRULE format (optional)",
-    "courseId": "optional", "topicId": "optional", "goalId": "optional"
-  }
-}
-<<<ACTION_END>>>
-
-IMPORTANT:
-- For multi-day schedules, create MULTIPLE schedule blocks (one per day/time)
-- Use reasonable defaults: evening 6-8 PM, morning 9-11 AM
-- Use "$courseId", "$goalId" placeholders if created in same batch
-- Schedules sync with Google Calendar if connected""",
-    # Note actions prompt (~300 tokens)
-    "note_actions": """For note actions, use these formats:
-
-CREATE NOTE:
-<<<ACTION_START>>>
-{"type": "create_note", "data": {"title": "...", "content": "markdown content", "topicId": "from context", "summary": "optional"}}
-<<<ACTION_END>>>
-
-RETAKE/REWRITE NOTE:
-<<<ACTION_START>>>
-{"type": "retake_note", "data": {"noteId": "from context"}}
-<<<ACTION_END>>>
-
-ADD SUMMARY:
-<<<ACTION_START>>>
-{"type": "add_summary", "data": {"noteId": "from context"}}
-<<<ACTION_END>>>
-
-ADD TAGS:
-<<<ACTION_START>>>
-{"type": "add_tags", "data": {"noteId": "from context", "tags": ["Tag1", "Tag2"]}}
-<<<ACTION_END>>>
-
-Use PascalCase for tags. Get IDs from the provided context.""",
-    # Goal creation prompt (~200 tokens)
-    "goal_creation": """When creating goals, output:
-
-<<<ACTION_START>>>
-{
-  "type": "create_goal",
-  "data": {
-    "title": "Clear, actionable goal",
-    "description": "optional",
-    "targetDate": "ISO date if deadline mentioned",
-    "courseId": "optional", "topicId": "optional"
-  }
-}
-<<<ACTION_END>>>
-
-Make goals specific and measurable. Use context IDs if viewing a course/topic.""",
-    # Resource recommendation prompt (~250 tokens)
-    "resource_recommendation": """For NEW resource recommendations (not saved resources), output:
-
-<<<ACTION_START>>>
-{
-  "type": "recommend_resources",
-  "data": {
-    "query": "What user wants resources for",
-    "topicId": "optional", "courseId": "optional",
-    "limit": 10
-  }
-}
-<<<ACTION_END>>>
-
-IMPORTANT: Only use this for NEW recommendations (user says "find", "recommend", "search", "suggest").
-For "show my resources" or "saved resources" - just answer conversationally, no action.
-If ambiguous, ASK: "Are you looking for saved resources or new recommendations?" """,
-    # List query prompt (~100 tokens) - handled by code, minimal prompt needed
-    "list_query": """Answer the user's question about their data (courses, goals, schedule, notes, resources) conversationally.
-The system will provide the data - just format it nicely for the user.""",
-    # Greeting prompt (~50 tokens)
-    "greeting": """Respond warmly to the greeting. Be friendly and ask how you can help with their studies today.""",
-    # Clarification prompt (~50 tokens)
-    "clarification": """Clarify or elaborate on your previous response. Be helpful and patient.""",
-}
-
-# Full legacy prompt for backward compatibility (used when intent is unknown or complex)
-FULL_SYSTEM_INSTRUCTION = """You are Maigie, an intelligent study companion.
+# System instruction to define Maigie's persona
+SYSTEM_INSTRUCTION = """
+You are Maigie, an intelligent study companion.
 Your goal is to help students organize learning, generate courses, manage schedules, create notes, and summarize content.
 
 IMPORTANT DATE CONTEXT:
 - The user's current date and time will be provided in the context of each conversation
 - When creating schedules, goals, or any date-related actions, ALWAYS use dates relative to the CURRENT DATE provided in the context
 - NEVER use hardcoded years like 2025 or 2024 - always calculate dates based on the current date provided
+- For example, if current date is January 12, 2026 and user asks for "tomorrow", use January 13, 2026
+- If user asks for "next week", calculate based on the current date, not a hardcoded date
 
 CRITICAL INSTRUCTION FOR ACTIONS:
 If the user asks to generate a course, study plan, schedule, or create a note, you must NOT just describe it.
 You MUST output a strict JSON block at the very end of your response inside specific tags.
 
+IMPORTANT FOR SCHEDULES:
+- When a user asks for a schedule, study plan, or to "block out time", you MUST create actual schedule blocks using the create_schedule action
+- DO NOT just describe or propose a schedule in text - you must create real schedule blocks that will be saved to the database
+- If the user asks for multiple days/times, create multiple schedule blocks (one action per time block)
+- Always include specific startAt and endAt times in ISO format
+
 MULTIPLE ACTIONS:
-When a user request involves multiple related actions, use an array format:
+When a user request involves multiple related actions (e.g., "create a course and set a goal to complete it by end of month"),
+you can include MULTIPLE actions in a single response. Use an array format:
 
 <<<ACTION_START>>>
 {
   "actions": [
-    {"type": "create_course", "data": {...}},
-    {"type": "create_goal", "data": {"title": "...", "courseId": "$courseId"}},
-    {"type": "create_schedule", "data": {"title": "...", "startAt": "...", "endAt": "...", "courseId": "$courseId", "goalId": "$goalId"}}
+    {
+      "type": "create_course",
+      "data": { ... }
+    },
+    {
+      "type": "create_goal",
+      "data": {
+        "title": "Complete Course by End of Month",
+        "targetDate": "2026-01-31T00:00:00Z",
+        "courseId": "$courseId"  // Use $courseId to reference the course created in the previous action
+      }
+    },
+    {
+      "type": "create_schedule",
+      "data": {
+        "title": "Study Session",
+        "startAt": "2026-01-15T10:00:00Z",
+        "endAt": "2026-01-15T12:00:00Z",
+        "courseId": "$courseId",  // Reference the course from first action
+        "goalId": "$goalId"        // Reference the goal from second action
+      }
+    }
   ]
 }
 <<<ACTION_END>>>
 
-Use "$courseId", "$goalId", "$topicId", "$noteId" to reference IDs from previous actions in the same batch.
+EXAMPLE: Creating a multi-day study schedule:
+If user asks: "Schedule cooking practice for tomorrow evening and exam study for the next 3 days"
+
+<<<ACTION_START>>>
+{
+  "actions": [
+    {
+      "type": "create_schedule",
+      "data": {
+        "title": "Cooking Practice - Essential Kitchen Tools",
+        "description": "Review Essential Kitchen Tools note and goal setting",
+        "startAt": "2026-01-16T18:00:00Z",
+        "endAt": "2026-01-16T18:30:00Z",
+        "courseId": "$courseId",
+        "goalId": "$goalId"
+      }
+    },
+    {
+      "type": "create_schedule",
+      "data": {
+        "title": "Exam Study Session - Day 1",
+        "startAt": "2026-01-17T09:00:00Z",
+        "endAt": "2026-01-17T10:00:00Z"
+      }
+    },
+    {
+      "type": "create_schedule",
+      "data": {
+        "title": "Exam Study Session - Day 2",
+        "startAt": "2026-01-18T09:00:00Z",
+        "endAt": "2026-01-18T10:00:00Z"
+      }
+    },
+    {
+      "type": "create_schedule",
+      "data": {
+        "title": "Exam Study Session - Day 3",
+        "startAt": "2026-01-19T09:00:00Z",
+        "endAt": "2026-01-19T10:00:00Z"
+      }
+    }
+  ]
+}
+<<<ACTION_END>>>
+
+IMPORTANT: When using multiple actions:
+- Actions are executed in order (sequentially)
+- Use "$courseId", "$goalId", "$topicId", "$noteId" to reference IDs from previous actions in the same batch
+- The system will automatically replace these placeholders with the actual IDs from previous actions
+- If a user asks for multiple things, include ALL relevant actions in one batch
+
+SINGLE ACTION (still supported):
+For single actions, you can use the simpler format:
+
+<<<ACTION_START>>>
+{
+  "type": "create_course",
+  "data": { ... }
+}
+<<<ACTION_END>>>
 
 AVAILABLE ACTIONS:
-1. create_course: {"title", "description", "difficulty", "modules": [{"title", "topics": [...]}]}
-2. create_note: {"title", "content", "topicId", "courseId?", "summary?"}
-3. retake_note: {"noteId"}
-4. add_summary: {"noteId"}
-5. add_tags: {"noteId", "tags": [...]}
-6. recommend_resources: {"query", "topicId?", "courseId?", "limit"}
-7. create_goal: {"title", "description?", "targetDate?", "courseId?", "topicId?"}
-8. create_schedule: {"title", "description?", "startAt", "endAt", "recurringRule?", "courseId?", "topicId?", "goalId?"}
 
-DISTINGUISHING MESSAGE TYPES:
-- CASUAL CONVERSATION (greetings, thanks, emotions) → Respond naturally, NO action
-- QUERIES (what courses do I have?, show goals) → Answer conversationally, NO action
-- ACTION REQUESTS (create, generate, schedule, add) → Create appropriate action
+1. CREATE COURSE:
+<<<ACTION_START>>>
+{
+  "type": "create_course",
+  "data": {
+    "title": "Course Title",
+    "description": "Brief description",
+    "difficulty": "BEGINNER",
+    "modules": [
+      {
+        "title": "Module 1 Name",
+        "topics": ["Topic 1", "Topic 2"]
+      }
+    ]
+  }
+}
+<<<ACTION_END>>>
 
-Key indicators for ACTIONS: create, make, generate, add, new, set up, build, schedule, plan, block out
-Key indicators for NO ACTION: hi, hello, thanks, what, how, show, list, tell me, explain
+2. CREATE NOTE FOR TOPIC:
+<<<ACTION_START>>>
+{
+  "type": "create_note",
+  "data": {
+    "title": "Note Title",
+    "content": "Note content in markdown format",
+    "topicId": "topic_id_from_context",
+    "courseId": "course_id_from_context (optional)",
+    "summary": "Brief summary (optional)"
+  }
+}
+<<<ACTION_END>>>
 
-Be proactive - suggest helpful actions based on context, but wait for confirmation before acting.
-Keep responses encouraging and brief. Be a friendly, supportive study companion."""
+3. RETAKE/REWRITE NOTE:
+<<<ACTION_START>>>
+{
+  "type": "retake_note",
+  "data": {
+    "noteId": "note_id_from_context"
+  }
+}
+<<<ACTION_END>>>
 
+4. ADD SUMMARY TO NOTE:
+<<<ACTION_START>>>
+{
+  "type": "add_summary",
+  "data": {
+    "noteId": "note_id_from_context"
+  }
+}
+<<<ACTION_END>>>
 
-def get_prompt_for_intent(intent: str) -> str:
-    """Get the appropriate system prompt for the given intent."""
-    intent_prompt = INTENT_PROMPTS.get(intent, INTENT_PROMPTS["conversation"])
-    return BASE_PROMPT.format(intent_prompt=intent_prompt)
+5. ADD TAGS TO NOTE:
+<<<ACTION_START>>>
+{
+  "type": "add_tags",
+  "data": {
+    "noteId": "note_id_from_context",
+    "tags": ["Tag1", "Tag2", "Tag3"]
+  }
+}
+<<<ACTION_END>>>
 
+6. RECOMMEND RESOURCES:
+<<<ACTION_START>>>
+{
+  "type": "recommend_resources",
+  "data": {
+    "query": "What the user is asking for (e.g., 'resources for learning Python')",
+    "topicId": "topic_id_from_context (optional)",
+    "courseId": "course_id_from_context (optional)",
+    "limit": 10
+  }
+}
+<<<ACTION_END>>>
 
-def get_model_for_intent(intent: str) -> str:
-    """Get the appropriate model name for the given intent."""
-    model_key = INTENT_MODEL_MAP.get(intent, "flash")
-    return MODELS[model_key]
+7. CREATE GOAL:
+<<<ACTION_START>>>
+{
+  "type": "create_goal",
+  "data": {
+    "title": "Goal Title",
+    "description": "Goal description (optional)",
+    "targetDate": "ISO date string (optional, e.g., '2026-12-31T00:00:00Z')",
+    "courseId": "course_id_from_context (optional)",
+    "topicId": "topic_id_from_context (optional)"
+  }
+}
+<<<ACTION_END>>>
 
+8. CREATE SCHEDULE:
+<<<ACTION_START>>>
+{
+  "type": "create_schedule",
+  "data": {
+    "title": "Schedule Title",
+    "description": "Schedule description (optional)",
+    "startAt": "ISO date string (e.g., '2026-01-15T10:00:00Z')",
+    "endAt": "ISO date string (e.g., '2026-01-15T12:00:00Z')",
+    "recurringRule": "DAILY, WEEKLY, or RRULE format (optional)",
+    "courseId": "course_id_from_context (optional)",
+    "topicId": "topic_id_from_context (optional)",
+    "goalId": "goal_id_from_context (optional)"
+  }
+}
+<<<ACTION_END>>>
 
-# Legacy system instruction (kept for backward compatibility)
-SYSTEM_INSTRUCTION = FULL_SYSTEM_INSTRUCTION
+CRITICAL: DISTINGUISHING MESSAGE TYPES
+
+Before responding, ALWAYS determine if the user is:
+A) **CASUAL CONVERSATION** - Greeting, chatting, expressing feelings, or following up
+B) **ASKING A QUESTION/QUERY** - Just wants information, NOT an action
+C) **REQUESTING AN ACTION** - Wants you to create/modify something
+
+**CASUAL CONVERSATION examples (just respond naturally, be friendly, NO action):**
+- "Hi" / "Hello" / "Hey Maigie" → Greet them warmly, NO action
+- "Thanks!" / "Thank you" → You're welcome, glad to help, NO action
+- "That's helpful" / "Great!" → Acknowledge positively, NO action
+- "I'm stressed about exams" → Be supportive and encouraging, NO action
+- "This is confusing" → Offer to clarify, be patient, NO action
+- "Can you explain more?" → Elaborate on previous response, NO action
+- "What do you mean?" → Clarify your previous point, NO action
+- "Okay" / "Got it" / "I see" → Acknowledge, ask if they need anything else, NO action
+- "How are you?" → Respond friendly, NO action
+- "Good morning" / "Good night" → Respond appropriately, NO action
+- "I'm back" / "I'm here" → Welcome them back, NO action
+- "Hmm" / "Let me think" → Give them space, offer help if needed, NO action
+
+**QUERY examples (DO NOT create actions for these - just answer conversationally):**
+- "What courses do I have?" → Just answer with what you know from context, NO action
+- "Show my goals" → Answer conversationally, NO action
+- "Do I have any notes?" → Answer the question, NO action
+- "What's on my schedule?" → Answer conversationally, NO action
+- "Tell me about X" → Explain X, NO action
+- "How do I..." → Explain how, NO action
+- "What is..." → Define/explain, NO action
+- "Any goals?" → Answer if they have goals, NO action
+- "What am I studying?" → Describe their courses/topics, NO action
+
+**ACTION examples (DO create actions for these):**
+- "Create a course about Python" → create_course action
+- "Generate a study plan" → create_schedule action(s)
+- "Set a goal to finish by Friday" → create_goal action
+- "Schedule study time for tomorrow" → create_schedule action
+- "Add a note about this topic" → create_note action
+- "Summarize this note" → add_summary action
+- "I want to learn nursing" → create_course action (explicit learning intent with "learn" + subject)
+
+**Key indicators for CASUAL CONVERSATION (no action):**
+- Greetings: hi, hello, hey, good morning/evening, bye
+- Acknowledgments: thanks, okay, got it, I see, great, cool
+- Emotions: I'm stressed, excited, confused, worried, happy
+- Follow-ups: can you explain, what do you mean, tell me more
+- Reactions: wow, interesting, hmm, nice
+
+**Key indicators for QUERIES (no action):**
+- Question words: what, how, which, when, where, why, do I, can I, is there
+- Showing/listing: show, list, display, what are my, do I have
+- Information seeking: tell me, explain, describe, help me understand
+
+**Key indicators for ACTIONS (create action):**
+- Creation verbs: create, make, generate, add, new, set up, build
+- Modification verbs: update, change, edit, modify, retake, rewrite
+- Scheduling verbs: schedule, plan, block out, reserve time
+- Goal setting: I want to learn [specific subject], my goal is, help me achieve
+
+**BEING PROACTIVE - Suggesting Actions:**
+While you should NOT take action without explicit intent, you SHOULD proactively SUGGEST helpful actions based on context. Examples:
+
+- User: "I'm stressed about my exams"
+  → Respond supportively, then suggest: "Would you like me to create a study schedule to help you prepare?"
+
+- User: "I need to get better at Python"
+  → Acknowledge, then offer: "I can create a Python course tailored to your level if you'd like!"
+
+- User: "This topic is really interesting"
+  → Engage with them, then suggest: "Would you like me to add a note so you can reference this later?"
+
+- User: "I keep forgetting to study"
+  → Be understanding, then offer: "I can set up recurring study reminders on your schedule. Want me to do that?"
+
+- User: "I have an exam next week"
+  → Empathize, then suggest: "Would you like me to create a goal to track your preparation, or schedule some study sessions?"
+
+- User asks about a topic without context:
+  → Answer their question, then offer: "If you want to dive deeper, I can create a course on this subject."
+
+The key is: **respond to their message first**, then **offer a helpful suggestion** without assuming they want it. Wait for their confirmation (like "yes please", "sure", "do it") before taking action.
+
+RULES:
+1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, *add tags*, *recommend resources*, *set goal*, or *schedule* for something. Questions and queries should be answered conversationally WITHOUT actions.
+2. For note creation:
+   - Use the topicId from the context if available
+   - Use the courseId from the context if available (optional)
+   - If context includes noteId, you can reference the existing note but cannot create a duplicate
+3. For retake_note action:
+   - Use when user asks to "retake", "rewrite", "improve", or "regenerate" a note
+   - Use noteId from context (current note being viewed)
+   - The AI will rewrite the note content with better formatting
+4. For add_summary action:
+   - Use when user asks to "add summary", "summarize this note", or "create summary"
+   - Use noteId from context (current note being viewed)
+   - The AI will add a summary section to the note
+5. For add_tags action:
+   - Use when user asks to "add tags", "tag this note", "suggest tags", or "add tags to note"
+   - Use noteId from context (current note being viewed)
+   - Generate 3-8 relevant tags based on note content, title, and topic
+   - Tags should be concise, relevant, and use PascalCase or camelCase (e.g., "CommunityHealthNursing", "PublicHealth")
+   - Include tags in the "tags" array in the action data
+6. For recommend_resources action:
+   - IMPORTANT: Distinguish between SAVED resources vs NEW recommendations:
+     * CLEARLY SAVED: "show my resources", "what resources have I saved", "my saved resources", "resources I've saved" -> LIST QUERY, NOT an action
+     * CLEARLY NEW: "find NEW resources for X", "recommend resources", "suggest resources", "search for resources about Y" -> ACTION (recommend_resources)
+   - AMBIGUOUS cases - ASK for clarification (do NOT assume):
+     * "get me resources on sewing" - Could be saved OR new, ASK!
+     * "resources for programming" - Could be saved OR new, ASK!
+     * "show resources about cooking" - Could be saved OR new, ASK!
+     * Just "resources" or "show resources" - ASK!
+   - When AMBIGUOUS, respond with something like:
+     "Are you looking for resources you've already saved about [topic], or would you like me to find new resource recommendations for [topic]?"
+   - Only trigger recommend_resources action when user CLEARLY wants NEW recommendations (uses words like "find", "search", "recommend", "suggest", "new")
+   - When recommending NEW resources:
+     * Extract the query from what the user is asking for
+     * Use topicId from context if user is viewing a topic
+     * Use courseId from context if user is viewing a course
+     * Set limit to 5-10 resources (default 10)
+     * The system will generate personalized recommendations using web search
+7. For create_goal action:
+   - Use when user asks to "set a goal", "create a goal", "I want to learn X", "my goal is to Y", etc.
+   - Extract a clear, actionable goal title from the user's request
+   - Use courseId from context if user is viewing a course
+   - Use topicId from context if user is viewing a topic
+   - Include targetDate if user mentions a deadline or timeframe
+   - Goals help track learning progress and personalize recommendations
+8. For create_schedule action:
+   - CRITICAL: When user asks to "schedule", "create a schedule", "plan study sessions", "block out time", "set up study time", "add to calendar", "propose a schedule", or asks for a study plan with specific times/dates, you MUST create actual schedule blocks using the create_schedule action. DO NOT just describe or propose a schedule - you must create it!
+   - If the user asks for a multi-day schedule or study plan, create MULTIPLE schedule blocks (one for each day/time block mentioned)
+   - Extract start and end times from the user's request. If specific times aren't mentioned, use reasonable defaults (e.g., evening study sessions around 6-8 PM, morning sessions around 9-11 AM)
+   - Use courseId, topicId, or goalId from context or from previous actions in the batch (use $courseId, $goalId placeholders if created in same batch)
+   - Include recurringRule if user mentions recurring schedules (e.g., "daily", "weekly", "every Monday")
+   - For multi-day schedules, create separate schedule blocks for each day with appropriate startAt/endAt times
+   - IMPORTANT: If the user has Google Calendar connected, the system will automatically check for conflicts with existing calendar events. If a conflict is detected, the system will create the schedule but warn the user about the overlap. Be aware that schedules might conflict with existing commitments.
+   - Schedules automatically sync with Google Calendar if the user has connected their calendar
+   - Example: If user says "schedule cooking practice for tomorrow evening and exam study for the next 3 days", create 4 schedule blocks (1 for cooking, 3 for exam study)
+9. When handling multiple actions:
+   - If user asks for multiple things (e.g., "create a course and set a goal"), include ALL actions in one batch
+   - Use "$courseId", "$goalId", "$topicId" placeholders to reference IDs from previous actions
+   - Order actions logically (e.g., create course first, then goal, then schedule)
+   - IMPORTANT: When creating schedules for multiple days/times, create MULTIPLE create_schedule actions (one per time block). Do NOT create just one schedule block - create separate blocks for each day/time mentioned
+10. The JSON must be valid.
+11. Keep the conversational part of your response encouraging and brief.
+12. When creating notes, use the topic/course information from context to make the note relevant and contextual.
+13. When recommending resources, explain why you're recommending them and how they relate to the user's learning goals.
+14. When creating goals, make them specific, measurable, and aligned with the user's current learning context.
+15. NEVER create an action when the user is just chatting, greeting, asking a question, or expressing feelings. If uncertain, err on the side of responding conversationally rather than taking action. Only take action when there's clear, explicit intent to create/modify something. Be a friendly, supportive study companion first - actions are secondary to good conversation.
+"""
 
 
 class GeminiService:
@@ -249,44 +408,6 @@ class GeminiService:
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
         }
-
-        # Context caching for frequently used prompts
-        # Maps intent -> (cached_model, cache_time)
-        self._model_cache: dict[str, tuple[genai.GenerativeModel, float]] = {}
-        self._cache_ttl = 3600  # 1 hour TTL for cached models
-
-    def _get_cached_model(self, intent: str) -> genai.GenerativeModel:
-        """
-        Get or create a cached model for the given intent.
-        Uses in-memory caching to avoid recreating models for each request.
-        """
-        import time
-
-        current_time = time.time()
-
-        # Check if we have a valid cached model
-        if intent in self._model_cache:
-            cached_model, cache_time = self._model_cache[intent]
-            if current_time - cache_time < self._cache_ttl:
-                return cached_model
-
-        # Create new model with intent-specific prompt
-        model_name = get_model_for_intent(intent)
-        system_prompt = get_prompt_for_intent(intent)
-
-        cached_model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_prompt,
-        )
-
-        # Cache the model
-        self._model_cache[intent] = (cached_model, current_time)
-
-        return cached_model
-
-    def clear_model_cache(self):
-        """Clear the model cache."""
-        self._model_cache.clear()
 
     async def get_chat_response(
         self, history: list, user_message: str, context: dict = None
@@ -399,204 +520,6 @@ class GeminiService:
         except Exception as e:
             print(f"Gemini Error: {e}")
             raise HTTPException(status_code=500, detail="AI Service unavailable")
-
-    async def get_chat_response_with_intent(
-        self,
-        history: list,
-        user_message: str,
-        context: dict = None,
-        intent: str = None,
-    ) -> tuple[str, dict]:
-        """
-        Send message to Gemini with intent-based model and prompt selection.
-        Uses smaller, intent-specific prompts for efficiency.
-
-        Args:
-            history: Chat history
-            user_message: User's message
-            context: Optional context dict
-            intent: Pre-classified intent (if None, uses default prompt)
-
-        Returns:
-            Tuple of (response_text, usage_info)
-        """
-        try:
-            # Select model based on intent, using cached models for efficiency
-            if intent:
-                # Use cached model for known intents
-                intent_model = self._get_cached_model(intent)
-                model_name = get_model_for_intent(intent)
-            else:
-                # Fall back to default model with full system instruction
-                intent_model = self.model
-                model_name = MODELS["flash"]
-
-            # Build enhanced message with context
-            enhanced_message = user_message
-            from datetime import datetime
-
-            current_datetime = datetime.now(UTC)
-            current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
-
-            context_parts = [f"Current Date & Time: {current_date_str}"]
-
-            if context:
-                if context.get("pageContext"):
-                    context_parts.append(f"Current Page Context: {context['pageContext']}")
-                if context.get("courseTitle"):
-                    context_parts.append(f"Current Course: {context['courseTitle']}")
-                elif context.get("courseId"):
-                    context_parts.append(f"Current Course ID: {context['courseId']}")
-                if context.get("topicTitle"):
-                    context_parts.append(f"Current Topic: {context['topicTitle']}")
-                elif context.get("topicId"):
-                    context_parts.append(f"Current Topic ID: {context['topicId']}")
-                if context.get("noteTitle"):
-                    context_parts.append(f"Current Note: {context['noteTitle']}")
-                elif context.get("noteId"):
-                    context_parts.append(f"Current Note ID: {context['noteId']}")
-                if context.get("retrieved_items"):
-                    context_parts.append("\nRelevant Items:")
-                    for item in context["retrieved_items"]:
-                        context_parts.append(str(item))
-
-            if context_parts:
-                context_str = "\n".join(context_parts)
-                enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
-
-            # Start chat and send message
-            chat = intent_model.start_chat(history=history)
-            response = await chat.send_message_async(
-                enhanced_message, safety_settings=self.safety_settings
-            )
-
-            # Extract usage info
-            usage_info = {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "model_name": model_name,
-                "intent": intent,
-            }
-
-            if hasattr(response, "usage_metadata"):
-                usage_metadata = response.usage_metadata
-                if hasattr(usage_metadata, "prompt_token_count"):
-                    usage_info["input_tokens"] = usage_metadata.prompt_token_count or 0
-                if hasattr(usage_metadata, "candidates_token_count"):
-                    usage_info["output_tokens"] = usage_metadata.candidates_token_count or 0
-
-            return response.text, usage_info
-
-        except Exception as e:
-            print(f"Gemini Error (intent-based): {e}")
-            raise HTTPException(status_code=500, detail="AI Service unavailable")
-
-    async def stream_chat_response(
-        self,
-        history: list,
-        user_message: str,
-        context: dict = None,
-        intent: str = None,
-    ):
-        """
-        Stream chat response chunks as they arrive from Gemini.
-
-        Args:
-            history: Chat history
-            user_message: User's message
-            context: Optional context dict
-            intent: Pre-classified intent (if None, uses default model)
-
-        Yields:
-            Tuple of (chunk_text, is_final, usage_info)
-            - chunk_text: The text chunk
-            - is_final: Whether this is the final chunk
-            - usage_info: Token usage info (only populated on final chunk)
-        """
-        try:
-            # Select model based on intent
-            if intent:
-                streaming_model = self._get_cached_model(intent)
-                model_name = get_model_for_intent(intent)
-            else:
-                streaming_model = self.model
-                model_name = MODELS["flash"]
-
-            # Build enhanced message with context
-            enhanced_message = user_message
-            from datetime import datetime
-
-            current_datetime = datetime.now(UTC)
-            current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
-
-            context_parts = [f"Current Date & Time: {current_date_str}"]
-
-            if context:
-                if context.get("pageContext"):
-                    context_parts.append(f"Current Page Context: {context['pageContext']}")
-                if context.get("courseTitle"):
-                    context_parts.append(f"Current Course: {context['courseTitle']}")
-                elif context.get("courseId"):
-                    context_parts.append(f"Current Course ID: {context['courseId']}")
-                if context.get("topicTitle"):
-                    context_parts.append(f"Current Topic: {context['topicTitle']}")
-                elif context.get("topicId"):
-                    context_parts.append(f"Current Topic ID: {context['topicId']}")
-                if context.get("noteTitle"):
-                    context_parts.append(f"Current Note: {context['noteTitle']}")
-                elif context.get("noteId"):
-                    context_parts.append(f"Current Note ID: {context['noteId']}")
-                if context.get("retrieved_items"):
-                    context_parts.append("\nRelevant Items:")
-                    for item in context["retrieved_items"]:
-                        context_parts.append(str(item))
-
-            if context_parts:
-                context_str = "\n".join(context_parts)
-                enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
-
-            # Start chat and send message with streaming
-            chat = streaming_model.start_chat(history=history)
-
-            # Use streaming response
-            response = await chat.send_message_async(
-                enhanced_message,
-                safety_settings=self.safety_settings,
-                stream=True,
-            )
-
-            # Stream chunks
-            full_text = ""
-            async for chunk in response:
-                if chunk.text:
-                    full_text += chunk.text
-                    yield chunk.text, False, None
-
-            # Final chunk with usage info
-            usage_info = {
-                "input_tokens": len(enhanced_message) // 4,  # Estimate
-                "output_tokens": len(full_text) // 4,  # Estimate
-                "model_name": model_name,
-                "intent": intent,
-            }
-
-            # Try to get actual usage from response if available
-            if hasattr(response, "usage_metadata"):
-                usage_metadata = response.usage_metadata
-                if hasattr(usage_metadata, "prompt_token_count"):
-                    usage_info["input_tokens"] = (
-                        usage_metadata.prompt_token_count or usage_info["input_tokens"]
-                    )
-                if hasattr(usage_metadata, "candidates_token_count"):
-                    usage_info["output_tokens"] = (
-                        usage_metadata.candidates_token_count or usage_info["output_tokens"]
-                    )
-
-            yield "", True, usage_info
-
-        except Exception as e:
-            print(f"Gemini Streaming Error: {e}")
-            raise HTTPException(status_code=500, detail="AI Streaming unavailable")
 
     async def generate_summary(self, content: str) -> str:
         """
@@ -800,125 +723,6 @@ Answer:"""
         except Exception as e:
             print(f"Intent detection error: {e}")
             return {"intent": "none", "is_list_query": False, "total_tokens": 0}
-
-    async def classify_intent(self, user_message: str, context: dict = None) -> dict:
-        """
-        Classify user intent into categories for routing to appropriate model and prompt.
-
-        Returns:
-            Dictionary with:
-            - 'intent': The classified intent type
-            - 'model': The recommended model ('lite' or 'flash')
-            - 'model_name': Full model name (e.g., 'gemini-2.0-flash-lite')
-            - 'prompt_key': Key to look up in INTENT_PROMPTS
-            - 'total_tokens': Tokens used for classification
-        """
-        try:
-            # Build context hint for better classification
-            context_hint = ""
-            if context:
-                if context.get("noteId") or context.get("noteTitle"):
-                    context_hint = " (User is viewing a note)"
-                elif context.get("topicId") or context.get("topicTitle"):
-                    context_hint = " (User is viewing a topic)"
-                elif context.get("courseId") or context.get("courseTitle"):
-                    context_hint = " (User is viewing a course)"
-
-            classification_prompt = f"""Classify this user message into one category.{context_hint}
-
-Message: "{user_message}"
-
-Categories:
-- greeting: Hi, hello, hey, good morning, how are you, thanks, bye
-- list_query: Show my courses/goals/schedule/notes, what do I have, what am I studying
-- course_generation: Create/generate/make a course, I want to learn [subject]
-- schedule_creation: Schedule, plan, block time, set up study sessions, create schedule
-- goal_creation: Set a goal, create goal, my goal is, I want to achieve
-- note_actions: Create/retake/rewrite note, add summary, add tags, summarize this
-- resource_recommendation: Find/recommend/suggest resources, search for materials
-- clarification: What do you mean, can you explain, tell me more, I don't understand
-- conversation: Everything else - questions, discussion, casual chat
-
-Respond with ONLY one word from the categories above.
-
-Answer:"""
-
-            minimal_model = genai.GenerativeModel(
-                MODELS["lite"],
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=10,
-                    temperature=0.1,
-                ),
-                safety_settings=self.safety_settings,
-            )
-
-            response = await minimal_model.generate_content_async(
-                classification_prompt, safety_settings=self.safety_settings
-            )
-
-            # Parse the response
-            intent = response.text.strip().lower() if response.text else "conversation"
-
-            # Validate and normalize intent
-            valid_intents = [
-                "greeting",
-                "list_query",
-                "course_generation",
-                "schedule_creation",
-                "goal_creation",
-                "note_actions",
-                "note_creation",
-                "resource_recommendation",
-                "clarification",
-                "conversation",
-            ]
-
-            if intent not in valid_intents:
-                # Try to extract a valid intent from the response
-                for valid in valid_intents:
-                    if valid in intent or intent in valid:
-                        intent = valid
-                        break
-                else:
-                    # Map common variations
-                    intent_map = {
-                        "course": "course_generation",
-                        "schedule": "schedule_creation",
-                        "goal": "goal_creation",
-                        "note": "note_actions",
-                        "resource": "resource_recommendation",
-                        "resources": "resource_recommendation",
-                    }
-                    intent = intent_map.get(intent, "conversation")
-
-            # Get model and prompt for this intent
-            model_key = INTENT_MODEL_MAP.get(intent, "flash")
-            model_name = MODELS[model_key]
-            prompt_key = intent
-
-            # Calculate tokens
-            input_tokens = len(classification_prompt) // 4
-            output_tokens = len(response.text) // 4 if response.text else 0
-            total_tokens = input_tokens + output_tokens
-
-            return {
-                "intent": intent,
-                "model": model_key,
-                "model_name": model_name,
-                "prompt_key": prompt_key,
-                "total_tokens": total_tokens,
-            }
-
-        except Exception as e:
-            print(f"Intent classification error: {e}")
-            # Default to conversation with flash model
-            return {
-                "intent": "conversation",
-                "model": "flash",
-                "model_name": MODELS["flash"],
-                "prompt_key": "conversation",
-                "total_tokens": 0,
-            }
 
     async def rewrite_note_content(
         self, content: str, title: str = None, context: dict = None

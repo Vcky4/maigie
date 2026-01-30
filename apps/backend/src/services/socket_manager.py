@@ -40,29 +40,6 @@ class ConnectionManager:
             websocket = self.active_connections[user_id]
             await websocket.send_json(data)
 
-    async def send_stream_chunk(
-        self, chunk: str, user_id: str, is_final: bool = False, usage_info: dict = None
-    ):
-        """
-        Send a streaming chunk to a specific user.
-
-        Args:
-            chunk: The text chunk to send
-            user_id: The user's ID
-            is_final: Whether this is the final chunk
-            usage_info: Token usage info (only on final chunk)
-        """
-        if user_id in self.active_connections:
-            websocket = self.active_connections[user_id]
-            data = {
-                "type": "stream",
-                "chunk": chunk,
-                "isFinal": is_final,
-            }
-            if is_final and usage_info:
-                data["usage"] = usage_info
-            await websocket.send_json(data)
-
 
 # Global instance
 manager = ConnectionManager()

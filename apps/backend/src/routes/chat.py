@@ -1024,41 +1024,8 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                         "model_name": "gemini-1.5-flash",
                     }
                 else:
-                    # Classify intent for smart model/prompt selection
-                    intent_result = await llm_service.classify_intent(user_text, enriched_context)
-                    classified_intent = intent_result.get("intent", "conversation")
-                    print(
-                        f"🎯 Classified intent: {classified_intent} -> {intent_result.get('model_name')}"
-                    )
-
-                    # Use streaming for real-time response
-                    ai_response_text = ""
-                    usage_info = None
-
-                    async for chunk, is_final, chunk_usage in llm_service.stream_chat_response(
-                        history=formatted_history,
-                        user_message=user_text,
-                        context=enriched_context,
-                        intent=classified_intent,
-                    ):
-                        if not is_final:
-                            # Send chunk to client
-                            await manager.send_stream_chunk(chunk, user.id, is_final=False)
-                            ai_response_text += chunk
-                        else:
-                            # Final chunk - capture usage info
-                            usage_info = chunk_usage or {
-                                "input_tokens": len(user_text) // 4,
-                                "output_tokens": len(ai_response_text) // 4,
-                                "model_name": intent_result.get("model_name", "gemini-2.0-flash"),
-                            }
-                            # Add intent classification tokens to usage
-                            if usage_info:
-                                usage_info["input_tokens"] += intent_result.get("total_tokens", 0)
-
-                    # Send final stream marker
-                    await manager.send_stream_chunk(
-                        "", user.id, is_final=True, usage_info=usage_info
+                    ai_response_text, usage_info = await llm_service.get_chat_response(
+                        history=formatted_history, user_message=user_text, context=enriched_context
                     )
 
             # --- NEW: Action Detection Logic ---
