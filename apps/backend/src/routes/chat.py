@@ -492,16 +492,35 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 )
 
                 # Queue Celery job
-                celery_app.send_task(
-                    "course.generate_from_chat",
-                    kwargs={
-                        "user_id": user.id,
-                        "course_id": placeholder_course.id,
-                        "user_message": user_text,
-                        "topic": topic,
-                        "difficulty": difficulty,
-                    },
-                )
+                try:
+                    celery_app.send_task(
+                        "course.generate_from_chat",
+                        kwargs={
+                            "user_id": user.id,
+                            "course_id": placeholder_course.id,
+                            "user_message": user_text,
+                            "topic": topic,
+                            "difficulty": difficulty,
+                        },
+                        ignore_result=True,
+                    )
+                except Exception as e:
+                    # Do not crash the websocket if Celery backend is unhealthy
+                    print(f"⚠️ Failed to enqueue course generation task: {e}")
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "error",
+                                "action": "ai_course_generation",
+                                "course_id": placeholder_course.id,
+                                "courseId": placeholder_course.id,
+                                "message": "Failed to enqueue course generation. Please try again.",
+                            },
+                        },
+                        user.id,
+                    )
+                    continue
 
                 # Optional queued event (frontend mainly reacts to success)
                 await manager.send_json(

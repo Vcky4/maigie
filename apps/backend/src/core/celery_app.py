@@ -50,6 +50,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_serializer=settings.CELERY_TASK_SERIALIZER,
         accept_content=settings.CELERY_ACCEPT_CONTENT,
         result_serializer=settings.CELERY_RESULT_SERIALIZER,
+        task_ignore_result=True,  # we don't use results; avoids backend reliance
         timezone=settings.CELERY_TIMEZONE,
         enable_utc=settings.CELERY_ENABLE_UTC,
         task_always_eager=settings.CELERY_TASK_ALWAYS_EAGER,
