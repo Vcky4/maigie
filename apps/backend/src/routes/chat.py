@@ -710,30 +710,43 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 query_results = []
 
             # 7. Process query tool results (if any)
+            # NOTE: Only show query results as components when they were the PRIMARY action
+            # (i.e., no create/update actions were executed). This prevents showing course
+            # lists when the LLM was just checking context for other operations like
+            # creating a study plan.
             query_component_responses = []
-            for query_result in query_results:
-                query_type = query_result.get("query_type", "")
-                component_type = query_result.get("component_type", "")
-                data = query_result.get("data", [])
 
-                if data and component_type:
-                    # Format message based on count
-                    count = len(data)
-                    if count == 0:
-                        message = f"You don't have any {query_type} yet."
-                    elif count == 1:
-                        message = f"Here is your {query_type[:-1]}:"  # Remove 's' for singular
-                    else:
-                        message = f"Here are your {count} {query_type}:"
+            # Check if any "create" or "update" actions were executed
+            has_create_or_update_actions = any(
+                action_info["type"].startswith(("create_", "update_"))
+                for action_info in executed_actions
+            )
 
-                    # Format as component response
-                    component_response = format_list_component_response(
-                        component_type=component_type,
-                        items=data,
-                        text=message,
-                    )
-                    if component_response:
-                        query_component_responses.append(component_response)
+            # Only show query results as components if there were no create/update actions
+            if not has_create_or_update_actions:
+                for query_result in query_results:
+                    query_type = query_result.get("query_type", "")
+                    component_type = query_result.get("component_type", "")
+                    data = query_result.get("data", [])
+
+                    if data and component_type:
+                        # Format message based on count
+                        count = len(data)
+                        if count == 0:
+                            message = f"You don't have any {query_type} yet."
+                        elif count == 1:
+                            message = f"Here is your {query_type[:-1]}:"  # Remove 's' for singular
+                        else:
+                            message = f"Here are your {count} {query_type}:"
+
+                        # Format as component response
+                        component_response = format_list_component_response(
+                            component_type=component_type,
+                            items=data,
+                            text=message,
+                        )
+                        if component_response:
+                            query_component_responses.append(component_response)
 
             # 8. Process executed actions (from tool calls)
             # NOTE: Actions are already executed by tool handlers in llm_service
