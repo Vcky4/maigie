@@ -563,7 +563,48 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             # 5.6. Perform Semantic Search (RAG) to find relevant items
             # This helps the LLM know about items the user might be referring to
-            if len(user_text) > 3:  # Only search for meaningful queries
+            # Skip RAG for short/simple messages to improve response time
+            simple_messages = {
+                "hi",
+                "hello",
+                "hey",
+                "thanks",
+                "thank you",
+                "ok",
+                "okay",
+                "yes",
+                "no",
+                "bye",
+                "goodbye",
+                "help",
+                "?",
+                "cool",
+                "great",
+                "nice",
+                "good",
+                "bad",
+                "sure",
+                "yep",
+                "nope",
+                "what",
+                "why",
+                "how",
+                "when",
+                "where",
+                "who",
+                "hm",
+                "hmm",
+                "ah",
+                "oh",
+            }
+            user_text_lower = user_text.lower().strip()
+            should_run_rag = (
+                len(user_text) > 15
+                and user_text_lower not in simple_messages
+                and not user_text_lower.startswith(("hi ", "hello ", "hey "))
+            )
+
+            if should_run_rag:
                 try:
                     # We use a broader limit to catch potential matches
                     rag_results = await rag_service.retrieve_relevant_context(
@@ -599,6 +640,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 except Exception as e:
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
+            else:
+                (
+                    print(f"⏭️ Skipping RAG for simple message: '{user_text[:30]}...'")
+                    if len(user_text) > 30
+                    else print(f"⏭️ Skipping RAG for simple message: '{user_text}'")
+                )
 
             # 6. Get AI response with tool calling support
             # Define progress callback for tool execution updates
@@ -622,6 +669,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     user.id,
                 )
 
+            # Define stream callback for streaming text responses
+            streamed_chunks = []
+
+            async def stream_text(chunk: str, is_final: bool):
+                """Stream text chunks to frontend via WebSocket"""
+                streamed_chunks.append(chunk)
+                await manager.send_json(
+                    {
+                        "type": "stream",
+                        "payload": {
+                            "chunk": chunk,
+                            "is_final": is_final,
+                        },
+                    },
+                    user.id,
+                )
+
             try:
                 response_text, usage_info, executed_actions, query_results = (
                     await llm_service.get_chat_response_with_tools(
@@ -631,6 +695,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         user_id=user.id,
                         image_url=file_urls,  # Pass image URL if present
                         progress_callback=send_progress,  # Pass progress callback
+                        stream_callback=stream_text,  # Pass stream callback
                     )
                 )
             except Exception as e:
@@ -879,8 +944,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 13. Send text response to client
-            if clean_response:
+            # 13. Send text response to client (skip if already streamed)
+            already_streamed = len(streamed_chunks) > 0
+            if clean_response and not already_streamed:
                 await manager.send_personal_message(clean_response, user.id)
 
             # 14. Send component responses (queries and actions)

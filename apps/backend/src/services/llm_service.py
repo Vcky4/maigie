@@ -5,11 +5,12 @@ Handles chat logic and tool execution.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import warnings
 from datetime import UTC
 
-import httpx  # <--- Added for image download
+import httpx
 from fastapi import HTTPException
 
 genai = None
@@ -238,6 +239,7 @@ class GeminiService:
         user_id: str = None,
         image_url: str = None,
         progress_callback=None,
+        stream_callback=None,
     ) -> tuple[str, dict, list[dict], list[dict]]:
         """
         Send message to Gemini with function calling support.
@@ -250,6 +252,8 @@ class GeminiService:
             image_url: Optional image URL to include in the message
             progress_callback: Optional async callback for progress updates during tool execution
                               Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
+            stream_callback: Optional async callback for streaming text responses
+                            Signature: async def callback(chunk: str, is_final: bool)
 
         Returns:
             tuple: (response_text, usage_info, executed_actions, query_results)
@@ -276,79 +280,84 @@ class GeminiService:
             # Build enhanced message with context
             enhanced_message_text = self._build_enhanced_message(user_message, context)
 
-            # Use a single HTTP client for all image downloads (performance optimization)
-            async with httpx.AsyncClient(timeout=15.0) as http_client:
-                # Prepare message content (multimodal if image_url provided)
-                message_content = enhanced_message_text
-                if image_url:
-                    # Download image and create multimodal content
-                    try:
-                        img_response = await http_client.get(image_url)
-                        if img_response.status_code == 200:
-                            image_data = img_response.content
-                            mime_type = img_response.headers.get("content-type", "image/jpeg")
-                            # Create multimodal content: [text, image]
-                            message_content = [
-                                enhanced_message_text,
-                                {"mime_type": mime_type, "data": image_data},
-                            ]
-                            print(f"🖼️ Including image in message: {image_url}")
-                        else:
-                            print(f"⚠️ Failed to download image: {img_response.status_code}")
-                    except Exception as e:
-                        print(f"⚠️ Error downloading current message image: {e}")
+            # Helper to check if URL is an image
+            def _is_image_url(url: str) -> bool:
+                return (
+                    any(ext in url.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])
+                    or "image" in url.lower()
+                    or any(domain in url.lower() for domain in ["bunnycdn", "storage", "cdn"])
+                )
 
-                # Process history to include images
-                processed_history = []
-                for hist_msg in history:
-                    if isinstance(hist_msg, dict) and "parts" in hist_msg:
-                        parts = hist_msg["parts"]
-                        processed_parts = []
-                        for part in parts:
-                            if isinstance(part, str):
-                                # Check if it's an image URL
-                                if part.startswith(("http://", "https://")):
-                                    # Check if it's likely an image URL
-                                    is_image_url = (
-                                        any(
-                                            ext in part.lower()
-                                            for ext in [".jpg", ".jpeg", ".png", ".webp"]
-                                        )
-                                        or "image" in part.lower()
-                                        or any(
-                                            domain in part.lower()
-                                            for domain in ["bunnycdn", "storage", "cdn"]
-                                        )
-                                    )
-                                    if is_image_url:
-                                        # Download image for history using shared client
-                                        try:
-                                            img_response = await http_client.get(part)
-                                            if img_response.status_code == 200:
-                                                image_data = img_response.content
-                                                mime_type = img_response.headers.get(
-                                                    "content-type", "image/jpeg"
-                                                )
-                                                processed_parts.append(
-                                                    {"mime_type": mime_type, "data": image_data}
-                                                )
-                                                print(
-                                                    f"🖼️ Loaded image from history: {part[:50]}..."
-                                                )
-                                        except Exception as e:
-                                            print(
-                                                f"⚠️ Failed to load image from history {part[:50]}...: {e}"
-                                            )
-                                            # Continue without image
-                                    else:
-                                        processed_parts.append(part)
-                                else:
-                                    processed_parts.append(part)
+            # Collect all image URLs to download (current message + history)
+            image_urls_to_download = []
+            if image_url:
+                image_urls_to_download.append(image_url)
+
+            # Scan history for image URLs
+            history_image_positions = []  # [(msg_idx, part_idx, url), ...]
+            for msg_idx, hist_msg in enumerate(history):
+                if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                    for part_idx, part in enumerate(hist_msg["parts"]):
+                        if isinstance(part, str) and part.startswith(("http://", "https://")):
+                            if _is_image_url(part):
+                                history_image_positions.append((msg_idx, part_idx, part))
+                                image_urls_to_download.append(part)
+
+            # Download all images in parallel
+            downloaded_images = {}  # url -> {"mime_type": ..., "data": ...}
+            if image_urls_to_download:
+                async with httpx.AsyncClient(timeout=15.0) as http_client:
+
+                    async def download_image(url: str):
+                        try:
+                            response = await http_client.get(url)
+                            if response.status_code == 200:
+                                return url, {
+                                    "mime_type": response.headers.get("content-type", "image/jpeg"),
+                                    "data": response.content,
+                                }
+                        except Exception as e:
+                            print(f"⚠️ Failed to download image {url[:50]}...: {e}")
+                        return url, None
+
+                    # Download all images in parallel
+                    results = await asyncio.gather(
+                        *[download_image(url) for url in image_urls_to_download]
+                    )
+                    for url, img_data in results:
+                        if img_data:
+                            downloaded_images[url] = img_data
+                            print(f"🖼️ Downloaded image: {url[:50]}...")
+
+            # Prepare message content (multimodal if image_url provided)
+            message_content = enhanced_message_text
+            if image_url and image_url in downloaded_images:
+                img_data = downloaded_images[image_url]
+                message_content = [
+                    enhanced_message_text,
+                    {"mime_type": img_data["mime_type"], "data": img_data["data"]},
+                ]
+                print(f"🖼️ Including image in message: {image_url}")
+
+            # Process history - replace image URLs with downloaded data
+            processed_history = []
+            for msg_idx, hist_msg in enumerate(history):
+                if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                    processed_parts = []
+                    for part_idx, part in enumerate(hist_msg["parts"]):
+                        if isinstance(part, str):
+                            if part.startswith(("http://", "https://")) and _is_image_url(part):
+                                # Replace URL with downloaded image data
+                                if part in downloaded_images:
+                                    processed_parts.append(downloaded_images[part])
+                                # Skip if download failed
                             else:
                                 processed_parts.append(part)
-                        processed_history.append({**hist_msg, "parts": processed_parts})
-                    else:
-                        processed_history.append(hist_msg)
+                        else:
+                            processed_parts.append(part)
+                    processed_history.append({**hist_msg, "parts": processed_parts})
+                else:
+                    processed_history.append(hist_msg)
 
             # Start chat session
             chat = model_with_tools.start_chat(history=processed_history)
@@ -400,16 +409,39 @@ class GeminiService:
                         print(f"📞 Found {len(function_calls)} function calls via response.parts")
 
                 if not function_calls:
-                    # No tool calls - return final response
-                    # Safely get text (may fail if response has function call parts)
-                    try:
-                        final_text = (
-                            response.text if hasattr(response, "text") and response.text else ""
-                        )
-                    except ValueError as e:
-                        # Response contains unexpected structure
-                        print(f"⚠️ Could not get text from response: {e}")
-                        final_text = ""
+                    # No tool calls - this is the final response
+                    # If streaming is enabled and this is the final iteration, re-request with streaming
+                    if stream_callback and iteration == 1:
+                        # Re-send with streaming for perceived performance
+                        # Note: We already got the response, so we can stream from what we have
+                        # For true streaming, we'd need to restructure, but this avoids a second API call
+                        try:
+                            final_text = (
+                                response.text if hasattr(response, "text") and response.text else ""
+                            )
+                            # Stream the response in chunks for perceived faster response
+                            if final_text:
+                                chunk_size = 50  # Characters per chunk
+                                for i in range(0, len(final_text), chunk_size):
+                                    chunk = final_text[i : i + chunk_size]
+                                    is_final = (i + chunk_size) >= len(final_text)
+                                    await stream_callback(chunk, is_final)
+                                    if not is_final:
+                                        await asyncio.sleep(
+                                            0.02
+                                        )  # Small delay for smooth streaming
+                        except ValueError as e:
+                            print(f"⚠️ Could not get text from response: {e}")
+                            final_text = ""
+                    else:
+                        # Non-streaming response
+                        try:
+                            final_text = (
+                                response.text if hasattr(response, "text") and response.text else ""
+                            )
+                        except ValueError as e:
+                            print(f"⚠️ Could not get text from response: {e}")
+                            final_text = ""
                     break
 
                 # Execute function calls
