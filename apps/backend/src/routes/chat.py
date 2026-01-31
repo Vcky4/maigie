@@ -794,9 +794,50 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             },
                             user.id,
                         )
+                    elif chunk.get("type") == "error":
+                        # Handle error in streaming mode
+                        logger.error(
+                            f"LLM service error during streaming: {chunk.get('error')}",
+                            exc_info=True,
+                        )
+                        error_message = "I'm sorry, I encountered an error processing your request. Please try again."
+                        response_text = error_message
+                        usage_info = chunk.get("usage_info", usage_info)
+                        executed_actions = chunk.get("executed_actions", [])
+                        query_results = chunk.get("query_results", [])
+                        # Send error message to frontend
+                        await manager.send_json(
+                            {
+                                "type": "stream_chunk",
+                                "content": error_message,
+                            },
+                            user.id,
+                        )
+                        await manager.send_json(
+                            {
+                                "type": "stream_end",
+                            },
+                            user.id,
+                        )
+                        break
             except Exception as e:
                 logger.error(f"LLM service error: {e}", exc_info=True)
-                response_text = "I'm sorry, I encountered an error. Please try again."
+                error_message = "I'm sorry, I encountered an error. Please try again."
+                response_text = error_message
+                # Send error message to frontend
+                await manager.send_json(
+                    {
+                        "type": "stream_chunk",
+                        "content": error_message,
+                    },
+                    user.id,
+                )
+                await manager.send_json(
+                    {
+                        "type": "stream_end",
+                    },
+                    user.id,
+                )
                 usage_info = {
                     "input_tokens": 0,
                     "output_tokens": 0,

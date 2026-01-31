@@ -199,11 +199,13 @@ class GeminiService:
         Send message to Gemini with function calling support.
 
         Args:
-            stream: If True, yields chunks as async generator. If False, returns tuple.
+            stream: If True, streams word-by-word. If False, yields entire text at once.
 
-        Returns:
-            If stream=False: tuple (response_text, usage_info, executed_actions, query_results)
-            If stream=True: async generator yielding dicts with "type" and content
+        Yields:
+            dict: Chunks with "type" field:
+                - "text_chunk": Text content (word-by-word if stream=True, full text if stream=False)
+                - "done": Final metadata (usage_info, executed_actions, query_results)
+                - "error": Error occurred (error message and metadata)
         """
         from src.services.gemini_tools import get_all_tools
         from src.services.gemini_tool_handlers import handle_tool_call
@@ -400,9 +402,9 @@ class GeminiService:
                 "model_name": "gemini-3-flash-preview",
             }
 
-            if stream:
-                # Stream the final text response in chunks
-                if final_text:
+            # Always yield (function is always a generator when stream parameter exists)
+            if final_text:
+                if stream:
                     # Stream word by word for smooth UX
                     import asyncio
 
@@ -414,19 +416,38 @@ class GeminiService:
                         }
                         # Small delay for smooth streaming effect
                         await asyncio.sleep(0.01)
-                # Yield final metadata
-                yield {
-                    "type": "done",
-                    "usage_info": usage_info,
-                    "executed_actions": executed_actions,
-                    "query_results": query_results,
-                }
-            else:
-                return final_text, usage_info, executed_actions, query_results
+                else:
+                    # Non-streaming: yield entire text at once (for backward compatibility)
+                    yield {
+                        "type": "text_chunk",
+                        "content": final_text,
+                    }
+
+            # Yield final metadata
+            yield {
+                "type": "done",
+                "usage_info": usage_info,
+                "executed_actions": executed_actions,
+                "query_results": query_results,
+            }
 
         except Exception as e:
             print(f"Gemini Error with tools: {e}")
-            raise HTTPException(status_code=500, detail="AI Service unavailable")
+            import traceback
+
+            traceback.print_exc()
+            # Always yield error (function is always a generator)
+            yield {
+                "type": "error",
+                "error": str(e),
+                "usage_info": {
+                    "input_tokens": total_input_tokens,
+                    "output_tokens": total_output_tokens,
+                    "model_name": "gemini-3-flash-preview",
+                },
+                "executed_actions": executed_actions,
+                "query_results": query_results,
+            }
 
     def _map_tool_to_action_type(self, tool_name: str) -> str:
         """Map tool name to action type for backward compatibility."""
