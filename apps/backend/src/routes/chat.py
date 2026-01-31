@@ -710,10 +710,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 query_results = []
 
             # 7. Process query tool results (if any)
-            # NOTE: Only show query results as components when they were the PRIMARY action
-            # (i.e., no create/update actions were executed). This prevents showing course
-            # lists when the LLM was just checking context for other operations like
-            # creating a study plan.
+            # NOTE: Only show query results as components when the user EXPLICITLY asked
+            # to view their data. This prevents showing course cards when the LLM was
+            # just checking context for other operations like creating a study plan.
             query_component_responses = []
 
             # Check if any "create" or "update" actions were executed
@@ -722,8 +721,42 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 for action_info in executed_actions
             )
 
-            # Only show query results as components if there were no create/update actions
-            if not has_create_or_update_actions:
+            # Check if user explicitly asked to VIEW their data (not just context lookup)
+            user_text_lower = user_text.lower()
+            explicit_view_keywords = [
+                "show my",
+                "list my",
+                "view my",
+                "see my",
+                "what are my",
+                "show me my",
+                "display my",
+                "get my",
+                "fetch my",
+                "my courses",
+                "my goals",
+                "my schedule",
+                "my notes",
+                "my resources",
+                "what courses",
+                "what goals",
+                "what schedule",
+                "what notes",
+                "show courses",
+                "show goals",
+                "show schedule",
+                "show notes",
+                "list courses",
+                "list goals",
+                "list schedule",
+                "list notes",
+            ]
+            user_wants_to_view = any(kw in user_text_lower for kw in explicit_view_keywords)
+
+            # Only show query results as components if:
+            # 1. No create/update actions were executed, AND
+            # 2. User explicitly asked to view their data
+            if not has_create_or_update_actions and user_wants_to_view:
                 for query_result in query_results:
                     query_type = query_result.get("query_type", "")
                     component_type = query_result.get("component_type", "")
