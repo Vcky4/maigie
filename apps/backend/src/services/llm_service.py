@@ -219,7 +219,41 @@ class GeminiService:
             )
 
             # Build enhanced message with context
-            enhanced_message = self._build_enhanced_message(user_message, context)
+            enhanced_message_text = self._build_enhanced_message(user_message, context)
+
+            # Handle images if present in context
+            image_parts = []
+            if context and context.get("fileUrls"):
+                file_urls = context.get("fileUrls")
+                # fileUrls can be a string (single URL) or list of URLs
+                if isinstance(file_urls, str):
+                    file_urls = [file_urls]
+                elif not isinstance(file_urls, list):
+                    file_urls = []
+
+                # Download and prepare images
+                for image_url in file_urls:
+                    try:
+                        print(f"🖼️ Downloading image for Gemini: {image_url}")
+                        async with httpx.AsyncClient() as client:
+                            img_response = await client.get(image_url)
+                            if img_response.status_code == 200:
+                                image_data = img_response.content
+                                mime_type = img_response.headers.get("content-type", "image/jpeg")
+                                image_parts.append({"mime_type": mime_type, "data": image_data})
+                                print(f"✅ Image downloaded successfully: {len(image_data)} bytes")
+                            else:
+                                print(f"⚠️ Failed to download image: {img_response.status_code}")
+                    except Exception as e:
+                        print(f"⚠️ Error downloading image {image_url}: {e}")
+
+            # Build multimodal content (text + images)
+            if image_parts:
+                # Combine text and images for multimodal input
+                enhanced_message = [enhanced_message_text] + image_parts
+                print(f"📸 Sending message with {len(image_parts)} image(s)")
+            else:
+                enhanced_message = enhanced_message_text
 
             # Start chat session
             chat = model_with_tools.start_chat(history=history)
