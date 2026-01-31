@@ -436,124 +436,21 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             user_message = await db.chatmessage.create(data=user_message_data)
 
-            # Fast-path: course generation via background worker
-            # Goal: respond immediately, then generate/persist course in Celery and notify UI via events.
-            if _looks_like_course_generation_intent(user_text):
-                topic, difficulty = _extract_course_request(user_text)
-
-                # Check & consume fixed credits for AI course generation
-                user_obj = await db.user.find_unique(where={"id": user.id})
-                if not user_obj:
-                    await websocket.close()
-                    return
-
-                try:
-                    await consume_credits(
-                        user_obj,
-                        CREDIT_COSTS["ai_course_generation"],
-                        operation="ai_course_generation",
-                        db_client=db,
-                    )
-                except SubscriptionLimitError as e:
-                    await manager.send_json(
-                        {
-                            "type": "credit_limit_error",
-                            "message": e.message,
-                            "detail": e.detail,
-                        },
-                        user.id,
-                    )
-                    continue
-
-                # Create placeholder course
-                placeholder_course = await db.course.create(
-                    data={
-                        "userId": user.id,
-                        "title": f"Learning {topic}",
-                        "description": "Generating your course...",
-                        "difficulty": difficulty,
-                        "isAIGenerated": True,
-                        "progress": 0.0,
-                    }
-                )
-
-                # Send immediate acknowledgement (no LLM wait)
-                ack_text = (
-                    f"Got it — I’m generating a {difficulty.lower()} course on **{topic}** now. "
-                    "I’ll let you know when it’s ready."
-                )
-                await manager.send_personal_message(ack_text, user.id)
-                await db.chatmessage.create(
-                    data={
-                        "sessionId": session.id,
-                        "userId": user.id,
-                        "role": "ASSISTANT",
-                        "content": ack_text,
-                        "tokenCount": 0,
-                    }
-                )
-
-                # Queue Celery job
-                try:
-                    celery_app.send_task(
-                        "course.generate_from_chat",
-                        kwargs={
-                            "user_id": user.id,
-                            "course_id": placeholder_course.id,
-                            "user_message": user_text,
-                            "topic": topic,
-                            "difficulty": difficulty,
-                        },
-                        ignore_result=True,
-                    )
-                except Exception as e:
-                    # Do not crash the websocket if Celery backend is unhealthy
-                    print(f"⚠️ Failed to enqueue course generation task: {e}")
-                    await manager.send_json(
-                        {
-                            "type": "event",
-                            "payload": {
-                                "status": "error",
-                                "action": "ai_course_generation",
-                                "course_id": placeholder_course.id,
-                                "courseId": placeholder_course.id,
-                                "message": "Failed to enqueue course generation. Please try again.",
-                            },
-                        },
-                        user.id,
-                    )
-                    continue
-
-                # Optional queued event (frontend mainly reacts to success)
-                await manager.send_json(
-                    {
-                        "type": "event",
-                        "payload": {
-                            "status": "queued",
-                            "action": "ai_course_generation",
-                            "course_id": placeholder_course.id,
-                            "courseId": placeholder_course.id,
-                            "progress": 0,
-                            "stage": "queued",
-                            "message": "Course generation queued",
-                        },
-                    },
-                    user.id,
-                )
-
-                continue
-
             # 5. Build History for Context (Last 6 messages to reduce token usage)
             history_records = await db.chatmessage.find_many(
                 where={"sessionId": session.id}, order={"createdAt": "asc"}, take=6
             )
 
-            # Format history for Gemini
+            # Format history for Gemini (including images)
             formatted_history = []
             for msg in history_records:
                 # Map DB roles to Gemini roles ('user' or 'model')
                 role = "user" if msg.role == "USER" else "model"
-                formatted_history.append({"role": role, "parts": [msg.content]})
+                parts = [msg.content]
+                # Include image if present
+                if msg.imageUrl:
+                    parts.append(msg.imageUrl)
+                formatted_history.append({"role": role, "parts": parts})
 
             # 5.5. Enrich context with topic/course/note details if IDs are provided
             enriched_context = None
@@ -711,6 +608,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         user_message=user_text,
                         context=enriched_context,
                         user_id=user.id,
+                        image_url=file_urls,  # Pass image URL if present
                     )
                 )
             except Exception as e:
@@ -774,62 +672,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     }
                 )
 
-                # Handle expensive actions in background (course generation, resource recommendations)
+                # Handle actions synchronously
                 if action_type == "create_course":
-                    # Course generation is already handled by fast-path (lines 437-542)
-                    # But if it comes through tool calling, queue background task
-                    topic = action_data.get("title", "").replace("Learning ", "")
-                    difficulty = action_data.get("difficulty", "BEGINNER")
-
-                    # Create placeholder course
-                    placeholder_course = await db.course.create(
-                        data={
-                            "userId": user.id,
-                            "title": action_data.get("title", f"Learning {topic}"),
-                            "description": action_data.get(
-                                "description", "Generating your course..."
-                            ),
-                            "difficulty": difficulty,
-                            "isAIGenerated": True,
-                            "progress": 0.0,
-                        }
+                    # Execute course creation synchronously
+                    action_result = await action_service.create_course(action_data, user.id)
+                    # Format component response
+                    component_response = await format_action_component_response(
+                        action_type=action_type,
+                        action_result=action_result,
+                        action_data=action_data,
+                        user_id=user.id,
+                        db=db,
                     )
-
-                    # Queue Celery task
-                    from src.core.celery_app import celery_app
-
-                    celery_app.send_task(
-                        "course.generate_from_chat",
-                        kwargs={
-                            "user_id": user.id,
-                            "course_id": placeholder_course.id,
-                            "user_message": user_text,
-                            "topic": topic,
-                            "difficulty": difficulty,
-                        },
-                        ignore_result=True,
-                    )
-
-                    # Send component response
-                    from src.services.component_response_service import (
-                        format_component_response,
-                    )
-
-                    component_responses.append(
-                        format_component_response(
-                            component_type="CourseCreationMessage",
-                            data={
-                                "courseId": placeholder_course.id,
-                                "status": "processing",
-                            },
-                            text="Generating your course...",
-                        )
-                    )
+                    if component_response:
+                        component_responses.append(component_response)
 
                 elif action_type == "recommend_resources":
                     # Queue background task for resource recommendations
-                    from src.core.celery_app import celery_app
-
                     celery_app.send_task(
                         "resources.recommend_from_chat",
                         kwargs={
@@ -843,18 +702,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
 
                 elif action_type == "create_schedule":
-                    # Queue background task for schedule creation
-                    from src.core.celery_app import celery_app
-
-                    schedule_blocks = [action_data]  # Single block
-                    celery_app.send_task(
-                        "schedule.create_from_chat",
-                        kwargs={
-                            "user_id": user.id,
-                            "schedule_blocks": schedule_blocks,
-                        },
-                        ignore_result=True,
+                    # Execute schedule creation synchronously
+                    action_result = await action_service.create_schedule(action_data, user.id)
+                    # Format component response
+                    component_response = await format_action_component_response(
+                        action_type=action_type,
+                        action_result=action_result,
+                        action_data=action_data,
+                        user_id=user.id,
+                        db=db,
                     )
+                    if component_response:
+                        component_responses.append(component_response)
 
                 else:
                     # Other actions are already executed synchronously by tool handlers

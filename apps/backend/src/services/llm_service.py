@@ -193,9 +193,17 @@ class GeminiService:
         user_message: str,
         context: dict = None,
         user_id: str = None,
+        image_url: str = None,
     ) -> tuple[str, dict, list[dict], list[dict]]:
         """
         Send message to Gemini with function calling support.
+
+        Args:
+            history: Chat history
+            user_message: User's text message
+            context: Additional context dictionary
+            user_id: User ID for tool execution
+            image_url: Optional image URL to include in the message
 
         Returns:
             tuple: (response_text, usage_info, executed_actions, query_results)
@@ -206,6 +214,7 @@ class GeminiService:
         """
         from src.services.gemini_tools import get_all_tools
         from src.services.gemini_tool_handlers import handle_tool_call
+        import httpx
 
         try:
             # Get tool definitions
@@ -219,10 +228,81 @@ class GeminiService:
             )
 
             # Build enhanced message with context
-            enhanced_message = self._build_enhanced_message(user_message, context)
+            enhanced_message_text = self._build_enhanced_message(user_message, context)
+
+            # Prepare message content (multimodal if image_url provided)
+            message_content = enhanced_message_text
+            if image_url:
+                # Download image and create multimodal content
+                async with httpx.AsyncClient() as client:
+                    img_response = await client.get(image_url)
+                    if img_response.status_code == 200:
+                        image_data = img_response.content
+                        mime_type = img_response.headers.get("content-type", "image/jpeg")
+                        # Create multimodal content: [text, image]
+                        message_content = [
+                            enhanced_message_text,
+                            {"mime_type": mime_type, "data": image_data},
+                        ]
+                        print(f"🖼️ Including image in message: {image_url}")
+                    else:
+                        print(f"⚠️ Failed to download image: {img_response.status_code}")
+
+            # Process history to include images
+            processed_history = []
+            for hist_msg in history:
+                if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                    parts = hist_msg["parts"]
+                    processed_parts = []
+                    for part in parts:
+                        if isinstance(part, str):
+                            # Check if it's an image URL (starts with http/https and looks like an image)
+                            if part.startswith(("http://", "https://")):
+                                # Check if it's likely an image URL (has image extension or is from image storage)
+                                is_image_url = (
+                                    any(
+                                        ext in part.lower()
+                                        for ext in [".jpg", ".jpeg", ".png", ".webp"]
+                                    )
+                                    or "image" in part.lower()
+                                    or any(
+                                        domain in part.lower()
+                                        for domain in ["bunnycdn", "storage", "cdn"]
+                                    )
+                                )
+                                if is_image_url:
+                                    # Download image for history
+                                    try:
+                                        async with httpx.AsyncClient() as client:
+                                            img_response = await client.get(part, timeout=10.0)
+                                            if img_response.status_code == 200:
+                                                image_data = img_response.content
+                                                mime_type = img_response.headers.get(
+                                                    "content-type", "image/jpeg"
+                                                )
+                                                processed_parts.append(
+                                                    {"mime_type": mime_type, "data": image_data}
+                                                )
+                                                print(
+                                                    f"🖼️ Loaded image from history: {part[:50]}..."
+                                                )
+                                    except Exception as e:
+                                        print(
+                                            f"⚠️ Failed to load image from history {part[:50]}...: {e}"
+                                        )
+                                        # Continue without image
+                                else:
+                                    processed_parts.append(part)
+                            else:
+                                processed_parts.append(part)
+                        else:
+                            processed_parts.append(part)
+                    processed_history.append({**hist_msg, "parts": processed_parts})
+                else:
+                    processed_history.append(hist_msg)
 
             # Start chat session
-            chat = model_with_tools.start_chat(history=history)
+            chat = model_with_tools.start_chat(history=processed_history)
 
             # Track executed actions and query results
             executed_actions = []
@@ -242,7 +322,7 @@ class GeminiService:
                 # Send message (first iteration) or tool results (subsequent iterations)
                 if iteration == 1:
                     response = await chat.send_message_async(
-                        enhanced_message, safety_settings=self.safety_settings
+                        message_content, safety_settings=self.safety_settings
                     )
                 else:
                     # Send tool results from previous iteration
@@ -357,7 +437,7 @@ class GeminiService:
         return mapping.get(tool_name, tool_name)
 
     def _build_enhanced_message(self, user_message: str, context: dict = None) -> str:
-        """Build enhanced message with context (extracted from get_chat_response)."""
+        """Build enhanced message with context."""
         enhanced_message = user_message
 
         # Always add current date/time context
