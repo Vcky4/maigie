@@ -664,10 +664,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if context.get("noteContent") and not enriched_context.get("noteContent"):
                     enriched_context["noteContent"] = context["noteContent"]
 
-                # Include fileUrls (images) if provided
-                if context.get("fileUrls"):
-                    enriched_context["fileUrls"] = context["fileUrls"]
-
             # 5.6. Perform Semantic Search (RAG) to find relevant items
             # This helps the LLM know about items the user might be referring to
             if len(user_text) > 3:  # Only search for meaningful queries
