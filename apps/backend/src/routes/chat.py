@@ -4,6 +4,7 @@ Handles real-time messaging with Gemini AI and Action Execution.
 """
 
 import json
+import logging
 import re
 from datetime import datetime, timedelta, UTC
 
@@ -44,6 +45,7 @@ from src.utils.exceptions import SubscriptionLimitError
 
 router = APIRouter()
 db = Prisma()
+logger = logging.getLogger(__name__)
 
 
 def _extract_course_request(user_text: str) -> tuple[str, str]:
@@ -432,7 +434,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_message_data["imageUrl"] = file_urls
                 print(f"🖼️ Message includes image: {file_urls}")
 
-            await db.chatmessage.create(data=user_message_data)
+            user_message = await db.chatmessage.create(data=user_message_data)
 
             # Fast-path: course generation via background worker
             # Goal: respond immediately, then generate/persist course in Celery and notify UI via events.
@@ -701,375 +703,177 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
 
-            # 6. Smart list/query detection using AI intent classification
-            # Allows natural language like "what am I studying?", "any goals?", etc.
-            is_list_query = False
-            list_component_response = None
-            detected_intent = None
-            intent_tokens = 0
-            user_text_lower = user_text.lower()  # Define early for use throughout
-
+            # 6. Get AI response with tool calling support
             try:
-                # Use AI to detect if this is a list query (minimal tokens ~30-50)
-                intent_result = await llm_service.detect_list_query_intent(user_text)
-                detected_intent = intent_result.get("intent", "none")
-                is_list_query = intent_result.get("is_list_query", False)
-                intent_tokens = intent_result.get("total_tokens", 0)
-
-                if is_list_query:
-                    print(f"🧠 AI detected list query intent: {detected_intent}")
-
+                response_text, usage_info, executed_actions, query_results = (
+                    await llm_service.get_chat_response_with_tools(
+                        history=formatted_history,
+                        user_message=user_text,
+                        context=enriched_context,
+                        user_id=user.id,
+                    )
+                )
             except Exception as e:
-                print(f"⚠️ AI intent detection failed, falling back to keywords: {e}")
-                # Fallback to keyword matching if AI fails
-                # Quick keyword check as fallback
-                if any(
-                    kw in user_text_lower for kw in ["my courses", "courses", "what am i learning"]
-                ):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "courses"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["my goals", "goals", "objectives"]):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "goals"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["schedule", "calendar", "upcoming"]):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "schedule"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["my notes", "notes"]):
-                    if "create" not in user_text_lower and "new" not in user_text_lower:
-                        detected_intent = "notes"
-                        is_list_query = True
-                elif any(kw in user_text_lower for kw in ["resources", "saved", "materials"]):
-                    if "create" not in user_text_lower and "recommend" not in user_text_lower:
-                        detected_intent = "resources"
-                        is_list_query = True
+                logger.error(f"LLM service error: {e}", exc_info=True)
+                response_text = "I'm sorry, I encountered an error. Please try again."
+                usage_info = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "model_name": "gemini-3-flash-preview",
+                }
+                executed_actions = []
+                query_results = []
 
-            # Fetch data based on detected intent
-            if is_list_query and detected_intent:
-                if detected_intent == "courses":
-                    courses = await db.course.find_many(
-                        where={"userId": user.id, "archived": False},
-                        include={"modules": {"include": {"topics": True}}},
-                        order={"updatedAt": "desc"},
-                        take=20,
-                    )
-                    courses_data = []
-                    for course in courses:
-                        total_topics = sum(len(m.topics) for m in course.modules)
-                        completed_topics = sum(
-                            sum(1 for t in m.topics if t.completed) for m in course.modules
-                        )
-                        progress = (
-                            (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
-                        )
-                        courses_data.append(
-                            {
-                                "courseId": course.id,
-                                "id": course.id,
-                                "title": course.title,
-                                "description": course.description or "",
-                                "progress": progress,
-                                "difficulty": course.difficulty,
-                                "completedTopics": completed_topics,
-                                "totalTopics": total_topics,
-                            }
-                        )
-                    # Format text naturally based on count
-                    courses_count = len(courses_data)
-                    if courses_count == 0:
-                        courses_text = "You don't have any courses yet."
-                    elif courses_count == 1:
-                        courses_text = "Here is your course:"
+            # 7. Process query tool results (if any)
+            query_component_responses = []
+            for query_result in query_results:
+                query_type = query_result.get("query_type", "")
+                component_type = query_result.get("component_type", "")
+                data = query_result.get("data", [])
+
+                if data and component_type:
+                    # Format message based on count
+                    count = len(data)
+                    if count == 0:
+                        message = f"You don't have any {query_type} yet."
+                    elif count == 1:
+                        message = f"Here is your {query_type[:-1]}:"  # Remove 's' for singular
                     else:
-                        courses_text = f"Here are your {courses_count} courses:"
+                        message = f"Here are your {count} {query_type}:"
 
-                    list_component_response = format_list_component_response(
-                        "CourseListMessage",
-                        courses_data,
-                        courses_text,
+                    # Format as component response
+                    component_response = format_list_component_response(
+                        component_type=component_type,
+                        items=data,
+                        text=message,
                     )
+                    if component_response:
+                        query_component_responses.append(component_response)
 
-                elif detected_intent == "goals":
-                    goals = await db.goal.find_many(
-                        where={"userId": user.id, "status": "ACTIVE"},
-                        order={"updatedAt": "desc"},
-                        take=20,
-                    )
-                    goals_data = []
-                    for goal in goals:
-                        goals_data.append(
-                            {
-                                "goalId": goal.id,
-                                "id": goal.id,
-                                "title": goal.title,
-                                "description": goal.description or "",
-                                "targetDate": (
-                                    goal.targetDate.isoformat() if goal.targetDate else None
-                                ),
-                                "progress": goal.progress or 0,
-                                "status": goal.status,
-                                "courseId": goal.courseId,
-                                "topicId": goal.topicId,
-                            }
-                        )
-                    # Format text naturally based on count
-                    goals_count = len(goals_data)
-                    if goals_count == 0:
-                        goals_text = "You don't have any active goals yet."
-                    elif goals_count == 1:
-                        goals_text = "Here is your active goal:"
-                    else:
-                        goals_text = f"Here are your {goals_count} active goals:"
+            # 8. Process executed actions (from tool calls)
+            component_responses = []
+            for action_info in executed_actions:
+                action_type = action_info["type"]
+                action_data = action_info["data"]
+                action_result = action_info["result"]
 
-                    list_component_response = format_list_component_response(
-                        "GoalListMessage",
-                        goals_data,
-                        goals_text,
-                    )
-
-                elif detected_intent == "schedule":
-                    now = datetime.now(UTC)
-                    end_date = now + timedelta(days=30)
-                    schedules = await db.scheduleblock.find_many(
-                        where={
-                            "userId": user.id,
-                            "startAt": {"gte": now, "lte": end_date},
-                        },
-                        order={"startAt": "asc"},
-                        take=50,
-                    )
-                    schedules_data = []
-                    for schedule in schedules:
-                        schedules_data.append(
-                            {
-                                "scheduleId": schedule.id,
-                                "id": schedule.id,
-                                "title": schedule.title,
-                                "startAt": (
-                                    schedule.startAt.isoformat() if schedule.startAt else None
-                                ),
-                                "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
-                                "description": schedule.description or "",
-                                "courseId": schedule.courseId,
-                                "topicId": schedule.topicId,
-                                "goalId": schedule.goalId,
-                            }
-                        )
-                    # Format text naturally based on count
-                    schedules_count = len(schedules_data)
-                    if schedules_count == 0:
-                        schedules_text = "You don't have any upcoming items in your schedule."
-                    elif schedules_count == 1:
-                        schedules_text = "Here is your upcoming item:"
-                    else:
-                        schedules_text = f"Here are your {schedules_count} upcoming items:"
-
-                    list_component_response = format_list_component_response(
-                        "ScheduleViewMessage",
-                        schedules_data,
-                        schedules_text,
-                    )
-
-                elif detected_intent == "notes":
-                    notes = await db.note.find_many(
-                        where={"userId": user.id, "archived": False},
-                        order={"updatedAt": "desc"},
-                        take=20,
-                    )
-                    notes_data = []
-                    for note in notes:
-                        notes_data.append(
-                            {
-                                "noteId": note.id,
-                                "id": note.id,
-                                "title": note.title,
-                                "content": note.content or "",
-                                "summary": note.summary,
-                                "createdAt": note.createdAt.isoformat() if note.createdAt else None,
-                                "updatedAt": note.updatedAt.isoformat() if note.updatedAt else None,
-                                "courseId": note.courseId,
-                                "topicId": note.topicId,
-                            }
-                        )
-                    # Format text naturally based on count
-                    notes_count = len(notes_data)
-                    if notes_count == 0:
-                        notes_text = "You don't have any notes yet."
-                    elif notes_count == 1:
-                        notes_text = "Here is your note:"
-                    else:
-                        notes_text = f"Here are your {notes_count} notes:"
-
-                    list_component_response = format_list_component_response(
-                        "NoteListMessage",
-                        notes_data,
-                        notes_text,
-                    )
-
-                elif detected_intent == "resources":
-                    resources = await db.resource.find_many(
-                        where={"userId": user.id},
-                        order={"createdAt": "desc"},
-                        take=20,
-                    )
-                    resources_data = []
-                    for resource in resources:
-                        resources_data.append(
-                            {
-                                "resourceId": resource.id,
-                                "id": resource.id,
-                                "title": resource.title,
-                                "url": resource.url or "",
-                                "description": resource.description or "",
-                                "type": resource.type,
-                                "courseId": resource.courseId,
-                                "topicId": resource.topicId,
-                            }
-                        )
-                    # Format text naturally based on count
-                    resources_count = len(resources_data)
-                    if resources_count == 0:
-                        resources_text = "You don't have any saved resources yet."
-                    elif resources_count == 1:
-                        resources_text = "Here is your saved resource:"
-                    else:
-                        resources_text = f"Here are your {resources_count} saved resources:"
-
-                    list_component_response = format_list_component_response(
-                        "ResourceListMessage",
-                        resources_data,
-                        resources_text,
-                    )
-
-            # If list query detected, send component response with optional AI insight
-            if is_list_query and list_component_response:
-                # Generate a brief AI insight about the data (minimal tokens)
-                ai_insight = None
-                insight_tokens = 0
-
-                try:
-                    # Build a minimal prompt for AI insight
-                    component_type = list_component_response.get("componentType", "")
-                    items_count = 0
-                    insight_context = ""
-
-                    if component_type == "CourseListMessage":
-                        items = list_component_response.get("courseListData", {}).get("courses", [])
-                        items_count = len(items)
-                        if items:
-                            # Get some context about courses
-                            in_progress = sum(1 for c in items if 0 < c.get("progress", 0) < 100)
-                            completed = sum(1 for c in items if c.get("progress", 0) >= 100)
-                            insight_context = f"User has {items_count} courses: {completed} completed, {in_progress} in progress, {items_count - completed - in_progress} not started."
-
-                    elif component_type == "GoalListMessage":
-                        items = list_component_response.get("goalListData", {}).get("goals", [])
-                        items_count = len(items)
-                        if items:
-                            with_deadlines = sum(1 for g in items if g.get("targetDate"))
-                            insight_context = f"User has {items_count} active goals, {with_deadlines} with deadlines set."
-
-                    elif component_type == "ScheduleViewMessage":
-                        items = list_component_response.get("scheduleViewData", {}).get(
-                            "schedules", []
-                        )
-                        items_count = len(items)
-                        if items:
-                            # Check for today's items
-                            today = datetime.now(UTC).date()
-                            today_items = sum(
-                                1
-                                for s in items
-                                if s.get("startAt")
-                                and datetime.fromisoformat(
-                                    s["startAt"].replace("Z", "+00:00")
-                                ).date()
-                                == today
-                            )
-                            insight_context = f"User has {items_count} scheduled items, {today_items} scheduled for today."
-
-                    elif component_type == "NoteListMessage":
-                        items = list_component_response.get("noteListData", {}).get("notes", [])
-                        items_count = len(items)
-                        if items:
-                            with_summary = sum(1 for n in items if n.get("summary"))
-                            insight_context = (
-                                f"User has {items_count} notes, {with_summary} have AI summaries."
-                            )
-
-                    elif component_type == "ResourceListMessage":
-                        items = list_component_response.get("resourceListData", {}).get(
-                            "resources", []
-                        )
-                        items_count = len(items)
-                        if items:
-                            # Count by type
-                            type_counts = {}
-                            for r in items:
-                                rtype = r.get("type", "OTHER")
-                                type_counts[rtype] = type_counts.get(rtype, 0) + 1
-                            most_common_type = (
-                                max(type_counts, key=type_counts.get) if type_counts else "OTHER"
-                            )
-                            insight_context = f"User has {items_count} saved resources, mostly {most_common_type.lower()}s. Types: {', '.join(f'{k}: {v}' for k, v in type_counts.items())}."
-
-                    # Generate brief AI insight if we have context (uses minimal tokens ~50-100)
-                    if insight_context and items_count > 0:
-                        insight_prompt = f"""Based on this data: {insight_context}
-
-Provide a brief, helpful one-sentence observation or tip (max 20 words). Be encouraging and actionable. Don't repeat the numbers."""
-
-                        insight_response = await llm_service.generate_minimal_response(
-                            prompt=insight_prompt, max_tokens=50
-                        )
-                        if insight_response:
-                            ai_insight = insight_response.get("text", "").strip()
-                            insight_tokens = insight_response.get("total_tokens", 0)
-
-                except Exception as e:
-                    print(f"⚠️ AI insight generation failed (non-critical): {e}")
-                    # Continue without AI insight - not critical
-
-                # Update the response text with AI insight if available
-                original_text = list_component_response.get("text", "Here's what you asked for")
-                if ai_insight:
-                    list_component_response["text"] = f"{original_text}\n\n💡 {ai_insight}"
-
-                await manager.send_json(list_component_response, user.id)
-
-                # Consume minimal credits for AI (intent detection + insight)
-                total_ai_tokens = intent_tokens + insight_tokens
-                if total_ai_tokens > 0:
-                    try:
-                        # Fetch user object for credit consumption
-                        user_obj_for_credits = await db.user.find_unique(where={"id": user.id})
-                        if user_obj_for_credits:
-                            await consume_credits(
-                                user_obj_for_credits,
-                                total_ai_tokens,
-                                "smart_list_query",
-                            )
-                            print(
-                                f"💳 Consumed {total_ai_tokens} tokens for smart list query (intent: {intent_tokens}, insight: {insight_tokens})"
-                            )
-                    except Exception as e:
-                        print(f"⚠️ Credit consumption failed for smart list query: {e}")
-
-                # Save message for history
-                await db.chatmessage.create(
+                # Log action to DB
+                await db.aiactionlog.create(
                     data={
-                        "sessionId": session.id,
-                        "userId": user.id,
-                        "role": "ASSISTANT",
-                        "content": list_component_response.get("text", "Here's what you asked for"),
-                        "tokenCount": total_ai_tokens,
+                        "messageId": user_message.id,  # Created earlier
+                        "actionType": action_type,
+                        "actionData": action_data,
+                        "status": (
+                            "SUCCESS" if action_result.get("status") == "success" else "FAILED"
+                        ),
+                        "error": (
+                            None
+                            if action_result.get("status") == "success"
+                            else action_result.get("message")
+                        ),
                     }
                 )
-                continue  # Skip to next message
 
-            # 6.5. Check credits ONLY for AI queries (after confirming it's not a free list query)
+                # Handle expensive actions in background (course generation, resource recommendations)
+                if action_type == "create_course":
+                    # Course generation is already handled by fast-path (lines 437-542)
+                    # But if it comes through tool calling, queue background task
+                    topic = action_data.get("title", "").replace("Learning ", "")
+                    difficulty = action_data.get("difficulty", "BEGINNER")
+
+                    # Create placeholder course
+                    placeholder_course = await db.course.create(
+                        data={
+                            "userId": user.id,
+                            "title": action_data.get("title", f"Learning {topic}"),
+                            "description": action_data.get(
+                                "description", "Generating your course..."
+                            ),
+                            "difficulty": difficulty,
+                            "isAIGenerated": True,
+                            "progress": 0.0,
+                        }
+                    )
+
+                    # Queue Celery task
+                    from src.core.celery_app import celery_app
+
+                    celery_app.send_task(
+                        "course.generate_from_chat",
+                        kwargs={
+                            "user_id": user.id,
+                            "course_id": placeholder_course.id,
+                            "user_message": user_text,
+                            "topic": topic,
+                            "difficulty": difficulty,
+                        },
+                        ignore_result=True,
+                    )
+
+                    # Send component response
+                    from src.services.component_response_service import (
+                        format_component_response,
+                    )
+
+                    component_responses.append(
+                        format_component_response(
+                            component_type="CourseCreationMessage",
+                            data={
+                                "courseId": placeholder_course.id,
+                                "status": "processing",
+                            },
+                            text="Generating your course...",
+                        )
+                    )
+
+                elif action_type == "recommend_resources":
+                    # Queue background task for resource recommendations
+                    from src.core.celery_app import celery_app
+
+                    celery_app.send_task(
+                        "resources.recommend_from_chat",
+                        kwargs={
+                            "user_id": user.id,
+                            "query": action_data.get("query", ""),
+                            "topic_id": action_data.get("topicId"),
+                            "course_id": action_data.get("courseId"),
+                            "limit": action_data.get("limit", 10),
+                        },
+                        ignore_result=True,
+                    )
+
+                elif action_type == "create_schedule":
+                    # Queue background task for schedule creation
+                    from src.core.celery_app import celery_app
+
+                    schedule_blocks = [action_data]  # Single block
+                    celery_app.send_task(
+                        "schedule.create_from_chat",
+                        kwargs={
+                            "user_id": user.id,
+                            "schedule_blocks": schedule_blocks,
+                        },
+                        ignore_result=True,
+                    )
+
+                else:
+                    # Other actions are already executed synchronously by tool handlers
+                    # Format component response
+                    component_response = await format_action_component_response(
+                        action_type=action_type,
+                        action_result=action_result,
+                        action_data=action_data,
+                        user_id=user.id,
+                        db=db,
+                    )
+                    if component_response:
+                        component_responses.append(component_response)
+
+            # 9. Clean response text
+            clean_response = response_text.strip()
+
+            # 10. Calculate costs and consume credits
+            # (Keep existing credit consumption logic)
             # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
             estimated_input_tokens = (
                 len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
@@ -1150,277 +954,8 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                 await websocket.close()
                 return
 
-            # 7. Check if user is asking for a summary
-            # Simple detection: check if message contains "summary" or "summarize"
-            is_summary_request = (
-                "summary" in user_text_lower
-                or "summarize" in user_text_lower
-                or "summarise" in user_text_lower
-            )
-
-            # If summary requested and we have context with content, generate summary
-            if is_summary_request:
-                # Check for content in enriched context or original context
-                # Priority: direct content > noteContent > topicContent
-                content_to_summarize = None
-                if enriched_context and enriched_context.get("content"):
-                    content_to_summarize = enriched_context["content"]
-                elif enriched_context and enriched_context.get("noteContent"):
-                    content_to_summarize = enriched_context["noteContent"]
-                elif enriched_context and enriched_context.get("topicContent"):
-                    content_to_summarize = enriched_context["topicContent"]
-                elif context and context.get("content"):
-                    content_to_summarize = context["content"]
-                elif context and context.get("noteContent"):
-                    content_to_summarize = context["noteContent"]
-
-                if content_to_summarize:
-                    summary = await llm_service.generate_summary(content_to_summarize)
-                    ai_response_text = f"I've generated a summary for you:\n\n{summary}"
-                    # For summaries, use estimated tokens
-                    usage_info = {
-                        "input_tokens": len(content_to_summarize) // 4,
-                        "output_tokens": len(summary) // 4,
-                        "model_name": "gemini-1.5-flash",
-                    }
-                else:
-                    # No content to summarize, ask user or provide general response
-                    ai_response_text, usage_info = await llm_service.get_chat_response(
-                        history=formatted_history, user_message=user_text, context=enriched_context
-                    )
-            else:
-                # 6. Get AI Response (with optional enriched context)
-                # Check if there's an image to analyze
-                if file_urls:
-                    print(f"🖼️ Analyzing image with Gemini Vision: {file_urls}")
-                    ai_response_text = await llm_service.analyze_image(user_text, file_urls)
-                    # Estimate token usage for image analysis
-                    usage_info = {
-                        "input_tokens": 500,  # Image analysis uses ~500 tokens for input
-                        "output_tokens": len(ai_response_text) // 4,
-                        "model_name": "gemini-1.5-flash",
-                    }
-                else:
-                    ai_response_text, usage_info = await llm_service.get_chat_response(
-                        history=formatted_history, user_message=user_text, context=enriched_context
-                    )
-
-            # --- NEW: Action Detection Logic ---
-            # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
-            # Use more flexible regex to handle whitespace variations
-            action_match = re.search(
-                r"<<<ACTION_START>>>\s*(.*?)\s*<<<ACTION_END>>>", ai_response_text, re.DOTALL
-            )
-
-            clean_response = ai_response_text  # Default to full text
-            action_results = []
-
-            if action_match:
-                try:
-                    print(f"⚙️ Action Detected for User {user.id}")
-                    # 1. Extract and Parse JSON
-                    json_str = action_match.group(1).strip()
-                    action_payload = json.loads(json_str)
-
-                    # Check if this is a single action or multiple actions
-                    if "actions" in action_payload:
-                        # Multiple actions
-                        actions_list = action_payload.get("actions", [])
-                        print(f"📋 Processing {len(actions_list)} actions in batch")
-                    else:
-                        # Single action (backward compatibility)
-                        actions_list = [action_payload]
-                        print("📋 Processing single action")
-
-                    # Track created IDs for dependency resolution
-                    created_ids = {}
-
-                    # Execute each action sequentially
-                    for idx, action_payload_item in enumerate(actions_list):
-                        action_type = action_payload_item.get("type")
-                        action_data = action_payload_item.get("data", {}).copy()
-
-                        print(
-                            f"\n🔄 Processing action {idx + 1}/{len(actions_list)}: {action_type}"
-                        )
-
-                        # 2. Enrich action data with context and resolve dependencies
-                        action_data = await enrich_action_data(
-                            action_type=action_type,
-                            action_data=action_data,
-                            enriched_context=enriched_context,
-                            context=context,
-                            created_ids=created_ids,
-                        )
-
-                        # 3. Execute Action (or enqueue for background execution)
-                        print(f"🚀 Executing {action_type} with action_data: {action_data}")
-
-                        # Offload expensive actions to Celery so chat stays fast
-                        if action_type == "recommend_resources":
-                            try:
-                                celery_app.send_task(
-                                    "resources.recommend_from_chat",
-                                    kwargs={
-                                        "user_id": user.id,
-                                        "query": action_data.get("query", ""),
-                                        "topic_id": action_data.get("topicId"),
-                                        "course_id": action_data.get("courseId"),
-                                        "limit": int(action_data.get("limit", 10)),
-                                    },
-                                    ignore_result=True,
-                                )
-                                action_result = {
-                                    "status": "queued",
-                                    "action": "recommend_resources",
-                                    "message": "Finding resources... I’ll share them when they’re ready.",
-                                }
-                            except Exception as e:
-                                action_result = {
-                                    "status": "error",
-                                    "action": "recommend_resources",
-                                    "message": f"Failed to enqueue resource recommendation: {e}",
-                                }
-
-                        elif action_type == "create_schedule":
-                            try:
-                                celery_app.send_task(
-                                    "schedule.create_from_chat",
-                                    kwargs={
-                                        "user_id": user.id,
-                                        "schedule_blocks": [action_data],
-                                    },
-                                    ignore_result=True,
-                                )
-                                action_result = {
-                                    "status": "queued",
-                                    "action": "create_schedule",
-                                    "message": "Scheduling that now... I’ll confirm once it’s saved.",
-                                }
-                            except Exception as e:
-                                action_result = {
-                                    "status": "error",
-                                    "action": "create_schedule",
-                                    "message": f"Failed to enqueue schedule creation: {e}",
-                                }
-
-                        else:
-                            action_result = await action_service.execute_action(
-                                action_type=action_type,
-                                action_data=action_data,
-                                user_id=user.id,
-                            )
-
-                        print(f"📤 Action result: {action_result}")
-
-                        # Store result with original action_data for component formatting
-                        action_results.append(
-                            {
-                                "type": action_type,
-                                "result": action_result,
-                                "action_data": action_data.copy() if action_data else {},
-                            }
-                        )
-
-                        # Extract created IDs for dependency resolution
-                        if action_result and action_result.get("status") == "success":
-                            # Extract IDs from result based on action type
-                            # Handle both camelCase and snake_case formats
-                            if action_type == "create_course":
-                                course_id = action_result.get("courseId") or action_result.get(
-                                    "course_id"
-                                )
-                                if course_id:
-                                    created_ids["courseId"] = course_id
-                                    print(f"💾 Stored courseId: {course_id}")
-                            elif action_type == "create_goal":
-                                goal_id = action_result.get("goalId") or action_result.get(
-                                    "goal_id"
-                                )
-                                if goal_id:
-                                    created_ids["goalId"] = goal_id
-                                    print(f"💾 Stored goalId: {goal_id}")
-                            elif action_type == "create_schedule":
-                                schedule_id = action_result.get("scheduleId") or (
-                                    action_result.get("schedule", {}) or {}
-                                ).get("id")
-                                if schedule_id:
-                                    created_ids["scheduleId"] = schedule_id
-                                    print(f"💾 Stored scheduleId: {schedule_id}")
-                            elif action_type == "create_note":
-                                note_id = action_result.get("noteId") or action_result.get(
-                                    "note_id"
-                                )
-                                if note_id:
-                                    created_ids["noteId"] = note_id
-                                    print(f"💾 Stored noteId: {note_id}")
-
-                    # 4. Clean the response (remove ALL instances of action markers and content)
-                    clean_response = re.sub(
-                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
-                        "",
-                        ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-
-                    # 5. Append confirmation messages for all actions
-                    success_messages = []
-                    error_messages = []
-
-                    for action_result_item in action_results:
-                        action_type_item = action_result_item["type"]
-                        result = action_result_item["result"]
-
-                        if result and result.get("status") == "success":
-                            if action_type_item == "recommend_resources":
-                                resources_count = result.get("count", 0)
-                                if resources_count > 0:
-                                    success_messages.append(
-                                        f"✅ I've found {resources_count} resource{'s' if resources_count > 1 else ''} for you! They've been saved to your resources."
-                                    )
-                            else:
-                                success_messages.append(
-                                    f"✅ **System:** {result.get('message', 'Action completed successfully')}"
-                                )
-                        elif result and result.get("status") == "error":
-                            error_messages.append(
-                                f"⚠️ **System:** {result.get('message', 'Action failed')}"
-                            )
-
-                    # Append all messages
-                    if success_messages:
-                        clean_response += "\n\n" + "\n".join(success_messages)
-                    if error_messages:
-                        clean_response += "\n\n" + "\n".join(error_messages)
-
-                except json.JSONDecodeError as e:
-                    print(f"❌ Action JSON Parse Error: {e}")
-                    print(f"   JSON string: {json_str[:200] if 'json_str' in locals() else 'N/A'}")
-                    # Still remove the action block even if parsing failed
-                    clean_response = re.sub(
-                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
-                        "",
-                        ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-                except Exception as e:
-                    print(f"❌ Action Execution Error: {e}")
-                    import traceback
-
-                    traceback.print_exc()
-                    # Remove action block on error too
-                    clean_response = re.sub(
-                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
-                        "",
-                        ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-                    clean_response += (
-                        "\n\n⚠️ **System:** I tried to execute the action, but an error occurred."
-                    )
-
-            # 7. Calculate actual token usage and consume credits
-            # Use actual token counts from API if available, otherwise estimate
+            # 11. Calculate actual token usage and consume credits
+            # Use actual token counts from API
             actual_input_tokens = usage_info.get("input_tokens", 0)
             actual_output_tokens = usage_info.get("output_tokens", 0)
 
@@ -1445,7 +980,7 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
             # Calculate costs and revenue
             from ..services.cost_calculator import calculate_ai_cost, calculate_revenue
 
-            model_name = usage_info.get("model_name", "gemini-1.5-flash")
+            model_name = usage_info.get("model_name", "gemini-3-flash-preview")
             cost_usd = calculate_ai_cost(
                 input_tokens=actual_input_tokens,
                 output_tokens=actual_output_tokens,
@@ -1457,7 +992,7 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                 user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
             )
 
-            # 8. Save AI Message to DB (We save the CLEAN text with token count and costs)
+            # 12. Save AI Message to DB
             await db.chatmessage.create(
                 data={
                     "sessionId": session.id,
@@ -1473,39 +1008,17 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
                 }
             )
 
-            # 9. Send text back to Client (if there's text to send)
+            # 13. Send text response to client
             if clean_response:
                 await manager.send_personal_message(clean_response, user.id)
 
-            # 10. Send component responses for successful actions
-            if action_results:
-                for action_result_item in action_results:
-                    action_type_item = action_result_item.get("type")
-                    result = action_result_item.get("result")
-                    action_data_item = action_result_item.get("action_data", {})
+            # 14. Send component responses (queries and actions)
+            for component_response in query_component_responses + component_responses:
+                # component_response already has the correct format from format_list_component_response
+                # or format_action_component_response
+                await manager.send_json(component_response, user.id)
 
-                    if result and result.get("status") == "success":
-                        # Format as component response
-                        component_response = await format_action_component_response(
-                            action_type=action_type_item,
-                            action_result=result,
-                            action_data=action_data_item,
-                            user_id=user.id,
-                            db=db,
-                        )
-
-                        if component_response:
-                            # Send component response as JSON
-                            await manager.send_json(component_response, user.id)
-
-                        # Also send event for backward compatibility and frontend refresh
-                        await manager.send_json(
-                            {
-                                "type": "event",
-                                "payload": {**result, "action": action_type_item},
-                            },
-                            user.id,
-                        )
+            continue  # Skip to next message
 
     except WebSocketDisconnect:
         manager.disconnect(user.id)
@@ -1515,6 +1028,8 @@ Provide a brief, helpful one-sentence observation or tip (max 20 words). Be enco
             await websocket.close()
         except Exception:
             pass
+        manager.disconnect(user.id)
+        raise
 
 
 @router.post("/voice")
