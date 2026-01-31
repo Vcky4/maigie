@@ -403,7 +403,11 @@ class GeminiService:
 
                     async for chunk in response_stream:
                         last_response = chunk
-                        chunk_text = getattr(chunk, "text", None)
+                        try:
+                            chunk_text = chunk.text
+                        except ValueError:
+                            # Ignore non-text parts (e.g., function_call)
+                            chunk_text = None
                         if chunk_text:
                             streamed_text_parts.append(chunk_text)
                             if last_chunk_text is not None:
