@@ -193,16 +193,17 @@ class GeminiService:
         user_message: str,
         context: dict = None,
         user_id: str = None,
-    ) -> tuple[str, dict, list[dict], list[dict]]:
+        stream: bool = False,
+    ):
         """
         Send message to Gemini with function calling support.
 
+        Args:
+            stream: If True, yields chunks as async generator. If False, returns tuple.
+
         Returns:
-            tuple: (response_text, usage_info, executed_actions, query_results)
-            - response_text: Final text response from model
-            - usage_info: Token usage information
-            - executed_actions: List of actions executed via tool calls
-            - query_results: List of query tool results formatted for component responses
+            If stream=False: tuple (response_text, usage_info, executed_actions, query_results)
+            If stream=True: async generator yielding dicts with "type" and content
         """
         from src.services.gemini_tools import get_all_tools
         from src.services.gemini_tool_handlers import handle_tool_call
@@ -399,7 +400,29 @@ class GeminiService:
                 "model_name": "gemini-3-flash-preview",
             }
 
-            return final_text, usage_info, executed_actions, query_results
+            if stream:
+                # Stream the final text response in chunks
+                if final_text:
+                    # Stream word by word for smooth UX
+                    import asyncio
+
+                    words = final_text.split()
+                    for word in words:
+                        yield {
+                            "type": "text_chunk",
+                            "content": word + " ",
+                        }
+                        # Small delay for smooth streaming effect
+                        await asyncio.sleep(0.01)
+                # Yield final metadata
+                yield {
+                    "type": "done",
+                    "usage_info": usage_info,
+                    "executed_actions": executed_actions,
+                    "query_results": query_results,
+                }
+            else:
+                return final_text, usage_info, executed_actions, query_results
 
         except Exception as e:
             print(f"Gemini Error with tools: {e}")
