@@ -1034,9 +1034,10 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 13. Send text response to client (skip if already streamed)
-            already_streamed = len(streamed_chunks) > 0
-            if clean_response and not already_streamed:
+            # 13. Send text response to client
+            # Always send the final message to avoid missing responses when
+            # clients don't process streaming events.
+            if clean_response:
                 await manager.send_personal_message(clean_response, user.id)
 
             # 14. Send component responses (queries and actions)

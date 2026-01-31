@@ -428,6 +428,7 @@ class GeminiService:
                             message_content, safety_settings=self.safety_settings
                         )
                     total_llm_time += time.perf_counter() - llm_start
+                    last_payload = message_content
                 else:
                     # Send tool results from previous iteration
                     llm_start = time.perf_counter()
@@ -438,6 +439,7 @@ class GeminiService:
                             tool_results, safety_settings=self.safety_settings
                         )
                     total_llm_time += time.perf_counter() - llm_start
+                    last_payload = tool_results
 
                 # Track token usage
                 if hasattr(response, "usage_metadata"):
@@ -461,8 +463,32 @@ class GeminiService:
 
                 if not function_calls:
                     # No tool calls - this is the final response
-                    if stream_callback and streamed_text:
-                        final_text = streamed_text
+                    if stream_callback:
+                        if streamed_text:
+                            final_text = streamed_text
+                        else:
+                            try:
+                                final_text = (
+                                    response.text
+                                    if hasattr(response, "text") and response.text
+                                    else ""
+                                )
+                            except ValueError as e:
+                                print(f"⚠️ Could not get text from response: {e}")
+                                final_text = ""
+                            if not final_text and last_payload is not None:
+                                try:
+                                    fallback_response = await chat.send_message_async(
+                                        last_payload, safety_settings=self.safety_settings
+                                    )
+                                    final_text = (
+                                        fallback_response.text
+                                        if hasattr(fallback_response, "text")
+                                        and fallback_response.text
+                                        else ""
+                                    )
+                                except Exception as e:
+                                    print(f"⚠️ Streaming fallback failed: {e}")
                     else:
                         # Non-streaming response
                         try:
