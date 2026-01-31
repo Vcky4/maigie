@@ -378,7 +378,7 @@ class GeminiService:
                                                             part.function_call
                                                         )
                                                         has_function_calls = True
-                                                        print(f"✅ Found function call in part")
+                                                        print("✅ Found function call in part")
                                                     elif (
                                                         hasattr(part, "function_calls")
                                                         and part.function_calls
@@ -426,7 +426,7 @@ class GeminiService:
                                     pass
                                 # If we still can't get text or function calls, use fallback message
                                 if not final_text:
-                                    print(f"⚠️ Giving up - cannot access function calls or text")
+                                    print("⚠️ Giving up - cannot access function calls or text")
                                     final_text = "I'm sorry, I encountered an issue processing your request. Please try again."
                                     break
                         except Exception as e2:
