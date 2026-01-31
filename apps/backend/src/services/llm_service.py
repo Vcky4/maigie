@@ -338,9 +338,16 @@ class GeminiService:
                 # Check for function calls
                 if not hasattr(response, "function_calls") or not response.function_calls:
                     # No more tool calls - return final response
-                    final_text = (
-                        response.text if hasattr(response, "text") and response.text else ""
-                    )
+                    # Safely get text (may fail if response has function call parts)
+                    try:
+                        final_text = (
+                            response.text if hasattr(response, "text") and response.text else ""
+                        )
+                    except ValueError as e:
+                        # Response contains function calls that can't be converted to text
+                        # This shouldn't happen if function_calls check passed, but handle gracefully
+                        print(f"⚠️ Could not get text from response: {e}")
+                        final_text = ""
                     break
 
                 # Execute function calls

@@ -674,8 +674,57 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                 # Handle actions synchronously
                 if action_type == "create_course":
-                    # Execute course creation synchronously
-                    action_result = await action_service.create_course(action_data, user.id)
+                    # Send initial progress update
+                    course_title = action_data.get("title", "course")
+
+                    async def send_progress(
+                        progress: int, stage: str, message: str, course_id: str = None
+                    ):
+                        """Helper to send progress updates"""
+                        await manager.send_json(
+                            {
+                                "type": "event",
+                                "payload": {
+                                    "status": "processing",
+                                    "action": "ai_course_generation",
+                                    "course_id": course_id,
+                                    "courseId": course_id,
+                                    "progress": progress,
+                                    "stage": stage,
+                                    "message": message,
+                                },
+                            },
+                            user.id,
+                        )
+
+                    await send_progress(
+                        10, "generating_outline", f"Generating course outline for {course_title}..."
+                    )
+
+                    # Execute course creation synchronously (with progress updates)
+                    action_result = await action_service.create_course(
+                        action_data, user.id, progress_callback=send_progress
+                    )
+
+                    # Send success event
+                    if action_result.get("status") == "success":
+                        course_id = action_result.get("course_id")
+                        await manager.send_json(
+                            {
+                                "type": "event",
+                                "payload": {
+                                    "status": "success",
+                                    "action": "create_course",
+                                    "course_id": course_id,
+                                    "courseId": course_id,
+                                    "message": action_result.get(
+                                        "message", "Course created successfully!"
+                                    ),
+                                },
+                            },
+                            user.id,
+                        )
+
                     # Format component response
                     component_response = await format_action_component_response(
                         action_type=action_type,

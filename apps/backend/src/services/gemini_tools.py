@@ -179,7 +179,7 @@ def create_course_tool() -> dict[str, Any]:
     """Tool definition for creating a course."""
     return {
         "name": "create_course",
-        "description": "Create a new learning course. Use this when the user explicitly asks to create, generate, or make a course about a topic.",
+        "description": "Create a new learning course with modules and topics. Use this when the user explicitly asks to create, generate, or make a course about a topic. IMPORTANT: Always provide a structured course outline with modules and topics when creating a course. Think about how to break down the topic into logical learning modules.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -198,7 +198,7 @@ def create_course_tool() -> dict[str, Any]:
                 },
                 "modules": {
                     "type": "array",
-                    "description": "Array of course modules with topics",
+                    "description": "Array of course modules with topics. REQUIRED: Always provide modules when creating a course. Structure the course into logical learning modules (typically 4-6 modules), each with 3-6 topics. Think about the learning progression and how to break down the topic.",
                     "items": {
                         "type": "object",
                         "properties": {
@@ -209,14 +209,14 @@ def create_course_tool() -> dict[str, Any]:
                             "topics": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Array of topic titles",
+                                "description": "Array of topic titles (3-6 topics per module)",
                             },
                         },
                         "required": ["title", "topics"],
                     },
                 },
             },
-            "required": ["title"],
+            "required": ["title", "modules"],
         },
     }
 
