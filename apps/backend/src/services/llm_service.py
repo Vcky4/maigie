@@ -295,220 +295,103 @@ class GeminiService:
                 # Check for function calls - must check before accessing .text
                 # Gemini raises ValueError when accessing .text if response has function calls
                 has_function_calls = False
-                function_calls_list = []
-
-                # First, try to detect function calls directly from response
                 try:
                     if hasattr(response, "function_calls") and response.function_calls:
-                        function_calls_list = list(response.function_calls)
-                        has_function_calls = len(function_calls_list) > 0
+                        has_function_calls = len(response.function_calls) > 0
                 except (AttributeError, TypeError):
-                    pass
+                    has_function_calls = False
 
-                # If not found, check candidates (alternative API structure)
                 if not has_function_calls:
+                    # Try to get text response - this will raise ValueError if function calls exist
                     try:
-                        if hasattr(response, "candidates") and response.candidates:
-                            for candidate in response.candidates:
-                                if (
-                                    hasattr(candidate, "function_calls")
-                                    and candidate.function_calls
-                                ):
-                                    function_calls_list = list(candidate.function_calls)
-                                    has_function_calls = len(function_calls_list) > 0
-                                    break
-                    except Exception:
-                        pass
-
-                # If no function calls detected, try to get text response
-                if not has_function_calls:
-                    try:
-                        final_text = response.text if hasattr(response, "text") else ""
-                        if final_text:
-                            # Successfully got text, no function calls - break the loop
-                            break
+                        final_text = (
+                            response.text if hasattr(response, "text") and response.text else ""
+                        )
+                        # Successfully got text, no function calls - break the loop
+                        break
                     except ValueError as e:
                         # ValueError means response has function calls but our check missed them
+                        # Fall through to process function calls
                         print(f"⚠️ Detected function calls via ValueError: {e}")
-                        # Try to get function calls from candidates
+                        # Try to get function calls again
                         try:
-                            if hasattr(response, "candidates") and response.candidates:
-                                for candidate in response.candidates:
-                                    if (
-                                        hasattr(candidate, "function_calls")
-                                        and candidate.function_calls
-                                    ):
-                                        function_calls_list = list(candidate.function_calls)
-                                        has_function_calls = len(function_calls_list) > 0
-                                        print(
-                                            f"✅ Found {len(function_calls_list)} function calls in candidate"
-                                        )
-                                        break
-
-                            # If still not found, try response.function_calls directly
-                            if not has_function_calls:
-                                try:
-                                    if (
-                                        hasattr(response, "function_calls")
-                                        and response.function_calls
-                                    ):
-                                        function_calls_list = list(response.function_calls)
-                                        has_function_calls = len(function_calls_list) > 0
-                                        print(
-                                            f"✅ Found {len(function_calls_list)} function calls in response"
-                                        )
-                                except Exception as e_fc:
-                                    print(f"⚠️ Error accessing response.function_calls: {e_fc}")
-
-                            # If we still can't find function calls, try accessing via content.parts
-                            if not has_function_calls:
-                                try:
-                                    # Function calls might be in candidates[0].content.parts
-                                    if hasattr(response, "candidates") and response.candidates:
-                                        candidate = response.candidates[0]
-                                        if hasattr(candidate, "content") and candidate.content:
-                                            if hasattr(candidate.content, "parts"):
-                                                for part in candidate.content.parts:
-                                                    if (
-                                                        hasattr(part, "function_call")
-                                                        and part.function_call
-                                                    ):
-                                                        # Single function call in part
-                                                        function_calls_list.append(
-                                                            part.function_call
-                                                        )
-                                                        has_function_calls = True
-                                                        print(f"✅ Found function call in part")
-                                                    elif (
-                                                        hasattr(part, "function_calls")
-                                                        and part.function_calls
-                                                    ):
-                                                        # Multiple function calls in part
-                                                        function_calls_list.extend(
-                                                            list(part.function_calls)
-                                                        )
-                                                        has_function_calls = (
-                                                            len(function_calls_list) > 0
-                                                        )
-                                                        print(
-                                                            f"✅ Found {len(function_calls_list)} function calls in parts"
-                                                        )
-                                except Exception as e3:
-                                    print(f"⚠️ Error accessing function calls via parts: {e3}")
-
-                            # If we found function calls, don't break - let code fall through to execute them
-                            if has_function_calls:
-                                print(f"✅ Will execute {len(function_calls_list)} function calls")
-                                # Don't break - let code continue to function call execution below
+                            if hasattr(response, "function_calls") and response.function_calls:
+                                has_function_calls = True
                             else:
-                                # Couldn't find function calls - try to get text as fallback
-                                print(
-                                    f"⚠️ Could not access function calls after ValueError. Response type: {type(response)}"
-                                )
-                                try:
-                                    if hasattr(response, "candidates") and response.candidates:
-                                        for candidate in response.candidates:
-                                            if hasattr(candidate, "content") and candidate.content:
-                                                if hasattr(candidate.content, "parts"):
-                                                    text_parts = []
-                                                    for part in candidate.content.parts:
-                                                        if hasattr(part, "text") and part.text:
-                                                            text_parts.append(part.text)
-                                                    if text_parts:
-                                                        final_text = " ".join(text_parts)
-                                                        print(
-                                                            f"✅ Extracted text from candidates: {len(final_text)} chars"
-                                                        )
-                                                        break
-                                    if final_text:
-                                        break
-                                except Exception:
-                                    pass
-                                # If we still can't get text or function calls, use fallback message
-                                if not final_text:
-                                    print(f"⚠️ Giving up - cannot access function calls or text")
-                                    final_text = "I'm sorry, I encountered an issue processing your request. Please try again."
-                                    break
-                        except Exception as e2:
-                            print(f"⚠️ Error accessing function calls: {e2}")
-                            import traceback
-
-                            traceback.print_exc()
-                            # Try to continue - maybe next iteration will work
-                            # But if this is the first iteration, we should break to avoid infinite loop
-                            if iteration == 1:
-                                final_text = "I'm sorry, I encountered an issue processing your request. Please try again."
+                                # No function calls found, but text access failed - use empty string
+                                final_text = ""
                                 break
-                            continue
+                        except Exception:
+                            final_text = ""
+                            break
                     except AttributeError:
-                        # No text attribute - this shouldn't happen, but handle gracefully
+                        # No text attribute - use empty string
                         final_text = ""
                         break
 
-                # Execute function calls if we have any
-                if has_function_calls and function_calls_list:
-                    tool_results = []
-                    for function_call in function_calls_list:
-                        tool_name = function_call.name
-                        tool_args = dict(function_call.args)
+                # Execute function calls
+                tool_results = []
+                for function_call in response.function_calls:
+                    tool_name = function_call.name
+                    tool_args = dict(function_call.args)
 
-                        print(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
+                    print(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
 
-                        # Execute tool handler
-                        try:
-                            tool_result = await handle_tool_call(
-                                tool_name=tool_name,
-                                args=tool_args,
-                                user_id=user_id,
-                                context=context,
+                    # Execute tool handler
+                    try:
+                        tool_result = await handle_tool_call(
+                            tool_name=tool_name,
+                            args=tool_args,
+                            user_id=user_id,
+                            context=context,
+                        )
+
+                        # Check if this is a query tool
+                        if tool_name.startswith("get_user_"):
+                            # Store query result for component response
+                            query_results.append(
+                                {
+                                    "tool_name": tool_name,
+                                    "result": tool_result,
+                                    "component_type": tool_result.get("_component_type"),
+                                    "query_type": tool_result.get("_query_type"),
+                                    "data": (
+                                        tool_result.get("courses")
+                                        or tool_result.get("goals")
+                                        or tool_result.get("schedules")
+                                        or tool_result.get("notes")
+                                        or tool_result.get("resources")
+                                    ),
+                                }
                             )
 
-                            # Check if this is a query tool
-                            if tool_name.startswith("get_user_"):
-                                # Store query result for component response
-                                query_results.append(
-                                    {
-                                        "tool_name": tool_name,
-                                        "result": tool_result,
-                                        "component_type": tool_result.get("_component_type"),
-                                        "query_type": tool_result.get("_query_type"),
-                                        "data": (
-                                            tool_result.get("courses")
-                                            or tool_result.get("goals")
-                                            or tool_result.get("schedules")
-                                            or tool_result.get("notes")
-                                            or tool_result.get("resources")
-                                        ),
-                                    }
-                                )
-
-                            # Track actions (for action tools)
-                            if tool_name.startswith("create_") or tool_name in [
-                                "recommend_resources",
-                                "retake_note",
-                                "add_summary_to_note",
-                                "add_tags_to_note",
-                            ]:
-                                executed_actions.append(
-                                    {
-                                        "type": self._map_tool_to_action_type(tool_name),
-                                        "data": tool_args,
-                                        "result": tool_result,
-                                    }
-                                )
-
-                            # Format tool result for Gemini
-                            tool_results.append(
-                                genai.protos.FunctionResponse(name=tool_name, response=tool_result)
+                        # Track actions (for action tools)
+                        if tool_name.startswith("create_") or tool_name in [
+                            "recommend_resources",
+                            "retake_note",
+                            "add_summary_to_note",
+                            "add_tags_to_note",
+                        ]:
+                            executed_actions.append(
+                                {
+                                    "type": self._map_tool_to_action_type(tool_name),
+                                    "data": tool_args,
+                                    "result": tool_result,
+                                }
                             )
-                        except Exception as e:
-                            print(f"❌ Tool execution error: {e}")
-                            # Send error result back to model
-                            tool_results.append(
-                                genai.protos.FunctionResponse(
-                                    name=tool_name, response={"error": str(e)}
-                                )
+
+                        # Format tool result for Gemini
+                        tool_results.append(
+                            genai.protos.FunctionResponse(name=tool_name, response=tool_result)
+                        )
+                    except Exception as e:
+                        print(f"❌ Tool execution error: {e}")
+                        # Send error result back to model
+                        tool_results.append(
+                            genai.protos.FunctionResponse(
+                                name=tool_name, response={"error": str(e)}
                             )
+                        )
             else:
                 # Max iterations reached
                 final_text = "I encountered an issue processing your request. Please try again."
