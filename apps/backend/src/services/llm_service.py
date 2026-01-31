@@ -51,6 +51,49 @@ GUIDELINES:
 """
 
 
+def _convert_proto_to_dict(obj):
+    """Recursively convert protobuf objects to plain Python dicts/lists.
+
+    This handles Google protobuf types like MapComposite and RepeatedComposite
+    that can't be directly serialized to JSON.
+    """
+    import json
+
+    if obj is None:
+        return None
+
+    # Handle protobuf MapComposite (dict-like)
+    if hasattr(obj, "keys") and callable(obj.keys):
+        return {k: _convert_proto_to_dict(v) for k, v in obj.items()}
+
+    # Handle protobuf RepeatedComposite (list-like)
+    if hasattr(obj, "__iter__") and not isinstance(obj, (str, bytes, dict)):
+        try:
+            return [_convert_proto_to_dict(item) for item in obj]
+        except TypeError:
+            pass
+
+    # Handle basic types
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    # Handle dict
+    if isinstance(obj, dict):
+        return {k: _convert_proto_to_dict(v) for k, v in obj.items()}
+
+    # Handle list/tuple
+    if isinstance(obj, (list, tuple)):
+        return [_convert_proto_to_dict(item) for item in obj]
+
+    # Fallback: try to convert to string
+    try:
+        # Try JSON serialization to test if it's serializable
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
+
+
 class GeminiService:
     def __init__(self):
         if genai is None:
@@ -373,7 +416,8 @@ class GeminiService:
                 tool_results = []
                 for function_call in function_calls:
                     tool_name = function_call.name
-                    tool_args = dict(function_call.args)
+                    # Convert protobuf args to plain Python dict (for JSON serialization)
+                    tool_args = _convert_proto_to_dict(dict(function_call.args))
 
                     print(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
 
