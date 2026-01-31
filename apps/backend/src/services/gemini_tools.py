@@ -179,7 +179,7 @@ def create_course_tool() -> dict[str, Any]:
     """Tool definition for creating a course."""
     return {
         "name": "create_course",
-        "description": "Create a new learning course with modules and topics. Use this when the user explicitly asks to create, generate, or make a course about a topic. IMPORTANT: Always provide a structured course outline with modules and topics when creating a course. Think about how to break down the topic into logical learning modules.",
+        "description": "Create a new learning course with modules and topics. IMPORTANT: Before using this tool, ALWAYS first call get_user_courses to check if the user already has a course on this topic. Only create a new course if no similar course exists. When creating, always provide a structured course outline with modules and topics.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -259,7 +259,7 @@ def create_goal_tool() -> dict[str, Any]:
     """Tool definition for creating a goal."""
     return {
         "name": "create_goal",
-        "description": "Create a learning goal. Use this when the user asks to set, create, or establish a goal.",
+        "description": "Create a learning goal. Use this when the user asks to set, create, or establish a goal. IMPORTANT: When creating a goal related to a topic, ALWAYS first call get_user_courses to find an existing course and use its course_id.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -293,7 +293,7 @@ def create_schedule_tool() -> dict[str, Any]:
     """Tool definition for creating schedule blocks."""
     return {
         "name": "create_schedule",
-        "description": "Create one or more schedule blocks (study sessions). Use this when the user asks to schedule, plan, block out time, or create study sessions. For multiple time blocks, call this function multiple times.",
+        "description": "Create one or more schedule blocks (study sessions). Use this when the user asks to schedule, plan, block out time, or create study sessions. IMPORTANT: When creating study schedules for a topic, ALWAYS first call get_user_courses to find an existing course on that topic and use its course_id. For multiple time blocks, call this function multiple times.",
         "parameters": {
             "type": "object",
             "properties": {
