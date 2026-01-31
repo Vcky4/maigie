@@ -8,6 +8,8 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import asyncio
+import hashlib
 import json
 import os
 import re
@@ -17,6 +19,7 @@ from fastapi import HTTPException
 from google import genai
 from google.genai import types
 
+from src.core.cache import cache
 from src.core.database import db
 from src.services.embedding_service import embedding_service
 from src.services.web_search_service import web_search_service
@@ -48,6 +51,24 @@ class RAGService:
         Retrieve relevant context from user's data using semantic search.
         """
         try:
+            cache_payload = {
+                "q": (query or "").strip().lower(),
+                "user_id": user_id,
+                "object_types": object_types or [],
+                "limit": limit,
+            }
+            cache_key = cache.make_key(
+                [
+                    "rag",
+                    hashlib.sha256(
+                        json.dumps(cache_payload, sort_keys=True).encode("utf-8")
+                    ).hexdigest(),
+                ]
+            )
+            cached_results = await cache.get(cache_key)
+            if cached_results:
+                return cached_results
+
             # Find similar embeddings
             similar_items = await embedding_service.find_similar(
                 query_text=query,
@@ -56,25 +77,22 @@ class RAGService:
             )
 
             # Filter by user ownership and enrich with actual data
+            items_to_fetch = similar_items[: limit * 2]
+            fetch_tasks = [
+                self._fetch_object(item["objectType"], item["objectId"], user_id)
+                for item in items_to_fetch
+            ]
+            fetch_results = await asyncio.gather(*fetch_tasks, return_exceptions=True)
+
             enriched_results = []
-            for item in similar_items:
-                object_type = item["objectType"]
-                object_id = item["objectId"]
+            for item, obj_data in zip(items_to_fetch, fetch_results):
+                if isinstance(obj_data, Exception) or not obj_data:
+                    continue
+                enriched_results.append({**item, "data": obj_data})
+                if len(enriched_results) >= limit:
+                    break
 
-                # Fetch the actual object based on type
-                obj_data = await self._fetch_object(object_type, object_id, user_id)
-
-                if obj_data:
-                    enriched_results.append(
-                        {
-                            **item,
-                            "data": obj_data,
-                        }
-                    )
-
-                    if len(enriched_results) >= limit:
-                        break
-
+            await cache.set(cache_key, enriched_results, expire=600)
             return enriched_results
 
         except Exception as e:

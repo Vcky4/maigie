@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 import warnings
 from datetime import UTC
 
@@ -274,6 +275,9 @@ class GeminiService:
         import httpx
 
         try:
+            request_start = time.perf_counter()
+            request_id = f"agentic_{int(request_start * 1000)}"
+
             # Get tool definitions
             tools = get_all_tools()
 
@@ -375,9 +379,11 @@ class GeminiService:
             total_input_tokens = 0
             total_output_tokens = 0
             final_text = ""  # Initialize final_text
+            total_llm_time = 0.0
+            total_tool_time = 0.0
 
             # Tool call loop
-            max_iterations = 10  # Prevent infinite loops
+            max_iterations = 6  # Prevent infinite loops while reducing latency
             iteration = 0
             tool_results = []  # Initialize tool_results
 
@@ -385,15 +391,49 @@ class GeminiService:
                 iteration += 1
 
                 # Send message (first iteration) or tool results (subsequent iterations)
-                if iteration == 1:
-                    response = await chat.send_message_async(
-                        message_content, safety_settings=self.safety_settings
+                streamed_text = ""
+
+                async def _send_streaming_request(payload):
+                    response_stream = await chat.send_message_async(
+                        payload, safety_settings=self.safety_settings, stream=True
                     )
+                    last_response = None
+                    streamed_text_parts = []
+                    last_chunk_text = None
+
+                    async for chunk in response_stream:
+                        last_response = chunk
+                        chunk_text = getattr(chunk, "text", None)
+                        if chunk_text:
+                            streamed_text_parts.append(chunk_text)
+                            if last_chunk_text is not None:
+                                await stream_callback(last_chunk_text, False)
+                            last_chunk_text = chunk_text
+
+                    if last_chunk_text is not None:
+                        await stream_callback(last_chunk_text, True)
+
+                    return last_response, "".join(streamed_text_parts)
+
+                if iteration == 1:
+                    llm_start = time.perf_counter()
+                    if stream_callback:
+                        response, streamed_text = await _send_streaming_request(message_content)
+                    else:
+                        response = await chat.send_message_async(
+                            message_content, safety_settings=self.safety_settings
+                        )
+                    total_llm_time += time.perf_counter() - llm_start
                 else:
                     # Send tool results from previous iteration
-                    response = await chat.send_message_async(
-                        tool_results, safety_settings=self.safety_settings
-                    )
+                    llm_start = time.perf_counter()
+                    if stream_callback:
+                        response, streamed_text = await _send_streaming_request(tool_results)
+                    else:
+                        response = await chat.send_message_async(
+                            tool_results, safety_settings=self.safety_settings
+                        )
+                    total_llm_time += time.perf_counter() - llm_start
 
                 # Track token usage
                 if hasattr(response, "usage_metadata"):
@@ -417,29 +457,8 @@ class GeminiService:
 
                 if not function_calls:
                     # No tool calls - this is the final response
-                    # If streaming is enabled and this is the final iteration, re-request with streaming
-                    if stream_callback and iteration == 1:
-                        # Re-send with streaming for perceived performance
-                        # Note: We already got the response, so we can stream from what we have
-                        # For true streaming, we'd need to restructure, but this avoids a second API call
-                        try:
-                            final_text = (
-                                response.text if hasattr(response, "text") and response.text else ""
-                            )
-                            # Stream the response in chunks for perceived faster response
-                            if final_text:
-                                chunk_size = 50  # Characters per chunk
-                                for i in range(0, len(final_text), chunk_size):
-                                    chunk = final_text[i : i + chunk_size]
-                                    is_final = (i + chunk_size) >= len(final_text)
-                                    await stream_callback(chunk, is_final)
-                                    if not is_final:
-                                        await asyncio.sleep(
-                                            0.02
-                                        )  # Small delay for smooth streaming
-                        except ValueError as e:
-                            print(f"⚠️ Could not get text from response: {e}")
-                            final_text = ""
+                    if stream_callback and streamed_text:
+                        final_text = streamed_text
                     else:
                         # Non-streaming response
                         try:
@@ -449,18 +468,25 @@ class GeminiService:
                         except ValueError as e:
                             print(f"⚠️ Could not get text from response: {e}")
                             final_text = ""
+                    print(f"⏱️ [{request_id}] LLM iteration {iteration} completed with no tools")
                     break
 
                 # Execute function calls
                 tool_results = []
-                for function_call in function_calls:
+
+                def _has_dependency_placeholders(value) -> bool:
+                    if isinstance(value, str):
+                        return "$" in value
+                    if isinstance(value, dict):
+                        return any(_has_dependency_placeholders(v) for v in value.values())
+                    if isinstance(value, list):
+                        return any(_has_dependency_placeholders(v) for v in value)
+                    return False
+
+                async def _execute_tool(function_call):
                     tool_name = function_call.name
-                    # Convert protobuf args to plain Python dict (for JSON serialization)
                     tool_args = _convert_proto_to_dict(dict(function_call.args))
-
                     print(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
-
-                    # Execute tool handler
                     try:
                         tool_result = await handle_tool_call(
                             tool_name=tool_name,
@@ -469,10 +495,35 @@ class GeminiService:
                             context=context,
                             progress_callback=progress_callback,
                         )
+                        return tool_name, tool_args, tool_result, None
+                    except Exception as e:
+                        print(f"❌ Tool execution error: {e}")
+                        return tool_name, tool_args, {"error": str(e)}, str(e)
 
-                        # Check if this is a query tool
+                tool_start = time.perf_counter()
+                independent_calls = []
+                dependent_calls = []
+                for function_call in function_calls:
+                    tool_args = _convert_proto_to_dict(dict(function_call.args))
+                    if _has_dependency_placeholders(tool_args):
+                        dependent_calls.append(function_call)
+                    else:
+                        independent_calls.append(function_call)
+
+                execution_results = []
+                if independent_calls:
+                    execution_results.extend(
+                        await asyncio.gather(
+                            *[_execute_tool(function_call) for function_call in independent_calls]
+                        )
+                    )
+                for function_call in dependent_calls:
+                    execution_results.append(await _execute_tool(function_call))
+                total_tool_time += time.perf_counter() - tool_start
+
+                for tool_name, tool_args, tool_result, tool_error in execution_results:
+                    if tool_error is None:
                         if tool_name.startswith("get_user_"):
-                            # Store query result for component response
                             query_results.append(
                                 {
                                     "tool_name": tool_name,
@@ -489,7 +540,6 @@ class GeminiService:
                                 }
                             )
 
-                        # Track actions (for action tools)
                         if tool_name.startswith("create_") or tool_name in [
                             "recommend_resources",
                             "retake_note",
@@ -504,18 +554,9 @@ class GeminiService:
                                 }
                             )
 
-                        # Format tool result for Gemini
-                        tool_results.append(
-                            genai.protos.FunctionResponse(name=tool_name, response=tool_result)
-                        )
-                    except Exception as e:
-                        print(f"❌ Tool execution error: {e}")
-                        # Send error result back to model
-                        tool_results.append(
-                            genai.protos.FunctionResponse(
-                                name=tool_name, response={"error": str(e)}
-                            )
-                        )
+                    tool_results.append(
+                        genai.protos.FunctionResponse(name=tool_name, response=tool_result)
+                    )
             else:
                 # Max iterations reached
                 final_text = "I encountered an issue processing your request. Please try again."
@@ -525,6 +566,12 @@ class GeminiService:
                 "output_tokens": total_output_tokens,
                 "model_name": "gemini-3-flash-preview",
             }
+
+            total_time = time.perf_counter() - request_start
+            print(
+                f"⏱️ [{request_id}] total={total_time:.2f}s llm={total_llm_time:.2f}s "
+                f"tools={total_tool_time:.2f}s iterations={iteration}"
+            )
 
             return final_text, usage_info, executed_actions, query_results
 

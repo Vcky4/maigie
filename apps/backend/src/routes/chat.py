@@ -23,6 +23,7 @@ from fastapi import (
 from jose import JWTError, jwt
 
 from prisma import Json, Prisma
+from src.core.cache import cache
 from src.core.celery_app import celery_app
 from src.config import settings
 from src.services.action_service import action_service
@@ -456,33 +457,108 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             enriched_context = None
             if context:
                 enriched_context = context.copy()
-
-                # Fetch note details if noteId is provided
-                if context.get("noteId"):
-                    note_id = context["noteId"]
-                    note = await db.note.find_unique(
-                        where={"id": note_id},
-                        include={
-                            "topic": {"include": {"module": {"include": {"course": True}}}},
-                            "course": True,
-                        },
+                cache_key = None
+                cached_context = None
+                note_id = context.get("noteId")
+                topic_id = context.get("topicId")
+                course_id = context.get("courseId")
+                if note_id or topic_id or course_id:
+                    cache_key = cache.make_key(
+                        [
+                            "chat",
+                            "context",
+                            user.id,
+                            note_id or "-",
+                            topic_id or "-",
+                            course_id or "-",
+                        ]
                     )
+                    cached_context = await cache.get(cache_key)
 
-                    # If note not found, check if noteId is actually a topicId
-                    if not note:
-                        print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
-                        topic = await db.topic.find_unique(
+                if cached_context:
+                    enriched_context = {**context, **cached_context}
+                else:
+                    # Fetch note details if noteId is provided
+                    if context.get("noteId"):
+                        note_id = context["noteId"]
+                        note = await db.note.find_unique(
                             where={"id": note_id},
-                            include={"note": True, "module": {"include": {"course": True}}},
+                            include={
+                                "topic": {"include": {"module": {"include": {"course": True}}}},
+                                "course": True,
+                            },
                         )
-                        if topic and topic.note:
-                            # It's a topicId, use the topic's note
+
+                        # If note not found, check if noteId is actually a topicId
+                        if not note:
                             print(
-                                f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                                f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
                             )
-                            note = topic.note
-                            # Also include topic details
-                            enriched_context["topicId"] = topic.id
+                            topic = await db.topic.find_unique(
+                                where={"id": note_id},
+                                include={
+                                    "note": True,
+                                    "module": {"include": {"course": True}},
+                                },
+                            )
+                            if topic and topic.note:
+                                # It's a topicId, use the topic's note
+                                print(
+                                    f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                                )
+                                note = topic.note
+                                # Also include topic details
+                                enriched_context["topicId"] = topic.id
+                                enriched_context["topicTitle"] = topic.title
+                                enriched_context["topicContent"] = topic.content or ""
+                                if topic.module:
+                                    enriched_context["moduleTitle"] = topic.module.title
+                                    if topic.module.course:
+                                        enriched_context["courseId"] = topic.module.course.id
+                                        enriched_context["courseTitle"] = topic.module.course.title
+                                        enriched_context["courseDescription"] = (
+                                            topic.module.course.description or ""
+                                        )
+                                # Update noteId in enriched_context to the actual note ID
+                                enriched_context["noteId"] = note.id
+
+                        if note:
+                            enriched_context["noteTitle"] = note.title
+                            enriched_context["noteContent"] = note.content or ""
+                            enriched_context["noteSummary"] = note.summary or ""
+                            # If note is linked to a topic, include topic details
+                            if note.topic:
+                                enriched_context["topicId"] = note.topic.id
+                                enriched_context["topicTitle"] = note.topic.title
+                                enriched_context["topicContent"] = note.topic.content or ""
+                                if note.topic.module:
+                                    enriched_context["moduleTitle"] = note.topic.module.title
+                                    if note.topic.module.course:
+                                        enriched_context["courseId"] = note.topic.module.course.id
+                                        enriched_context["courseTitle"] = (
+                                            note.topic.module.course.title
+                                        )
+                                        enriched_context["courseDescription"] = (
+                                            note.topic.module.course.description or ""
+                                        )
+                            # If note is linked to a course (but not via topic)
+                            elif note.course:
+                                enriched_context["courseId"] = note.course.id
+                                enriched_context["courseTitle"] = note.course.title
+                                enriched_context["courseDescription"] = (
+                                    note.course.description or ""
+                                )
+
+                    # Fetch topic details if topicId is provided (and not already fetched from note)
+                    elif context.get("topicId") and not enriched_context.get("topicTitle"):
+                        topic_id = context["topicId"]
+                        # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
+                        enriched_context["topicId"] = topic_id
+                        topic = await db.topic.find_unique(
+                            where={"id": topic_id},
+                            include={"module": {"include": {"course": True}}},
+                        )
+                        if topic:
                             enriched_context["topicTitle"] = topic.title
                             enriched_context["topicContent"] = topic.content or ""
                             if topic.module:
@@ -493,65 +569,33 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     enriched_context["courseDescription"] = (
                                         topic.module.course.description or ""
                                     )
-                            # Update noteId in enriched_context to the actual note ID
-                            enriched_context["noteId"] = note.id
+                        else:
+                            # Topic not found - log for debugging but keep topicId in context
+                            print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
+                            print(
+                                "⚠️ This topicId will still be passed to action service for validation"
+                            )
 
-                    if note:
-                        enriched_context["noteTitle"] = note.title
-                        enriched_context["noteContent"] = note.content or ""
-                        enriched_context["noteSummary"] = note.summary or ""
-                        # If note is linked to a topic, include topic details
-                        if note.topic:
-                            enriched_context["topicId"] = note.topic.id
-                            enriched_context["topicTitle"] = note.topic.title
-                            enriched_context["topicContent"] = note.topic.content or ""
-                            if note.topic.module:
-                                enriched_context["moduleTitle"] = note.topic.module.title
-                                if note.topic.module.course:
-                                    enriched_context["courseId"] = note.topic.module.course.id
-                                    enriched_context["courseTitle"] = note.topic.module.course.title
-                                    enriched_context["courseDescription"] = (
-                                        note.topic.module.course.description or ""
-                                    )
-                        # If note is linked to a course (but not via topic)
-                        elif note.course:
-                            enriched_context["courseId"] = note.course.id
-                            enriched_context["courseTitle"] = note.course.title
-                            enriched_context["courseDescription"] = note.course.description or ""
+                    # Fetch course details if courseId is provided (and not already fetched)
+                    elif context.get("courseId") and not enriched_context.get("courseTitle"):
+                        course = await db.course.find_unique(where={"id": context["courseId"]})
+                        if course:
+                            enriched_context["courseTitle"] = course.title
+                            enriched_context["courseDescription"] = course.description or ""
 
-                # Fetch topic details if topicId is provided (and not already fetched from note)
-                elif context.get("topicId") and not enriched_context.get("topicTitle"):
-                    topic_id = context["topicId"]
-                    # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
-                    enriched_context["topicId"] = topic_id
-                    topic = await db.topic.find_unique(
-                        where={"id": topic_id},
-                        include={"module": {"include": {"course": True}}},
-                    )
-                    if topic:
-                        enriched_context["topicTitle"] = topic.title
-                        enriched_context["topicContent"] = topic.content or ""
-                        if topic.module:
-                            enriched_context["moduleTitle"] = topic.module.title
-                            if topic.module.course:
-                                enriched_context["courseId"] = topic.module.course.id
-                                enriched_context["courseTitle"] = topic.module.course.title
-                                enriched_context["courseDescription"] = (
-                                    topic.module.course.description or ""
-                                )
-                    else:
-                        # Topic not found - log for debugging but keep topicId in context
-                        print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
-                        print(
-                            "⚠️ This topicId will still be passed to action service for validation"
-                        )
-
-                # Fetch course details if courseId is provided (and not already fetched)
-                elif context.get("courseId") and not enriched_context.get("courseTitle"):
-                    course = await db.course.find_unique(where={"id": context["courseId"]})
-                    if course:
-                        enriched_context["courseTitle"] = course.title
-                        enriched_context["courseDescription"] = course.description or ""
+                    if cache_key:
+                        cacheable_context = {
+                            key: value
+                            for key, value in enriched_context.items()
+                            if key
+                            not in {
+                                "pageContext",
+                                "content",
+                                "noteContent",
+                                "retrieved_items",
+                            }
+                        }
+                        await cache.set(cache_key, cacheable_context, expire=300)
 
                 # Include direct content if provided (for summaries, etc.)
                 if context.get("content"):
