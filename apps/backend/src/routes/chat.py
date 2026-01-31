@@ -415,40 +415,10 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if isinstance(message_data, dict):
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
-                    logger.info(
-                        "Received message from user",
-                        extra={
-                            "user_id": user.id,
-                            "session_id": session.id,
-                            "message_length": len(user_text),
-                            "has_context": context is not None,
-                            "has_file_urls": bool(context.get("fileUrls") if context else False),
-                        },
-                    )
-                    if context:
-                        print(f"📥 Received context from frontend: {context}")
+                    print(f"📥 Received context from frontend: {context}")
             except (json.JSONDecodeError, AttributeError):
                 # If not JSON, treat as plain text
-                logger.info(
-                    "Received plain text message from user",
-                    extra={
-                        "user_id": user.id,
-                        "session_id": session.id,
-                        "message_length": len(user_text),
-                    },
-                )
-
-            # Log the user message (truncated for privacy/logging)
-            message_preview = user_text[:100] + "..." if len(user_text) > 100 else user_text
-            logger.info(
-                f"User message: {message_preview}",
-                extra={
-                    "user_id": user.id,
-                    "session_id": session.id,
-                    "message_length": len(user_text),
-                    "message_preview": message_preview,
-                },
-            )
+                pass
 
             # 4. Extract fileUrls from context (if any)
             file_urls = context.get("fileUrls") if context else None
@@ -462,25 +432,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             }
             if file_urls:
                 user_message_data["imageUrl"] = file_urls
-                logger.info(
-                    "Message includes image",
-                    extra={
-                        "user_id": user.id,
-                        "session_id": session.id,
-                        "image_urls": file_urls if isinstance(file_urls, list) else [file_urls],
-                    },
-                )
                 print(f"🖼️ Message includes image: {file_urls}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
-            logger.info(
-                "User message saved to database",
-                extra={
-                    "user_id": user.id,
-                    "session_id": session.id,
-                    "message_id": user_message.id,
-                },
-            )
 
             # Fast-path: course generation via background worker
             # Goal: respond immediately, then generate/persist course in Celery and notify UI via events.
@@ -753,47 +707,16 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
 
-            # 6. Get AI response with tool calling support (streaming enabled)
-            response_text = ""
-            usage_info = {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "model_name": "gemini-3-flash-preview",
-            }
-            executed_actions = []
-            query_results = []
-
+            # 6. Get AI response with tool calling support
             try:
-                # Stream response chunks
-                async for chunk in llm_service.get_chat_response_with_tools(
-                    history=formatted_history,
-                    user_message=user_text,
-                    context=enriched_context,
-                    user_id=user.id,
-                    stream=True,
-                ):
-                    if chunk.get("type") == "text_chunk":
-                        # Send text chunk to frontend immediately
-                        response_text += chunk["content"]
-                        await manager.send_json(
-                            {
-                                "type": "stream_chunk",
-                                "content": chunk["content"],
-                            },
-                            user.id,
-                        )
-                    elif chunk.get("type") == "done":
-                        # Final metadata
-                        usage_info = chunk.get("usage_info", usage_info)
-                        executed_actions = chunk.get("executed_actions", [])
-                        query_results = chunk.get("query_results", [])
-                        # Send stream end marker
-                        await manager.send_json(
-                            {
-                                "type": "stream_end",
-                            },
-                            user.id,
-                        )
+                response_text, usage_info, executed_actions, query_results = (
+                    await llm_service.get_chat_response_with_tools(
+                        history=formatted_history,
+                        user_message=user_text,
+                        context=enriched_context,
+                        user_id=user.id,
+                    )
+                )
             except Exception as e:
                 logger.error(f"LLM service error: {e}", exc_info=True)
                 response_text = "I'm sorry, I encountered an error. Please try again."
@@ -1083,13 +1006,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 13. Send text response to client (already streamed, but send complete message for compatibility)
-            # Note: Text was already streamed chunk by chunk, but we send the full message here
-            # for backward compatibility and to ensure the frontend has the complete text
+            # 13. Send text response to client
             if clean_response:
-                # Don't send again if we already streamed it
-                # The frontend should have accumulated all chunks
-                pass  # Text was already streamed above
+                await manager.send_personal_message(clean_response, user.id)
 
             # 14. Send component responses (queries and actions)
             for component_response in query_component_responses + component_responses:
