@@ -18,8 +18,21 @@ async def handle_tool_call(
     args: dict[str, Any],
     user_id: str,
     context: dict[str, Any] | None = None,
+    progress_callback=None,
 ) -> dict[str, Any]:
-    """Route tool call to appropriate handler."""
+    """Route tool call to appropriate handler.
+
+    Args:
+        tool_name: Name of the tool to execute
+        args: Tool arguments
+        user_id: User ID
+        context: Additional context (courseId, topicId, etc.)
+        progress_callback: Optional async callback for progress updates
+                          Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
+    """
+    # Handlers that support progress callbacks
+    handlers_with_progress = {"create_course"}
+
     handlers = {
         # Query handlers
         "get_user_courses": handle_get_user_courses,
@@ -52,7 +65,11 @@ async def handle_tool_call(
             args["note_id"] = context["noteId"]
 
     try:
-        result = await handler(args, user_id, context)
+        # Pass progress_callback to handlers that support it
+        if tool_name in handlers_with_progress and progress_callback:
+            result = await handler(args, user_id, context, progress_callback=progress_callback)
+        else:
+            result = await handler(args, user_id, context)
         return result
     except Exception as e:
         logger.error(f"Tool execution error for {tool_name}: {e}", exc_info=True)
@@ -371,8 +388,16 @@ async def handle_create_course(
     args: dict[str, Any],
     user_id: str,
     context: dict[str, Any] | None = None,
+    progress_callback=None,
 ) -> dict[str, Any]:
-    """Handle create_course tool call."""
+    """Handle create_course tool call.
+
+    Args:
+        args: Tool arguments (title, description, difficulty, modules)
+        user_id: User ID
+        context: Additional context
+        progress_callback: Optional async callback for progress updates
+    """
     # Map tool args to action_service format
     action_data = {
         "title": args["title"],
@@ -381,8 +406,16 @@ async def handle_create_course(
         "modules": args.get("modules", []),
     }
 
-    # Call existing action service
-    result = await action_service.create_course(action_data, user_id)
+    # Send initial progress if callback provided
+    if progress_callback:
+        await progress_callback(
+            10, "generating_outline", f"Generating course outline for {action_data['title']}..."
+        )
+
+    # Call existing action service with progress callback
+    result = await action_service.create_course(
+        action_data, user_id, progress_callback=progress_callback
+    )
     return result
 
 

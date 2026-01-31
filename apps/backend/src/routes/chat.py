@@ -601,6 +601,27 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # Continue without RAG results
 
             # 6. Get AI response with tool calling support
+            # Define progress callback for tool execution updates
+            async def send_progress(
+                progress: int, stage: str, message: str, course_id: str = None, **kwargs
+            ):
+                """Send progress updates to frontend via WebSocket"""
+                await manager.send_json(
+                    {
+                        "type": "event",
+                        "payload": {
+                            "status": "processing",
+                            "action": "ai_course_generation",
+                            "course_id": course_id,
+                            "courseId": course_id,
+                            "progress": progress,
+                            "stage": stage,
+                            "message": message,
+                        },
+                    },
+                    user.id,
+                )
+
             try:
                 response_text, usage_info, executed_actions, query_results = (
                     await llm_service.get_chat_response_with_tools(
@@ -609,6 +630,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         context=enriched_context,
                         user_id=user.id,
                         image_url=file_urls,  # Pass image URL if present
+                        progress_callback=send_progress,  # Pass progress callback
                     )
                 )
             except Exception as e:
@@ -649,6 +671,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         query_component_responses.append(component_response)
 
             # 8. Process executed actions (from tool calls)
+            # NOTE: Actions are already executed by tool handlers in llm_service
+            # Here we only: log to DB, send success events, format component responses
             component_responses = []
             for action_info in executed_actions:
                 action_type = action_info["type"]
@@ -658,7 +682,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Log action to DB
                 await db.aiactionlog.create(
                     data={
-                        "messageId": user_message.id,  # Created earlier
+                        "messageId": user_message.id,
                         "actionType": action_type,
                         "actionData": action_data,
                         "status": (
@@ -672,69 +696,24 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     }
                 )
 
-                # Handle actions synchronously
-                if action_type == "create_course":
-                    # Send initial progress update
-                    course_title = action_data.get("title", "course")
-
-                    async def send_progress(
-                        progress: int, stage: str, message: str, course_id: str = None
-                    ):
-                        """Helper to send progress updates"""
-                        await manager.send_json(
-                            {
-                                "type": "event",
-                                "payload": {
-                                    "status": "processing",
-                                    "action": "ai_course_generation",
-                                    "course_id": course_id,
-                                    "courseId": course_id,
-                                    "progress": progress,
-                                    "stage": stage,
-                                    "message": message,
-                                },
+                # Send success event for create actions
+                if action_type == "create_course" and action_result.get("status") == "success":
+                    course_id = action_result.get("course_id")
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "success",
+                                "action": "create_course",
+                                "course_id": course_id,
+                                "courseId": course_id,
+                                "message": action_result.get(
+                                    "message", "Course created successfully!"
+                                ),
                             },
-                            user.id,
-                        )
-
-                    await send_progress(
-                        10, "generating_outline", f"Generating course outline for {course_title}..."
+                        },
+                        user.id,
                     )
-
-                    # Execute course creation synchronously (with progress updates)
-                    action_result = await action_service.create_course(
-                        action_data, user.id, progress_callback=send_progress
-                    )
-
-                    # Send success event
-                    if action_result.get("status") == "success":
-                        course_id = action_result.get("course_id")
-                        await manager.send_json(
-                            {
-                                "type": "event",
-                                "payload": {
-                                    "status": "success",
-                                    "action": "create_course",
-                                    "course_id": course_id,
-                                    "courseId": course_id,
-                                    "message": action_result.get(
-                                        "message", "Course created successfully!"
-                                    ),
-                                },
-                            },
-                            user.id,
-                        )
-
-                    # Format component response
-                    component_response = await format_action_component_response(
-                        action_type=action_type,
-                        action_result=action_result,
-                        action_data=action_data,
-                        user_id=user.id,
-                        db=db,
-                    )
-                    if component_response:
-                        component_responses.append(component_response)
 
                 elif action_type == "recommend_resources":
                     # Queue background task for resource recommendations
@@ -750,32 +729,16 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         ignore_result=True,
                     )
 
-                elif action_type == "create_schedule":
-                    # Execute schedule creation synchronously
-                    action_result = await action_service.create_schedule(action_data, user.id)
-                    # Format component response
-                    component_response = await format_action_component_response(
-                        action_type=action_type,
-                        action_result=action_result,
-                        action_data=action_data,
-                        user_id=user.id,
-                        db=db,
-                    )
-                    if component_response:
-                        component_responses.append(component_response)
-
-                else:
-                    # Other actions are already executed synchronously by tool handlers
-                    # Format component response
-                    component_response = await format_action_component_response(
-                        action_type=action_type,
-                        action_result=action_result,
-                        action_data=action_data,
-                        user_id=user.id,
-                        db=db,
-                    )
-                    if component_response:
-                        component_responses.append(component_response)
+                # Format component response for all actions
+                component_response = await format_action_component_response(
+                    action_type=action_type,
+                    action_result=action_result,
+                    action_data=action_data,
+                    user_id=user.id,
+                    db=db,
+                )
+                if component_response:
+                    component_responses.append(component_response)
 
             # 9. Clean response text
             clean_response = response_text.strip()

@@ -194,6 +194,7 @@ class GeminiService:
         context: dict = None,
         user_id: str = None,
         image_url: str = None,
+        progress_callback=None,
     ) -> tuple[str, dict, list[dict], list[dict]]:
         """
         Send message to Gemini with function calling support.
@@ -204,6 +205,8 @@ class GeminiService:
             context: Additional context dictionary
             user_id: User ID for tool execution
             image_url: Optional image URL to include in the message
+            progress_callback: Optional async callback for progress updates during tool execution
+                              Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
 
         Returns:
             tuple: (response_text, usage_info, executed_actions, query_results)
@@ -230,51 +233,54 @@ class GeminiService:
             # Build enhanced message with context
             enhanced_message_text = self._build_enhanced_message(user_message, context)
 
-            # Prepare message content (multimodal if image_url provided)
-            message_content = enhanced_message_text
-            if image_url:
-                # Download image and create multimodal content
-                async with httpx.AsyncClient() as client:
-                    img_response = await client.get(image_url)
-                    if img_response.status_code == 200:
-                        image_data = img_response.content
-                        mime_type = img_response.headers.get("content-type", "image/jpeg")
-                        # Create multimodal content: [text, image]
-                        message_content = [
-                            enhanced_message_text,
-                            {"mime_type": mime_type, "data": image_data},
-                        ]
-                        print(f"🖼️ Including image in message: {image_url}")
-                    else:
-                        print(f"⚠️ Failed to download image: {img_response.status_code}")
+            # Use a single HTTP client for all image downloads (performance optimization)
+            async with httpx.AsyncClient(timeout=15.0) as http_client:
+                # Prepare message content (multimodal if image_url provided)
+                message_content = enhanced_message_text
+                if image_url:
+                    # Download image and create multimodal content
+                    try:
+                        img_response = await http_client.get(image_url)
+                        if img_response.status_code == 200:
+                            image_data = img_response.content
+                            mime_type = img_response.headers.get("content-type", "image/jpeg")
+                            # Create multimodal content: [text, image]
+                            message_content = [
+                                enhanced_message_text,
+                                {"mime_type": mime_type, "data": image_data},
+                            ]
+                            print(f"🖼️ Including image in message: {image_url}")
+                        else:
+                            print(f"⚠️ Failed to download image: {img_response.status_code}")
+                    except Exception as e:
+                        print(f"⚠️ Error downloading current message image: {e}")
 
-            # Process history to include images
-            processed_history = []
-            for hist_msg in history:
-                if isinstance(hist_msg, dict) and "parts" in hist_msg:
-                    parts = hist_msg["parts"]
-                    processed_parts = []
-                    for part in parts:
-                        if isinstance(part, str):
-                            # Check if it's an image URL (starts with http/https and looks like an image)
-                            if part.startswith(("http://", "https://")):
-                                # Check if it's likely an image URL (has image extension or is from image storage)
-                                is_image_url = (
-                                    any(
-                                        ext in part.lower()
-                                        for ext in [".jpg", ".jpeg", ".png", ".webp"]
+                # Process history to include images
+                processed_history = []
+                for hist_msg in history:
+                    if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                        parts = hist_msg["parts"]
+                        processed_parts = []
+                        for part in parts:
+                            if isinstance(part, str):
+                                # Check if it's an image URL
+                                if part.startswith(("http://", "https://")):
+                                    # Check if it's likely an image URL
+                                    is_image_url = (
+                                        any(
+                                            ext in part.lower()
+                                            for ext in [".jpg", ".jpeg", ".png", ".webp"]
+                                        )
+                                        or "image" in part.lower()
+                                        or any(
+                                            domain in part.lower()
+                                            for domain in ["bunnycdn", "storage", "cdn"]
+                                        )
                                     )
-                                    or "image" in part.lower()
-                                    or any(
-                                        domain in part.lower()
-                                        for domain in ["bunnycdn", "storage", "cdn"]
-                                    )
-                                )
-                                if is_image_url:
-                                    # Download image for history
-                                    try:
-                                        async with httpx.AsyncClient() as client:
-                                            img_response = await client.get(part, timeout=10.0)
+                                    if is_image_url:
+                                        # Download image for history using shared client
+                                        try:
+                                            img_response = await http_client.get(part)
                                             if img_response.status_code == 200:
                                                 image_data = img_response.content
                                                 mime_type = img_response.headers.get(
@@ -286,20 +292,20 @@ class GeminiService:
                                                 print(
                                                     f"🖼️ Loaded image from history: {part[:50]}..."
                                                 )
-                                    except Exception as e:
-                                        print(
-                                            f"⚠️ Failed to load image from history {part[:50]}...: {e}"
-                                        )
-                                        # Continue without image
+                                        except Exception as e:
+                                            print(
+                                                f"⚠️ Failed to load image from history {part[:50]}...: {e}"
+                                            )
+                                            # Continue without image
+                                    else:
+                                        processed_parts.append(part)
                                 else:
                                     processed_parts.append(part)
                             else:
                                 processed_parts.append(part)
-                        else:
-                            processed_parts.append(part)
-                    processed_history.append({**hist_msg, "parts": processed_parts})
-                else:
-                    processed_history.append(hist_msg)
+                        processed_history.append({**hist_msg, "parts": processed_parts})
+                    else:
+                        processed_history.append(hist_msg)
 
             # Start chat session
             chat = model_with_tools.start_chat(history=processed_history)
@@ -378,6 +384,7 @@ class GeminiService:
                             args=tool_args,
                             user_id=user_id,
                             context=context,
+                            progress_callback=progress_callback,
                         )
 
                         # Check if this is a query tool
