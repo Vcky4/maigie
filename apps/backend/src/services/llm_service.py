@@ -400,6 +400,7 @@ class GeminiService:
                     last_response = None
                     streamed_text_parts = []
                     last_chunk_text = None
+                    streamed_function_calls = []
 
                     async for chunk in response_stream:
                         last_response = chunk
@@ -408,6 +409,10 @@ class GeminiService:
                         except ValueError:
                             # Ignore non-text parts (e.g., function_call)
                             chunk_text = None
+                        if hasattr(chunk, "parts"):
+                            for part in chunk.parts:
+                                if hasattr(part, "function_call") and part.function_call:
+                                    streamed_function_calls.append(part.function_call)
                         if chunk_text:
                             streamed_text_parts.append(chunk_text)
                             if last_chunk_text is not None:
@@ -417,12 +422,14 @@ class GeminiService:
                     if last_chunk_text is not None:
                         await stream_callback(last_chunk_text, True)
 
-                    return last_response, "".join(streamed_text_parts)
+                    return last_response, "".join(streamed_text_parts), streamed_function_calls
 
                 if iteration == 1:
                     llm_start = time.perf_counter()
                     if stream_callback:
-                        response, streamed_text = await _send_streaming_request(message_content)
+                        response, streamed_text, streamed_function_calls = (
+                            await _send_streaming_request(message_content)
+                        )
                     else:
                         response = await chat.send_message_async(
                             message_content, safety_settings=self.safety_settings
@@ -433,7 +440,9 @@ class GeminiService:
                     # Send tool results from previous iteration
                     llm_start = time.perf_counter()
                     if stream_callback:
-                        response, streamed_text = await _send_streaming_request(tool_results)
+                        response, streamed_text, streamed_function_calls = (
+                            await _send_streaming_request(tool_results)
+                        )
                     else:
                         response = await chat.send_message_async(
                             tool_results, safety_settings=self.safety_settings
@@ -448,7 +457,10 @@ class GeminiService:
 
                 # Check for function calls - check both function_calls property and parts
                 function_calls = []
-                if hasattr(response, "function_calls") and response.function_calls:
+                if stream_callback and streamed_function_calls:
+                    function_calls = streamed_function_calls
+                    print(f"📞 Found {len(function_calls)} function calls via stream parts")
+                elif hasattr(response, "function_calls") and response.function_calls:
                     function_calls = list(response.function_calls)
                     print(
                         f"📞 Found {len(function_calls)} function calls via response.function_calls"
@@ -476,19 +488,8 @@ class GeminiService:
                             except ValueError as e:
                                 print(f"⚠️ Could not get text from response: {e}")
                                 final_text = ""
-                            if not final_text and last_payload is not None:
-                                try:
-                                    fallback_response = await chat.send_message_async(
-                                        last_payload, safety_settings=self.safety_settings
-                                    )
-                                    final_text = (
-                                        fallback_response.text
-                                        if hasattr(fallback_response, "text")
-                                        and fallback_response.text
-                                        else ""
-                                    )
-                                except Exception as e:
-                                    print(f"⚠️ Streaming fallback failed: {e}")
+                            if not final_text:
+                                final_text = "I'm sorry, I couldn't generate a response."
                     else:
                         # Non-streaming response
                         try:
