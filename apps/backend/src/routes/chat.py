@@ -22,7 +22,7 @@ from fastapi import (
 )
 from jose import JWTError, jwt
 
-from prisma import Prisma
+from prisma import Json, Prisma
 from src.core.celery_app import celery_app
 from src.config import settings
 from src.services.action_service import action_service
@@ -684,7 +684,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     data={
                         "messageId": user_message.id,
                         "actionType": action_type,
-                        "actionData": action_data,
+                        "actionData": Json(action_data) if action_data else Json({}),
                         "status": (
                             "SUCCESS" if action_result.get("status") == "success" else "FAILED"
                         ),
