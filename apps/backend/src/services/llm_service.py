@@ -335,24 +335,37 @@ class GeminiService:
                     total_input_tokens += response.usage_metadata.prompt_token_count or 0
                     total_output_tokens += response.usage_metadata.candidates_token_count or 0
 
-                # Check for function calls
-                if not hasattr(response, "function_calls") or not response.function_calls:
-                    # No more tool calls - return final response
+                # Check for function calls - check both function_calls property and parts
+                function_calls = []
+                if hasattr(response, "function_calls") and response.function_calls:
+                    function_calls = list(response.function_calls)
+                    print(
+                        f"📞 Found {len(function_calls)} function calls via response.function_calls"
+                    )
+                elif hasattr(response, "parts"):
+                    # Check parts for function calls (some models return them in parts)
+                    for part in response.parts:
+                        if hasattr(part, "function_call") and part.function_call:
+                            function_calls.append(part.function_call)
+                    if function_calls:
+                        print(f"📞 Found {len(function_calls)} function calls via response.parts")
+
+                if not function_calls:
+                    # No tool calls - return final response
                     # Safely get text (may fail if response has function call parts)
                     try:
                         final_text = (
                             response.text if hasattr(response, "text") and response.text else ""
                         )
                     except ValueError as e:
-                        # Response contains function calls that can't be converted to text
-                        # This shouldn't happen if function_calls check passed, but handle gracefully
+                        # Response contains unexpected structure
                         print(f"⚠️ Could not get text from response: {e}")
                         final_text = ""
                     break
 
                 # Execute function calls
                 tool_results = []
-                for function_call in response.function_calls:
+                for function_call in function_calls:
                     tool_name = function_call.name
                     tool_args = dict(function_call.args)
 
