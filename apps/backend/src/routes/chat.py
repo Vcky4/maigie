@@ -796,6 +796,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
 
                     # Queue Celery task
+                    from src.core.celery_app import celery_app
+
                     celery_app.send_task(
                         "course.generate_from_chat",
                         kwargs={
@@ -826,6 +828,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                 elif action_type == "recommend_resources":
                     # Queue background task for resource recommendations
+                    from src.core.celery_app import celery_app
+
                     celery_app.send_task(
                         "resources.recommend_from_chat",
                         kwargs={
@@ -840,6 +844,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                 elif action_type == "create_schedule":
                     # Queue background task for schedule creation
+                    from src.core.celery_app import celery_app
+
                     schedule_blocks = [action_data]  # Single block
                     celery_app.send_task(
                         "schedule.create_from_chat",

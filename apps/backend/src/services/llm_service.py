@@ -255,42 +255,13 @@ class GeminiService:
                     total_input_tokens += response.usage_metadata.prompt_token_count or 0
                     total_output_tokens += response.usage_metadata.candidates_token_count or 0
 
-                # Check for function calls - must check before accessing .text
-                # Gemini raises ValueError when accessing .text if response has function calls
-                has_function_calls = False
-                try:
-                    if hasattr(response, "function_calls") and response.function_calls:
-                        has_function_calls = len(response.function_calls) > 0
-                except (AttributeError, TypeError):
-                    has_function_calls = False
-
-                if not has_function_calls:
-                    # Try to get text response - this will raise ValueError if function calls exist
-                    try:
-                        final_text = (
-                            response.text if hasattr(response, "text") and response.text else ""
-                        )
-                        # Successfully got text, no function calls - break the loop
-                        break
-                    except ValueError as e:
-                        # ValueError means response has function calls but our check missed them
-                        # Fall through to process function calls
-                        print(f"⚠️ Detected function calls via ValueError: {e}")
-                        # Try to get function calls again
-                        try:
-                            if hasattr(response, "function_calls") and response.function_calls:
-                                has_function_calls = True
-                            else:
-                                # No function calls found, but text access failed - use empty string
-                                final_text = ""
-                                break
-                        except Exception:
-                            final_text = ""
-                            break
-                    except AttributeError:
-                        # No text attribute - use empty string
-                        final_text = ""
-                        break
+                # Check for function calls
+                if not hasattr(response, "function_calls") or not response.function_calls:
+                    # No more tool calls - return final response
+                    final_text = (
+                        response.text if hasattr(response, "text") and response.text else ""
+                    )
+                    break
 
                 # Execute function calls
                 tool_results = []
