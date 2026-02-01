@@ -361,6 +361,10 @@ jobs:
               export ENVIRONMENT="preview"
               export PREVIEW_ID="${{ steps.preview.outputs.id }}"
               export REDIS_URL="redis://redis:6379/0"
+              # Celery must use the Docker service hostname, not localhost.
+              # (localhost inside the container is the backend itself)
+              export CELERY_BROKER_URL="redis://redis:6379/1"
+              export CELERY_RESULT_BACKEND="redis://redis:6379/2"
               
               # GitHub secrets are already available as environment variables (passed via envs in ssh-action)
               # SENTRY_DSN and SECRET_KEY are passed from GitHub secrets
@@ -426,6 +430,25 @@ jobs:
                     prisma db push --accept-data-loss &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
+                  "
+
+              worker:
+                image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                container_name: maigie-preview-worker-${{ steps.preview.outputs.id }}
+                env_file:
+                  - .env
+                environment:
+                  PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                  redis:
+                    condition: service_healthy
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+                command: >
+                  sh -c "
+                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=2 --queues=default --without-gossip --without-mingle --without-heartbeat
                   "
             
             volumes:

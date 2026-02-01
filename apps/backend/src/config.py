@@ -106,7 +106,10 @@ class Settings(BaseSettings):
 
     # --- Celery (Background Workers) ---
     CELERY_BROKER_URL: str = ""
-    CELERY_RESULT_BACKEND: str = ""
+    # Optional: result backend is not required for enqueueing tasks.
+    # If unset, we disable the result backend to avoid Redis backend failures
+    # taking down request paths (e.g. chat websockets in preview envs).
+    CELERY_RESULT_BACKEND: str | None = None
     CELERY_TASK_SERIALIZER: str = "json"
     CELERY_RESULT_SERIALIZER: str = "json"
     CELERY_ACCEPT_CONTENT: ListStr = ["json"]
@@ -173,8 +176,7 @@ def get_settings() -> Settings:
     # Auto-generate Celery URLs
     if not settings.CELERY_BROKER_URL:
         settings.CELERY_BROKER_URL = _get_redis_url_with_db(settings.REDIS_URL, 1)
-    if not settings.CELERY_RESULT_BACKEND:
-        settings.CELERY_RESULT_BACKEND = _get_redis_url_with_db(settings.REDIS_URL, 2)
+    # Leave result backend disabled unless explicitly configured
 
     # Ensure production domains are always included in CORS origins
     # This prevents CORS issues when environment variables override defaults

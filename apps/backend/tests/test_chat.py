@@ -87,3 +87,69 @@ async def test_voice_endpoint_success():
 
                 assert response.status_code == 200
                 assert response.json() == {"text": "This is a mocked transcription."}
+
+
+# --- 3. Unit Test: WebSocket Continue Flow ---
+@pytest.mark.asyncio
+async def test_websocket_continue_after_message_processing():
+    """
+    Verify that after processing a message and sending responses,
+    the WebSocket loop continues to the next message.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from fastapi import WebSocket
+
+    # Mock WebSocket
+    mock_websocket = MagicMock(spec=WebSocket)
+    mock_websocket.receive_text = AsyncMock(side_effect=["Hello", "World", KeyboardInterrupt])
+
+    # Mock user
+    mock_user = MagicMock()
+    mock_user.id = "user_123"
+
+    # Mock database
+    mock_session = MagicMock()
+    mock_session.id = "session_123"
+    mock_session.isActive = True
+
+    with (
+        patch("src.routes.chat.db") as mock_db,
+        patch("src.routes.chat.manager") as mock_manager,
+        patch("src.routes.chat.llm_service") as mock_llm_service_patch,
+        patch("src.routes.chat.get_current_user_ws", return_value=mock_user),
+    ):
+
+        # Setup database mocks
+        mock_db.chatsession.find_first = AsyncMock(return_value=mock_session)
+        mock_db.chatmessage.create = AsyncMock(return_value=MagicMock(id="msg_123"))
+        mock_db.user.find_unique = AsyncMock(return_value=MagicMock(tier="FREE", credits=1000))
+        mock_db.chatsession.find_first.return_value = mock_session
+
+        # Setup LLM service mock - llm_service is imported directly, patch the instance
+        mock_llm_instance = MagicMock()
+        mock_llm_instance.get_chat_response_with_tools = AsyncMock(
+            return_value=("Test response", {"input_tokens": 10, "output_tokens": 5}, [], [])
+        )
+        # Patch the imported llm_service instance in the chat module
+        import src.routes.chat as chat_module
+
+        chat_module.llm_service = mock_llm_instance
+
+        # Setup manager mocks
+        mock_manager.connect = AsyncMock()
+        mock_manager.send_personal_message = AsyncMock()
+        mock_manager.send_json = AsyncMock()
+        mock_manager.disconnect = MagicMock()
+
+        # Import and call the WebSocket endpoint
+        from src.routes.chat import websocket_endpoint
+
+        try:
+            await websocket_endpoint(mock_websocket, mock_user)
+        except KeyboardInterrupt:
+            # Expected - this simulates the loop continuing
+            pass
+
+        # Verify that multiple messages were processed (continue worked)
+        assert mock_websocket.receive_text.call_count >= 2
+        assert mock_manager.send_personal_message.call_count >= 2

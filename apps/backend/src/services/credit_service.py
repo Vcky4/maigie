@@ -51,8 +51,8 @@ CREDIT_LIMITS = {
 
 # Token multiplier - we charge users less than actual tokens consumed
 # This makes the service more affordable while still tracking usage
-# 0.5 = charge 50% of actual tokens (users get 2x the conversations)
-TOKEN_MULTIPLIER = 0.5
+# 0.2 = charge 20% of actual tokens (users get 5x the conversations)
+TOKEN_MULTIPLIER = 0.2
 
 # Credit costs for different operations (in tokens) - Reduced for cost optimization
 CREDIT_COSTS = {

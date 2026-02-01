@@ -50,6 +50,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_serializer=settings.CELERY_TASK_SERIALIZER,
         accept_content=settings.CELERY_ACCEPT_CONTENT,
         result_serializer=settings.CELERY_RESULT_SERIALIZER,
+        task_ignore_result=True,  # we don't use results; avoids backend reliance
         timezone=settings.CELERY_TIMEZONE,
         enable_utc=settings.CELERY_ENABLE_UTC,
         task_always_eager=settings.CELERY_TASK_ALWAYS_EAGER,
@@ -70,6 +71,11 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         # Worker settings
         worker_max_tasks_per_child=1000,  # Restart worker after N tasks
         worker_disable_rate_limits=False,
+        # Prisma spawns an engine subprocess; Celery's stdout redirection replaces
+        # sys.stdout/sys.stderr with a LoggingProxy (no .fileno), which breaks
+        # subprocess.Popen in prisma-engine spawn.
+        worker_redirect_stdouts=False,
+        worker_hijack_root_logger=False,
     )
 
     # Configure logging
@@ -85,6 +91,20 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
 
 # Global Celery app instance
 celery_app = create_celery_app()
+
+# Ensure feature tasks are imported so Celery registers them.
+# Celery worker entrypoint is `-A src.core.celery_app:celery_app`, so we import
+# task modules here to make them discoverable without requiring autodiscovery.
+try:
+    from ..tasks import course_generation  # noqa: F401
+    from ..tasks import resource_recommendations  # noqa: F401
+    from ..tasks import schedule_generation  # noqa: F401
+except Exception as e:
+    # Avoid crashing the app if optional modules are unavailable at import time,
+    # but do log so worker/task registration issues are visible.
+    logger.exception("Failed to import Celery task modules: %s", e)
+    # Celery boot logs can miss python logger output early; print ensures visibility.
+    print(f"[celery_app] Failed to import Celery task modules: {e}")
 
 
 def get_celery_app() -> Celery:
