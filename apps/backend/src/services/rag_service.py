@@ -171,6 +171,7 @@ class RAGService:
         Generate personalized recommendations using RAG with Google Search Grounding.
         """
         try:
+            limit = max(1, int(limit))
             # 1. Retrieve relevant context from user's data
             relevant_context = await self.retrieve_relevant_context(
                 query=query, user_id=user_id, limit=5
