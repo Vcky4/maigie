@@ -13,11 +13,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from prisma import Client as PrismaClient
 
+from prisma import Client as PrismaClient
 from src.core.security import decode_access_token
 from src.dependencies import CurrentUser, db
-from src.utils.dependencies import get_db_client
 from src.models.auth import TokenData
 from src.models.feedback import (
     FeedbackCreate,
@@ -25,6 +24,7 @@ from src.models.feedback import (
     FeedbackResponse,
     FeedbackUpdate,
 )
+from src.utils.dependencies import get_db_client
 
 logger = logging.getLogger(__name__)
 

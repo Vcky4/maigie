@@ -7,6 +7,7 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import asyncio
 import logging
 import traceback
 from contextlib import asynccontextmanager
@@ -32,6 +33,7 @@ from .config import get_settings
 from .core.cache import cache
 from .core.websocket import manager as websocket_manager
 from .dependencies import SettingsDep
+from .services.ws_event_bus import ws_event_forwarder
 from .exceptions import (
     AppException,
     app_exception_handler,
@@ -51,10 +53,10 @@ from .routes.examples import router as examples_router
 from .routes.feedback import router as feedback_router
 from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
+from .routes.referrals import router as referrals_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
-from .routes.referrals import router as referrals_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
 from .routes.waitlist import router as waitlist_router
@@ -239,10 +241,30 @@ async def lifespan(app: FastAPI):
     await websocket_manager.start_cleanup()
     logger.info("WebSocket manager initialized")
 
+    # Start Redis -> chat WebSocket event forwarder (for worker notifications)
+    stop_ws_forwarder = asyncio.Event()
+    ws_forwarder_task = asyncio.create_task(ws_event_forwarder(stop_ws_forwarder))
+    app.state.ws_event_forwarder_stop = stop_ws_forwarder
+    app.state.ws_event_forwarder_task = ws_forwarder_task
+    logger.info("WS event forwarder initialized")
+
     yield  # Application runs here
 
     # Shutdown
     logger.info("Shutting down application...")
+    try:
+        stop_event = getattr(app.state, "ws_event_forwarder_stop", None)
+        if stop_event:
+            stop_event.set()
+        task = getattr(app.state, "ws_event_forwarder_task", None)
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+    except Exception:
+        pass
     await websocket_manager.stop_heartbeat()
     await websocket_manager.stop_cleanup()
 

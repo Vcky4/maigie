@@ -21,7 +21,8 @@ from src.core.database import db
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Use text-embedding-004 model for embeddings
-EMBEDDING_MODEL = "models/text-embedding-004"
+# Note: The embed_content function adds the "models/" prefix automatically
+EMBEDDING_MODEL = "text-embedding-004"
 
 
 class EmbeddingService:
@@ -114,7 +115,7 @@ class EmbeddingService:
                     "objectId": object_id,
                     "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,  # Store truncated content
-                    "metadata": metadata,
+                    "metadata": Json(metadata) if metadata else None,
                     "resourceId": resource_id,
                 }
             )
@@ -264,7 +265,7 @@ class EmbeddingService:
                 data_to_update = {
                     "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,
-                    "metadata": metadata,
+                    "metadata": Json(metadata) if metadata else None,
                 }
 
                 # Update resourceId if provided

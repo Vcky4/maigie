@@ -3,19 +3,36 @@ LLM Service using Google Gemini.
 Handles chat logic and tool execution.
 """
 
-import os
-import warnings
+from __future__ import annotations
 
+import asyncio
+import os
+import time
+import warnings
+from datetime import UTC
+
+import httpx
+from fastapi import HTTPException
+
+genai = None
 # Suppress the Google Gemini deprecation warning temporarily
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
-    import google.generativeai as genai
+    try:
+        import google.generativeai as _genai
 
-from fastapi import HTTPException
-from google.generativeai.types import HarmBlockThreshold, HarmCategory
+        genai = _genai
+    except Exception:
+        # Keep module importable even if the dependency isn't installed.
+        # We'll raise a clearer error when the service is actually used.
+        genai = None
 
-# Configure API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+try:
+    # Only available when google-generativeai is installed
+    from google.generativeai.types import HarmBlockThreshold, HarmCategory
+except Exception:  # pragma: no cover - depends on optional dependency
+    HarmBlockThreshold = None  # type: ignore[assignment]
+    HarmCategory = None  # type: ignore[assignment]
 
 # System instruction to define Maigie's persona
 SYSTEM_INSTRUCTION = """
@@ -25,287 +42,86 @@ Your goal is to help students organize learning, generate courses, manage schedu
 IMPORTANT DATE CONTEXT:
 - The user's current date and time will be provided in the context of each conversation
 - When creating schedules, goals, or any date-related actions, ALWAYS use dates relative to the CURRENT DATE provided in the context
-- NEVER use hardcoded years like 2025 or 2024 - always calculate dates based on the current date provided
-- For example, if current date is January 12, 2026 and user asks for "tomorrow", use January 13, 2026
-- If user asks for "next week", calculate based on the current date, not a hardcoded date
+- NEVER use hardcoded years - always calculate dates based on the current date provided
 
-CRITICAL INSTRUCTION FOR ACTIONS:
-If the user asks to generate a course, study plan, schedule, or create a note, you must NOT just describe it.
-You MUST output a strict JSON block at the very end of your response inside specific tags.
+CRITICAL - AVOID DUPLICATES:
+- BEFORE creating any new course, ALWAYS first use get_user_courses to check if the user already has a relevant course on that topic
+- If a matching or similar course exists, USE that existing course instead of creating a duplicate
+- When creating schedules or goals for a topic, first check existing courses and link to them
+- Only create a new course if no relevant course exists
 
-IMPORTANT FOR SCHEDULES:
-- When a user asks for a schedule, study plan, or to "block out time", you MUST create actual schedule blocks using the create_schedule action
-- DO NOT just describe or propose a schedule in text - you must create real schedule blocks that will be saved to the database
-- If the user asks for multiple days/times, create multiple schedule blocks (one action per time block)
-- Always include specific startAt and endAt times in ISO format
-
-MULTIPLE ACTIONS:
-When a user request involves multiple related actions (e.g., "create a course and set a goal to complete it by end of month"),
-you can include MULTIPLE actions in a single response. Use an array format:
-
-<<<ACTION_START>>>
-{
-  "actions": [
-    {
-      "type": "create_course",
-      "data": { ... }
-    },
-    {
-      "type": "create_goal",
-      "data": {
-        "title": "Complete Course by End of Month",
-        "targetDate": "2026-01-31T00:00:00Z",
-        "courseId": "$courseId"  // Use $courseId to reference the course created in the previous action
-      }
-    },
-    {
-      "type": "create_schedule",
-      "data": {
-        "title": "Study Session",
-        "startAt": "2026-01-15T10:00:00Z",
-        "endAt": "2026-01-15T12:00:00Z",
-        "courseId": "$courseId",  // Reference the course from first action
-        "goalId": "$goalId"        // Reference the goal from second action
-      }
-    }
-  ]
-}
-<<<ACTION_END>>>
-
-EXAMPLE: Creating a multi-day study schedule:
-If user asks: "Schedule cooking practice for tomorrow evening and exam study for the next 3 days"
-
-<<<ACTION_START>>>
-{
-  "actions": [
-    {
-      "type": "create_schedule",
-      "data": {
-        "title": "Cooking Practice - Essential Kitchen Tools",
-        "description": "Review Essential Kitchen Tools note and goal setting",
-        "startAt": "2026-01-16T18:00:00Z",
-        "endAt": "2026-01-16T18:30:00Z",
-        "courseId": "$courseId",
-        "goalId": "$goalId"
-      }
-    },
-    {
-      "type": "create_schedule",
-      "data": {
-        "title": "Exam Study Session - Day 1",
-        "startAt": "2026-01-17T09:00:00Z",
-        "endAt": "2026-01-17T10:00:00Z"
-      }
-    },
-    {
-      "type": "create_schedule",
-      "data": {
-        "title": "Exam Study Session - Day 2",
-        "startAt": "2026-01-18T09:00:00Z",
-        "endAt": "2026-01-18T10:00:00Z"
-      }
-    },
-    {
-      "type": "create_schedule",
-      "data": {
-        "title": "Exam Study Session - Day 3",
-        "startAt": "2026-01-19T09:00:00Z",
-        "endAt": "2026-01-19T10:00:00Z"
-      }
-    }
-  ]
-}
-<<<ACTION_END>>>
-
-IMPORTANT: When using multiple actions:
-- Actions are executed in order (sequentially)
-- Use "$courseId", "$goalId", "$topicId", "$noteId" to reference IDs from previous actions in the same batch
-- The system will automatically replace these placeholders with the actual IDs from previous actions
-- If a user asks for multiple things, include ALL relevant actions in one batch
-
-SINGLE ACTION (still supported):
-For single actions, you can use the simpler format:
-
-<<<ACTION_START>>>
-{
-  "type": "create_course",
-  "data": { ... }
-}
-<<<ACTION_END>>>
-
-AVAILABLE ACTIONS:
-
-1. CREATE COURSE:
-<<<ACTION_START>>>
-{
-  "type": "create_course",
-  "data": {
-    "title": "Course Title",
-    "description": "Brief description",
-    "difficulty": "BEGINNER",
-    "modules": [
-      {
-        "title": "Module 1 Name",
-        "topics": ["Topic 1", "Topic 2"]
-      }
-    ]
-  }
-}
-<<<ACTION_END>>>
-
-2. CREATE NOTE FOR TOPIC:
-<<<ACTION_START>>>
-{
-  "type": "create_note",
-  "data": {
-    "title": "Note Title",
-    "content": "Note content in markdown format",
-    "topicId": "topic_id_from_context",
-    "courseId": "course_id_from_context (optional)",
-    "summary": "Brief summary (optional)"
-  }
-}
-<<<ACTION_END>>>
-
-3. RETAKE/REWRITE NOTE:
-<<<ACTION_START>>>
-{
-  "type": "retake_note",
-  "data": {
-    "noteId": "note_id_from_context"
-  }
-}
-<<<ACTION_END>>>
-
-4. ADD SUMMARY TO NOTE:
-<<<ACTION_START>>>
-{
-  "type": "add_summary",
-  "data": {
-    "noteId": "note_id_from_context"
-  }
-}
-<<<ACTION_END>>>
-
-5. ADD TAGS TO NOTE:
-<<<ACTION_START>>>
-{
-  "type": "add_tags",
-  "data": {
-    "noteId": "note_id_from_context",
-    "tags": ["Tag1", "Tag2", "Tag3"]
-  }
-}
-<<<ACTION_END>>>
-
-6. RECOMMEND RESOURCES:
-<<<ACTION_START>>>
-{
-  "type": "recommend_resources",
-  "data": {
-    "query": "What the user is asking for (e.g., 'resources for learning Python')",
-    "topicId": "topic_id_from_context (optional)",
-    "courseId": "course_id_from_context (optional)",
-    "limit": 10
-  }
-}
-<<<ACTION_END>>>
-
-7. CREATE GOAL:
-<<<ACTION_START>>>
-{
-  "type": "create_goal",
-  "data": {
-    "title": "Goal Title",
-    "description": "Goal description (optional)",
-    "targetDate": "ISO date string (optional, e.g., '2026-12-31T00:00:00Z')",
-    "courseId": "course_id_from_context (optional)",
-    "topicId": "topic_id_from_context (optional)"
-  }
-}
-<<<ACTION_END>>>
-
-8. CREATE SCHEDULE:
-<<<ACTION_START>>>
-{
-  "type": "create_schedule",
-  "data": {
-    "title": "Schedule Title",
-    "description": "Schedule description (optional)",
-    "startAt": "ISO date string (e.g., '2026-01-15T10:00:00Z')",
-    "endAt": "ISO date string (e.g., '2026-01-15T12:00:00Z')",
-    "recurringRule": "DAILY, WEEKLY, or RRULE format (optional)",
-    "courseId": "course_id_from_context (optional)",
-    "topicId": "topic_id_from_context (optional)",
-    "goalId": "goal_id_from_context (optional)"
-  }
-}
-<<<ACTION_END>>>
-
-RULES:
-1. Only generate the JSON if the user explicitly asks to *create*, *generate*, *retake*, *rewrite*, *summarize*, *add tags*, *recommend resources*, *set goal*, or *schedule* for something.
-2. For note creation:
-   - Use the topicId from the context if available
-   - Use the courseId from the context if available (optional)
-   - If context includes noteId, you can reference the existing note but cannot create a duplicate
-3. For retake_note action:
-   - Use when user asks to "retake", "rewrite", "improve", or "regenerate" a note
-   - Use noteId from context (current note being viewed)
-   - The AI will rewrite the note content with better formatting
-4. For add_summary action:
-   - Use when user asks to "add summary", "summarize this note", or "create summary"
-   - Use noteId from context (current note being viewed)
-   - The AI will add a summary section to the note
-5. For add_tags action:
-   - Use when user asks to "add tags", "tag this note", "suggest tags", or "add tags to note"
-   - Use noteId from context (current note being viewed)
-   - Generate 3-8 relevant tags based on note content, title, and topic
-   - Tags should be concise, relevant, and use PascalCase or camelCase (e.g., "CommunityHealthNursing", "PublicHealth")
-   - Include tags in the "tags" array in the action data
-6. For recommend_resources action:
-   - Use when user asks for "resources", "recommendations", "suggestions", "links", "videos", "articles", "books", etc.
-   - Extract the query from what the user is asking for
-   - Use topicId from context if user is viewing a topic
-   - Use courseId from context if user is viewing a course
-   - Set limit to 5-10 resources (default 10)
-   - The system will generate personalized recommendations using RAG
-7. For create_goal action:
-   - Use when user asks to "set a goal", "create a goal", "I want to learn X", "my goal is to Y", etc.
-   - Extract a clear, actionable goal title from the user's request
-   - Use courseId from context if user is viewing a course
-   - Use topicId from context if user is viewing a topic
-   - Include targetDate if user mentions a deadline or timeframe
-   - Goals help track learning progress and personalize recommendations
-8. For create_schedule action:
-   - CRITICAL: When user asks to "schedule", "create a schedule", "plan study sessions", "block out time", "set up study time", "add to calendar", "propose a schedule", or asks for a study plan with specific times/dates, you MUST create actual schedule blocks using the create_schedule action. DO NOT just describe or propose a schedule - you must create it!
-   - If the user asks for a multi-day schedule or study plan, create MULTIPLE schedule blocks (one for each day/time block mentioned)
-   - Extract start and end times from the user's request. If specific times aren't mentioned, use reasonable defaults (e.g., evening study sessions around 6-8 PM, morning sessions around 9-11 AM)
-   - Use courseId, topicId, or goalId from context or from previous actions in the batch (use $courseId, $goalId placeholders if created in same batch)
-   - Include recurringRule if user mentions recurring schedules (e.g., "daily", "weekly", "every Monday")
-   - For multi-day schedules, create separate schedule blocks for each day with appropriate startAt/endAt times
-   - IMPORTANT: If the user has Google Calendar connected, the system will automatically check for conflicts with existing calendar events. If a conflict is detected, the system will create the schedule but warn the user about the overlap. Be aware that schedules might conflict with existing commitments.
-   - Schedules automatically sync with Google Calendar if the user has connected their calendar
-   - Example: If user says "schedule cooking practice for tomorrow evening and exam study for the next 3 days", create 4 schedule blocks (1 for cooking, 3 for exam study)
-9. When handling multiple actions:
-   - If user asks for multiple things (e.g., "create a course and set a goal"), include ALL actions in one batch
-   - Use "$courseId", "$goalId", "$topicId" placeholders to reference IDs from previous actions
-   - Order actions logically (e.g., create course first, then goal, then schedule)
-   - IMPORTANT: When creating schedules for multiple days/times, create MULTIPLE create_schedule actions (one per time block). Do NOT create just one schedule block - create separate blocks for each day/time mentioned
-10. The JSON must be valid.
-11. Keep the conversational part of your response encouraging and brief.
-12. When creating notes, use the topic/course information from context to make the note relevant and contextual.
-13. When recommending resources, explain why you're recommending them and how they relate to the user's learning goals.
-14. When creating goals, make them specific, measurable, and aligned with the user's current learning context.
+GUIDELINES:
+- Be friendly, supportive, and encouraging
+- When users ask questions or want to see their data, use the appropriate query tools (get_user_courses, get_user_goals, etc.)
+- When users want to create or modify something, use the appropriate action tools (create_course, create_note, etc.)
+- For casual conversation (greetings, thanks, etc.), respond naturally without using tools
+- Always provide helpful context and explanations in your responses
+- When a user asks for a study plan/schedule for a topic they already have a course for, use the existing course
 """
+
+
+def _convert_proto_to_dict(obj):
+    """Recursively convert protobuf objects to plain Python dicts/lists.
+
+    This handles Google protobuf types like MapComposite and RepeatedComposite
+    that can't be directly serialized to JSON.
+    """
+    import json
+
+    if obj is None:
+        return None
+
+    # Handle protobuf MapComposite (dict-like)
+    if hasattr(obj, "keys") and callable(obj.keys):
+        return {k: _convert_proto_to_dict(v) for k, v in obj.items()}
+
+    # Handle protobuf RepeatedComposite (list-like)
+    if hasattr(obj, "__iter__") and not isinstance(obj, (str, bytes, dict)):
+        try:
+            return [_convert_proto_to_dict(item) for item in obj]
+        except TypeError:
+            pass
+
+    # Handle basic types
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    # Handle dict
+    if isinstance(obj, dict):
+        return {k: _convert_proto_to_dict(v) for k, v in obj.items()}
+
+    # Handle list/tuple
+    if isinstance(obj, (list, tuple)):
+        return [_convert_proto_to_dict(item) for item in obj]
+
+    # Fallback: try to convert to string
+    try:
+        # Try JSON serialization to test if it's serializable
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError):
+        return str(obj)
 
 
 class GeminiService:
     def __init__(self):
+        if genai is None:
+            raise RuntimeError(
+                "google-generativeai is not installed. Install it to enable Gemini features."
+            )
+
+        # Configure API lazily (prevents import-time failures in worker contexts)
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+
         self.model = genai.GenerativeModel(
-            model_name="models/gemini-flash-latest", system_instruction=SYSTEM_INSTRUCTION
+            model_name="models/gemini-3-flash-preview", system_instruction=SYSTEM_INSTRUCTION
         )
 
         # Safety settings (block hate speech, etc.)
+        if HarmCategory is None or HarmBlockThreshold is None:
+            raise RuntimeError(
+                "google-generativeai types are unavailable; cannot configure safety settings."
+            )
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -326,7 +142,7 @@ class GeminiService:
             # Always add current date/time context
             from datetime import datetime, timezone
 
-            current_datetime = datetime.now(timezone.utc)
+            current_datetime = datetime.now(UTC)
             current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
 
             context_parts = [f"Current Date & Time: {current_date_str}"]
@@ -349,10 +165,10 @@ class GeminiService:
                     if context.get("moduleTitle"):
                         context_parts.append(f"Module: {context['moduleTitle']}")
                     if context.get("topicContent"):
-                        # Include topic content for context (truncated if too long)
+                        # Include topic content for context (truncated for cost savings)
                         topic_content = context["topicContent"]
-                        if len(topic_content) > 500:
-                            topic_content = topic_content[:500] + "..."
+                        if len(topic_content) > 300:
+                            topic_content = topic_content[:300] + "..."
                         context_parts.append(f"Topic Content: {topic_content}")
                 elif context.get("topicId"):
                     context_parts.append(f"Current Topic ID: {context['topicId']}")
@@ -361,10 +177,10 @@ class GeminiService:
                 if context.get("noteTitle"):
                     context_parts.append(f"Current Note: {context['noteTitle']}")
                     if context.get("noteContent"):
-                        # Include note content for context (truncated if too long)
+                        # Include note content for context (truncated for cost savings)
                         note_content = context["noteContent"]
-                        if len(note_content) > 500:
-                            note_content = note_content[:500] + "..."
+                        if len(note_content) > 300:
+                            note_content = note_content[:300] + "..."
                         context_parts.append(f"Note Content: {note_content}")
                     if context.get("noteSummary"):
                         context_parts.append(f"Note Summary: {context['noteSummary']}")
@@ -422,6 +238,457 @@ class GeminiService:
         except Exception as e:
             print(f"Gemini Error: {e}")
             raise HTTPException(status_code=500, detail="AI Service unavailable")
+
+    async def get_chat_response_with_tools(
+        self,
+        history: list,
+        user_message: str,
+        context: dict = None,
+        user_id: str = None,
+        image_url: str = None,
+        progress_callback=None,
+        stream_callback=None,
+    ) -> tuple[str, dict, list[dict], list[dict]]:
+        """
+        Send message to Gemini with function calling support.
+
+        Args:
+            history: Chat history
+            user_message: User's text message
+            context: Additional context dictionary
+            user_id: User ID for tool execution
+            image_url: Optional image URL to include in the message
+            progress_callback: Optional async callback for progress updates during tool execution
+                              Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
+            stream_callback: Optional async callback for streaming text responses
+                            Signature: async def callback(chunk: str, is_final: bool)
+
+        Returns:
+            tuple: (response_text, usage_info, executed_actions, query_results)
+            - response_text: Final text response from model
+            - usage_info: Token usage information
+            - executed_actions: List of actions executed via tool calls
+            - query_results: List of query tool results formatted for component responses
+        """
+        from src.services.gemini_tools import get_all_tools
+        from src.services.gemini_tool_handlers import handle_tool_call
+        import httpx
+
+        try:
+            request_start = time.perf_counter()
+            request_id = f"agentic_{int(request_start * 1000)}"
+
+            # Get tool definitions
+            tools = get_all_tools()
+
+            # Create model with tools
+            model_with_tools = genai.GenerativeModel(
+                model_name="models/gemini-3-flash-preview",
+                system_instruction=SYSTEM_INSTRUCTION,
+                tools=tools,
+            )
+
+            # Build enhanced message with context
+            enhanced_message_text = self._build_enhanced_message(user_message, context)
+
+            # Helper to check if URL is an image
+            def _is_image_url(url: str) -> bool:
+                return (
+                    any(ext in url.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])
+                    or "image" in url.lower()
+                    or any(domain in url.lower() for domain in ["bunnycdn", "storage", "cdn"])
+                )
+
+            # Collect all image URLs to download (current message + history)
+            image_urls_to_download = []
+            if image_url:
+                image_urls_to_download.append(image_url)
+
+            # Scan history for image URLs
+            history_image_positions = []  # [(msg_idx, part_idx, url), ...]
+            for msg_idx, hist_msg in enumerate(history):
+                if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                    for part_idx, part in enumerate(hist_msg["parts"]):
+                        if isinstance(part, str) and part.startswith(("http://", "https://")):
+                            if _is_image_url(part):
+                                history_image_positions.append((msg_idx, part_idx, part))
+                                image_urls_to_download.append(part)
+
+            # Download all images in parallel
+            downloaded_images = {}  # url -> {"mime_type": ..., "data": ...}
+            if image_urls_to_download:
+                async with httpx.AsyncClient(timeout=15.0) as http_client:
+
+                    async def download_image(url: str):
+                        try:
+                            response = await http_client.get(url)
+                            if response.status_code == 200:
+                                return url, {
+                                    "mime_type": response.headers.get("content-type", "image/jpeg"),
+                                    "data": response.content,
+                                }
+                        except Exception as e:
+                            print(f"⚠️ Failed to download image {url[:50]}...: {e}")
+                        return url, None
+
+                    # Download all images in parallel
+                    results = await asyncio.gather(
+                        *[download_image(url) for url in image_urls_to_download]
+                    )
+                    for url, img_data in results:
+                        if img_data:
+                            downloaded_images[url] = img_data
+                            print(f"🖼️ Downloaded image: {url[:50]}...")
+
+            # Prepare message content (multimodal if image_url provided)
+            message_content = enhanced_message_text
+            if image_url and image_url in downloaded_images:
+                img_data = downloaded_images[image_url]
+                message_content = [
+                    enhanced_message_text,
+                    {"mime_type": img_data["mime_type"], "data": img_data["data"]},
+                ]
+                print(f"🖼️ Including image in message: {image_url}")
+
+            # Process history - replace image URLs with downloaded data
+            processed_history = []
+            for msg_idx, hist_msg in enumerate(history):
+                if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                    processed_parts = []
+                    for part_idx, part in enumerate(hist_msg["parts"]):
+                        if isinstance(part, str):
+                            if part.startswith(("http://", "https://")) and _is_image_url(part):
+                                # Replace URL with downloaded image data
+                                if part in downloaded_images:
+                                    processed_parts.append(downloaded_images[part])
+                                # Skip if download failed
+                            else:
+                                processed_parts.append(part)
+                        else:
+                            processed_parts.append(part)
+                    processed_history.append({**hist_msg, "parts": processed_parts})
+                else:
+                    processed_history.append(hist_msg)
+
+            # Start chat session
+            chat = model_with_tools.start_chat(history=processed_history)
+
+            # Track executed actions and query results
+            executed_actions = []
+            query_results = []
+            total_input_tokens = 0
+            total_output_tokens = 0
+            final_text = ""  # Initialize final_text
+            total_llm_time = 0.0
+            total_tool_time = 0.0
+
+            # Tool call loop
+            max_iterations = 6  # Prevent infinite loops while reducing latency
+            iteration = 0
+            tool_results = []  # Initialize tool_results
+
+            while iteration < max_iterations:
+                iteration += 1
+
+                # Send message (first iteration) or tool results (subsequent iterations)
+                streamed_text = ""
+
+                async def _send_streaming_request(payload):
+                    response_stream = await chat.send_message_async(
+                        payload, safety_settings=self.safety_settings, stream=True
+                    )
+                    last_response = None
+                    streamed_text_parts = []
+                    last_chunk_text = None
+                    streamed_function_calls = []
+
+                    async for chunk in response_stream:
+                        last_response = chunk
+                        try:
+                            chunk_text = chunk.text
+                        except ValueError:
+                            # Ignore non-text parts (e.g., function_call)
+                            chunk_text = None
+                        if hasattr(chunk, "parts"):
+                            for part in chunk.parts:
+                                if hasattr(part, "function_call") and part.function_call:
+                                    streamed_function_calls.append(part.function_call)
+                        if chunk_text:
+                            streamed_text_parts.append(chunk_text)
+                            if last_chunk_text is not None:
+                                await stream_callback(last_chunk_text, False)
+                            last_chunk_text = chunk_text
+
+                    if last_chunk_text is not None:
+                        await stream_callback(last_chunk_text, True)
+
+                    return last_response, "".join(streamed_text_parts), streamed_function_calls
+
+                if iteration == 1:
+                    llm_start = time.perf_counter()
+                    if stream_callback:
+                        response, streamed_text, streamed_function_calls = (
+                            await _send_streaming_request(message_content)
+                        )
+                    else:
+                        response = await chat.send_message_async(
+                            message_content, safety_settings=self.safety_settings
+                        )
+                    total_llm_time += time.perf_counter() - llm_start
+                    last_payload = message_content
+                else:
+                    # Send tool results from previous iteration
+                    llm_start = time.perf_counter()
+                    if stream_callback:
+                        response, streamed_text, streamed_function_calls = (
+                            await _send_streaming_request(tool_results)
+                        )
+                    else:
+                        response = await chat.send_message_async(
+                            tool_results, safety_settings=self.safety_settings
+                        )
+                    total_llm_time += time.perf_counter() - llm_start
+                    last_payload = tool_results
+
+                # Track token usage
+                if hasattr(response, "usage_metadata"):
+                    total_input_tokens += response.usage_metadata.prompt_token_count or 0
+                    total_output_tokens += response.usage_metadata.candidates_token_count or 0
+
+                # Check for function calls - check both function_calls property and parts
+                function_calls = []
+                if stream_callback and streamed_function_calls:
+                    function_calls = streamed_function_calls
+                    print(f"📞 Found {len(function_calls)} function calls via stream parts")
+                elif hasattr(response, "function_calls") and response.function_calls:
+                    function_calls = list(response.function_calls)
+                    print(
+                        f"📞 Found {len(function_calls)} function calls via response.function_calls"
+                    )
+                elif hasattr(response, "parts"):
+                    # Check parts for function calls (some models return them in parts)
+                    for part in response.parts:
+                        if hasattr(part, "function_call") and part.function_call:
+                            function_calls.append(part.function_call)
+                    if function_calls:
+                        print(f"📞 Found {len(function_calls)} function calls via response.parts")
+
+                if not function_calls:
+                    # No tool calls - this is the final response
+                    if stream_callback:
+                        if streamed_text:
+                            final_text = streamed_text
+                        else:
+                            try:
+                                final_text = (
+                                    response.text
+                                    if hasattr(response, "text") and response.text
+                                    else ""
+                                )
+                            except ValueError as e:
+                                print(f"⚠️ Could not get text from response: {e}")
+                                final_text = ""
+                            if not final_text:
+                                final_text = "I'm sorry, I couldn't generate a response."
+                    else:
+                        # Non-streaming response
+                        try:
+                            final_text = (
+                                response.text if hasattr(response, "text") and response.text else ""
+                            )
+                        except ValueError as e:
+                            print(f"⚠️ Could not get text from response: {e}")
+                            final_text = ""
+                    print(f"⏱️ [{request_id}] LLM iteration {iteration} completed with no tools")
+                    break
+
+                # Execute function calls
+                tool_results = []
+
+                def _has_dependency_placeholders(value) -> bool:
+                    if isinstance(value, str):
+                        return "$" in value
+                    if isinstance(value, dict):
+                        return any(_has_dependency_placeholders(v) for v in value.values())
+                    if isinstance(value, list):
+                        return any(_has_dependency_placeholders(v) for v in value)
+                    return False
+
+                async def _execute_tool(function_call):
+                    tool_name = function_call.name
+                    tool_args = _convert_proto_to_dict(dict(function_call.args))
+                    print(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
+                    try:
+                        tool_result = await handle_tool_call(
+                            tool_name=tool_name,
+                            args=tool_args,
+                            user_id=user_id,
+                            context=context,
+                            progress_callback=progress_callback,
+                        )
+                        return tool_name, tool_args, tool_result, None
+                    except Exception as e:
+                        print(f"❌ Tool execution error: {e}")
+                        return tool_name, tool_args, {"error": str(e)}, str(e)
+
+                tool_start = time.perf_counter()
+                independent_calls = []
+                dependent_calls = []
+                for function_call in function_calls:
+                    tool_args = _convert_proto_to_dict(dict(function_call.args))
+                    if _has_dependency_placeholders(tool_args):
+                        dependent_calls.append(function_call)
+                    else:
+                        independent_calls.append(function_call)
+
+                execution_results = []
+                if independent_calls:
+                    execution_results.extend(
+                        await asyncio.gather(
+                            *[_execute_tool(function_call) for function_call in independent_calls]
+                        )
+                    )
+                for function_call in dependent_calls:
+                    execution_results.append(await _execute_tool(function_call))
+                total_tool_time += time.perf_counter() - tool_start
+
+                for tool_name, tool_args, tool_result, tool_error in execution_results:
+                    if tool_error is None:
+                        if tool_name.startswith("get_user_"):
+                            query_results.append(
+                                {
+                                    "tool_name": tool_name,
+                                    "result": tool_result,
+                                    "component_type": tool_result.get("_component_type"),
+                                    "query_type": tool_result.get("_query_type"),
+                                    "data": (
+                                        tool_result.get("courses")
+                                        or tool_result.get("goals")
+                                        or tool_result.get("schedules")
+                                        or tool_result.get("notes")
+                                        or tool_result.get("resources")
+                                    ),
+                                }
+                            )
+
+                        if tool_name.startswith("create_") or tool_name in [
+                            "recommend_resources",
+                            "retake_note",
+                            "add_summary_to_note",
+                            "add_tags_to_note",
+                        ]:
+                            executed_actions.append(
+                                {
+                                    "type": self._map_tool_to_action_type(tool_name),
+                                    "data": tool_args,
+                                    "result": tool_result,
+                                }
+                            )
+
+                    tool_results.append(
+                        genai.protos.FunctionResponse(name=tool_name, response=tool_result)
+                    )
+            else:
+                # Max iterations reached
+                final_text = "I encountered an issue processing your request. Please try again."
+
+            usage_info = {
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
+                "model_name": "gemini-3-flash-preview",
+            }
+
+            total_time = time.perf_counter() - request_start
+            print(
+                f"⏱️ [{request_id}] total={total_time:.2f}s llm={total_llm_time:.2f}s "
+                f"tools={total_tool_time:.2f}s iterations={iteration}"
+            )
+
+            return final_text, usage_info, executed_actions, query_results
+
+        except Exception as e:
+            print(f"Gemini Error with tools: {e}")
+            raise HTTPException(status_code=500, detail="AI Service unavailable")
+
+    def _map_tool_to_action_type(self, tool_name: str) -> str:
+        """Map tool name to action type for backward compatibility."""
+        mapping = {
+            "create_course": "create_course",
+            "create_note": "create_note",
+            "create_goal": "create_goal",
+            "create_schedule": "create_schedule",
+            "recommend_resources": "recommend_resources",
+            "retake_note": "retake_note",
+            "add_summary_to_note": "add_summary",
+            "add_tags_to_note": "add_tags",
+        }
+        return mapping.get(tool_name, tool_name)
+
+    def _build_enhanced_message(self, user_message: str, context: dict = None) -> str:
+        """Build enhanced message with context."""
+        enhanced_message = user_message
+
+        # Always add current date/time context
+        from datetime import datetime
+
+        current_datetime = datetime.now(UTC)
+        current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
+
+        context_parts = [f"Current Date & Time: {current_date_str}"]
+
+        if context:
+            if context.get("pageContext"):
+                context_parts.append(f"Current Page Context: {context['pageContext']}")
+
+            # Course information
+            if context.get("courseTitle"):
+                context_parts.append(f"Current Course: {context['courseTitle']}")
+                if context.get("courseDescription"):
+                    context_parts.append(f"Course Description: {context['courseDescription']}")
+            elif context.get("courseId"):
+                context_parts.append(f"Current Course ID: {context['courseId']}")
+
+            # Topic information
+            if context.get("topicTitle"):
+                context_parts.append(f"Current Topic: {context['topicTitle']}")
+                if context.get("moduleTitle"):
+                    context_parts.append(f"Module: {context['moduleTitle']}")
+                if context.get("topicContent"):
+                    # Include topic content for context (truncated for cost savings)
+                    topic_content = context["topicContent"]
+                    if len(topic_content) > 300:
+                        topic_content = topic_content[:300] + "..."
+                    context_parts.append(f"Topic Content: {topic_content}")
+            elif context.get("topicId"):
+                context_parts.append(f"Current Topic ID: {context['topicId']}")
+
+            # Note information
+            if context.get("noteTitle"):
+                context_parts.append(f"Current Note: {context['noteTitle']}")
+                if context.get("noteContent"):
+                    # Include note content for context (truncated for cost savings)
+                    note_content = context["noteContent"]
+                    if len(note_content) > 300:
+                        note_content = note_content[:300] + "..."
+                    context_parts.append(f"Note Content: {note_content}")
+                if context.get("noteSummary"):
+                    context_parts.append(f"Note Summary: {context['noteSummary']}")
+            elif context.get("noteId"):
+                context_parts.append(f"Current Note ID: {context['noteId']}")
+
+            # Retrieved Items (from RAG/Database Search)
+            if context.get("retrieved_items"):
+                context_parts.append("\nPossibly Relevant Items found in Database:")
+                for item in context["retrieved_items"]:
+                    context_parts.append(str(item))
+                context_parts.append("(Use these IDs if the user refers to these items)")
+
+        # Always include context_parts (at minimum current date/time)
+        if context_parts:
+            context_str = "\n".join(context_parts)
+            enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
+
+        return enhanced_message
 
     async def generate_summary(self, content: str) -> str:
         """
@@ -492,6 +759,152 @@ Summary:"""
         except Exception as e:
             print(f"Gemini Summary Error: {e}")
             raise HTTPException(status_code=500, detail="Summary generation failed")
+
+    async def generate_minimal_response(self, prompt: str, max_tokens: int = 50) -> dict:
+        """
+        Generate a minimal AI response with strict token limits.
+        Used for brief insights and tips that don't require full conversation context.
+
+        Args:
+            prompt: The prompt to generate a response for
+            max_tokens: Maximum tokens for the response (default 50)
+
+        Returns:
+            Dictionary with 'text' and 'total_tokens' keys, or None if failed
+        """
+        try:
+            # Use Flash model for minimal responses (faster and cheaper)
+            minimal_model = genai.GenerativeModel(
+                "gemini-2.0-flash-lite",
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.7,
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            response = await minimal_model.generate_content_async(
+                prompt, safety_settings=self.safety_settings
+            )
+
+            # Calculate tokens used
+            input_tokens = len(prompt) // 4  # Rough estimate
+            output_tokens = len(response.text) // 4 if response.text else 0
+            total_tokens = input_tokens + output_tokens
+
+            return {
+                "text": response.text.strip() if response.text else "",
+                "total_tokens": total_tokens,
+            }
+
+        except Exception as e:
+            print(f"Minimal response generation error: {e}")
+            return None
+
+    async def generate_course_outline(
+        self,
+        *,
+        topic: str,
+        difficulty: str = "BEGINNER",
+        user_message: str | None = None,
+        max_modules: int = 6,
+        max_topics_per_module: int = 6,
+    ) -> dict:
+        """
+        Generate a course outline (modules + topic titles) as JSON.
+
+        This is designed to be run in a background job and MUST return valid JSON.
+        It intentionally avoids generating long topic content to keep costs low.
+        """
+        try:
+            difficulty_norm = (difficulty or "BEGINNER").upper()
+
+            # Use a fast/cheap model for structured outline generation.
+            outline_model = genai.GenerativeModel(
+                "gemini-2.0-flash",
+                system_instruction=SYSTEM_INSTRUCTION,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=900,
+                    temperature=0.2,
+                ),
+                safety_settings=self.safety_settings,
+            )
+
+            user_msg = user_message or ""
+            prompt = f"""Generate a course outline for the topic below.
+
+Topic: {topic}
+Difficulty: {difficulty_norm}
+
+Constraints:
+- Return ONLY valid JSON (no markdown, no code fences, no commentary).
+- Keep it concise and structured for a learning app.
+- Use at most {max_modules} modules.
+- Each module should have at most {max_topics_per_module} topic titles.
+- Topics should be short titles (no paragraphs).
+
+Output JSON schema:
+{{
+  "title": "string",
+  "description": "string",
+  "difficulty": "BEGINNER|INTERMEDIATE|ADVANCED",
+  "modules": [
+    {{
+      "title": "string",
+      "description": "string (optional)",
+      "topics": ["string", "string"]
+    }}
+  ]
+}}
+
+If the user message includes constraints (timeframe, focus areas), reflect them:
+User message: {user_msg}
+
+JSON:"""
+
+            response = await outline_model.generate_content_async(
+                prompt, safety_settings=self.safety_settings
+            )
+            text = (response.text or "").strip()
+
+            # Parse JSON robustly (extract first {...} block if needed)
+            import json
+            import re
+
+            try:
+                return json.loads(text)
+            except Exception:
+                match = re.search(r"\{[\s\S]*\}", text)
+                if not match:
+                    raise ValueError("No JSON object found in outline response")
+                return json.loads(match.group(0))
+        except Exception as e:
+            print(f"Course outline generation error: {e}")
+            # Fallback minimal outline (ensures task can still succeed)
+            safe_topic = topic.strip() or "Your Topic"
+            return {
+                "title": f"Learning {safe_topic}",
+                "description": f"A structured course on {safe_topic}.",
+                "difficulty": (difficulty or "BEGINNER").upper(),
+                "modules": [
+                    {
+                        "title": "Module 1: Foundations",
+                        "topics": [
+                            f"Introduction to {safe_topic}",
+                            "Key concepts and terminology",
+                            "Common pitfalls",
+                        ],
+                    },
+                    {
+                        "title": "Module 2: Practice",
+                        "topics": [
+                            "Core techniques",
+                            "Exercises and drills",
+                            "Review and next steps",
+                        ],
+                    },
+                ],
+            }
 
     async def rewrite_note_content(
         self, content: str, title: str = None, context: dict = None
@@ -665,6 +1078,55 @@ Tags (JSON array):"""
             traceback.print_exc()
             raise HTTPException(status_code=500, detail="Tag generation failed")
 
+    async def analyze_image(self, prompt: str, image_url: str) -> str:
+        """
+        Analyze an image from a URL using Gemini Vision capabilities.
+        """
+        print(f"👁️ Gemini analyzing image: {image_url}")
 
-# Global instance
-llm_service = GeminiService()
+        try:
+            # 1. Download the image bytes from the URL
+            async with httpx.AsyncClient() as client:
+                response = await client.get(image_url)
+                if response.status_code != 200:
+                    print(f"❌ Failed to download image: {response.status_code}")
+                    return "I'm sorry, I couldn't access the image URL."
+
+                image_data = response.content
+                mime_type = response.headers.get("content-type", "image/jpeg")
+
+            # 2. Prepare the content for Gemini
+            # Gemini treats images as a distinct part of the prompt content
+            content = [prompt, {"mime_type": mime_type, "data": image_data}]
+
+            # 3. Generate response
+            response = await self.model.generate_content_async(
+                content, safety_settings=self.safety_settings
+            )
+
+            return response.text
+
+        except Exception as e:
+            print(f"❌ Gemini Vision Error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return "I'm sorry, I encountered an error analyzing that image."
+
+
+class _LazyGeminiService:
+    """Lazy proxy to avoid import-time side effects/crashes."""
+
+    _instance: "GeminiService | None" = None
+
+    def _get(self) -> "GeminiService":
+        if self._instance is None:
+            self._instance = GeminiService()
+        return self._instance
+
+    def __getattr__(self, name: str):
+        return getattr(self._get(), name)
+
+
+# Backwards-compatible global proxy
+llm_service = _LazyGeminiService()

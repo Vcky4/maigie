@@ -37,7 +37,7 @@ def register_periodic_task(
     args: tuple = (),
     kwargs: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
-) -> Callable | None:
+) -> Callable:
     """Register a periodic task with Celery Beat.
 
     Args:
@@ -49,7 +49,8 @@ def register_periodic_task(
         options: Additional task options
 
     Returns:
-        The task function if provided, None otherwise
+        A decorator when used as `@register_periodic_task(...)`, otherwise the
+        provided task reference.
 
     Example:
         ```python
@@ -69,18 +70,41 @@ def register_periodic_task(
     if options is None:
         options = {}
 
-    # Register with Celery Beat
-    celery_app.conf.beat_schedule[name] = {
-        "task": task if isinstance(task, str) else (task.__name__ if task else name),
-        "schedule": schedule,
-        "args": args,
-        "kwargs": kwargs,
-        "options": options,
-    }
+    def _register(task_ref: Callable | str) -> Callable:
+        # Celery expects the *Celery task name* (e.g. "course.generate_from_chat"),
+        # not the Python function name.
+        if isinstance(task_ref, str):
+            task_name = task_ref
+        else:
+            task_name = (
+                getattr(task_ref, "name", None) or getattr(task_ref, "__name__", None) or name
+            )
 
-    logger.info(f"Registered periodic task: {name} with schedule {schedule}")
+        # Ensure beat_schedule is always a dict.
+        if celery_app.conf.beat_schedule is None:
+            celery_app.conf.beat_schedule = {}
 
-    return task
+        celery_app.conf.beat_schedule[name] = {
+            "task": task_name,
+            "schedule": schedule,
+            "args": args,
+            "kwargs": kwargs,
+            "options": options,
+        }
+
+        logger.info(f"Registered periodic task: {name} -> {task_name} @ {schedule}")
+        return task_ref if not isinstance(task_ref, str) else (lambda: None)
+
+    # Decorator usage: @register_periodic_task(...)
+    if task is None:
+
+        def decorator(func: Callable) -> Callable:
+            return _register(func)
+
+        return decorator
+
+    # Direct registration usage: register_periodic_task(..., task="some.task")
+    return _register(task)
 
 
 def unregister_periodic_task(name: str) -> None:

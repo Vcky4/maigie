@@ -1,0 +1,282 @@
+"""
+Course generation tasks (Celery).
+
+These tasks run in a separate worker process and communicate progress/results
+back to the API server through Redis pubsub, which then forwards to chat
+WebSocket clients.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from src.tasks.base import run_async_in_celery, task
+from src.tasks.registry import register_task
+
+logger = logging.getLogger(__name__)
+
+TASK_NAME = "course.generate_from_chat"
+
+
+async def _ensure_db_connected() -> None:
+    from src.core.database import db
+
+    if not db.is_connected():
+        await db.connect()
+
+
+async def _delete_existing_course_content(course_id: str) -> None:
+    from src.core.database import db
+
+    # Delete topics first, then modules (to satisfy FK constraints).
+    modules = await db.module.find_many(where={"courseId": course_id})
+    module_ids = [m.id for m in modules]
+    if module_ids:
+        await db.topic.delete_many(where={"moduleId": {"in": module_ids}})
+    await db.module.delete_many(where={"courseId": course_id})
+
+
+async def _persist_course_outline(course_id: str, outline: dict[str, Any]) -> None:
+    from src.core.database import db
+
+    modules = outline.get("modules") or []
+
+    for i, mod in enumerate(modules):
+        module_title = (mod.get("title") or f"Module {i+1}").strip()
+        topics = mod.get("topics") or []
+
+        module = await db.module.create(
+            data={
+                "courseId": course_id,
+                "title": module_title,
+                "order": float(i),
+                "description": mod.get("description") or None,
+            }
+        )
+
+        for j, topic in enumerate(topics):
+            if isinstance(topic, str):
+                topic_title = topic.strip()
+            else:
+                topic_title = str(topic.get("title") or f"Topic {j+1}").strip()
+
+            if not topic_title:
+                continue
+
+            await db.topic.create(
+                data={
+                    "moduleId": module.id,
+                    "title": topic_title,
+                    "order": float(j),
+                }
+            )
+
+
+@register_task(
+    name=TASK_NAME,
+    description="Generate a course outline from a chat request and persist it",
+    category="courses",
+    tags=["courses", "ai", "generation"],
+)
+@task(name=TASK_NAME, bind=True, max_retries=3)
+def generate_course_from_chat_task(  # type: ignore[misc]
+    self: Any,
+    *,
+    user_id: str,
+    course_id: str,
+    user_message: str,
+    topic: str,
+    difficulty: str,
+) -> dict[str, Any]:
+    """
+    Generate a course outline in the background and store it in the DB.
+
+    Notes:
+    - This is a synchronous Celery task wrapper that runs async logic using run_async_in_celery().
+    - Emits websocket events via Redis pubsub so the API server can forward updates.
+    """
+
+    async def _run() -> dict[str, Any]:
+        from src.core.database import db
+        from src.services.llm_service import llm_service
+        from src.services.ws_event_bus import publish_ws_event
+
+        await _ensure_db_connected()
+
+        # Started
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 10,
+                "stage": "generating_outline",
+                "message": "Generating your course outline...",
+            },
+        )
+
+        outline = await llm_service.generate_course_outline(
+            topic=topic,
+            difficulty=difficulty,
+            user_message=user_message,
+        )
+
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 35,
+                "stage": "outline_ready",
+                "message": "Outline ready. Preparing your course...",
+            },
+        )
+
+        await _delete_existing_course_content(course_id)
+
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 45,
+                "stage": "writing_modules",
+                "message": "Creating modules and topics...",
+            },
+        )
+
+        # Persist and emit coarse-grained progress (1 event per module).
+        modules = outline.get("modules") or []
+        total = max(1, len(modules)) if modules else 1
+
+        if modules:
+            for idx, mod in enumerate(modules):
+                # Create module
+                module_title = (mod.get("title") or f"Module {idx+1}").strip()
+                topics = mod.get("topics") or []
+
+                module = await db.module.create(
+                    data={
+                        "courseId": course_id,
+                        "title": module_title,
+                        "order": float(idx),
+                        "description": mod.get("description") or None,
+                    }
+                )
+
+                # Create topics
+                for j, topic_item in enumerate(topics):
+                    if isinstance(topic_item, str):
+                        topic_title = topic_item.strip()
+                    else:
+                        topic_title = str(topic_item.get("title") or f"Topic {j+1}").strip()
+
+                    if not topic_title:
+                        continue
+
+                    await db.topic.create(
+                        data={
+                            "moduleId": module.id,
+                            "title": topic_title,
+                            "order": float(j),
+                        }
+                    )
+
+                # Emit progress after each module
+                await publish_ws_event(
+                    user_id,
+                    {
+                        "status": "processing",
+                        "action": "ai_course_generation",
+                        "course_id": course_id,
+                        "courseId": course_id,
+                        "progress": 45 + int(((idx + 1) / total) * 40),
+                        "stage": "writing_modules",
+                        "message": f"Created module {idx + 1} of {total}...",
+                    },
+                )
+        else:
+            # Fallback if model returned no modules
+            await _persist_course_outline(course_id, outline)
+
+        # Update course details from outline (otherwise the placeholder title/difficulty remain)
+        title = str(outline.get("title") or f"Learning {topic}").strip()
+        description = str(outline.get("description") or f"A course about {topic}.").strip()
+
+        outline_difficulty = str(outline.get("difficulty") or difficulty or "BEGINNER").upper()
+        allowed = {"BEGINNER", "INTERMEDIATE", "ADVANCED"}
+        final_difficulty = (
+            outline_difficulty
+            if outline_difficulty in allowed
+            else str(difficulty or "BEGINNER").upper()
+        )
+        await db.course.update(
+            where={"id": course_id},
+            data={
+                "title": title,
+                "description": description,
+                "difficulty": final_difficulty,
+                "isAIGenerated": True,
+                "progress": 0.0,
+            },
+        )
+
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "processing",
+                "action": "ai_course_generation",
+                "course_id": course_id,
+                "courseId": course_id,
+                "progress": 95,
+                "stage": "finalizing",
+                "message": "Finalizing...",
+            },
+        )
+
+        await publish_ws_event(
+            user_id,
+            {
+                "status": "success",
+                "action": "create_course",
+                "course_id": course_id,
+                "courseId": course_id,
+                "message": "Your course is ready!",
+            },
+        )
+
+        return {"status": "success", "course_id": course_id}
+
+    try:
+        return run_async_in_celery(_run())
+    except Exception as e:
+        logger.error(f"Course generation task failed: {e}", exc_info=True)
+
+        # Best-effort notify user
+        try:
+            from src.services.ws_event_bus import publish_ws_event
+
+            async def _notify_error() -> None:
+                await publish_ws_event(
+                    user_id,
+                    {
+                        "status": "error",
+                        "action": "ai_course_generation",
+                        "course_id": course_id,
+                        "courseId": course_id,
+                        "message": "Course generation failed. Please try again.",
+                    },
+                )
+
+            run_async_in_celery(_notify_error())
+        except Exception:
+            pass
+
+        raise

@@ -915,7 +915,7 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
                 )
 
                 # Calculate expiration time
-                expires_at = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+                expires_at = datetime.now(UTC).replace(microsecond=0) + timedelta(
                     seconds=expires_in
                 )
                 logger.debug(

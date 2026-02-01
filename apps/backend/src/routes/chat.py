@@ -4,24 +4,35 @@ Handles real-time messaging with Gemini AI and Action Execution.
 """
 
 import json
+import logging
 import re
+from datetime import datetime, timedelta, UTC
 
 from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,  # <--- Added
     HTTPException,
     Query,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
+    status,
 )
 from jose import JWTError, jwt
 
-from prisma import Prisma
+from prisma import Json, Prisma
+from src.core.cache import cache
+from src.core.celery_app import celery_app
 from src.config import settings
 from src.services.action_service import action_service
+from src.services.component_response_service import (
+    format_action_component_response,
+    format_list_component_response,
+)
 from src.services.credit_service import (
+    CREDIT_COSTS,
     check_credit_availability,
     consume_credits,
     get_credit_usage,
@@ -29,11 +40,81 @@ from src.services.credit_service import (
 from src.services.llm_service import llm_service
 from src.services.rag_service import rag_service
 from src.services.socket_manager import manager
+from src.services.storage_service import storage_service  # <--- Added
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
 
 router = APIRouter()
 db = Prisma()
+logger = logging.getLogger(__name__)
+
+
+def _extract_course_request(user_text: str) -> tuple[str, str]:
+    """
+    Best-effort extraction of (topic, difficulty) from a free-form message.
+    Kept intentionally cheap to avoid extra LLM calls before replying.
+    """
+    text = (user_text or "").strip()
+    lower = text.lower()
+
+    # Difficulty
+    difficulty = "BEGINNER"
+    if "intermediate" in lower:
+        difficulty = "INTERMEDIATE"
+    elif "advanced" in lower:
+        difficulty = "ADVANCED"
+    elif "expert" in lower:
+        difficulty = "EXPERT"
+
+    # Topic patterns
+    patterns = [
+        r"(?:create|make|build|generate)\s+(?:me\s+)?(?:a\s+)?course\s+(?:about|on)\s+(?P<topic>.+)",
+        r"(?:i\s+want\s+to\s+learn|i\s+would\s+like\s+to\s+learn|help\s+me\s+learn)\s+(?P<topic>.+)",
+        r"(?:i\s+want\s+to\s+study|help\s+me\s+study)\s+(?P<topic>.+)",
+        r"(?:course\s+on)\s+(?P<topic>.+)",
+    ]
+    topic = ""
+    for pat in patterns:
+        m = re.search(pat, lower, re.IGNORECASE)
+        if m:
+            topic = (m.group("topic") or "").strip()
+            break
+
+    # Clean topic
+    if topic:
+        topic = re.split(r"[.?!]", topic)[0].strip()
+        topic = re.sub(r"\b(for|please|thanks|thank you)\b", "", topic, flags=re.IGNORECASE).strip()
+
+    if not topic:
+        # Fallback: use first ~8 words from user text
+        words = re.findall(r"[A-Za-z0-9#+\-]+", text)
+        topic = " ".join(words[:8]).strip()
+
+    return topic or "a new topic", difficulty
+
+
+def _looks_like_course_generation_intent(user_text: str) -> bool:
+    lower = (user_text or "").lower()
+    if not lower.strip():
+        return False
+
+    # Exclude obvious non-generation queries
+    if any(x in lower for x in ["what courses", "my courses", "list courses", "show my courses"]):
+        return False
+
+    triggers = [
+        "create a course",
+        "make a course",
+        "generate a course",
+        "build a course",
+        "course on",
+        "course about",
+        "i want to learn",
+        "help me learn",
+        "i want to study",
+        "help me study",
+    ]
+    return any(t in lower for t in triggers)
 
 
 async def enrich_action_data(
@@ -340,59 +421,144 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # If not JSON, treat as plain text
                 pass
 
-            # 4. Save User Message to DB
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": user.id,
-                    "role": "USER",
-                    "content": user_text,
-                }
-            )
+            # 4. Extract fileUrls from context (if any)
+            file_urls = context.get("fileUrls") if context else None
 
-            # 5. Build History for Context (Last 10 messages)
+            # 4.1 Save User Message to DB (with imageUrl if provided)
+            user_message_data = {
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "USER",
+                "content": user_text,
+            }
+            if file_urls:
+                user_message_data["imageUrl"] = file_urls
+                print(f"🖼️ Message includes image: {file_urls}")
+
+            user_message = await db.chatmessage.create(data=user_message_data)
+
+            # 5. Build History for Context (Last 6 messages to reduce token usage)
             history_records = await db.chatmessage.find_many(
-                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=10
+                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=6
             )
 
-            # Format history for Gemini
+            # Format history for Gemini (including images)
             formatted_history = []
             for msg in history_records:
                 # Map DB roles to Gemini roles ('user' or 'model')
                 role = "user" if msg.role == "USER" else "model"
-                formatted_history.append({"role": role, "parts": [msg.content]})
+                parts = [msg.content]
+                # Include image if present
+                if msg.imageUrl:
+                    parts.append(msg.imageUrl)
+                formatted_history.append({"role": role, "parts": parts})
 
             # 5.5. Enrich context with topic/course/note details if IDs are provided
             enriched_context = None
             if context:
                 enriched_context = context.copy()
-
-                # Fetch note details if noteId is provided
-                if context.get("noteId"):
-                    note_id = context["noteId"]
-                    note = await db.note.find_unique(
-                        where={"id": note_id},
-                        include={
-                            "topic": {"include": {"module": {"include": {"course": True}}}},
-                            "course": True,
-                        },
+                cache_key = None
+                cached_context = None
+                note_id = context.get("noteId")
+                topic_id = context.get("topicId")
+                course_id = context.get("courseId")
+                if note_id or topic_id or course_id:
+                    cache_key = cache.make_key(
+                        [
+                            "chat",
+                            "context",
+                            user.id,
+                            note_id or "-",
+                            topic_id or "-",
+                            course_id or "-",
+                        ]
                     )
+                    cached_context = await cache.get(cache_key)
 
-                    # If note not found, check if noteId is actually a topicId
-                    if not note:
-                        print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
-                        topic = await db.topic.find_unique(
+                if cached_context:
+                    enriched_context = {**context, **cached_context}
+                else:
+                    # Fetch note details if noteId is provided
+                    if context.get("noteId"):
+                        note_id = context["noteId"]
+                        note = await db.note.find_unique(
                             where={"id": note_id},
-                            include={"note": True, "module": {"include": {"course": True}}},
+                            include={
+                                "topic": {"include": {"module": {"include": {"course": True}}}},
+                                "course": True,
+                            },
                         )
-                        if topic and topic.note:
-                            # It's a topicId, use the topic's note
+
+                        # If note not found, check if noteId is actually a topicId
+                        if not note:
                             print(
-                                f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                                f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
                             )
-                            note = topic.note
-                            # Also include topic details
-                            enriched_context["topicId"] = topic.id
+                            topic = await db.topic.find_unique(
+                                where={"id": note_id},
+                                include={
+                                    "note": True,
+                                    "module": {"include": {"course": True}},
+                                },
+                            )
+                            if topic and topic.note:
+                                # It's a topicId, use the topic's note
+                                print(
+                                    f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
+                                )
+                                note = topic.note
+                                # Also include topic details
+                                enriched_context["topicId"] = topic.id
+                                enriched_context["topicTitle"] = topic.title
+                                enriched_context["topicContent"] = topic.content or ""
+                                if topic.module:
+                                    enriched_context["moduleTitle"] = topic.module.title
+                                    if topic.module.course:
+                                        enriched_context["courseId"] = topic.module.course.id
+                                        enriched_context["courseTitle"] = topic.module.course.title
+                                        enriched_context["courseDescription"] = (
+                                            topic.module.course.description or ""
+                                        )
+                                # Update noteId in enriched_context to the actual note ID
+                                enriched_context["noteId"] = note.id
+
+                        if note:
+                            enriched_context["noteTitle"] = note.title
+                            enriched_context["noteContent"] = note.content or ""
+                            enriched_context["noteSummary"] = note.summary or ""
+                            # If note is linked to a topic, include topic details
+                            if note.topic:
+                                enriched_context["topicId"] = note.topic.id
+                                enriched_context["topicTitle"] = note.topic.title
+                                enriched_context["topicContent"] = note.topic.content or ""
+                                if note.topic.module:
+                                    enriched_context["moduleTitle"] = note.topic.module.title
+                                    if note.topic.module.course:
+                                        enriched_context["courseId"] = note.topic.module.course.id
+                                        enriched_context["courseTitle"] = (
+                                            note.topic.module.course.title
+                                        )
+                                        enriched_context["courseDescription"] = (
+                                            note.topic.module.course.description or ""
+                                        )
+                            # If note is linked to a course (but not via topic)
+                            elif note.course:
+                                enriched_context["courseId"] = note.course.id
+                                enriched_context["courseTitle"] = note.course.title
+                                enriched_context["courseDescription"] = (
+                                    note.course.description or ""
+                                )
+
+                    # Fetch topic details if topicId is provided (and not already fetched from note)
+                    elif context.get("topicId") and not enriched_context.get("topicTitle"):
+                        topic_id = context["topicId"]
+                        # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
+                        enriched_context["topicId"] = topic_id
+                        topic = await db.topic.find_unique(
+                            where={"id": topic_id},
+                            include={"module": {"include": {"course": True}}},
+                        )
+                        if topic:
                             enriched_context["topicTitle"] = topic.title
                             enriched_context["topicContent"] = topic.content or ""
                             if topic.module:
@@ -403,65 +569,33 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     enriched_context["courseDescription"] = (
                                         topic.module.course.description or ""
                                     )
-                            # Update noteId in enriched_context to the actual note ID
-                            enriched_context["noteId"] = note.id
+                        else:
+                            # Topic not found - log for debugging but keep topicId in context
+                            print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
+                            print(
+                                "⚠️ This topicId will still be passed to action service for validation"
+                            )
 
-                    if note:
-                        enriched_context["noteTitle"] = note.title
-                        enriched_context["noteContent"] = note.content or ""
-                        enriched_context["noteSummary"] = note.summary or ""
-                        # If note is linked to a topic, include topic details
-                        if note.topic:
-                            enriched_context["topicId"] = note.topic.id
-                            enriched_context["topicTitle"] = note.topic.title
-                            enriched_context["topicContent"] = note.topic.content or ""
-                            if note.topic.module:
-                                enriched_context["moduleTitle"] = note.topic.module.title
-                                if note.topic.module.course:
-                                    enriched_context["courseId"] = note.topic.module.course.id
-                                    enriched_context["courseTitle"] = note.topic.module.course.title
-                                    enriched_context["courseDescription"] = (
-                                        note.topic.module.course.description or ""
-                                    )
-                        # If note is linked to a course (but not via topic)
-                        elif note.course:
-                            enriched_context["courseId"] = note.course.id
-                            enriched_context["courseTitle"] = note.course.title
-                            enriched_context["courseDescription"] = note.course.description or ""
+                    # Fetch course details if courseId is provided (and not already fetched)
+                    elif context.get("courseId") and not enriched_context.get("courseTitle"):
+                        course = await db.course.find_unique(where={"id": context["courseId"]})
+                        if course:
+                            enriched_context["courseTitle"] = course.title
+                            enriched_context["courseDescription"] = course.description or ""
 
-                # Fetch topic details if topicId is provided (and not already fetched from note)
-                elif context.get("topicId") and not enriched_context.get("topicTitle"):
-                    topic_id = context["topicId"]
-                    # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
-                    enriched_context["topicId"] = topic_id
-                    topic = await db.topic.find_unique(
-                        where={"id": topic_id},
-                        include={"module": {"include": {"course": True}}},
-                    )
-                    if topic:
-                        enriched_context["topicTitle"] = topic.title
-                        enriched_context["topicContent"] = topic.content or ""
-                        if topic.module:
-                            enriched_context["moduleTitle"] = topic.module.title
-                            if topic.module.course:
-                                enriched_context["courseId"] = topic.module.course.id
-                                enriched_context["courseTitle"] = topic.module.course.title
-                                enriched_context["courseDescription"] = (
-                                    topic.module.course.description or ""
-                                )
-                    else:
-                        # Topic not found - log for debugging but keep topicId in context
-                        print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
-                        print(
-                            "⚠️ This topicId will still be passed to action service for validation"
-                        )
-
-                # Fetch course details if courseId is provided (and not already fetched)
-                elif context.get("courseId") and not enriched_context.get("courseTitle"):
-                    course = await db.course.find_unique(where={"id": context["courseId"]})
-                    if course:
-                        enriched_context["courseTitle"] = course.title
-                        enriched_context["courseDescription"] = course.description or ""
+                    if cache_key:
+                        cacheable_context = {
+                            key: value
+                            for key, value in enriched_context.items()
+                            if key
+                            not in {
+                                "pageContext",
+                                "content",
+                                "noteContent",
+                                "retrieved_items",
+                            }
+                        }
+                        await cache.set(cache_key, cacheable_context, expire=300)
 
                 # Include direct content if provided (for summaries, etc.)
                 if context.get("content"):
@@ -473,7 +607,48 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             # 5.6. Perform Semantic Search (RAG) to find relevant items
             # This helps the LLM know about items the user might be referring to
-            if len(user_text) > 3:  # Only search for meaningful queries
+            # Skip RAG for short/simple messages to improve response time
+            simple_messages = {
+                "hi",
+                "hello",
+                "hey",
+                "thanks",
+                "thank you",
+                "ok",
+                "okay",
+                "yes",
+                "no",
+                "bye",
+                "goodbye",
+                "help",
+                "?",
+                "cool",
+                "great",
+                "nice",
+                "good",
+                "bad",
+                "sure",
+                "yep",
+                "nope",
+                "what",
+                "why",
+                "how",
+                "when",
+                "where",
+                "who",
+                "hm",
+                "hmm",
+                "ah",
+                "oh",
+            }
+            user_text_lower = user_text.lower().strip()
+            should_run_rag = (
+                len(user_text) > 15
+                and user_text_lower not in simple_messages
+                and not user_text_lower.startswith(("hi ", "hello ", "hey "))
+            )
+
+            if should_run_rag:
                 try:
                     # We use a broader limit to catch potential matches
                     rag_results = await rag_service.retrieve_relevant_context(
@@ -509,14 +684,228 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 except Exception as e:
                     print(f"⚠️ RAG context retrieval failed: {e}")
                     # Continue without RAG results
+            else:
+                (
+                    print(f"⏭️ Skipping RAG for simple message: '{user_text[:30]}...'")
+                    if len(user_text) > 30
+                    else print(f"⏭️ Skipping RAG for simple message: '{user_text}'")
+                )
 
-            # 4.5. Check credits before processing AI response (after context/history are built)
+            # 6. Get AI response with tool calling support
+            # Define progress callback for tool execution updates
+            async def send_progress(
+                progress: int, stage: str, message: str, course_id: str = None, **kwargs
+            ):
+                """Send progress updates to frontend via WebSocket"""
+                await manager.send_json(
+                    {
+                        "type": "event",
+                        "payload": {
+                            "status": "processing",
+                            "action": "ai_course_generation",
+                            "course_id": course_id,
+                            "courseId": course_id,
+                            "progress": progress,
+                            "stage": stage,
+                            "message": message,
+                        },
+                    },
+                    user.id,
+                )
+
+            # Define stream callback for streaming text responses
+            streamed_chunks = []
+
+            async def stream_text(chunk: str, is_final: bool):
+                """Stream text chunks to frontend via WebSocket"""
+                streamed_chunks.append(chunk)
+                await manager.send_json(
+                    {
+                        "type": "stream",
+                        "payload": {
+                            "chunk": chunk,
+                            "is_final": is_final,
+                        },
+                    },
+                    user.id,
+                )
+
+            try:
+                response_text, usage_info, executed_actions, query_results = (
+                    await llm_service.get_chat_response_with_tools(
+                        history=formatted_history,
+                        user_message=user_text,
+                        context=enriched_context,
+                        user_id=user.id,
+                        image_url=file_urls,  # Pass image URL if present
+                        progress_callback=send_progress,  # Pass progress callback
+                        stream_callback=stream_text,  # Pass stream callback
+                    )
+                )
+            except Exception as e:
+                logger.error(f"LLM service error: {e}", exc_info=True)
+                response_text = "I'm sorry, I encountered an error. Please try again."
+                usage_info = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "model_name": "gemini-3-flash-preview",
+                }
+                executed_actions = []
+                query_results = []
+
+            # 7. Process query tool results (if any)
+            # NOTE: Only show query results as components when the user EXPLICITLY asked
+            # to view their data. This prevents showing course cards when the LLM was
+            # just checking context for other operations like creating a study plan.
+            query_component_responses = []
+
+            # Check if any "create" or "update" actions were executed
+            has_create_or_update_actions = any(
+                action_info["type"].startswith(("create_", "update_"))
+                for action_info in executed_actions
+            )
+
+            # Check if user explicitly asked to VIEW their data (not just context lookup)
+            user_text_lower = user_text.lower()
+            explicit_view_keywords = [
+                "show my",
+                "list my",
+                "view my",
+                "see my",
+                "what are my",
+                "show me my",
+                "display my",
+                "get my",
+                "fetch my",
+                "my courses",
+                "my goals",
+                "my schedule",
+                "my notes",
+                "my resources",
+                "what courses",
+                "what goals",
+                "what schedule",
+                "what notes",
+                "show courses",
+                "show goals",
+                "show schedule",
+                "show notes",
+                "list courses",
+                "list goals",
+                "list schedule",
+                "list notes",
+            ]
+            user_wants_to_view = any(kw in user_text_lower for kw in explicit_view_keywords)
+
+            # Only show query results as components if:
+            # 1. No create/update actions were executed, AND
+            # 2. User explicitly asked to view their data
+            if not has_create_or_update_actions and user_wants_to_view:
+                for query_result in query_results:
+                    query_type = query_result.get("query_type", "")
+                    component_type = query_result.get("component_type", "")
+                    data = query_result.get("data", [])
+
+                    if data and component_type:
+                        # Format message based on count
+                        count = len(data)
+                        if count == 0:
+                            message = f"You don't have any {query_type} yet."
+                        elif count == 1:
+                            message = f"Here is your {query_type[:-1]}:"  # Remove 's' for singular
+                        else:
+                            message = f"Here are your {count} {query_type}:"
+
+                        # Format as component response
+                        component_response = format_list_component_response(
+                            component_type=component_type,
+                            items=data,
+                            text=message,
+                        )
+                        if component_response:
+                            query_component_responses.append(component_response)
+
+            # 8. Process executed actions (from tool calls)
+            # NOTE: Actions are already executed by tool handlers in llm_service
+            # Here we only: log to DB, send success events, format component responses
+            component_responses = []
+            for action_info in executed_actions:
+                action_type = action_info["type"]
+                action_data = action_info["data"]
+                action_result = action_info["result"]
+
+                # Log action to DB
+                await db.aiactionlog.create(
+                    data={
+                        "messageId": user_message.id,
+                        "actionType": action_type,
+                        "actionData": Json(action_data) if action_data else Json({}),
+                        "status": (
+                            "SUCCESS" if action_result.get("status") == "success" else "FAILED"
+                        ),
+                        "error": (
+                            None
+                            if action_result.get("status") == "success"
+                            else action_result.get("message")
+                        ),
+                    }
+                )
+
+                # Send success event for create actions
+                if action_type == "create_course" and action_result.get("status") == "success":
+                    course_id = action_result.get("course_id")
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "success",
+                                "action": "create_course",
+                                "course_id": course_id,
+                                "courseId": course_id,
+                                "message": action_result.get(
+                                    "message", "Course created successfully!"
+                                ),
+                            },
+                        },
+                        user.id,
+                    )
+
+                elif action_type == "recommend_resources":
+                    # Queue background task for resource recommendations
+                    celery_app.send_task(
+                        "resources.recommend_from_chat",
+                        kwargs={
+                            "user_id": user.id,
+                            "query": action_data.get("query", ""),
+                            "topic_id": action_data.get("topicId"),
+                            "course_id": action_data.get("courseId"),
+                            "limit": action_data.get("limit", 10),
+                        },
+                        ignore_result=True,
+                    )
+
+                # Format component response for all actions
+                component_response = await format_action_component_response(
+                    action_type=action_type,
+                    action_result=action_result,
+                    action_data=action_data,
+                    user_id=user.id,
+                    db=db,
+                )
+                if component_response:
+                    component_responses.append(component_response)
+
+            # 9. Clean response text
+            clean_response = response_text.strip()
+
+            # 10. Calculate costs and consume credits
+            # (Keep existing credit consumption logic)
             # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
             estimated_input_tokens = (
                 len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
             ) // 4
-            # Reserve credits for response (estimate max response size)
-            estimated_output_tokens = 1000  # Conservative estimate for response
+            # Reserve credits for response (reduced estimate for cost savings)
+            estimated_output_tokens = 500  # Reduced from 1000 for cost optimization
             estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
 
             # Get user object for credit check
@@ -537,22 +926,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     tier = str(user_obj.tier) if user_obj.tier else "FREE"
                     daily_limit = credit_usage.get("daily_limit", 0)
                     used_today = credit_usage.get("credits_used_today", 0)
-
-                    if (
+                    is_daily = (
                         tier == "FREE"
                         and daily_limit > 0
                         and (used_today + estimated_total_tokens > daily_limit)
-                    ):
+                    )
+
+                    if is_daily:
                         error_message = (
                             f"Daily credit limit exceeded. You've used {used_today:,} "
                             f"of {daily_limit:,} daily credits. "
-                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}"
+                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
+                            f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
                         )
                     else:
                         error_message = (
                             f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
                             f"of {credit_usage['hard_cap']:,} credits. "
-                            f"Period resets: {credit_usage['period_end']}"
+                            f"Period resets: {credit_usage['period_end']}. "
+                            f"Upgrade to Premium for unlimited usage, or refer friends to earn bonus credits!"
                         )
 
                     # Send error message with tier information as JSON for frontend handling
@@ -560,11 +952,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "type": "credit_limit_error",
                         "message": error_message,
                         "tier": tier,
-                        "is_daily_limit": (
-                            tier == "FREE"
-                            and daily_limit > 0
-                            and (used_today + estimated_total_tokens > daily_limit)
-                        ),
+                        "is_daily_limit": is_daily,
+                        "show_referral_option": True,
                     }
                     await manager.send_personal_message(json.dumps(error_data), user.id)
                     await websocket.close()
@@ -574,224 +963,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_obj = await db.user.find_unique(where={"id": user.id})
                 tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
 
+                # Enhance error message with referral option
+                enhanced_message = (
+                    f"{e.message} "
+                    f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
+                )
+
                 error_data = {
                     "type": "credit_limit_error",
-                    "message": e.message,
+                    "message": enhanced_message,
                     "tier": tier,
                     "is_daily_limit": False,
+                    "show_referral_option": True,
                 }
                 await manager.send_personal_message(json.dumps(error_data), user.id)
                 await websocket.close()
                 return
 
-            # 6. Check if user is asking for a summary
-            # Simple detection: check if message contains "summary" or "summarize"
-            is_summary_request = (
-                "summary" in user_text.lower()
-                or "summarize" in user_text.lower()
-                or "summarise" in user_text.lower()
-            )
-
-            # If summary requested and we have context with content, generate summary
-            if is_summary_request:
-                # Check for content in enriched context or original context
-                # Priority: direct content > noteContent > topicContent
-                content_to_summarize = None
-                if enriched_context and enriched_context.get("content"):
-                    content_to_summarize = enriched_context["content"]
-                elif enriched_context and enriched_context.get("noteContent"):
-                    content_to_summarize = enriched_context["noteContent"]
-                elif enriched_context and enriched_context.get("topicContent"):
-                    content_to_summarize = enriched_context["topicContent"]
-                elif context and context.get("content"):
-                    content_to_summarize = context["content"]
-                elif context and context.get("noteContent"):
-                    content_to_summarize = context["noteContent"]
-
-                if content_to_summarize:
-                    summary = await llm_service.generate_summary(content_to_summarize)
-                    ai_response_text = f"I've generated a summary for you:\n\n{summary}"
-                    # For summaries, use estimated tokens
-                    usage_info = {
-                        "input_tokens": len(content_to_summarize) // 4,
-                        "output_tokens": len(summary) // 4,
-                        "model_name": "gemini-1.5-flash",
-                    }
-                else:
-                    # No content to summarize, ask user or provide general response
-                    ai_response_text, usage_info = await llm_service.get_chat_response(
-                        history=formatted_history, user_message=user_text, context=enriched_context
-                    )
-            else:
-                # 6. Get AI Response (with optional enriched context)
-                ai_response_text, usage_info = await llm_service.get_chat_response(
-                    history=formatted_history, user_message=user_text, context=enriched_context
-                )
-
-            # --- NEW: Action Detection Logic ---
-            # Regex to find content between <<<ACTION_START>>> and <<<ACTION_END>>>
-            # Use more flexible regex to handle whitespace variations
-            action_match = re.search(
-                r"<<<ACTION_START>>>\s*(.*?)\s*<<<ACTION_END>>>", ai_response_text, re.DOTALL
-            )
-
-            clean_response = ai_response_text  # Default to full text
-            action_results = []
-
-            if action_match:
-                try:
-                    print(f"⚙️ Action Detected for User {user.id}")
-                    # 1. Extract and Parse JSON
-                    json_str = action_match.group(1).strip()
-                    action_payload = json.loads(json_str)
-
-                    # Check if this is a single action or multiple actions
-                    if "actions" in action_payload:
-                        # Multiple actions
-                        actions_list = action_payload.get("actions", [])
-                        print(f"📋 Processing {len(actions_list)} actions in batch")
-                    else:
-                        # Single action (backward compatibility)
-                        actions_list = [action_payload]
-                        print("📋 Processing single action")
-
-                    # Track created IDs for dependency resolution
-                    created_ids = {}
-
-                    # Execute each action sequentially
-                    for idx, action_payload_item in enumerate(actions_list):
-                        action_type = action_payload_item.get("type")
-                        action_data = action_payload_item.get("data", {}).copy()
-
-                        print(
-                            f"\n🔄 Processing action {idx + 1}/{len(actions_list)}: {action_type}"
-                        )
-
-                        # 2. Enrich action data with context and resolve dependencies
-                        action_data = await enrich_action_data(
-                            action_type=action_type,
-                            action_data=action_data,
-                            enriched_context=enriched_context,
-                            context=context,
-                            created_ids=created_ids,
-                        )
-
-                        # 3. Execute Action
-                        print(f"🚀 Executing {action_type} with action_data: {action_data}")
-                        action_result = await action_service.execute_action(
-                            action_type=action_type,
-                            action_data=action_data,
-                            user_id=user.id,
-                        )
-                        print(f"📤 Action result: {action_result}")
-
-                        # Store result
-                        action_results.append(
-                            {
-                                "type": action_type,
-                                "result": action_result,
-                            }
-                        )
-
-                        # Extract created IDs for dependency resolution
-                        if action_result and action_result.get("status") == "success":
-                            # Extract IDs from result based on action type
-                            # Handle both camelCase and snake_case formats
-                            if action_type == "create_course":
-                                course_id = action_result.get("courseId") or action_result.get(
-                                    "course_id"
-                                )
-                                if course_id:
-                                    created_ids["courseId"] = course_id
-                                    print(f"💾 Stored courseId: {course_id}")
-                            elif action_type == "create_goal":
-                                goal_id = action_result.get("goalId") or action_result.get(
-                                    "goal_id"
-                                )
-                                if goal_id:
-                                    created_ids["goalId"] = goal_id
-                                    print(f"💾 Stored goalId: {goal_id}")
-                            elif action_type == "create_schedule":
-                                schedule_id = action_result.get("scheduleId") or (
-                                    action_result.get("schedule", {}) or {}
-                                ).get("id")
-                                if schedule_id:
-                                    created_ids["scheduleId"] = schedule_id
-                                    print(f"💾 Stored scheduleId: {schedule_id}")
-                            elif action_type == "create_note":
-                                note_id = action_result.get("noteId") or action_result.get(
-                                    "note_id"
-                                )
-                                if note_id:
-                                    created_ids["noteId"] = note_id
-                                    print(f"💾 Stored noteId: {note_id}")
-
-                    # 4. Clean the response (remove ALL instances of action markers and content)
-                    clean_response = re.sub(
-                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
-                        "",
-                        ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-
-                    # 5. Append confirmation messages for all actions
-                    success_messages = []
-                    error_messages = []
-
-                    for action_result_item in action_results:
-                        action_type_item = action_result_item["type"]
-                        result = action_result_item["result"]
-
-                        if result and result.get("status") == "success":
-                            if action_type_item == "recommend_resources":
-                                resources_count = result.get("count", 0)
-                                if resources_count > 0:
-                                    success_messages.append(
-                                        f"✅ I've found {resources_count} resource{'s' if resources_count > 1 else ''} for you! They've been saved to your resources."
-                                    )
-                            else:
-                                success_messages.append(
-                                    f"✅ **System:** {result.get('message', 'Action completed successfully')}"
-                                )
-                        elif result and result.get("status") == "error":
-                            error_messages.append(
-                                f"⚠️ **System:** {result.get('message', 'Action failed')}"
-                            )
-
-                    # Append all messages
-                    if success_messages:
-                        clean_response += "\n\n" + "\n".join(success_messages)
-                    if error_messages:
-                        clean_response += "\n\n" + "\n".join(error_messages)
-
-                except json.JSONDecodeError as e:
-                    print(f"❌ Action JSON Parse Error: {e}")
-                    print(f"   JSON string: {json_str[:200] if 'json_str' in locals() else 'N/A'}")
-                    # Still remove the action block even if parsing failed
-                    clean_response = re.sub(
-                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
-                        "",
-                        ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-                except Exception as e:
-                    print(f"❌ Action Execution Error: {e}")
-                    import traceback
-
-                    traceback.print_exc()
-                    # Remove action block on error too
-                    clean_response = re.sub(
-                        r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
-                        "",
-                        ai_response_text,
-                        flags=re.DOTALL,
-                    ).strip()
-                    clean_response += (
-                        "\n\n⚠️ **System:** I tried to execute the action, but an error occurred."
-                    )
-
-            # 7. Calculate actual token usage and consume credits
-            # Use actual token counts from API if available, otherwise estimate
+            # 11. Calculate actual token usage and consume credits
+            # Use actual token counts from API
             actual_input_tokens = usage_info.get("input_tokens", 0)
             actual_output_tokens = usage_info.get("output_tokens", 0)
 
@@ -816,7 +1006,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Calculate costs and revenue
             from ..services.cost_calculator import calculate_ai_cost, calculate_revenue
 
-            model_name = usage_info.get("model_name", "gemini-1.5-flash")
+            model_name = usage_info.get("model_name", "gemini-3-flash-preview")
             cost_usd = calculate_ai_cost(
                 input_tokens=actual_input_tokens,
                 output_tokens=actual_output_tokens,
@@ -828,7 +1018,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
             )
 
-            # 8. Save AI Message to DB (We save the CLEAN text with token count and costs)
+            # 12. Save AI Message to DB
             await db.chatmessage.create(
                 data={
                     "sessionId": session.id,
@@ -844,23 +1034,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 }
             )
 
-            # 9. Send text back to Client
-            await manager.send_personal_message(clean_response, user.id)
+            # 13. Send text response to client
+            # Always send the final message to avoid missing responses when
+            # clients don't process streaming events.
+            if clean_response:
+                await manager.send_personal_message(clean_response, user.id)
 
-            # 10. (Optional) If actions happened, send separate events to refresh the Frontend
-            # Send each action result separately so frontend can add buttons for each
-            if action_results:
-                for action_result_item in action_results:
-                    result = action_result_item.get("result")
-                    if result:
-                        # Include the action type in the payload for frontend processing
-                        await manager.send_json(
-                            {
-                                "type": "event",
-                                "payload": {**result, "action": action_result_item.get("type")},
-                            },
-                            user.id,
-                        )
+            # 14. Send component responses (queries and actions)
+            for component_response in query_component_responses + component_responses:
+                # component_response already has the correct format from format_list_component_response
+                # or format_action_component_response
+                await manager.send_json(component_response, user.id)
+
+            continue  # Skip to next message
 
     except WebSocketDisconnect:
         manager.disconnect(user.id)
@@ -870,6 +1056,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             await websocket.close()
         except Exception:
             pass
+        manager.disconnect(user.id)
+        raise
 
 
 @router.post("/voice")
@@ -884,3 +1072,149 @@ async def handle_voice_upload(file: UploadFile = File(...), token: str = Query(.
     transcript = await voice_service.transcribe_audio(file)
 
     return {"text": transcript}
+
+
+# 👇 ENDPOINT: Upload image only (for eager upload)
+@router.post("/image/upload", summary="Upload an image and return URL")
+async def upload_chat_image(
+    file: UploadFile = File(...),
+    token: str = Query(...),
+):
+    """
+    Upload an image to storage and return the URL.
+    Used for eager upload - upload immediately when user selects image.
+    """
+    # Validate user
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # Validate Image Type
+    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG, PNG, or WebP images are allowed.",
+        )
+
+    try:
+        # Upload to BunnyCDN
+        upload_result = await storage_service.upload_file(file, path="chat-images")
+        image_url = upload_result["url"]
+
+        print(f"🔵 Image pre-uploaded: {image_url}")
+
+        return {"url": image_url, "filename": upload_result["filename"]}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/upload: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 ENDPOINT: Delete uploaded image (if user cancels)
+@router.delete("/image/delete", summary="Delete an uploaded image")
+async def delete_chat_image(
+    url: str = Query(...),
+    token: str = Query(...),
+):
+    """
+    Delete a previously uploaded image from storage.
+    Used when user removes an image before sending.
+    """
+    # Validate user
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    try:
+        success = await storage_service.delete_file(url)
+        if success:
+            print(f"🗑️ Image deleted: {url}")
+            return {"status": "deleted"}
+        else:
+            return {"status": "not_found"}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image/delete: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+# 👇 LEGACY ENDPOINT: Image Analysis Chat (upload + analyze in one call)
+# NOTE: Deprecated - prefer using eager upload (/image/upload) + WebSocket with fileUrls context
+@router.post("/image", summary="Upload an image and get AI analysis")
+async def handle_image_chat(
+    file: UploadFile = File(...),
+    text: str = Form(default="Explain this image"),
+    token: str = Form(...),
+):
+    """
+    Handles multimodal chat:
+    1. Uploads image to Storage (BunnyCDN)
+    2. Saves USER message with image URL to DB
+    3. Sends Image + Text to Gemini AI via llm_service
+    4. Saves ASSISTANT response to DB
+    """
+    # Validate user from token
+    user = await get_current_user_ws(token)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    # 1. Validate Image Type
+    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only JPEG, PNG, or WebP images are allowed.",
+        )
+
+    # Ensure DB is connected
+    if not db.is_connected():
+        await db.connect()
+
+    try:
+        # Find or create an active chat session
+        session = await db.chatsession.find_first(
+            where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
+        )
+        if not session:
+            session = await db.chatsession.create(data={"userId": user.id, "title": "New Chat"})
+
+        # 2. Upload to BunnyCDN
+        upload_result = await storage_service.upload_file(file, path="chat-images")
+        image_url = upload_result["url"]
+
+        print(f"🔵 Image uploaded: {image_url}")
+
+        # 3. Save User Message (with Image URL)
+        user_message = await db.chatmessage.create(
+            data={
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "USER",
+                "content": text,
+                "imageUrl": image_url,
+                "modelName": "user-upload",
+            }
+        )
+
+        # 4. Get AI Analysis (Gemini Vision)
+        print("🔵 Asking Gemini to analyze...")
+        ai_response_text = await llm_service.analyze_image(text, image_url)
+
+        # 5. Save AI Response
+        ai_message = await db.chatmessage.create(
+            data={
+                "sessionId": session.id,
+                "userId": user.id,
+                "role": "ASSISTANT",
+                "content": ai_response_text,
+                "modelName": "gemini-1.5-flash",
+            }
+        )
+
+        return {"status": "success", "user_message": user_message, "ai_message": ai_message}
+
+    except Exception as e:
+        print(f"❌ Error in /chat/image: {e}")
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

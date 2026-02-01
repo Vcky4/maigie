@@ -40,7 +40,7 @@ async def test_upload_file_success():
             assert result["size"] == len(b"fake-image-content")
 
             # Verify HTTP call
-            expected_url = "https://storage.bunnycdn.com/test-zone/notes/test-image.png"
+            expected_url = "https://uk.storage.bunnycdn.com/test-zone/notes/test-image.png"
             mock_client.put.assert_called_once()
             call_args = mock_client.put.call_args
             assert call_args[0][0] == expected_url
