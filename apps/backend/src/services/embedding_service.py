@@ -115,7 +115,7 @@ class EmbeddingService:
                     "objectId": object_id,
                     "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,  # Store truncated content
-                    "metadata": metadata,
+                    "metadata": Json(metadata) if metadata else None,
                     "resourceId": resource_id,
                 }
             )
@@ -265,7 +265,7 @@ class EmbeddingService:
                 data_to_update = {
                     "vector": Json(embedding_vector),  # Wrap in Json for Prisma
                     "content": content[:1000] if content else None,
-                    "metadata": metadata,
+                    "metadata": Json(metadata) if metadata else None,
                 }
 
                 # Update resourceId if provided
