@@ -192,6 +192,10 @@ async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> U
     Ensure user has an active credit period. If period has expired or doesn't exist,
     initialize a new one.
 
+    FREE tier: Usage resets monthly when creditsPeriodEnd is reached (every 30 days).
+    Limits are synced to current CREDIT_LIMITS when stored limits are outdated
+    (e.g. old 10k cap upgraded to 50k) so existing users get new limits without waiting.
+
     Args:
         user: User model instance
         db_client: Optional Prisma client (defaults to global db)
@@ -203,6 +207,24 @@ async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> U
         db_client = db
 
     now = datetime.utcnow()
+    tier_str = str(user.tier) if user.tier else "FREE"
+
+    # Sync FREE users with outdated stored limits to current tier limits (e.g. 10k -> 50k)
+    if tier_str == "FREE":
+        current_limits = await get_credit_limits(tier_str)
+        stored_hard = user.creditsHardCap or 0
+        if stored_hard < current_limits["hard_cap"]:
+            update_data = {
+                "creditsHardCap": current_limits["hard_cap"],
+                "creditsSoftCap": current_limits["soft_cap"],
+            }
+            if "daily_limit" in current_limits:
+                update_data["creditsDailyLimit"] = current_limits["daily_limit"]
+            user = await db_client.user.update(where={"id": user.id}, data=update_data)
+            logger.info(
+                f"Synced FREE user {user.id} limits to current: hard_cap={current_limits['hard_cap']}, "
+                f"daily_limit={current_limits.get('daily_limit', 'N/A')}"
+            )
 
     # Check if period needs to be initialized or reset
     needs_reset = False
