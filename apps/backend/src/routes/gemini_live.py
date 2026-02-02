@@ -178,6 +178,10 @@ async def gemini_live_websocket(
                 await websocket.send_text(msg)
             else:
                 await websocket.send_bytes(msg)
+        except RuntimeError as e:
+            if "close" in str(e).lower() or "disconnect" in str(e).lower():
+                return
+            logger.warning("Send to client failed: %s", e)
         except Exception as e:
             logger.warning("Send to client failed: %s", e)
 
@@ -191,6 +195,10 @@ async def gemini_live_websocket(
                 raw = await websocket.receive()
             except WebSocketDisconnect:
                 break
+            except RuntimeError as e:
+                if "disconnect" in str(e).lower() or "close" in str(e).lower():
+                    break
+                raise
 
             if "text" in raw and raw["text"]:
                 data = json.loads(raw["text"])
