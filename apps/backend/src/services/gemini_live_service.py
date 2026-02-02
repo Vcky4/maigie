@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Default Live API model. Override with GEMINI_LIVE_MODEL env.
 # See https://ai.google.dev/gemini-api/docs/live for current model names.
-DEFAULT_LIVE_MODEL = "models/gemini-2.0-flash-live-001"
+DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 GEMINI_LIVE_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
 
