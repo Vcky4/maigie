@@ -13,14 +13,14 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from jose import JWTError
 from pydantic import BaseModel
 
 from src.config import settings
 from src.core.database import db
 from src.core.security import decode_access_token
-from src.dependencies import CurrentUser, get_current_user
+from src.dependencies import CurrentUser
 from src.services.gemini_live_service import (
     create_session as create_live_session,
     delete_session as delete_live_session,
@@ -62,8 +62,8 @@ class StartConversationResponse(BaseModel):
 
 @router.post("/conversation/start", response_model=StartConversationResponse)
 async def start_conversation(
+    current_user: CurrentUser,
     request: StartConversationRequest | None = None,
-    current_user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     """
     Start a new Gemini Live conversation session.
@@ -91,7 +91,7 @@ async def start_conversation(
 @router.post("/conversation/{session_id}/stop")
 async def stop_conversation(
     session_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser,
 ) -> dict[str, str]:
     """Stop an active Gemini Live conversation session."""
     session = await get_live_session(session_id)
@@ -106,7 +106,7 @@ async def stop_conversation(
 @router.get("/conversation/{session_id}/status")
 async def get_conversation_status(
     session_id: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser,
 ) -> dict[str, Any]:
     """Get the status of a Gemini Live conversation session."""
     session = await get_live_session(session_id)
@@ -123,7 +123,7 @@ async def get_conversation_status(
 
 @router.get("/conversations")
 async def list_conversations(
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser,
 ) -> dict[str, Any]:
     """List active Gemini Live conversation sessions for the current user."""
     sessions = await list_sessions_for_user(current_user.id)
