@@ -21,11 +21,13 @@ from src.config import settings
 from src.core.database import db
 from src.core.security import decode_access_token
 from src.dependencies import CurrentUser
+from src.services.credit_service import CREDIT_COSTS, check_credit_availability
 from src.services.gemini_live_service import (
     create_session as create_live_session,
     delete_session as delete_live_session,
     get_session as get_live_session,
     list_sessions_for_user,
+    post_gemini_live_session,
     run_gemini_live_bridge,
 )
 
@@ -171,6 +173,10 @@ async def gemini_live_websocket(
     client_queue: asyncio.Queue[str | bytes | None] = asyncio.Queue()
     bridge_task: asyncio.Task[None] | None = None
     current_session_id: str | None = None
+    current_topic_id: str | None = None
+    current_course_id: str | None = None
+    conversation_turns: list[dict[str, str]] = []
+    session_id_for_post: str | None = None  # captured when bridge starts, for post-session
 
     async def send_to_client(msg: str | bytes) -> None:
         try:
@@ -187,7 +193,13 @@ async def gemini_live_websocket(
 
     def on_bridge_done() -> None:
         nonlocal bridge_task
+        sid = session_id_for_post
+        turns = list(conversation_turns)
+        topic_id = current_topic_id
+        course_id = current_course_id
         bridge_task = None
+        if sid and user:
+            asyncio.create_task(post_gemini_live_session(user.id, sid, turns, topic_id, course_id))
 
     try:
         while True:
@@ -240,7 +252,27 @@ async def gemini_live_websocket(
                             )
                         )
                         continue
+
+                    # Pre-check credits so we don't start the call if user is out
+                    credits_needed = CREDIT_COSTS.get("gemini_live_voice", 500)
+                    is_available, _ = await check_credit_availability(user, credits_needed)
+                    if not is_available:
+                        await send_to_client(
+                            json.dumps(
+                                {
+                                    "type": "error",
+                                    "session_id": msg_session_id,
+                                    "message": "Insufficient credits. Upgrade or wait for your limit to reset to use voice study.",
+                                }
+                            )
+                        )
+                        continue
+
                     current_session_id = msg_session_id
+                    session_id_for_post = msg_session_id
+                    current_topic_id = session.get("topic_id")
+                    current_course_id = session.get("course_id")
+                    conversation_turns.clear()
 
                     async def receive_from_client() -> str | bytes | None:
                         return await client_queue.get()
@@ -253,6 +285,7 @@ async def gemini_live_websocket(
                             receive_from_client=receive_from_client,
                             system_instruction=session.get("system_instruction"),
                             on_done=on_bridge_done,
+                            conversation_turns=conversation_turns,
                         )
                     )
                     continue

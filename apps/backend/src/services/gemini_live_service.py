@@ -97,12 +97,14 @@ async def run_gemini_live_bridge(
     receive_from_client: Callable[[], Coroutine[Any, Any, str | bytes | None]],
     system_instruction: str | None = None,
     on_done: Callable[[], Any] | None = None,
+    conversation_turns: list[dict[str, str]] | None = None,
 ) -> None:
     """
     Connect to Google Live API and bridge messages between client and Gemini.
     - send_to_client(msg): send JSON string or bytes to client.
     - receive_from_client(): await next message from client (bytes or str).
     - on_done(): called when bridge ends (e.g. stop or error).
+    - conversation_turns: optional list to append {"role": "user"|"assistant", "text": "..."} for post-session note.
     """
     api_key = _get_api_key()
     if not api_key:
@@ -155,22 +157,28 @@ async def run_gemini_live_bridge(
                             json.dumps({"type": "interrupted", "session_id": session_id})
                         )
                     if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
+                        text = sc["inputTranscription"]["text"]
+                        if conversation_turns is not None:
+                            conversation_turns.append({"role": "user", "text": text})
                         await send_to_client(
                             json.dumps(
                                 {
                                     "type": "transcription",
                                     "session_id": session_id,
-                                    "text": sc["inputTranscription"]["text"],
+                                    "text": text,
                                 }
                             )
                         )
                     if "outputTranscription" in sc and sc["outputTranscription"].get("text"):
+                        text = sc["outputTranscription"]["text"]
+                        if conversation_turns is not None:
+                            conversation_turns.append({"role": "assistant", "text": text})
                         await send_to_client(
                             json.dumps(
                                 {
                                     "type": "assistant_message",
                                     "session_id": session_id,
-                                    "text": sc["outputTranscription"]["text"],
+                                    "text": text,
                                 }
                             )
                         )
@@ -221,24 +229,30 @@ async def run_gemini_live_bridge(
                                     json.dumps({"type": "interrupted", "session_id": session_id})
                                 )
                             if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
+                                text = sc["inputTranscription"]["text"]
+                                if conversation_turns is not None:
+                                    conversation_turns.append({"role": "user", "text": text})
                                 await send_to_client(
                                     json.dumps(
                                         {
                                             "type": "transcription",
                                             "session_id": session_id,
-                                            "text": sc["inputTranscription"]["text"],
+                                            "text": text,
                                         }
                                     )
                                 )
                             if "outputTranscription" in sc and sc["outputTranscription"].get(
                                 "text"
                             ):
+                                text = sc["outputTranscription"]["text"]
+                                if conversation_turns is not None:
+                                    conversation_turns.append({"role": "assistant", "text": text})
                                 await send_to_client(
                                     json.dumps(
                                         {
                                             "type": "assistant_message",
                                             "session_id": session_id,
-                                            "text": sc["outputTranscription"]["text"],
+                                            "text": text,
                                         }
                                     )
                                 )
@@ -287,3 +301,94 @@ async def run_gemini_live_bridge(
     finally:
         if on_done:
             on_done()
+
+
+async def post_gemini_live_session(
+    user_id: str,
+    session_id: str,
+    conversation_turns: list[dict[str, str]],
+    topic_id: str | None,
+    course_id: str | None,
+) -> None:
+    """
+    Run after a Gemini Live session ends: record credits (non-blocking) and optionally
+    create a structured note from the conversation. Does not affect session latency.
+    """
+    # Record credits after the call (does not affect latency). If user ran out mid-call, we log and continue.
+    try:
+        from src.core.database import db
+        from src.services.credit_service import CREDIT_COSTS, consume_credits
+        from src.utils.exceptions import SubscriptionLimitError
+
+        user = await db.user.find_unique(where={"id": user_id})
+        if user and CREDIT_COSTS.get("gemini_live_voice"):
+            await consume_credits(
+                user, CREDIT_COSTS["gemini_live_voice"], operation="gemini_live_voice"
+            )
+    except SubscriptionLimitError as e:
+        logger.warning(
+            "Post-session credit recording skipped (limit reached): user_id=%s, session_id=%s, detail=%s",
+            user_id,
+            session_id,
+            getattr(e, "detail", str(e)),
+        )
+    except Exception as e:
+        logger.exception("Post-session credit recording failed: %s", e)
+
+    # Generate and save note from conversation (only if we have content and topic)
+    if not conversation_turns or len(conversation_turns) < 2 or not topic_id:
+        return
+
+    try:
+        from src.core.database import db
+        from src.models.notes import NoteCreate
+        from src.services import note_service
+
+        transcript = "\n".join(
+            f"{t['role'].upper()}: {t['text']}" for t in conversation_turns if t.get("text")
+        )
+        if not transcript.strip():
+            return
+
+        import google.generativeai as genai
+
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel("models/gemini-3-flash-preview")
+        prompt = (
+            "From this voice study conversation transcript, create a short structured study note "
+            "as the student would write from what they learnt. Output exactly two lines:\n"
+            "TITLE: <one short title>\n"
+            "CONTENT: <concise bullet or paragraph content>\n"
+            "Do not add any other text.\n\nTranscript:\n"
+        ) + transcript[:12000]
+
+        response = await model.generate_content_async(prompt)
+        text = (response.text or "").strip()
+        title = "Study session notes"
+        content = ""
+        for line in text.split("\n"):
+            line_strip = line.strip()
+            if line_strip.upper().startswith("TITLE:"):
+                title = (line_strip[6:].strip() or title)[:500]
+            elif line_strip.upper().startswith("CONTENT:"):
+                content = line_strip[8:].strip()
+
+        if not content:
+            content = text[:50000] if text else "Summary of voice study session."
+
+        existing = await db.note.find_first(where={"topicId": topic_id})
+        if existing:
+            return
+
+        note_data = NoteCreate(
+            title=title[:500],
+            content=content[:50000],
+            topicId=topic_id,
+            courseId=course_id,
+        )
+        await note_service.create_note(db, user_id, note_data)
+        logger.info("Created note from Gemini Live session %s for topic %s", session_id, topic_id)
+    except ValueError as e:
+        logger.debug("Note not created (e.g. already exists): %s", e)
+    except Exception as e:
+        logger.exception("Post-session note creation failed: %s", e)
