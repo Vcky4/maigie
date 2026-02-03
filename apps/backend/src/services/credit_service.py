@@ -59,6 +59,7 @@ CREDIT_COSTS = {
     "ai_course_generation": 250,  # 250 tokens per AI course generation (reduced from 500)
     "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
     "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
+    "gemini_live_voice": 500,  # per session; recorded after session ends (no latency impact)
 }
 
 
