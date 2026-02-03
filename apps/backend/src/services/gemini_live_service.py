@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 # See https://ai.google.dev/gemini-api/docs/live for current model names.
 DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 GEMINI_LIVE_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+DEFAULT_LIVE_GREETING_PROMPT = (
+    "Start with a brief greeting and ask what the learner wants to study."
+)
 
 
 def _get_api_key() -> str | None:
@@ -124,12 +127,79 @@ async def run_gemini_live_bridge(
     url = f"{GEMINI_LIVE_WS_URL}?key={api_key}"
     model = os.getenv("GEMINI_LIVE_MODEL", DEFAULT_LIVE_MODEL)
     system_text = system_instruction or "You are a helpful and friendly AI assistant."
+    greeting_env = os.getenv("GEMINI_LIVE_GREETING_PROMPT")
+    greeting_prompt = (
+        greeting_env if greeting_env is not None else DEFAULT_LIVE_GREETING_PROMPT
+    ).strip()
+
+    def append_turn(role: str, text: str) -> None:
+        if conversation_turns is None:
+            return
+        normalized = text.strip()
+        if not normalized:
+            return
+        if conversation_turns:
+            last = conversation_turns[-1]
+            if last.get("role") == role and last.get("text") == normalized:
+                return
+        conversation_turns.append({"role": role, "text": normalized})
+
+    async def handle_server_content(sc: dict[str, Any]) -> None:
+        if sc.get("interrupted"):
+            await send_to_client(json.dumps({"type": "interrupted", "session_id": session_id}))
+        if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
+            text = sc["inputTranscription"]["text"]
+            if greeting_prompt and text.strip() == greeting_prompt:
+                return
+            append_turn("user", text)
+            await send_to_client(
+                json.dumps(
+                    {
+                        "type": "transcription",
+                        "session_id": session_id,
+                        "text": text,
+                    }
+                )
+            )
+        if "outputTranscription" in sc and sc["outputTranscription"].get("text"):
+            text = sc["outputTranscription"]["text"]
+            append_turn("assistant", text)
+            await send_to_client(
+                json.dumps(
+                    {
+                        "type": "assistant_message",
+                        "session_id": session_id,
+                        "text": text,
+                    }
+                )
+            )
+        model_turn = sc.get("modelTurn")
+        if model_turn and isinstance(model_turn, dict) and "parts" in model_turn:
+            for part in model_turn["parts"]:
+                if "text" in part and part["text"]:
+                    append_turn("assistant", part["text"])
+                    await send_to_client(
+                        json.dumps(
+                            {
+                                "type": "assistant_message",
+                                "session_id": session_id,
+                                "text": part["text"],
+                            }
+                        )
+                    )
+                if "inlineData" in part and "data" in part["inlineData"]:
+                    b64 = part["inlineData"]["data"]
+                    try:
+                        audio_bytes = base64.b64decode(b64)
+                        await send_to_client(audio_bytes)
+                    except Exception as e:
+                        logger.warning("Failed to decode audio from modelTurn: %s", e)
 
     setup = {
         "setup": {
             "model": model,
             "generationConfig": {
-                "responseModalities": ["AUDIO"],
+                "responseModalities": ["AUDIO", "TEXT"],
             },
             "systemInstruction": {
                 "parts": [{"text": system_text}],
@@ -151,50 +221,21 @@ async def run_gemini_live_bridge(
                     setup_done = True
                     break
                 if "serverContent" in msg:
-                    sc = msg["serverContent"]
-                    if sc.get("interrupted"):
-                        await send_to_client(
-                            json.dumps({"type": "interrupted", "session_id": session_id})
-                        )
-                    if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
-                        text = sc["inputTranscription"]["text"]
-                        if conversation_turns is not None:
-                            conversation_turns.append({"role": "user", "text": text})
-                        await send_to_client(
-                            json.dumps(
-                                {
-                                    "type": "transcription",
-                                    "session_id": session_id,
-                                    "text": text,
-                                }
-                            )
-                        )
-                    if "outputTranscription" in sc and sc["outputTranscription"].get("text"):
-                        text = sc["outputTranscription"]["text"]
-                        if conversation_turns is not None:
-                            conversation_turns.append({"role": "assistant", "text": text})
-                        await send_to_client(
-                            json.dumps(
-                                {
-                                    "type": "assistant_message",
-                                    "session_id": session_id,
-                                    "text": text,
-                                }
-                            )
-                        )
-                    model_turn = sc.get("modelTurn")
-                    if model_turn and isinstance(model_turn, dict) and "parts" in model_turn:
-                        for part in model_turn["parts"]:
-                            if "inlineData" in part and "data" in part["inlineData"]:
-                                b64 = part["inlineData"]["data"]
-                                try:
-                                    audio_bytes = base64.b64decode(b64)
-                                    await send_to_client(audio_bytes)
-                                except Exception as e:
-                                    logger.warning("Failed to decode audio from modelTurn: %s", e)
+                    await handle_server_content(msg["serverContent"])
 
             # Notify client that session is ready for audio
             await send_to_client(json.dumps({"type": "session_started", "session_id": session_id}))
+            if greeting_prompt:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "clientContent": {
+                                "turns": [{"role": "user", "parts": [{"text": greeting_prompt}]}],
+                                "turnComplete": True,
+                            }
+                        }
+                    )
+                )
 
             async def from_client_to_gemini() -> None:
                 try:
@@ -223,53 +264,7 @@ async def run_gemini_live_bridge(
                             raw = raw.decode("utf-8")
                         msg = json.loads(raw)
                         if "serverContent" in msg:
-                            sc = msg["serverContent"]
-                            if sc.get("interrupted"):
-                                await send_to_client(
-                                    json.dumps({"type": "interrupted", "session_id": session_id})
-                                )
-                            if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
-                                text = sc["inputTranscription"]["text"]
-                                if conversation_turns is not None:
-                                    conversation_turns.append({"role": "user", "text": text})
-                                await send_to_client(
-                                    json.dumps(
-                                        {
-                                            "type": "transcription",
-                                            "session_id": session_id,
-                                            "text": text,
-                                        }
-                                    )
-                                )
-                            if "outputTranscription" in sc and sc["outputTranscription"].get(
-                                "text"
-                            ):
-                                text = sc["outputTranscription"]["text"]
-                                if conversation_turns is not None:
-                                    conversation_turns.append({"role": "assistant", "text": text})
-                                await send_to_client(
-                                    json.dumps(
-                                        {
-                                            "type": "assistant_message",
-                                            "session_id": session_id,
-                                            "text": text,
-                                        }
-                                    )
-                                )
-                            model_turn = sc.get("modelTurn")
-                            if (
-                                model_turn
-                                and isinstance(model_turn, dict)
-                                and "parts" in model_turn
-                            ):
-                                for part in model_turn["parts"]:
-                                    if "inlineData" in part and "data" in part["inlineData"]:
-                                        b64 = part["inlineData"]["data"]
-                                        try:
-                                            audio_bytes = base64.b64decode(b64)
-                                            await send_to_client(audio_bytes)
-                                        except Exception as e:
-                                            logger.warning("Failed to decode audio: %s", e)
+                            await handle_server_content(msg["serverContent"])
                 except asyncio.CancelledError:
                     pass
                 except websockets.exceptions.ConnectionClosed:
