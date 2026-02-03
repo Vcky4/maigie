@@ -35,17 +35,17 @@ settings = get_settings()
 # For yearly subscriptions, multiply by 12
 CREDIT_LIMITS = {
     "FREE": {
-        "hard_cap": 50000,  # 50k tokens/month (increased from 10k)
-        "soft_cap": 40000,  # 80% warning threshold
-        "daily_limit": 15000,  # 15k tokens/day (increased from 5k)
+        "hard_cap": 75000,  # 75k tokens/month
+        "soft_cap": 60000,  # 80% warning threshold
+        "daily_limit": 25000,  # 25k tokens/day
     },
     "PREMIUM_MONTHLY": {
-        "hard_cap": 200000,  # 200k tokens/month (increased from 100k)
-        "soft_cap": 160000,  # 80% warning threshold
+        "hard_cap": 300000,  # 300k tokens/month
+        "soft_cap": 240000,  # 80% warning threshold
     },
     "PREMIUM_YEARLY": {
-        "hard_cap": 2400000,  # 2.4M tokens/year (200k/month * 12)
-        "soft_cap": 1920000,  # 80% warning threshold
+        "hard_cap": 3600000,  # 3.6M tokens/year (300k/month * 12)
+        "soft_cap": 2880000,  # 80% warning threshold
     },
 }
 
@@ -59,6 +59,7 @@ CREDIT_COSTS = {
     "ai_course_generation": 250,  # 250 tokens per AI course generation (reduced from 500)
     "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
     "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
+    "gemini_live_voice": 500,  # per session; recorded after session ends (no latency impact)
 }
 
 
@@ -209,22 +210,21 @@ async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> U
     now = datetime.utcnow()
     tier_str = str(user.tier) if user.tier else "FREE"
 
-    # Sync FREE users with outdated stored limits to current tier limits (e.g. 10k -> 50k)
-    if tier_str == "FREE":
-        current_limits = await get_credit_limits(tier_str)
-        stored_hard = user.creditsHardCap or 0
-        if stored_hard < current_limits["hard_cap"]:
-            update_data = {
-                "creditsHardCap": current_limits["hard_cap"],
-                "creditsSoftCap": current_limits["soft_cap"],
-            }
-            if "daily_limit" in current_limits:
-                update_data["creditsDailyLimit"] = current_limits["daily_limit"]
-            user = await db_client.user.update(where={"id": user.id}, data=update_data)
-            logger.info(
-                f"Synced FREE user {user.id} limits to current: hard_cap={current_limits['hard_cap']}, "
-                f"daily_limit={current_limits.get('daily_limit', 'N/A')}"
-            )
+    # Sync any user with outdated stored limits to current tier limits (e.g. 50k -> 75k, 200k -> 300k)
+    current_limits = await get_credit_limits(tier_str)
+    stored_hard = user.creditsHardCap or 0
+    if stored_hard < current_limits["hard_cap"]:
+        update_data = {
+            "creditsHardCap": current_limits["hard_cap"],
+            "creditsSoftCap": current_limits["soft_cap"],
+        }
+        if tier_str == "FREE" and "daily_limit" in current_limits:
+            update_data["creditsDailyLimit"] = current_limits["daily_limit"]
+        user = await db_client.user.update(where={"id": user.id}, data=update_data)
+        logger.info(
+            f"Synced user {user.id} ({tier_str}) limits to current: hard_cap={current_limits['hard_cap']}"
+            + (f", daily_limit={current_limits.get('daily_limit')}" if tier_str == "FREE" else "")
+        )
 
     # Check if period needs to be initialized or reset
     needs_reset = False
