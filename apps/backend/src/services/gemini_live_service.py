@@ -199,8 +199,10 @@ async def run_gemini_live_bridge(
         "setup": {
             "model": model,
             "generationConfig": {
-                "responseModalities": ["AUDIO", "TEXT"],
+                "responseModalities": ["AUDIO"],
             },
+            "inputAudioTranscription": {},
+            "outputAudioTranscription": {},
             "systemInstruction": {
                 "parts": [{"text": system_text}],
             },
