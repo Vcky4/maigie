@@ -84,7 +84,10 @@ async def list_review_items(
 
     items = await db.reviewitem.find_many(
         where={"userId": user_id},
-        include={"topic": {"include": {"module": {"include": {"course": True}}}}},
+        include={
+            "topic": {"include": {"module": {"include": {"course": True}}}},
+            "scheduleBlock": True,
+        },
         order={"nextReviewAt": "asc"},
     )
     due = []
@@ -101,7 +104,7 @@ async def list_review_items(
             "intervalDays": r.intervalDays,
             "repetitionCount": r.repetitionCount,
             "lastReviewedAt": r.lastReviewedAt,
-            "scheduleBlockId": r.scheduleBlockId,
+            "scheduleBlockId": r.scheduleBlock.id if r.scheduleBlock else None,
         }
         if r.nextReviewAt <= cutoff:
             due.append(ReviewItemResponse(**payload))
@@ -132,7 +135,10 @@ async def complete_review(
         raise ResourceNotFoundError("Review item", review_item_id) from e
     review_with_topic = await db.reviewitem.find_unique(
         where={"id": updated.id},
-        include={"topic": {"include": {"module": {"include": {"course": True}}}}},
+        include={
+            "topic": {"include": {"module": {"include": {"course": True}}}},
+            "scheduleBlock": True,
+        },
     )
     topic = review_with_topic.topic if review_with_topic else None
     course = topic.module.course if topic and topic.module else None
@@ -146,7 +152,7 @@ async def complete_review(
         intervalDays=updated.intervalDays,
         repetitionCount=updated.repetitionCount,
         lastReviewedAt=updated.lastReviewedAt,
-        scheduleBlockId=updated.scheduleBlockId,
+        scheduleBlockId=review_with_topic.scheduleBlock.id if review_with_topic and review_with_topic.scheduleBlock else None,
     )
 
 
@@ -161,7 +167,10 @@ async def snooze_review(
     user_id = current_user.id
     review = await db.reviewitem.find_first(
         where={"id": review_item_id, "userId": user_id},
-        include={"topic": {"include": {"module": {"include": {"course": True}}}}},
+        include={
+            "topic": {"include": {"module": {"include": {"course": True}}}},
+            "scheduleBlock": True,
+        },
     )
     if not review:
         raise ResourceNotFoundError("Review item", review_item_id)
@@ -185,6 +194,11 @@ async def snooze_review(
         where={"id": review_item_id},
         data={"nextReviewAt": body.nextReviewAt},
     )
+    # Re-fetch to get scheduleBlock for response (updated has no relation)
+    updated_with_block = await db.reviewitem.find_unique(
+        where={"id": updated.id},
+        include={"scheduleBlock": True},
+    )
     return ReviewItemResponse(
         id=updated.id,
         topicId=updated.topicId,
@@ -195,5 +209,5 @@ async def snooze_review(
         intervalDays=updated.intervalDays,
         repetitionCount=updated.repetitionCount,
         lastReviewedAt=updated.lastReviewedAt,
-        scheduleBlockId=updated.scheduleBlockId,
+        scheduleBlockId=updated_with_block.scheduleBlock.id if updated_with_block and updated_with_block.scheduleBlock else None,
     )

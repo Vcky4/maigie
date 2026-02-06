@@ -61,7 +61,7 @@ async def advance_review(
     """
     review = await db.reviewitem.find_first(
         where={"id": review_item_id, "userId": user_id},
-        include={"topic": True},
+        include={"topic": True, "scheduleBlock": True},
     )
     if not review:
         raise ValueError("ReviewItem not found")
@@ -80,7 +80,6 @@ async def advance_review(
     new_count = review.repetitionCount + 1
     interval_days = get_next_interval_days(new_count)
     next_review_at = now + timedelta(days=interval_days)
-    # Clear scheduleBlockId so daily task can create a new block for next time
     updated = await db.reviewitem.update(
         where={"id": review_item_id},
         data={
@@ -88,13 +87,12 @@ async def advance_review(
             "repetitionCount": new_count,
             "intervalDays": interval_days,
             "nextReviewAt": next_review_at,
-            "scheduleBlockId": None,
         },
     )
-    # Unlink the old schedule block from this review (block stays in DB for history)
-    if review.scheduleBlockId:
+    # Unlink the old schedule block from this review (block holds FK; stays in DB for history)
+    if review.scheduleBlock:
         await db.scheduleblock.update(
-            where={"id": review.scheduleBlockId},
+            where={"id": review.scheduleBlock.id},
             data={"reviewItemId": None},
         )
     return updated

@@ -532,9 +532,8 @@ model ReviewItem {
   repetitionCount Int     @default(0)  // Number of reviews completed
   lastReviewedAt DateTime?
 
-  // The schedule block we created for the upcoming review (optional)
-  scheduleBlockId String?   @unique
-  scheduleBlock   ScheduleBlock? @relation(fields: [scheduleBlockId], references: [id], onDelete: SetNull)
+  // The schedule block we created for the upcoming review (optional; back-relation from ScheduleBlock.reviewItemId)
+  scheduleBlock   ScheduleBlock?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

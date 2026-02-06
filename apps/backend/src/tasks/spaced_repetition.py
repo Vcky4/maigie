@@ -47,7 +47,7 @@ async def _create_review_blocks_for_due_items() -> dict[str, Any]:
         where={
             "nextReviewAt": {"lte": end_tomorrow},
             "OR": [
-                {"scheduleBlockId": None},
+                {"scheduleBlock": None},
                 {"scheduleBlock": {"endAt": {"lt": now}}},
             ],
         },
@@ -59,13 +59,13 @@ async def _create_review_blocks_for_due_items() -> dict[str, Any]:
 
     for review in items:
         try:
-            # If there's an old block, unlink it
-            if review.scheduleBlockId and review.scheduleBlock:
+            # If there's an old block, unlink it (block holds FK via reviewItemId)
+            if review.scheduleBlock:
                 if review.scheduleBlock.endAt >= now:
                     skipped += 1
                     continue
                 await db.scheduleblock.update(
-                    where={"id": review.scheduleBlockId},
+                    where={"id": review.scheduleBlock.id},
                     data={"reviewItemId": None},
                 )
             topic = review.topic
@@ -87,10 +87,7 @@ async def _create_review_blocks_for_due_items() -> dict[str, Any]:
                     "reviewItemId": review.id,
                 },
             )
-            await db.reviewitem.update(
-                where={"id": review.id},
-                data={"scheduleBlockId": block.id},
-            )
+            # Relation is maintained via block.reviewItemId; no update on ReviewItem
             await log_behaviour(
                 db,
                 user_id=review.userId,
