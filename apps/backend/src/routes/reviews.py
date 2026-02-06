@@ -152,7 +152,11 @@ async def complete_review(
         intervalDays=updated.intervalDays,
         repetitionCount=updated.repetitionCount,
         lastReviewedAt=updated.lastReviewedAt,
-        scheduleBlockId=review_with_topic.scheduleBlock.id if review_with_topic and review_with_topic.scheduleBlock else None,
+        scheduleBlockId=(
+            review_with_topic.scheduleBlock.id
+            if review_with_topic and review_with_topic.scheduleBlock
+            else None
+        ),
     )
 
 
@@ -209,5 +213,9 @@ async def snooze_review(
         intervalDays=updated.intervalDays,
         repetitionCount=updated.repetitionCount,
         lastReviewedAt=updated.lastReviewedAt,
-        scheduleBlockId=updated_with_block.scheduleBlock.id if updated_with_block and updated_with_block.scheduleBlock else None,
+        scheduleBlockId=(
+            updated_with_block.scheduleBlock.id
+            if updated_with_block and updated_with_block.scheduleBlock
+            else None
+        ),
     )
