@@ -260,6 +260,7 @@ async def handle_get_user_schedule(
                 "courseId": schedule.courseId,
                 "topicId": schedule.topicId,
                 "goalId": schedule.goalId,
+                "reviewItemId": getattr(schedule, "reviewItemId", None),
             }
         )
 
