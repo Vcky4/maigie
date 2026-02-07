@@ -51,6 +51,13 @@ CRITICAL - AVOID DUPLICATES:
 - When creating schedules or goals for a topic, first check existing courses and link to them
 - Only create a new course if no relevant course exists
 
+COURSE OUTLINE UPDATES:
+- When a user provides a course outline (text or image), use update_course_outline to populate the course with modules and topics.
+- ALWAYS call get_user_courses first to find the matching course by name.
+- If the outline is a FLAT list of topics (no modules), group them into logical modules (4-6 modules) before calling update_course_outline.
+- If the user says "outline for X" or "here is the outline for X", match X to an existing course.
+- Images may contain course outlines/syllabi — extract the topics from the image and structure them into modules.
+
 GUIDELINES:
 - Be friendly, supportive, and encouraging
 - When users ask questions or want to see their data, use the appropriate query tools (get_user_courses, get_user_goals, etc.)
@@ -578,6 +585,7 @@ class GeminiService:
                             "add_summary_to_note",
                             "add_tags_to_note",
                             "complete_review",
+                            "update_course_outline",
                         ]:
                             executed_actions.append(
                                 {
@@ -624,6 +632,7 @@ class GeminiService:
             "add_summary_to_note": "add_summary",
             "add_tags_to_note": "add_tags",
             "complete_review": "complete_review",
+            "update_course_outline": "update_course_outline",
         }
         return mapping.get(tool_name, tool_name)
 

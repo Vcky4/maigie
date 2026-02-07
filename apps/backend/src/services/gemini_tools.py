@@ -27,6 +27,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 add_summary_to_note_tool(),
                 add_tags_to_note_tool(),
                 complete_review_tool(),
+                update_course_outline_tool(),
             ]
         }
     ]
@@ -439,5 +440,49 @@ def add_tags_to_note_tool() -> dict[str, Any]:
                 },
             },
             "required": ["note_id", "tags"],
+        },
+    }
+
+
+def update_course_outline_tool() -> dict[str, Any]:
+    """Tool definition for updating a course outline with modules and topics."""
+    return {
+        "name": "update_course_outline",
+        "description": (
+            "Populate or replace the modules and topics for an EXISTING course based on an outline the user provides. "
+            "Use this when the user says things like 'outline for ...', 'update outline for ...', 'here is my outline', "
+            "or when they paste/upload a course outline or syllabus. "
+            "IMPORTANT: If the outline is just a flat list of topics, group them into logical modules (4-6 modules). "
+            "If modules are already provided, keep them as-is. "
+            "Always call get_user_courses first to find the matching course_id."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "course_id": {
+                    "type": "string",
+                    "description": "The ID of the existing course to update",
+                },
+                "modules": {
+                    "type": "array",
+                    "description": "Array of modules, each with a title and a list of topic titles.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "Module title",
+                            },
+                            "topics": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Array of topic titles",
+                            },
+                        },
+                        "required": ["title", "topics"],
+                    },
+                },
+            },
+            "required": ["course_id", "modules"],
         },
     }

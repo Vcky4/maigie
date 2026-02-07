@@ -674,10 +674,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 logger.warning("Failed to update session title: %s", e)
 
             # 4.2 Onboarding router: for new users, run a guided flow instead of LLM chat.
+            # Re-read `isOnboarded` from DB each iteration because the WS `user` object
+            # was fetched at connection time and becomes stale after onboarding completes.
+            is_onboarded = getattr(user, "isOnboarded", False)
+            if not is_onboarded:
+                try:
+                    fresh_user = await db.user.find_unique(where={"id": user.id})
+                    if fresh_user:
+                        is_onboarded = getattr(fresh_user, "isOnboarded", False)
+                except Exception:
+                    pass
+
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
-            if not getattr(user, "isOnboarded", False) and not (
-                context and context.get("reviewItemId")
-            ):
+            if not is_onboarded and not (context and context.get("reviewItemId")):
                 try:
                     from src.services.onboarding_service import (
                         ensure_onboarding_initialized,
@@ -1210,6 +1219,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "status": "success",
                                 "action": "complete_review",
                                 "message": action_result.get("message", "Review completed!"),
+                            },
+                        },
+                        user.id,
+                    )
+
+                elif (
+                    action_type == "update_course_outline"
+                    and action_result.get("status") == "success"
+                ):
+                    course_id = action_result.get("course_id") or action_result.get("courseId")
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "success",
+                                "action": "update_course_outline",
+                                "course_id": course_id,
+                                "courseId": course_id,
+                                "message": action_result.get("message", "Course outline updated!"),
                             },
                         },
                         user.id,

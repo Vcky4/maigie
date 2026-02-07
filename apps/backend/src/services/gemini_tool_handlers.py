@@ -50,6 +50,7 @@ async def handle_tool_call(
         "add_summary_to_note": handle_add_summary_to_note,
         "add_tags_to_note": handle_add_tags_to_note,
         "complete_review": handle_complete_review,
+        "update_course_outline": handle_update_course_outline,
     }
 
     handler = handlers.get(tool_name)
@@ -576,3 +577,83 @@ async def handle_complete_review(
     except ValueError as e:
         logger.warning("complete_review failed: %s", e)
         return {"status": "error", "message": str(e)}
+
+
+async def handle_update_course_outline(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Handle update_course_outline tool call.
+    Replaces (or creates) modules and topics for an existing course
+    based on an outline the user provided in chat (text or image).
+    """
+    course_id = args.get("course_id") or (context or {}).get("courseId")
+    modules_data = args.get("modules", [])
+
+    if not course_id:
+        return {"status": "error", "message": "No course_id provided."}
+
+    if not modules_data:
+        return {"status": "error", "message": "No modules provided in the outline."}
+
+    # Verify ownership
+    course = await db.course.find_first(
+        where={"id": course_id, "userId": user_id},
+        include={"modules": True},
+    )
+    if not course:
+        return {"status": "error", "message": "Course not found or you don't have access."}
+
+    try:
+        # Delete existing modules + topics (cascade deletes topics)
+        if course.modules:
+            for existing_mod in course.modules:
+                await db.module.delete(where={"id": existing_mod.id})
+
+        # Create new modules and topics from the outline
+        total_topics = 0
+        for i, mod_data in enumerate(modules_data):
+            mod_title = mod_data.get("title", f"Module {i + 1}")
+            topics = mod_data.get("topics", [])
+
+            module = await db.module.create(
+                data={
+                    "courseId": course_id,
+                    "title": mod_title,
+                    "order": float(i),
+                }
+            )
+
+            for j, topic_title in enumerate(topics):
+                title = topic_title if isinstance(topic_title, str) else str(topic_title)
+                await db.topic.create(
+                    data={
+                        "moduleId": module.id,
+                        "title": title,
+                        "order": float(j),
+                    }
+                )
+                total_topics += 1
+
+        # Update course description if it was the default placeholder
+        desc = course.description or ""
+        if "outline pending" in desc.lower() or not desc.strip():
+            await db.course.update(
+                where={"id": course_id},
+                data={
+                    "description": f"Course with {len(modules_data)} modules and {total_topics} topics."
+                },
+            )
+
+        return {
+            "status": "success",
+            "action": "update_course_outline",
+            "courseId": course_id,
+            "course_id": course_id,
+            "message": f"Outline updated: {len(modules_data)} modules, {total_topics} topics created for {course.title}.",
+        }
+    except Exception as e:
+        logger.error(f"update_course_outline error: {e}", exc_info=True)
+        return {"status": "error", "message": f"Failed to update outline: {e}"}
