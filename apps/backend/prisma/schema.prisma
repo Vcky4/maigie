@@ -294,6 +294,10 @@ model ChatMessage {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Spaced repetition / review threading (optional)
+  reviewItemId String?
+  reviewItem   ReviewItem? @relation(fields: [reviewItemId], references: [id], onDelete: SetNull)
+
   role    ChatRole // USER, ASSISTANT, SYSTEM
   content String // The Markdown text response
 
@@ -318,6 +322,8 @@ model ChatMessage {
   actions AIActionLog[]
 
   @@index([sessionId])
+  @@index([reviewItemId])
+  @@index([sessionId, reviewItemId])
   @@index([userId]) // Helps count "messages this month" quickly
   @@index([createdAt]) // For cost/revenue analytics
 }

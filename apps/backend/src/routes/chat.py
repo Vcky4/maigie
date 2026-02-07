@@ -43,10 +43,173 @@ from src.services.socket_manager import manager
 from src.services.storage_service import storage_service  # <--- Added
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
+from src.dependencies import CurrentUser, DBDep
 
 router = APIRouter()
 db = Prisma()
 logger = logging.getLogger(__name__)
+
+
+def _map_db_role_to_client(role: str) -> str:
+    if role == "USER":
+        return "user"
+    if role == "ASSISTANT":
+        return "assistant"
+    return "system"
+
+
+@router.get("/sessions", response_model=dict)
+async def list_my_chat_sessions(
+    current_user: CurrentUser,
+    db: DBDep,
+    take: int = Query(20, ge=1, le=100),
+):
+    """
+    List the current user's chat sessions (for conversation history UI).
+    """
+    sessions = await db.chatsession.find_many(
+        where={"userId": current_user.id},
+        order={"updatedAt": "desc"},
+        take=take,
+    )
+
+    # Attach a lightweight "last message" preview
+    result = []
+    for s in sessions:
+        last_msg = await db.chatmessage.find_first(
+            where={"sessionId": s.id, "userId": current_user.id},
+            order={"createdAt": "desc"},
+        )
+        result.append(
+            {
+                "id": s.id,
+                "title": s.title or "Chat",
+                "isActive": bool(s.isActive),
+                "createdAt": (
+                    s.createdAt.isoformat()
+                    if hasattr(s.createdAt, "isoformat")
+                    else str(s.createdAt)
+                ),
+                "updatedAt": (
+                    s.updatedAt.isoformat()
+                    if hasattr(s.updatedAt, "isoformat")
+                    else str(s.updatedAt)
+                ),
+                "lastMessageAt": (
+                    last_msg.createdAt.isoformat()
+                    if last_msg and hasattr(last_msg.createdAt, "isoformat")
+                    else None
+                ),
+                "lastMessagePreview": (
+                    last_msg.content[:140] if last_msg and last_msg.content else None
+                ),
+            }
+        )
+
+    return {"sessions": result}
+
+
+@router.post("/sessions", response_model=dict)
+async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
+    """
+    Create a new chat session for the current user.
+    """
+    # Mark other sessions inactive (keeps backward compatibility with WS default behavior)
+    await db.chatsession.update_many(
+        where={"userId": current_user.id, "isActive": True},
+        data={"isActive": False},
+    )
+    session = await db.chatsession.create(
+        data={"userId": current_user.id, "title": "New Chat", "isActive": True}
+    )
+    return {
+        "id": session.id,
+        "title": session.title,
+        "isActive": bool(session.isActive),
+        "createdAt": (
+            session.createdAt.isoformat()
+            if hasattr(session.createdAt, "isoformat")
+            else str(session.createdAt)
+        ),
+        "updatedAt": (
+            session.updatedAt.isoformat()
+            if hasattr(session.updatedAt, "isoformat")
+            else str(session.updatedAt)
+        ),
+    }
+
+
+@router.post("/sessions/{session_id}/activate", response_model=dict)
+async def activate_my_chat_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Mark a session active (optional; WS can also be pinned per message via context.sessionId).
+    """
+    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.chatsession.update_many(
+        where={"userId": current_user.id, "isActive": True},
+        data={"isActive": False},
+    )
+    session = await db.chatsession.update(where={"id": session_id}, data={"isActive": True})
+    return {"id": session.id, "isActive": bool(session.isActive)}
+
+
+@router.get("/sessions/{session_id}/messages", response_model=dict)
+async def get_my_chat_messages(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+    reviewItemId: str | None = Query(default=None),
+    take: int = Query(200, ge=1, le=500),
+):
+    """
+    Fetch messages for a given session.
+
+    If `reviewItemId` is provided, returns only that review thread.
+    If `reviewItemId` is omitted, returns only general chat messages (reviewItemId is NULL).
+    """
+    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    where = {"sessionId": session_id, "userId": current_user.id}
+    if reviewItemId:
+        where["reviewItemId"] = reviewItemId
+    else:
+        where["reviewItemId"] = None
+
+    # Get latest `take` messages then return in chronological order
+    records = await db.chatmessage.find_many(
+        where=where,
+        order={"createdAt": "desc"},
+        take=take,
+    )
+    records = list(reversed(records))
+
+    messages = []
+    for m in records:
+        messages.append(
+            {
+                "id": m.id,
+                "role": _map_db_role_to_client(str(m.role)),
+                "content": m.content,
+                "reviewItemId": getattr(m, "reviewItemId", None),
+                "timestamp": (
+                    m.createdAt.isoformat()
+                    if hasattr(m.createdAt, "isoformat")
+                    else str(m.createdAt)
+                ),
+                "imageUrl": getattr(m, "imageUrl", None),
+            }
+        )
+
+    return {"sessionId": session_id, "messages": messages}
 
 
 def _extract_course_request(user_text: str) -> tuple[str, str]:
@@ -402,6 +565,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
     await manager.connect(websocket, user.id)
 
     # 2. Find or Create an active Chat Session
+    # NOTE: The frontend can optionally pass `context.sessionId` per message to pin a conversation.
     session = await db.chatsession.find_first(
         where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
     )
@@ -429,6 +593,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # If not JSON, treat as plain text
                 pass
 
+            # 3.1 If client pins a sessionId, switch to it (per-message)
+            if context and context.get("sessionId"):
+                requested_session_id = context.get("sessionId")
+                try:
+                    pinned = await db.chatsession.find_first(
+                        where={"id": requested_session_id, "userId": user.id}
+                    )
+                    if pinned:
+                        session = pinned
+                except Exception:
+                    # If anything goes wrong, fall back to the current session
+                    pass
+
             # 4. Extract fileUrls from context (if any)
             file_urls = context.get("fileUrls") if context else None
 
@@ -439,16 +616,30 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 "role": "USER",
                 "content": user_text,
             }
+            # If this message was sent from a review, persist the review thread ID
+            if context and context.get("reviewItemId"):
+                user_message_data["reviewItemId"] = context["reviewItemId"]
             if file_urls:
                 user_message_data["imageUrl"] = file_urls
                 print(f"🖼️ Message includes image: {file_urls}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
 
-            # 5. Build History for Context (Last 6 messages to reduce token usage)
+            # 5. Build History for Context (latest messages to reduce token usage)
+            # IMPORTANT: Use the *most recent* messages; ordering asc with take would grab the oldest.
+            history_take = 12
+            history_where = {"sessionId": session.id}
+            # Keep review conversations isolated from general chat (and from other reviews)
+            if context and context.get("reviewItemId"):
+                history_where["reviewItemId"] = context["reviewItemId"]
+            else:
+                history_where["reviewItemId"] = None
             history_records = await db.chatmessage.find_many(
-                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=6
+                where=history_where,
+                order={"createdAt": "desc"},
+                take=history_take,
             )
+            history_records = list(reversed(history_records))
 
             # Format history for Gemini (including images)
             formatted_history = []
@@ -1076,10 +1267,17 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             )
 
             # 12. Save AI Message to DB
+            assistant_review_item_id = None
+            if enriched_context and enriched_context.get("reviewItemId"):
+                assistant_review_item_id = enriched_context["reviewItemId"]
+            elif context and context.get("reviewItemId"):
+                assistant_review_item_id = context["reviewItemId"]
+
             await db.chatmessage.create(
                 data={
                     "sessionId": session.id,
                     "userId": user.id,
+                    "reviewItemId": assistant_review_item_id,
                     "role": "ASSISTANT",
                     "content": clean_response,
                     "tokenCount": actual_total_tokens,
