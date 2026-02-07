@@ -115,16 +115,50 @@ def _should_try_image_extraction(text: str) -> bool:
     return len(t) <= 12
 
 
+_COURSE_LIST_PLACEHOLDERS = {
+    "here",
+    "attached",
+    "see",
+    "this",
+    "image",
+    "screenshot",
+    "photo",
+    "courses",
+    "course list",
+    "my courses",
+}
+
+
+def _looks_like_placeholder_course_list(courses: list[str]) -> bool:
+    """
+    Detect when the user didn't actually list courses (e.g. they typed "here")
+    but attached an image that contains the real list.
+    """
+    if not courses:
+        return True
+    if len(courses) > 1:
+        return False
+    only = _normalize_text(courses[0])
+    if only in _COURSE_LIST_PLACEHOLDERS:
+        return True
+    # Very short single token often isn't a course title in this context.
+    if len(only) <= 4 and " " not in only:
+        return True
+    return False
+
+
 async def _extract_courses_from_image(image_url: str) -> list[str]:
     """
     Use Gemini vision to extract course titles from an uploaded image.
     Returns a de-duplicated list of course titles (max 10).
     """
     prompt = (
-        "Extract the course titles from this image.\n\n"
+        "Extract the student's course titles from this image.\n\n"
         "Return ONLY a JSON array of strings.\n"
         'Example: ["Calculus", "Data Structures", "Operating Systems"]\n'
-        "No other text."
+        "No other text.\n"
+        "If the image contains a table, read the course title column.\n"
+        "Ignore headers, grading info, names, dates, and non-course fields."
     )
 
     raw = (await llm_service.analyze_image(prompt, image_url) or "").strip()
@@ -329,7 +363,13 @@ async def handle_onboarding_message(
     if stage == "courses":
         courses = _parse_list_items(text, max_items=10)
         first_image = _pick_first_image_url(image_url)
-        if not courses and first_image and _should_try_image_extraction(text):
+        # If the user sent an image and their text looks like a placeholder (e.g. "here"),
+        # prefer extracting from the image.
+        if (
+            first_image
+            and _should_try_image_extraction(text)
+            and _looks_like_placeholder_course_list(courses)
+        ):
             try:
                 courses = await _extract_courses_from_image(first_image)
             except Exception:
