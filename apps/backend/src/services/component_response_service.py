@@ -190,6 +190,10 @@ async def format_action_component_response(
                         ),
                         "endAt": schedule_obj.endAt.isoformat() if schedule_obj.endAt else None,
                         "description": schedule_obj.description or "",
+                        "courseId": getattr(schedule_obj, "courseId", None),
+                        "topicId": getattr(schedule_obj, "topicId", None),
+                        "goalId": getattr(schedule_obj, "goalId", None),
+                        "reviewItemId": getattr(schedule_obj, "reviewItemId", None),
                     }
             except Exception as e:
                 print(f"Error fetching schedule data: {e}")

@@ -99,6 +99,7 @@ try:
     from ..tasks import course_generation  # noqa: F401
     from ..tasks import resource_recommendations  # noqa: F401
     from ..tasks import schedule_generation  # noqa: F401
+    from ..tasks import spaced_repetition  # noqa: F401
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,
     # but do log so worker/task registration issues are visible.

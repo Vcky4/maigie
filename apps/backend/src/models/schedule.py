@@ -60,6 +60,7 @@ class ScheduleResponse(BaseModel):
     courseId: str | None = None
     topicId: str | None = None
     goalId: str | None = None
+    reviewItemId: str | None = None  # Set when block is a spaced-repetition review
     googleCalendarEventId: str | None = None
     googleCalendarSyncedAt: str | None = None
     createdAt: str

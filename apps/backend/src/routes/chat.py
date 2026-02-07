@@ -43,10 +43,196 @@ from src.services.socket_manager import manager
 from src.services.storage_service import storage_service  # <--- Added
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
+from src.dependencies import CurrentUser, DBDep
 
 router = APIRouter()
 db = Prisma()
 logger = logging.getLogger(__name__)
+
+
+def _map_db_role_to_client(role: str) -> str:
+    if role == "USER":
+        return "user"
+    if role == "ASSISTANT":
+        return "assistant"
+    return "system"
+
+
+@router.get("/sessions", response_model=dict)
+async def list_my_chat_sessions(
+    current_user: CurrentUser,
+    db: DBDep,
+    take: int = Query(20, ge=1, le=100),
+):
+    """
+    List the current user's chat sessions (for conversation history UI).
+    """
+    sessions = await db.chatsession.find_many(
+        where={"userId": current_user.id},
+        order={"updatedAt": "desc"},
+        take=take,
+    )
+
+    # Attach a lightweight "last message" preview
+    result = []
+    for s in sessions:
+        last_msg = await db.chatmessage.find_first(
+            where={"sessionId": s.id, "userId": current_user.id},
+            order={"createdAt": "desc"},
+        )
+        result.append(
+            {
+                "id": s.id,
+                "title": s.title or "Chat",
+                "isActive": bool(s.isActive),
+                "createdAt": (
+                    s.createdAt.isoformat()
+                    if hasattr(s.createdAt, "isoformat")
+                    else str(s.createdAt)
+                ),
+                "updatedAt": (
+                    s.updatedAt.isoformat()
+                    if hasattr(s.updatedAt, "isoformat")
+                    else str(s.updatedAt)
+                ),
+                "lastMessageAt": (
+                    last_msg.createdAt.isoformat()
+                    if last_msg and hasattr(last_msg.createdAt, "isoformat")
+                    else None
+                ),
+                "lastMessagePreview": (
+                    last_msg.content[:140] if last_msg and last_msg.content else None
+                ),
+            }
+        )
+
+    return {"sessions": result}
+
+
+@router.post("/sessions", response_model=dict)
+async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
+    """
+    Create a new chat session for the current user.
+    """
+    # Mark other sessions inactive (keeps backward compatibility with WS default behavior)
+    await db.chatsession.update_many(
+        where={"userId": current_user.id, "isActive": True},
+        data={"isActive": False},
+    )
+    session = await db.chatsession.create(
+        data={"userId": current_user.id, "title": "New Chat", "isActive": True}
+    )
+
+    # If the user is not onboarded, proactively send the first assistant message
+    # and initialize onboarding state (stored on the user).
+    try:
+        if not getattr(current_user, "isOnboarded", False):
+            from src.services.onboarding_service import ensure_onboarding_initialized
+
+            await ensure_onboarding_initialized(db, current_user.id)
+            await db.chatmessage.create(
+                data={
+                    "sessionId": session.id,
+                    "userId": current_user.id,
+                    "role": "ASSISTANT",
+                    "content": (
+                        "Welcome! I’m Maigie.\n\n"
+                        "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                        "Reply with `university` or `self-paced`."
+                    ),
+                }
+            )
+    except Exception as e:
+        # Onboarding is best-effort; don't fail session creation.
+        logger.warning("Failed to seed onboarding message: %s", e)
+    return {
+        "id": session.id,
+        "title": session.title,
+        "isActive": bool(session.isActive),
+        "createdAt": (
+            session.createdAt.isoformat()
+            if hasattr(session.createdAt, "isoformat")
+            else str(session.createdAt)
+        ),
+        "updatedAt": (
+            session.updatedAt.isoformat()
+            if hasattr(session.updatedAt, "isoformat")
+            else str(session.updatedAt)
+        ),
+    }
+
+
+@router.post("/sessions/{session_id}/activate", response_model=dict)
+async def activate_my_chat_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Mark a session active (optional; WS can also be pinned per message via context.sessionId).
+    """
+    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.chatsession.update_many(
+        where={"userId": current_user.id, "isActive": True},
+        data={"isActive": False},
+    )
+    session = await db.chatsession.update(where={"id": session_id}, data={"isActive": True})
+    return {"id": session.id, "isActive": bool(session.isActive)}
+
+
+@router.get("/sessions/{session_id}/messages", response_model=dict)
+async def get_my_chat_messages(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+    reviewItemId: str | None = Query(default=None),
+    take: int = Query(200, ge=1, le=500),
+):
+    """
+    Fetch messages for a given session.
+
+    If `reviewItemId` is provided, returns only that review thread.
+    If `reviewItemId` is omitted, returns only general chat messages (reviewItemId is NULL).
+    """
+    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    where = {"sessionId": session_id, "userId": current_user.id}
+    if reviewItemId:
+        where["reviewItemId"] = reviewItemId
+    else:
+        where["reviewItemId"] = None
+
+    # Get latest `take` messages then return in chronological order
+    records = await db.chatmessage.find_many(
+        where=where,
+        order={"createdAt": "desc"},
+        take=take,
+    )
+    records = list(reversed(records))
+
+    messages = []
+    for m in records:
+        messages.append(
+            {
+                "id": m.id,
+                "role": _map_db_role_to_client(str(m.role)),
+                "content": m.content,
+                "reviewItemId": getattr(m, "reviewItemId", None),
+                "timestamp": (
+                    m.createdAt.isoformat()
+                    if hasattr(m.createdAt, "isoformat")
+                    else str(m.createdAt)
+                ),
+                "imageUrl": getattr(m, "imageUrl", None),
+            }
+        )
+
+    return {"sessionId": session_id, "messages": messages}
 
 
 def _extract_course_request(user_text: str) -> tuple[str, str]:
@@ -358,6 +544,14 @@ async def enrich_action_data(
                     print(f"⚠️ Removing invalid {id_field} placeholder: {action_id}")
                     action_data.pop(id_field, None)
 
+    # Handle complete_review action (review_item_id from context)
+    if action_type == "complete_review":
+        if not action_data.get("review_item_id"):
+            if enriched_context and enriched_context.get("reviewItemId"):
+                action_data["review_item_id"] = enriched_context["reviewItemId"]
+            elif context and context.get("reviewItemId"):
+                action_data["review_item_id"] = context["reviewItemId"]
+
     return action_data
 
 
@@ -394,6 +588,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
     await manager.connect(websocket, user.id)
 
     # 2. Find or Create an active Chat Session
+    # NOTE: The frontend can optionally pass `context.sessionId` per message to pin a conversation.
     session = await db.chatsession.find_first(
         where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
     )
@@ -421,6 +616,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # If not JSON, treat as plain text
                 pass
 
+            # 3.1 If client pins a sessionId, switch to it (per-message)
+            if context and context.get("sessionId"):
+                requested_session_id = context.get("sessionId")
+                try:
+                    pinned = await db.chatsession.find_first(
+                        where={"id": requested_session_id, "userId": user.id}
+                    )
+                    if pinned:
+                        session = pinned
+                except Exception:
+                    # If anything goes wrong, fall back to the current session
+                    pass
+
             # 4. Extract fileUrls from context (if any)
             file_urls = context.get("fileUrls") if context else None
 
@@ -431,16 +639,113 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 "role": "USER",
                 "content": user_text,
             }
+            # If this message was sent from a review, persist the review thread ID
+            if context and context.get("reviewItemId"):
+                user_message_data["reviewItemId"] = context["reviewItemId"]
             if file_urls:
                 user_message_data["imageUrl"] = file_urls
                 print(f"🖼️ Message includes image: {file_urls}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
 
-            # 5. Build History for Context (Last 6 messages to reduce token usage)
+            # Keep ChatSession title meaningful when the frontend relies on DB history.
+            # Update it from the very first general-chat USER message (not review threads).
+            try:
+                if (
+                    (not context or not context.get("reviewItemId"))
+                    and getattr(session, "title", None) in (None, "", "New Chat")
+                    and (user_text or "").strip()
+                ):
+                    user_msg_count = await db.chatmessage.count(
+                        where={
+                            "sessionId": session.id,
+                            "userId": user.id,
+                            "role": "USER",
+                            "reviewItemId": None,
+                        }
+                    )
+                    if user_msg_count == 1:
+                        cleaned = " ".join((user_text or "").strip().split())
+                        title = cleaned[:50] + ("..." if len(cleaned) > 50 else "")
+                        session = await db.chatsession.update(
+                            where={"id": session.id}, data={"title": title}
+                        )
+            except Exception as e:
+                logger.warning("Failed to update session title: %s", e)
+
+            # 4.2 Onboarding router: for new users, run a guided flow instead of LLM chat.
+            # Re-read `isOnboarded` from DB each iteration because the WS `user` object
+            # was fetched at connection time and becomes stale after onboarding completes.
+            is_onboarded = getattr(user, "isOnboarded", False)
+            if not is_onboarded:
+                try:
+                    fresh_user = await db.user.find_unique(where={"id": user.id})
+                    if fresh_user:
+                        is_onboarded = getattr(fresh_user, "isOnboarded", False)
+                except Exception:
+                    pass
+
+            # Skip onboarding in review threads (spaced repetition), and only run for general chat.
+            if not is_onboarded and not (context and context.get("reviewItemId")):
+                try:
+                    from src.services.onboarding_service import (
+                        ensure_onboarding_initialized,
+                        handle_onboarding_message,
+                    )
+
+                    await ensure_onboarding_initialized(db, user.id)
+                    onboarding_result = await handle_onboarding_message(
+                        db,
+                        user=user,
+                        session_id=session.id,
+                        user_text=user_text,
+                        image_url=file_urls,
+                    )
+
+                    # Persist assistant reply
+                    await db.chatmessage.create(
+                        data={
+                            "sessionId": session.id,
+                            "userId": user.id,
+                            "role": "ASSISTANT",
+                            "content": onboarding_result.reply_text,
+                            "tokenCount": 0,
+                            "modelName": "onboarding",
+                        }
+                    )
+
+                    # Send reply to the client
+                    await manager.send_personal_message(onboarding_result.reply_text, user.id)
+
+                    # Optionally send created courses as a component list for immediate UI rendering
+                    if onboarding_result.created_courses:
+                        component = format_list_component_response(
+                            component_type="CourseListMessage",
+                            items=onboarding_result.created_courses,
+                            text="Here are your courses:",
+                        )
+                        await manager.send_json(component, user.id)
+
+                    continue
+                except Exception as e:
+                    # If onboarding fails for any reason, fall back to normal LLM flow.
+                    logger.error("Onboarding flow error: %s", e, exc_info=True)
+
+            # 5. Build History for Context (latest messages to reduce token usage)
+            # IMPORTANT: Use the *most recent* messages; ordering asc with take would grab the oldest.
+            history_take = 12
+            history_where = {"sessionId": session.id}
+            # Keep review conversations isolated from general chat (and from other reviews)
+            if context and context.get("reviewItemId"):
+                history_where["reviewItemId"] = context["reviewItemId"]
+            else:
+                history_where["reviewItemId"] = None
             history_records = await db.chatmessage.find_many(
-                where={"sessionId": session.id}, order={"createdAt": "asc"}, take=6
+                where=history_where,
+                order={"createdAt": "desc"},
+                take=history_take,
             )
+            history_records = list(reversed(history_records))
 
             # Format history for Gemini (including images)
             formatted_history = []
@@ -462,7 +767,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 note_id = context.get("noteId")
                 topic_id = context.get("topicId")
                 course_id = context.get("courseId")
-                if note_id or topic_id or course_id:
+                review_item_id = context.get("reviewItemId")
+                if note_id or topic_id or course_id or review_item_id:
                     cache_key = cache.make_key(
                         [
                             "chat",
@@ -471,6 +777,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             note_id or "-",
                             topic_id or "-",
                             course_id or "-",
+                            review_item_id or "-",
                         ]
                     )
                     cached_context = await cache.get(cache_key)
@@ -478,8 +785,42 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if cached_context:
                     enriched_context = {**context, **cached_context}
                 else:
+                    # Fetch review details if reviewItemId is provided (review mode in chat)
+                    if context.get("reviewItemId"):
+                        review_id = context["reviewItemId"]
+                        review = await db.reviewitem.find_first(
+                            where={"id": review_id, "userId": user.id},
+                            include={
+                                "topic": {"include": {"module": {"include": {"course": True}}}},
+                            },
+                        )
+                        if review and review.topic:
+                            enriched_context["pageContext"] = (
+                                "Review mode (spaced repetition): You are conducting a review for the topic below. "
+                                "1) Start with a brief, engaging summary of what the topic is about (2–3 sentences). "
+                                "2) Then ask 3–5 short quiz questions ONE AT A TIME. Do not list all questions at once. "
+                                "3) After each answer, give a brief explanation or feedback before asking the next question. "
+                                "4) When the user has answered all questions and you have given your final explanation, call the complete_review tool to mark the review as done. "
+                                "Do not ask the user to click any button; completion is automatic when you call complete_review."
+                            )
+                            enriched_context["topicId"] = review.topicId
+                            enriched_context["topicTitle"] = review.topic.title
+                            enriched_context["topicContent"] = review.topic.content or ""
+                            enriched_context["reviewItemId"] = review.id
+                            enriched_context["nextReviewAt"] = (
+                                review.nextReviewAt.isoformat()
+                                if hasattr(review.nextReviewAt, "isoformat")
+                                else str(review.nextReviewAt)
+                            )
+                            if review.topic.module and review.topic.module.course:
+                                enriched_context["courseId"] = review.topic.module.course.id
+                                enriched_context["courseTitle"] = review.topic.module.course.title
+                                enriched_context["courseDescription"] = (
+                                    review.topic.module.course.description or ""
+                                )
+                                enriched_context["moduleTitle"] = review.topic.module.title
                     # Fetch note details if noteId is provided
-                    if context.get("noteId"):
+                    elif context.get("noteId"):
                         note_id = context["noteId"]
                         note = await db.note.find_unique(
                             where={"id": note_id},
@@ -870,6 +1211,38 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         user.id,
                     )
 
+                elif action_type == "complete_review" and action_result.get("status") == "success":
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "success",
+                                "action": "complete_review",
+                                "message": action_result.get("message", "Review completed!"),
+                            },
+                        },
+                        user.id,
+                    )
+
+                elif (
+                    action_type == "update_course_outline"
+                    and action_result.get("status") == "success"
+                ):
+                    course_id = action_result.get("course_id") or action_result.get("courseId")
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "success",
+                                "action": "update_course_outline",
+                                "course_id": course_id,
+                                "courseId": course_id,
+                                "message": action_result.get("message", "Course outline updated!"),
+                            },
+                        },
+                        user.id,
+                    )
+
                 elif action_type == "recommend_resources":
                     # Queue background task for resource recommendations
                     celery_app.send_task(
@@ -1019,10 +1392,17 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             )
 
             # 12. Save AI Message to DB
+            assistant_review_item_id = None
+            if enriched_context and enriched_context.get("reviewItemId"):
+                assistant_review_item_id = enriched_context["reviewItemId"]
+            elif context and context.get("reviewItemId"):
+                assistant_review_item_id = context["reviewItemId"]
+
             await db.chatmessage.create(
                 data={
                     "sessionId": session.id,
                     "userId": user.id,
+                    "reviewItemId": assistant_review_item_id,
                     "role": "ASSISTANT",
                     "content": clean_response,
                     "tokenCount": actual_total_tokens,

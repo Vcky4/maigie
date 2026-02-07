@@ -25,7 +25,7 @@ import base64
 import hashlib
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import bcrypt
@@ -88,7 +88,7 @@ async def main() -> None:
         # Prepare credit initialization data
         tier = "PREMIUM_MONTHLY"
         limits = CREDIT_LIMITS[tier]
-        period_start = datetime.utcnow()
+        period_start = datetime.now(UTC)
         period_end = period_start + timedelta(days=30)  # Monthly for PREMIUM_MONTHLY
 
         admin = await prisma.user.upsert(

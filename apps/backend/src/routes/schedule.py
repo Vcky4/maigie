@@ -104,6 +104,7 @@ async def list_schedules(
                 courseId=getattr(schedule, "courseId", None),
                 topicId=getattr(schedule, "topicId", None),
                 goalId=getattr(schedule, "goalId", None),
+                reviewItemId=getattr(schedule, "reviewItemId", None),
                 googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
                 googleCalendarSyncedAt=(
                     schedule.googleCalendarSyncedAt.isoformat()
@@ -261,6 +262,7 @@ async def create_schedule_block(
             courseId=getattr(schedule, "courseId", None),
             topicId=getattr(schedule, "topicId", None),
             goalId=getattr(schedule, "goalId", None),
+            reviewItemId=getattr(schedule, "reviewItemId", None),
             googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
             googleCalendarSyncedAt=(
                 schedule.googleCalendarSyncedAt.isoformat()
@@ -316,6 +318,7 @@ async def get_schedule(
             courseId=getattr(schedule, "courseId", None),
             topicId=getattr(schedule, "topicId", None),
             goalId=getattr(schedule, "goalId", None),
+            reviewItemId=getattr(schedule, "reviewItemId", None),
             googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
             googleCalendarSyncedAt=(
                 schedule.googleCalendarSyncedAt.isoformat()
@@ -471,6 +474,7 @@ async def update_schedule(
             courseId=getattr(updated_schedule, "courseId", None),
             topicId=getattr(updated_schedule, "topicId", None),
             goalId=getattr(updated_schedule, "goalId", None),
+            reviewItemId=getattr(updated_schedule, "reviewItemId", None),
             googleCalendarEventId=getattr(updated_schedule, "googleCalendarEventId", None),
             googleCalendarSyncedAt=(
                 updated_schedule.googleCalendarSyncedAt.isoformat()

@@ -52,6 +52,14 @@ enum GoalStatus {
   CANCELLED
 }
 
+enum ScheduleBehaviourType {
+  COMPLETED_ON_TIME
+  COMPLETED_LATE
+  SKIPPED
+  RESCHEDULED
+  AI_CREATED
+}
+
 enum ResourceType {
   VIDEO
   ARTICLE
@@ -139,6 +147,8 @@ model User {
   resources               Resource[]
   goals                   Goal[]
   schedules               ScheduleBlock[]
+  reviewItems             ReviewItem[]
+  scheduleBehaviourLogs   ScheduleBehaviourLog[]
   userInteractionMemories UserInteractionMemory[]
 
   // NEW: Chat Relations
@@ -245,6 +255,7 @@ model Topic {
   goals     Goal[] // Goals linked to this topic
   schedules ScheduleBlock[] // Schedule blocks linked to this topic
   studySessions StudySession[] // Study sessions for this topic
+  reviewItems ReviewItem[] // Spaced repetition: one review schedule per completed topic
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -283,6 +294,10 @@ model ChatMessage {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // Spaced repetition / review threading (optional)
+  reviewItemId String?
+  reviewItem   ReviewItem? @relation("ReviewItemChatMessages", fields: [reviewItemId], references: [id], onDelete: SetNull)
+
   role    ChatRole // USER, ASSISTANT, SYSTEM
   content String // The Markdown text response
 
@@ -307,6 +322,8 @@ model ChatMessage {
   actions AIActionLog[]
 
   @@index([sessionId])
+  @@index([reviewItemId])
+  @@index([sessionId, reviewItemId])
   @@index([userId]) // Helps count "messages this month" quickly
   @@index([createdAt]) // For cost/revenue analytics
 }
@@ -489,6 +506,10 @@ model ScheduleBlock {
   goalId   String?
   goal     Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
 
+  // Spaced repetition: when this block was created for a review
+  reviewItemId String?   @unique
+  reviewItem   ReviewItem? @relation(fields: [reviewItemId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -498,6 +519,57 @@ model ScheduleBlock {
   @@index([courseId])
   @@index([topicId])
   @@index([goalId])
+}
+
+// ==========================================
+//  SPACED REPETITION & SCHEDULE BEHAVIOUR
+// ==========================================
+
+model ReviewItem {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId String
+  topic  Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  // Next review due (spaced repetition)
+  nextReviewAt   DateTime
+  intervalDays   Int      @default(1) // Current interval in days (1, 3, 7, 14, 30...)
+  repetitionCount Int     @default(0)  // Number of reviews completed
+  lastReviewedAt DateTime?
+
+  // The schedule block we created for the upcoming review (optional; back-relation from ScheduleBlock.reviewItemId)
+  scheduleBlock   ScheduleBlock?
+
+  // Chat messages that happened during this review (optional)
+  chatMessages ChatMessage[] @relation("ReviewItemChatMessages")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, nextReviewAt])
+  @@index([topicId])
+}
+
+model ScheduleBehaviourLog {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  behaviourType ScheduleBehaviourType
+  entityType    String   // "review", "schedule_block"
+  entityId      String?
+
+  scheduledAt DateTime? // When it was supposed to happen
+  actualAt    DateTime? // When it actually happened (or null if skipped)
+  metadata    Json?     // Extra context for AI (e.g. reschedule reason, course title)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([behaviourType])
 }
 
 model Embedding {
