@@ -122,6 +122,29 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
     session = await db.chatsession.create(
         data={"userId": current_user.id, "title": "New Chat", "isActive": True}
     )
+
+    # If the user is not onboarded, proactively send the first assistant message
+    # and initialize onboarding state (stored on the user).
+    try:
+        if not getattr(current_user, "isOnboarded", False):
+            from src.services.onboarding_service import ensure_onboarding_initialized
+
+            await ensure_onboarding_initialized(db, current_user.id)
+            await db.chatmessage.create(
+                data={
+                    "sessionId": session.id,
+                    "userId": current_user.id,
+                    "role": "ASSISTANT",
+                    "content": (
+                        "Welcome! I’m Maigie.\n\n"
+                        "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                        "Reply with `university` or `self-paced`."
+                    ),
+                }
+            )
+    except Exception as e:
+        # Onboarding is best-effort; don't fail session creation.
+        logger.warning("Failed to seed onboarding message: %s", e)
     return {
         "id": session.id,
         "title": session.title,
@@ -624,6 +647,54 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 print(f"🖼️ Message includes image: {file_urls}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
+
+            # 4.2 Onboarding router: for new users, run a guided flow instead of LLM chat.
+            # Skip onboarding in review threads (spaced repetition), and only run for general chat.
+            if not getattr(user, "isOnboarded", False) and not (
+                context and context.get("reviewItemId")
+            ):
+                try:
+                    from src.services.onboarding_service import (
+                        ensure_onboarding_initialized,
+                        handle_onboarding_message,
+                    )
+                    from src.services.component_response_service import (
+                        format_list_component_response,
+                    )
+
+                    await ensure_onboarding_initialized(db, user.id)
+                    onboarding_result = await handle_onboarding_message(
+                        db, user=user, session_id=session.id, user_text=user_text
+                    )
+
+                    # Persist assistant reply
+                    await db.chatmessage.create(
+                        data={
+                            "sessionId": session.id,
+                            "userId": user.id,
+                            "role": "ASSISTANT",
+                            "content": onboarding_result.reply_text,
+                            "tokenCount": 0,
+                            "modelName": "onboarding",
+                        }
+                    )
+
+                    # Send reply to the client
+                    await manager.send_personal_message(onboarding_result.reply_text, user.id)
+
+                    # Optionally send created courses as a component list for immediate UI rendering
+                    if onboarding_result.created_courses:
+                        component = format_list_component_response(
+                            component_type="CourseListMessage",
+                            items=onboarding_result.created_courses,
+                            text="Here are your courses:",
+                        )
+                        await manager.send_json(component, user.id)
+
+                    continue
+                except Exception as e:
+                    # If onboarding fails for any reason, fall back to normal LLM flow.
+                    logger.error("Onboarding flow error: %s", e, exc_info=True)
 
             # 5. Build History for Context (latest messages to reduce token usage)
             # IMPORTANT: Use the *most recent* messages; ordering asc with take would grab the oldest.
