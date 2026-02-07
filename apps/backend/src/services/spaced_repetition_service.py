@@ -48,6 +48,39 @@ async def create_review_item(db: Prisma, user_id: str, topic_id: str) -> Any | N
     )
 
 
+async def create_schedule_block_for_review(db: Prisma, review: Any) -> Any | None:
+    """
+    Create a ScheduleBlock for a ReviewItem so it appears on the calendar.
+    Call this when a new review is created (topic completed) or when the daily task runs.
+    Returns the created ScheduleBlock or None on error.
+    """
+    review_with_topic = await db.reviewitem.find_unique(
+        where={"id": review.id},
+        include={"topic": {"include": {"module": {"include": {"course": True}}}}},
+    )
+    if not review_with_topic or not review_with_topic.topic:
+        return None
+    topic = review_with_topic.topic
+    course = topic.module.course if topic.module else None
+    topic_title = topic.title if topic else "Topic"
+    start_at = review.nextReviewAt
+    if start_at.tzinfo is None:
+        start_at = start_at.replace(tzinfo=UTC)
+    end_at = start_at + timedelta(minutes=REVIEW_BLOCK_DURATION_MINUTES)
+    return await db.scheduleblock.create(
+        data={
+            "userId": review.userId,
+            "title": f"Review: {topic_title}",
+            "description": "Spaced repetition review (quiz and refresher)",
+            "startAt": start_at,
+            "endAt": end_at,
+            "topicId": review.topicId,
+            "courseId": course.id if course else None,
+            "reviewItemId": review.id,
+        },
+    )
+
+
 async def advance_review(
     db: Prisma,
     review_item_id: str,
@@ -126,7 +159,8 @@ async def ensure_review_item_for_completed_topic(
     db: Prisma, user_id: str, topic_id: str
 ) -> Any | None:
     """
-    If the topic is completed and no ReviewItem exists for it, create one.
+    If the topic is completed and no ReviewItem exists for it, create one
+    and create a schedule block so the review appears on the calendar.
     Call this after marking a topic complete. Returns created ReviewItem or None.
     """
     topic = await db.topic.find_first(
@@ -134,4 +168,17 @@ async def ensure_review_item_for_completed_topic(
     )
     if not topic or not topic.completed:
         return None
-    return await create_review_item(db, user_id, topic_id)
+    review = await create_review_item(db, user_id, topic_id)
+    if review:
+        await create_schedule_block_for_review(db, review)
+        await log_behaviour(
+            db,
+            user_id=user_id,
+            behaviour_type="AI_CREATED",
+            entity_type="schedule_block",
+            entity_id=None,
+            scheduled_at=review.nextReviewAt,
+            actual_at=None,
+            metadata={"topicId": topic_id, "source": "topic_completed"},
+        )
+    return review

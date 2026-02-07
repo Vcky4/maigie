@@ -462,7 +462,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 note_id = context.get("noteId")
                 topic_id = context.get("topicId")
                 course_id = context.get("courseId")
-                if note_id or topic_id or course_id:
+                review_item_id = context.get("reviewItemId")
+                if note_id or topic_id or course_id or review_item_id:
                     cache_key = cache.make_key(
                         [
                             "chat",
@@ -471,6 +472,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             note_id or "-",
                             topic_id or "-",
                             course_id or "-",
+                            review_item_id or "-",
                         ]
                     )
                     cached_context = await cache.get(cache_key)
@@ -478,8 +480,38 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if cached_context:
                     enriched_context = {**context, **cached_context}
                 else:
+                    # Fetch review details if reviewItemId is provided (review mode in chat)
+                    if context.get("reviewItemId"):
+                        review_id = context["reviewItemId"]
+                        review = await db.reviewitem.find_first(
+                            where={"id": review_id, "userId": user.id},
+                            include={
+                                "topic": {"include": {"module": {"include": {"course": True}}}},
+                            },
+                        )
+                        if review and review.topic:
+                            enriched_context["pageContext"] = (
+                                "Review mode: User is doing a spaced repetition review. "
+                                "Focus on this topic for quiz questions and refresher content."
+                            )
+                            enriched_context["topicId"] = review.topicId
+                            enriched_context["topicTitle"] = review.topic.title
+                            enriched_context["topicContent"] = review.topic.content or ""
+                            enriched_context["reviewItemId"] = review.id
+                            enriched_context["nextReviewAt"] = (
+                                review.nextReviewAt.isoformat()
+                                if hasattr(review.nextReviewAt, "isoformat")
+                                else str(review.nextReviewAt)
+                            )
+                            if review.topic.module and review.topic.module.course:
+                                enriched_context["courseId"] = review.topic.module.course.id
+                                enriched_context["courseTitle"] = review.topic.module.course.title
+                                enriched_context["courseDescription"] = (
+                                    review.topic.module.course.description or ""
+                                )
+                                enriched_context["moduleTitle"] = review.topic.module.title
                     # Fetch note details if noteId is provided
-                    if context.get("noteId"):
+                    elif context.get("noteId"):
                         note_id = context["noteId"]
                         note = await db.note.find_unique(
                             where={"id": note_id},
