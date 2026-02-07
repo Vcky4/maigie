@@ -296,7 +296,7 @@ model ChatMessage {
 
   // Spaced repetition / review threading (optional)
   reviewItemId String?
-  reviewItem   ReviewItem? @relation(fields: [reviewItemId], references: [id], onDelete: SetNull)
+  reviewItem   ReviewItem? @relation("ReviewItemChatMessages", fields: [reviewItemId], references: [id], onDelete: SetNull)
 
   role    ChatRole // USER, ASSISTANT, SYSTEM
   content String // The Markdown text response
@@ -540,6 +540,9 @@ model ReviewItem {
 
   // The schedule block we created for the upcoming review (optional; back-relation from ScheduleBlock.reviewItemId)
   scheduleBlock   ScheduleBlock?
+
+  // Chat messages that happened during this review (optional)
+  chatMessages ChatMessage[] @relation("ReviewItemChatMessages")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
