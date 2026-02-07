@@ -648,6 +648,31 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             user_message = await db.chatmessage.create(data=user_message_data)
 
+            # Keep ChatSession title meaningful when the frontend relies on DB history.
+            # Update it from the very first general-chat USER message (not review threads).
+            try:
+                if (
+                    (not context or not context.get("reviewItemId"))
+                    and getattr(session, "title", None) in (None, "", "New Chat")
+                    and (user_text or "").strip()
+                ):
+                    user_msg_count = await db.chatmessage.count(
+                        where={
+                            "sessionId": session.id,
+                            "userId": user.id,
+                            "role": "USER",
+                            "reviewItemId": None,
+                        }
+                    )
+                    if user_msg_count == 1:
+                        cleaned = " ".join((user_text or "").strip().split())
+                        title = cleaned[:50] + ("..." if len(cleaned) > 50 else "")
+                        session = await db.chatsession.update(
+                            where={"id": session.id}, data={"title": title}
+                        )
+            except Exception as e:
+                logger.warning("Failed to update session title: %s", e)
+
             # 4.2 Onboarding router: for new users, run a guided flow instead of LLM chat.
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
             if not getattr(user, "isOnboarded", False) and not (
@@ -657,9 +682,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     from src.services.onboarding_service import (
                         ensure_onboarding_initialized,
                         handle_onboarding_message,
-                    )
-                    from src.services.component_response_service import (
-                        format_list_component_response,
                     )
 
                     await ensure_onboarding_initialized(db, user.id)
