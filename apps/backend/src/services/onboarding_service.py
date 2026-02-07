@@ -14,6 +14,7 @@ from typing import Any, Literal
 from prisma import Json
 
 from src.services.action_service import action_service
+from src.services.llm_service import llm_service
 
 LearnerType = Literal["university", "self_paced"]
 
@@ -92,6 +93,55 @@ def _parse_list_items(text: str, *, max_items: int = 10) -> list[str]:
         if len(out) >= max_items:
             break
     return out
+
+
+def _pick_first_image_url(image_url: Any) -> str | None:
+    if not image_url:
+        return None
+    if isinstance(image_url, str):
+        return image_url
+    if isinstance(image_url, list) and image_url and isinstance(image_url[0], str):
+        return image_url[0]
+    return None
+
+
+def _should_try_image_extraction(text: str) -> bool:
+    t = _normalize_text(text)
+    if not t:
+        return True
+    if t in {"here", "attached", "see", "this", "image", "screenshot", "photo"}:
+        return True
+    # Heuristic: very short text + an image likely means "use the image"
+    return len(t) <= 12
+
+
+async def _extract_courses_from_image(image_url: str) -> list[str]:
+    """
+    Use Gemini vision to extract course titles from an uploaded image.
+    Returns a de-duplicated list of course titles (max 10).
+    """
+    prompt = (
+        "Extract the course titles from this image.\n\n"
+        "Return ONLY a JSON array of strings.\n"
+        'Example: ["Calculus", "Data Structures", "Operating Systems"]\n'
+        "No other text."
+    )
+
+    raw = (await llm_service.analyze_image(prompt, image_url) or "").strip()
+
+    # Try JSON array first
+    try:
+        import json
+
+        arr = json.loads(raw)
+        if isinstance(arr, list):
+            joined = "\n".join([str(x) for x in arr])
+            return _parse_list_items(joined, max_items=10)
+    except Exception:
+        pass
+
+    # Fallback: parse any text response
+    return _parse_list_items(raw, max_items=10)
 
 
 def default_onboarding_state() -> dict[str, Any]:
@@ -173,7 +223,7 @@ def _welcome_prompt() -> str:
 
 
 async def handle_onboarding_message(
-    db, *, user, session_id: str, user_text: str
+    db, *, user, session_id: str, user_text: str, image_url: Any = None
 ) -> OnboardingResult:
     """
     Advance the onboarding state machine based on the user's message.
@@ -249,6 +299,7 @@ async def handle_onboarding_message(
         return OnboardingResult(
             reply_text=(
                 "Awesome. List your courses for this term/semester (one per line or comma-separated).\n"
+                "You can also upload a screenshot/photo of your course list.\n"
                 "Example:\n"
                 "- Calculus\n"
                 "- Data Structures\n"
@@ -270,12 +321,19 @@ async def handle_onboarding_message(
         return OnboardingResult(
             reply_text=(
                 "Nice. List the courses/topics you want to study (one per line or comma-separated)."
+                " You can also upload a screenshot/photo."
             ),
             is_complete=False,
         )
 
     if stage == "courses":
         courses = _parse_list_items(text, max_items=10)
+        first_image = _pick_first_image_url(image_url)
+        if not courses and first_image and _should_try_image_extraction(text):
+            try:
+                courses = await _extract_courses_from_image(first_image)
+            except Exception:
+                courses = []
         if not courses:
             return OnboardingResult(
                 reply_text="Please list at least 1 course (one per line or comma-separated).",

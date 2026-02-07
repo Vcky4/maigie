@@ -686,7 +686,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                     await ensure_onboarding_initialized(db, user.id)
                     onboarding_result = await handle_onboarding_message(
-                        db, user=user, session_id=session.id, user_text=user_text
+                        db,
+                        user=user,
+                        session_id=session.id,
+                        user_text=user_text,
+                        image_url=file_urls,
                     )
 
                     # Persist assistant reply
