@@ -49,6 +49,7 @@ async def handle_tool_call(
         "retake_note": handle_retake_note,
         "add_summary_to_note": handle_add_summary_to_note,
         "add_tags_to_note": handle_add_tags_to_note,
+        "complete_review": handle_complete_review,
     }
 
     handler = handlers.get(tool_name)
@@ -63,6 +64,8 @@ async def handle_tool_call(
             args["topic_id"] = context["topicId"]
         if "noteId" in context and "note_id" not in args:
             args["note_id"] = context["noteId"]
+        if "reviewItemId" in context and "review_item_id" not in args:
+            args["review_item_id"] = context["reviewItemId"]
 
     try:
         # Pass progress_callback to handlers that support it
@@ -549,3 +552,27 @@ async def handle_add_tags_to_note(
     # Call existing action service
     result = await action_service.add_tags(action_data, user_id)
     return result
+
+
+async def handle_complete_review(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle complete_review tool call. Marks the spaced-repetition review as done."""
+    from src.services.spaced_repetition_service import advance_review
+
+    review_item_id = args.get("review_item_id") or (context or {}).get("reviewItemId")
+    if not review_item_id:
+        return {"status": "error", "message": "No review item in context."}
+    try:
+        await advance_review(
+            db,
+            review_item_id=review_item_id,
+            user_id=user_id,
+            completed_on_time=True,
+        )
+        return {"status": "success", "message": "Review completed! Great job."}
+    except ValueError as e:
+        logger.warning("complete_review failed: %s", e)
+        return {"status": "error", "message": str(e)}

@@ -358,6 +358,14 @@ async def enrich_action_data(
                     print(f"⚠️ Removing invalid {id_field} placeholder: {action_id}")
                     action_data.pop(id_field, None)
 
+    # Handle complete_review action (review_item_id from context)
+    if action_type == "complete_review":
+        if not action_data.get("review_item_id"):
+            if enriched_context and enriched_context.get("reviewItemId"):
+                action_data["review_item_id"] = enriched_context["reviewItemId"]
+            elif context and context.get("reviewItemId"):
+                action_data["review_item_id"] = context["reviewItemId"]
+
     return action_data
 
 
@@ -491,8 +499,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         )
                         if review and review.topic:
                             enriched_context["pageContext"] = (
-                                "Review mode: User is doing a spaced repetition review. "
-                                "Focus on this topic for quiz questions and refresher content."
+                                "Review mode (spaced repetition): You are conducting a review for the topic below. "
+                                "1) Start with a brief, engaging summary of what the topic is about (2–3 sentences). "
+                                "2) Then ask 3–5 short quiz questions ONE AT A TIME. Do not list all questions at once. "
+                                "3) After each answer, give a brief explanation or feedback before asking the next question. "
+                                "4) When the user has answered all questions and you have given your final explanation, call the complete_review tool to mark the review as done. "
+                                "Do not ask the user to click any button; completion is automatic when you call complete_review."
                             )
                             enriched_context["topicId"] = review.topicId
                             enriched_context["topicTitle"] = review.topic.title
@@ -897,6 +909,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "message": action_result.get(
                                     "message", "Course created successfully!"
                                 ),
+                            },
+                        },
+                        user.id,
+                    )
+
+                elif action_type == "complete_review" and action_result.get("status") == "success":
+                    await manager.send_json(
+                        {
+                            "type": "event",
+                            "payload": {
+                                "status": "success",
+                                "action": "complete_review",
+                                "message": action_result.get("message", "Review completed!"),
                             },
                         },
                         user.id,

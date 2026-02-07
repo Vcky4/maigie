@@ -577,6 +577,7 @@ class GeminiService:
                             "retake_note",
                             "add_summary_to_note",
                             "add_tags_to_note",
+                            "complete_review",
                         ]:
                             executed_actions.append(
                                 {
@@ -622,6 +623,7 @@ class GeminiService:
             "retake_note": "retake_note",
             "add_summary_to_note": "add_summary",
             "add_tags_to_note": "add_tags",
+            "complete_review": "complete_review",
         }
         return mapping.get(tool_name, tool_name)
 

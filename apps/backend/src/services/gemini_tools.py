@@ -26,6 +26,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 retake_note_tool(),
                 add_summary_to_note_tool(),
                 add_tags_to_note_tool(),
+                complete_review_tool(),
             ]
         }
     ]
@@ -331,6 +332,24 @@ def create_schedule_tool() -> dict[str, Any]:
                 },
             },
             "required": ["title", "start_at", "end_at"],
+        },
+    }
+
+
+def complete_review_tool() -> dict[str, Any]:
+    """Tool definition for marking a spaced-repetition review as completed."""
+    return {
+        "name": "complete_review",
+        "description": "Mark the current spaced-repetition review as completed. Call this ONLY when the user has finished answering all quiz questions in the review flow (after you have given your final explanation). The review_item_id comes from context when the user is in review mode.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "review_item_id": {
+                    "type": "string",
+                    "description": "Review item ID from context (required when in review mode)",
+                },
+            },
+            "required": [],
         },
     }
 
