@@ -69,6 +69,12 @@ async def cleanup_duplicates():
         return total_fixed
 
     except Exception as e:
+        error_str = str(e)
+        # If the table doesn't exist yet (migrations haven't run), exit gracefully
+        if "does not exist" in error_str and "User" in error_str:
+            print("User table does not exist yet (migrations pending). Skipping cleanup.")
+            print("No duplicates to clean")
+            return 0
         print(f"Error during cleanup: {e}", file=sys.stderr)
         import traceback
 
