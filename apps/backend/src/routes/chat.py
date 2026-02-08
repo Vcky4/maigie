@@ -579,6 +579,154 @@ async def get_current_user_ws(token: str = Query(...)):
         raise HTTPException(status_code=403, detail="Could not validate credentials")
 
 
+async def _build_greeting_context(db_client, user) -> dict:
+    """Fetch user data for a personalized AI greeting on new chat."""
+    now = datetime.now(UTC)
+    ctx: dict = {
+        "name": getattr(user, "name", "") or "",
+        "current_time": now.strftime("%A, %B %d, %Y at %H:%M UTC"),
+    }
+
+    # Recent courses with progress
+    try:
+        courses = await db_client.course.find_many(
+            where={"userId": user.id, "archived": False},
+            order={"updatedAt": "desc"},
+            take=5,
+            include={"modules": {"include": {"topics": True}}},
+        )
+        ctx["courses"] = []
+        for c in courses:
+            total = sum(len(m.topics) for m in c.modules)
+            completed = sum(1 for m in c.modules for t in m.topics if t.completed)
+            progress = round((completed / total * 100) if total > 0 else 0)
+            ctx["courses"].append(
+                {
+                    "title": c.title,
+                    "progress": progress,
+                    "totalTopics": total,
+                    "completedTopics": completed,
+                }
+            )
+    except Exception:
+        ctx["courses"] = []
+
+    # Active goals
+    try:
+        goals = await db_client.goal.find_many(
+            where={"userId": user.id, "status": "ACTIVE"},
+            take=5,
+        )
+        ctx["goals"] = [
+            {
+                "title": g.title,
+                "progress": g.progress or 0,
+                "targetDate": (g.targetDate.isoformat() if g.targetDate else None),
+            }
+            for g in goals
+        ]
+    except Exception:
+        ctx["goals"] = []
+
+    # Upcoming schedules (next 3 days)
+    try:
+        schedules = await db_client.scheduleblock.find_many(
+            where={
+                "userId": user.id,
+                "startAt": {"gte": now, "lte": now + timedelta(days=3)},
+            },
+            order={"startAt": "asc"},
+            take=5,
+        )
+        ctx["schedules"] = [{"title": s.title, "startAt": s.startAt.isoformat()} for s in schedules]
+    except Exception:
+        ctx["schedules"] = []
+
+    # Study streak
+    try:
+        streak = await db_client.userstreak.find_unique(where={"userId": user.id})
+        ctx["streak"] = streak.currentStreak if streak else 0
+    except Exception:
+        ctx["streak"] = 0
+
+    # Pending spaced-repetition reviews
+    try:
+        pending_reviews = await db_client.reviewitem.count(
+            where={"userId": user.id, "nextReviewAt": {"lte": now}}
+        )
+        ctx["pendingReviews"] = pending_reviews
+    except Exception:
+        ctx["pendingReviews"] = 0
+
+    return ctx
+
+
+def _build_greeting_prompt(context: dict) -> str:
+    """Build a personalized greeting prompt for the LLM."""
+    name = context.get("name", "").split()[0] if context.get("name") else "there"
+    current_time = context.get("current_time", "")
+
+    parts = [
+        f"Current Date & Time: {current_time}",
+        f"User's first name: {name}",
+    ]
+
+    courses = context.get("courses", [])
+    if courses:
+        lines = [
+            f"  - {c['title']}: {c['progress']}% complete "
+            f"({c['completedTopics']}/{c['totalTopics']} topics)"
+            for c in courses
+        ]
+        parts.append("User's courses:\n" + "\n".join(lines))
+    else:
+        parts.append("User has no courses yet.")
+
+    goals = context.get("goals", [])
+    if goals:
+        lines = [
+            f"  - {g['title']}: {g['progress']}% progress"
+            + (f" (target: {g['targetDate']})" if g.get("targetDate") else "")
+            for g in goals
+        ]
+        parts.append("Active goals:\n" + "\n".join(lines))
+
+    schedules = context.get("schedules", [])
+    if schedules:
+        lines = [f"  - {s['title']} at {s['startAt']}" for s in schedules]
+        parts.append("Upcoming schedule (next 3 days):\n" + "\n".join(lines))
+
+    streak = context.get("streak", 0)
+    if streak > 0:
+        parts.append(f"Current study streak: {streak} days")
+
+    pending_reviews = context.get("pendingReviews", 0)
+    if pending_reviews > 0:
+        parts.append(f"Pending spaced repetition reviews: {pending_reviews}")
+
+    data_section = "\n".join(parts)
+
+    return (
+        "You are starting a new conversation with the user. Generate a warm, "
+        "personalized greeting as their study companion Maigie.\n\n"
+        f"User Context:\n{data_section}\n\n"
+        "Guidelines:\n"
+        "- Keep it concise (2-4 sentences max)\n"
+        "- Address the user by their first name\n"
+        "- Reference specific things they're working on if available\n"
+        "- Suggest ONE specific thing they could do next (continue a course, "
+        "work on a goal, check their schedule, do their reviews, etc.)\n"
+        "- Be encouraging but natural, not over-the-top\n"
+        "- Consider the time of day (morning/afternoon/evening) for appropriate greetings\n"
+        "- If they have a study streak going, briefly mention it to motivate them\n"
+        "- If they have pending reviews, suggest they tackle those\n"
+        "- If they have upcoming schedules, give them a heads up\n"
+        "- If they have no courses/goals yet, encourage them to create their first course\n"
+        "- Vary your style — don't always structure the greeting the same way\n"
+        "- Do NOT use any tools — just respond with the greeting text directly\n"
+    )
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_current_user_ws)):
     """
@@ -628,6 +776,89 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 except Exception:
                     # If anything goes wrong, fall back to the current session
                     pass
+
+            # 3.2 Handle AI-initiated greeting for new chats
+            if user_text == "__greeting__":
+                # Only generate greeting for onboarded users
+                is_onboarded = getattr(user, "isOnboarded", False)
+                if not is_onboarded:
+                    try:
+                        fresh = await db.user.find_unique(where={"id": user.id})
+                        if fresh:
+                            is_onboarded = getattr(fresh, "isOnboarded", False)
+                    except Exception:
+                        pass
+
+                if is_onboarded:
+                    try:
+                        greeting_ctx = await _build_greeting_context(db, user)
+                        greeting_prompt = _build_greeting_prompt(greeting_ctx)
+
+                        # Stream callback
+                        streamed_greeting_chunks: list[str] = []
+
+                        async def stream_greeting(chunk: str, is_final: bool):
+                            streamed_greeting_chunks.append(chunk)
+                            await manager.send_json(
+                                {
+                                    "type": "stream",
+                                    "payload": {"chunk": chunk, "is_final": is_final},
+                                },
+                                user.id,
+                            )
+
+                        response_text, usage_info, _, _ = (
+                            await llm_service.get_chat_response_with_tools(
+                                history=[],
+                                user_message=greeting_prompt,
+                                context=None,
+                                user_id=user.id,
+                                stream_callback=stream_greeting,
+                            )
+                        )
+
+                        clean_greeting = response_text.strip()
+                        if clean_greeting:
+                            # Save greeting as assistant message
+                            model_name = usage_info.get("model_name", "gemini-3-flash-preview")
+                            input_tokens = usage_info.get("input_tokens", 0)
+                            output_tokens = usage_info.get("output_tokens", 0)
+
+                            await db.chatmessage.create(
+                                data={
+                                    "sessionId": session.id,
+                                    "userId": user.id,
+                                    "role": "ASSISTANT",
+                                    "content": clean_greeting,
+                                    "tokenCount": input_tokens + output_tokens,
+                                    "inputTokens": input_tokens,
+                                    "outputTokens": output_tokens,
+                                    "modelName": model_name,
+                                }
+                            )
+
+                            # Send final plain-text message (deduped by frontend)
+                            await manager.send_personal_message(clean_greeting, user.id)
+                    except Exception as e:
+                        logger.error("Greeting generation error: %s", e, exc_info=True)
+                        # Fallback: send a simple greeting
+                        first_name = (
+                            getattr(user, "name", "").split()[0]
+                            if getattr(user, "name", "")
+                            else "there"
+                        )
+                        fallback = f"Hey {first_name}! 👋 What would you like to " "work on today?"
+                        await manager.send_personal_message(fallback, user.id)
+                        await db.chatmessage.create(
+                            data={
+                                "sessionId": session.id,
+                                "userId": user.id,
+                                "role": "ASSISTANT",
+                                "content": fallback,
+                            }
+                        )
+                # Skip the rest of the loop for greeting messages
+                continue
 
             # 4. Extract fileUrls from context (if any)
             file_urls = context.get("fileUrls") if context else None
