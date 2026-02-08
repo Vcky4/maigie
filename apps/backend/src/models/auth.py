@@ -73,6 +73,7 @@ class UserResponse(BaseModel):
     tier: str
     role: str
     isActive: bool  # noqa: N815
+    isOnboarded: bool = False  # noqa: N815
     preferences: UserPreferencesResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
