@@ -587,7 +587,7 @@ async def _build_greeting_context(db_client, user) -> dict:
         "current_time": now.strftime("%A, %B %d, %Y at %H:%M UTC"),
     }
 
-    # Recent courses with progress
+    # Recent courses with progress (summary for LLM + full payload for components)
     try:
         courses = await db_client.course.find_many(
             where={"userId": user.id, "archived": False},
@@ -596,6 +596,7 @@ async def _build_greeting_context(db_client, user) -> dict:
             include={"modules": {"include": {"topics": True}}},
         )
         ctx["courses"] = []
+        ctx["courses_for_component"] = []
         for c in courses:
             total = sum(len(m.topics) for m in c.modules)
             completed = sum(1 for m in c.modules for t in m.topics if t.completed)
@@ -608,10 +609,39 @@ async def _build_greeting_context(db_client, user) -> dict:
                     "completedTopics": completed,
                 }
             )
+            card = {
+                "courseId": c.id,
+                "id": c.id,
+                "title": c.title,
+                "description": (c.description or "")[:500],
+                "progress": float(progress),
+                "difficulty": getattr(c, "difficulty", None),
+                "completedTopics": completed,
+                "totalTopics": total,
+            }
+            # First incomplete topic for "pick up where you left off"
+            next_topic = None
+            if total > 0 and completed < total:
+                for mod in c.modules or []:
+                    for t in mod.topics or []:
+                        if not getattr(t, "completed", False):
+                            next_topic = {
+                                "topicId": t.id,
+                                "topicTitle": getattr(t, "title", "Topic"),
+                                "moduleId": mod.id,
+                                "moduleTitle": getattr(mod, "title", "Module"),
+                            }
+                            break
+                    if next_topic:
+                        break
+            if next_topic:
+                card["nextTopic"] = next_topic
+            ctx["courses_for_component"].append(card)
     except Exception:
         ctx["courses"] = []
+        ctx["courses_for_component"] = []
 
-    # Active goals
+    # Active goals (summary + full for component)
     try:
         goals = await db_client.goal.find_many(
             where={"userId": user.id, "status": "ACTIVE"},
@@ -625,10 +655,25 @@ async def _build_greeting_context(db_client, user) -> dict:
             }
             for g in goals
         ]
+        ctx["goals_for_component"] = [
+            {
+                "goalId": g.id,
+                "id": g.id,
+                "title": g.title,
+                "description": g.description or "",
+                "targetDate": g.targetDate.isoformat() if g.targetDate else None,
+                "progress": g.progress or 0,
+                "status": g.status,
+                "courseId": g.courseId,
+                "topicId": g.topicId,
+            }
+            for g in goals
+        ]
     except Exception:
         ctx["goals"] = []
+        ctx["goals_for_component"] = []
 
-    # Upcoming schedules (next 3 days)
+    # Upcoming schedules (next 3 days) – summary + full for component
     try:
         schedules = await db_client.scheduleblock.find_many(
             where={
@@ -639,8 +684,24 @@ async def _build_greeting_context(db_client, user) -> dict:
             take=5,
         )
         ctx["schedules"] = [{"title": s.title, "startAt": s.startAt.isoformat()} for s in schedules]
+        ctx["schedules_for_component"] = [
+            {
+                "scheduleId": s.id,
+                "id": s.id,
+                "title": s.title,
+                "startAt": s.startAt.isoformat() if s.startAt else "",
+                "endAt": s.endAt.isoformat() if s.endAt else "",
+                "description": s.description or "",
+                "courseId": getattr(s, "courseId", None),
+                "topicId": getattr(s, "topicId", None),
+                "goalId": getattr(s, "goalId", None),
+                "reviewItemId": getattr(s, "reviewItemId", None),
+            }
+            for s in schedules
+        ]
     except Exception:
         ctx["schedules"] = []
+        ctx["schedules_for_component"] = []
 
     # Study streak
     try:
@@ -725,6 +786,63 @@ def _build_greeting_prompt(context: dict) -> str:
         "- Vary your style — don't always structure the greeting the same way\n"
         "- Do NOT use any tools — just respond with the greeting text directly\n"
     )
+
+
+def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
+    """
+    Build 0–2 component payloads to send with the greeting (e.g. pick-up course, schedule, goals).
+    Each item is a dict with type "component" and component/data/text for the frontend.
+    """
+    from src.services.component_response_service import (
+        format_component_response,
+        format_list_component_response,
+    )
+
+    out = []
+    courses = greeting_ctx.get("courses_for_component") or []
+    goals = greeting_ctx.get("goals_for_component") or []
+    schedules = greeting_ctx.get("schedules_for_component") or []
+
+    # 1) "Pick up where you left off": single course card with nextTopic (if any)
+    if courses:
+        pick_up = next((c for c in courses if c.get("nextTopic")), None)
+        if pick_up:
+            out.append(
+                format_component_response(
+                    "CourseCardMessage",
+                    pick_up,
+                    text=None,
+                )
+            )
+        elif len(courses) > 0:
+            # No next topic; show up to 3 courses as list
+            out.append(
+                format_list_component_response(
+                    "CourseListMessage",
+                    courses[:3],
+                    text=None,
+                )
+            )
+
+    # 2) Upcoming schedule or active goals (one more component)
+    if schedules and len(out) < 2:
+        out.append(
+            format_list_component_response(
+                "ScheduleViewMessage",
+                schedules,
+                text=None,
+            )
+        )
+    if not schedules and goals and len(out) < 2:
+        out.append(
+            format_list_component_response(
+                "GoalListMessage",
+                goals,
+                text=None,
+            )
+        )
+
+    return out
 
 
 @router.websocket("/ws")
@@ -839,6 +957,14 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                             # Send final plain-text message (deduped by frontend)
                             await manager.send_personal_message(clean_greeting, user.id)
+
+                            # Send optional components (e.g. pick-up course, schedule, goals)
+                            try:
+                                greeting_components = _build_greeting_components(greeting_ctx)
+                                for comp in greeting_components:
+                                    await manager.send_json(comp, user.id)
+                            except Exception as comp_err:
+                                logger.warning("Greeting components error: %s", comp_err)
                     except Exception as e:
                         logger.error("Greeting generation error: %s", e, exc_info=True)
                         # Fallback: send a simple greeting
