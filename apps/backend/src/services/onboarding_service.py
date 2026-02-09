@@ -406,6 +406,15 @@ async def handle_onboarding_message(
         # University: create courses WITHOUT AI outlines (no modules/topics).
         # Self-paced: create AI generated outlines (using action_service.create_course).
         if learner_type == "university":
+            to_create = []
+            for title in courses:
+                norm = _normalize_text(title)
+                if norm in existing_by_norm:
+                    continue
+                to_create.append(title)
+            total_to_create = len(to_create)
+            created_count = 0
+
             for title in courses:
                 norm = _normalize_text(title)
                 if norm in existing_by_norm:
@@ -431,14 +440,28 @@ async def handle_onboarding_message(
                         "totalTopics": 0,
                     }
                 )
+                created_count += 1
+                if progress_callback:
+                    suffix = f" ({created_count}/{total_to_create})" if total_to_create else ""
+                    await progress_callback(f"Created{suffix}: {course.title}")
         else:
             # self-paced
+            to_create = []
+            for title in courses:
+                norm = _normalize_text(title)
+                if norm in existing_by_norm:
+                    continue
+                to_create.append(title)
+            total_to_create = len(to_create)
+            created_count = 0
+
             for title in courses:
                 norm = _normalize_text(title)
                 if norm in existing_by_norm:
                     continue
                 if progress_callback:
-                    await progress_callback(f"Creating: {title}...")
+                    suffix = f" ({created_count + 1}/{total_to_create})" if total_to_create else ""
+                    await progress_callback(f"Creating{suffix}: {title}...")
                 # Let action_service generate outline by providing no modules.
                 result = await action_service.create_course(
                     {
@@ -453,6 +476,12 @@ async def handle_onboarding_message(
                     cid = result.get("courseId") or result.get("course_id")
                     if cid:
                         created_course_ids.append(cid)
+                        created_count += 1
+                        if progress_callback:
+                            suffix = (
+                                f" ({created_count}/{total_to_create})" if total_to_create else ""
+                            )
+                            await progress_callback(f"Created{suffix}: {title}")
 
             # Load created courses for lightweight list
             if created_course_ids:
