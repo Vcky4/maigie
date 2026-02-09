@@ -43,6 +43,7 @@ from ..services.credit_service import (
     consume_credits,
     get_credit_usage,
 )
+from ..services.spaced_repetition_service import ensure_review_item_for_completed_topic
 from ..utils.dependencies import get_db_client
 from ..utils.exceptions import (
     ForbiddenError,
@@ -909,6 +910,8 @@ async def update_topic(
     if topic_data.completed is not None:
         await update_goal_progress_for_topic(db, topic_id, user_id, topic_data.completed)
         await update_goal_progress_for_course(db, course_id, user_id)
+        # Spaced repetition: create ReviewItem for this topic when marked complete
+        await ensure_review_item_for_completed_topic(db, user_id, topic_id)
 
     return TopicResponse(**updated_topic.model_dump())
 
@@ -974,6 +977,9 @@ async def toggle_topic_completion(
 
     # Update goal progress for goals linked to this course
     await update_goal_progress_for_course(db, course_id, user_id)
+
+    # Spaced repetition: create ReviewItem for this topic when marked complete
+    await ensure_review_item_for_completed_topic(db, user_id, topic_id)
 
     return TopicResponse(**updated_topic.model_dump())
 

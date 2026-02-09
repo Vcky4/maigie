@@ -22,7 +22,7 @@ async def cleanup_duplicates():
     try:
         # Fetch all users ordered by creation date
         print("Fetching all users...")
-        all_users = await db.user.find_many(order_by={"createdAt": "asc"})
+        all_users = await db.user.find_many(order={"createdAt": "asc"})
 
         print(f"Found {len(all_users)} users")
 
@@ -69,6 +69,12 @@ async def cleanup_duplicates():
         return total_fixed
 
     except Exception as e:
+        error_str = str(e)
+        # If the table doesn't exist yet (migrations haven't run), exit gracefully
+        if "does not exist" in error_str and "User" in error_str:
+            print("User table does not exist yet (migrations pending). Skipping cleanup.")
+            print("No duplicates to clean")
+            return 0
         print(f"Error during cleanup: {e}", file=sys.stderr)
         import traceback
 

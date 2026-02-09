@@ -20,9 +20,10 @@ from src.core.database import db
 # Configure API
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Use text-embedding-004 model for embeddings
+# Use Gemini embedding model (text-embedding-004 is deprecated/removed for v1beta)
 # Note: The embed_content function adds the "models/" prefix automatically
-EMBEDDING_MODEL = "text-embedding-004"
+# Existing DB embeddings from text-embedding-004 may need re-indexing for best results
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 class EmbeddingService:
