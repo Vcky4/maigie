@@ -1050,6 +1050,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         handle_onboarding_message,
                     )
 
+                    async def send_onboarding_progress(message: str) -> None:
+                        await manager.send_json(
+                            {
+                                "type": "event",
+                                "payload": {
+                                    "status": "processing",
+                                    "action": "onboarding",
+                                    "message": message,
+                                },
+                            },
+                            user.id,
+                        )
+
                     await ensure_onboarding_initialized(db, user.id)
                     onboarding_result = await handle_onboarding_message(
                         db,
@@ -1057,6 +1070,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         session_id=session.id,
                         user_text=user_text,
                         image_url=file_urls,
+                        progress_callback=send_onboarding_progress,
                     )
 
                     # Persist assistant reply
@@ -1071,8 +1085,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         }
                     )
 
-                    # Send reply to the client
-                    await manager.send_personal_message(onboarding_result.reply_text, user.id)
+                    # Stream reply to the client so the user sees progress (word-by-word)
+                    reply_text = onboarding_result.reply_text or ""
+                    words = reply_text.split()
+                    for i, word in enumerate(words):
+                        chunk = word + (" " if i < len(words) - 1 else "")
+                        await manager.send_json(
+                            {
+                                "type": "stream",
+                                "payload": {
+                                    "chunk": chunk,
+                                    "is_final": i == len(words) - 1,
+                                },
+                            },
+                            user.id,
+                        )
+                    if not words:
+                        await manager.send_personal_message(reply_text, user.id)
 
                     # Optionally send created courses as a component list for immediate UI rendering
                     if onboarding_result.created_courses:
@@ -1880,7 +1909,7 @@ async def delete_chat_image(
 @router.post("/image", summary="Upload an image and get AI analysis")
 async def handle_image_chat(
     file: UploadFile = File(...),
-    text: str = Form(default="Explain this image"),
+    text: str = Form(default="Here"),
     token: str = Form(...),
 ):
     """

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 from prisma import Json
 
@@ -257,7 +257,13 @@ def _welcome_prompt() -> str:
 
 
 async def handle_onboarding_message(
-    db, *, user, session_id: str, user_text: str, image_url: Any = None
+    db,
+    *,
+    user,
+    session_id: str,
+    user_text: str,
+    image_url: Any = None,
+    progress_callback: Callable[[str], Awaitable[None]] | None = None,
 ) -> OnboardingResult:
     """
     Advance the onboarding state machine based on the user's message.
@@ -370,10 +376,14 @@ async def handle_onboarding_message(
             and _should_try_image_extraction(text)
             and _looks_like_placeholder_course_list(courses)
         ):
+            if progress_callback:
+                await progress_callback("Reading your course list...")
             try:
                 courses = await _extract_courses_from_image(first_image)
             except Exception:
                 courses = []
+        if courses and progress_callback:
+            await progress_callback("Setting up your courses...")
         if not courses:
             return OnboardingResult(
                 reply_text="Please list at least 1 course (one per line or comma-separated).",
@@ -427,6 +437,8 @@ async def handle_onboarding_message(
                 norm = _normalize_text(title)
                 if norm in existing_by_norm:
                     continue
+                if progress_callback:
+                    await progress_callback(f"Creating: {title}...")
                 # Let action_service generate outline by providing no modules.
                 result = await action_service.create_course(
                     {
