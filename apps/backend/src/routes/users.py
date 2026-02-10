@@ -23,6 +23,7 @@ class PreferencesUpdate(BaseModel):
     theme: str | None = None
     language: str | None = None
     notifications: bool | None = None
+    studyGoals: dict | None = None  # Dynamic JSON for study goals
 
 
 @router.put("/preferences", response_model=UserResponse)
@@ -30,26 +31,33 @@ async def update_preferences(preferences: PreferencesUpdate, current_user: Curre
     """
     Update the current user's preferences.
     """
+    from prisma import Json
+
+    update_data = preferences.model_dump(exclude_unset=True)
+
+    # Convert studyGoals to Prisma Json for storage
+    if "studyGoals" in update_data and update_data["studyGoals"] is not None:
+        update_data["studyGoals"] = Json(update_data["studyGoals"])
+
+    create_defaults = {
+        "theme": preferences.theme or "light",
+        "language": preferences.language or "en",
+        "notifications": (
+            preferences.notifications if preferences.notifications is not None else True
+        ),
+    }
+    if "studyGoals" in update_data:
+        create_defaults["studyGoals"] = update_data["studyGoals"]
+
     # Using Prisma's 'update' with a nested write to UserPreferences
     updated_user = await db.user.update(
         where={"id": current_user.id},
         data={
             "preferences": {
                 "upsert": {
-                    "create": {
-                        "theme": preferences.theme or "light",
-                        "language": preferences.language or "en",
-                        "notifications": (
-                            preferences.notifications
-                            if preferences.notifications is not None
-                            else True
-                        ),
-                    },
-                    "update": {
-                        # Only update fields that were sent (exclude None)
-                        **preferences.model_dump(exclude_unset=True)
-                    },
-                }
+                    "create": create_defaults,
+                    "update": update_data,
+                },
             }
         },
         include={"preferences": True},

@@ -60,8 +60,11 @@ class UserPreferencesResponse(BaseModel):
     theme: str
     language: str
     notifications: bool
+    study_goals: dict | None = Field(
+        None, validation_alias="studyGoals", serialization_alias="studyGoals"
+    )
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class UserResponse(BaseModel):
@@ -73,6 +76,7 @@ class UserResponse(BaseModel):
     tier: str
     role: str
     isActive: bool  # noqa: N815
+    isOnboarded: bool = False  # noqa: N815
     preferences: UserPreferencesResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)

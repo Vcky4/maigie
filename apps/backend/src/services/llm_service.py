@@ -6,6 +6,7 @@ Handles chat logic and tool execution.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 import os
 import time
 import warnings
@@ -49,6 +50,13 @@ CRITICAL - AVOID DUPLICATES:
 - If a matching or similar course exists, USE that existing course instead of creating a duplicate
 - When creating schedules or goals for a topic, first check existing courses and link to them
 - Only create a new course if no relevant course exists
+
+COURSE OUTLINE UPDATES:
+- When a user provides a course outline (text or image), use update_course_outline to populate the course with modules and topics.
+- ALWAYS call get_user_courses first to find the matching course by name.
+- If the outline is a FLAT list of topics (no modules), group them into logical modules (4-6 modules) before calling update_course_outline.
+- If the user says "outline for X" or "here is the outline for X", match X to an existing course.
+- Images may contain course outlines/syllabi — extract the topics from the image and structure them into modules.
 
 GUIDELINES:
 - Be friendly, supportive, and encouraging
@@ -576,6 +584,8 @@ class GeminiService:
                             "retake_note",
                             "add_summary_to_note",
                             "add_tags_to_note",
+                            "complete_review",
+                            "update_course_outline",
                         ]:
                             executed_actions.append(
                                 {
@@ -621,6 +631,8 @@ class GeminiService:
             "retake_note": "retake_note",
             "add_summary_to_note": "add_summary",
             "add_tags_to_note": "add_tags",
+            "complete_review": "complete_review",
+            "update_course_outline": "update_course_outline",
         }
         return mapping.get(tool_name, tool_name)
 
@@ -1112,6 +1124,123 @@ Tags (JSON array):"""
 
             traceback.print_exc()
             return "I'm sorry, I encountered an error analyzing that image."
+
+
+async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[str, Any]]:
+    """
+    For daily AI schedule review: fetch user's recent behaviour and schedule,
+    ask Gemini to suggest 0-3 new schedule blocks for the next 7 days; return list of
+    { title, startAt, endAt, courseId? } for create_schedule.
+    """
+    import json
+    import re
+    from datetime import UTC, datetime, timedelta
+
+    if genai is None:
+        return []
+    now = datetime.now(UTC)
+    week_end = now + timedelta(days=7)
+    # Recent behaviour (last 30)
+    behaviour_logs = await db.schedulebehaviourlog.find_many(
+        where={"userId": user_id},
+        order={"createdAt": "desc"},
+        take=30,
+    )
+    # Upcoming schedule (next 7 days)
+    schedules = await db.scheduleblock.find_many(
+        where={"userId": user_id, "startAt": {"gte": now}, "endAt": {"lte": week_end}},
+        order={"startAt": "asc"},
+        take=50,
+    )
+    # Due reviews (per-topic spaced repetition)
+    due_reviews = await db.reviewitem.find_many(
+        where={"userId": user_id, "nextReviewAt": {"lte": week_end}},
+        include={"topic": True},
+        order={"nextReviewAt": "asc"},
+    )
+    behaviour_str = (
+        "\n".join(
+            [
+                f"- {b.behaviourType} ({b.entityType}) at {b.createdAt.isoformat()}"
+                + (f" scheduled={b.scheduledAt}" if b.scheduledAt else "")
+                for b in behaviour_logs[:20]
+            ]
+        )
+        or "None yet."
+    )
+    schedule_str = (
+        "\n".join(
+            [f"- {s.title} {s.startAt.isoformat()} - {s.endAt.isoformat()}" for s in schedules[:20]]
+        )
+        or "None."
+    )
+    reviews_str = (
+        "\n".join(
+            [
+                f"- Review: {r.topic.title if r.topic else 'Topic'} due {r.nextReviewAt.isoformat()}"
+                for r in due_reviews[:15]
+            ]
+        )
+        or "None."
+    )
+    current_date = now.strftime("%A, %B %d, %Y at %H:%M UTC")
+    prompt = f"""You are a study schedule assistant. Based on this user's recent behaviour and current schedule, suggest 0-3 new schedule blocks for the next 7 days (e.g. catch-up reviews, buffer time, or focus blocks). Learn from behaviour: COMPLETED_ON_TIME = reliable; COMPLETED_LATE/SKIPPED = suggest easier times or shorter blocks; RESCHEDULED = respect their preferred timing.
+
+Current date and time: {current_date}
+
+Recent behaviour (last 20):
+{behaviour_str}
+
+Upcoming schedule (next 7 days):
+{schedule_str}
+
+Reviews due (spaced repetition):
+{reviews_str}
+
+Return ONLY a JSON array of 0-3 blocks. Each block: {{ "title": "string", "startAt": "ISO8601", "endAt": "ISO8601", "courseId": "optional cuid" }}.
+Use times in the next 7 days. No markdown, no code fence, no commentary.
+JSON:"""
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(
+            "models/gemini-2.0-flash",
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=600,
+                temperature=0.3,
+            ),
+        )
+        response = await model.generate_content_async(prompt)
+        text = (response.text or "").strip()
+        try:
+            arr = json.loads(text)
+        except Exception:
+            match = re.search(r"\[[\s\S]*\]", text)
+            if not match:
+                return []
+            arr = json.loads(match.group(0))
+        if not isinstance(arr, list):
+            return []
+        out = []
+        for item in arr[:3]:
+            if (
+                not isinstance(item, dict)
+                or "title" not in item
+                or "startAt" not in item
+                or "endAt" not in item
+            ):
+                continue
+            out.append(
+                {
+                    "title": str(item.get("title", "Study block")),
+                    "startAt": item["startAt"],
+                    "endAt": item["endAt"],
+                    "courseId": item.get("courseId"),
+                }
+            )
+        return out
+    except Exception as e:
+        print(f"get_schedule_review_suggestions error: {e}")
+        return []
 
 
 class _LazyGeminiService:

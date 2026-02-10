@@ -1412,13 +1412,7 @@ jobs:
           ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             bash -c "cd /opt/maigie/previews && \
-            if [ -d \"${PREVIEW_ID}\" ]; then \
-              cd ${PREVIEW_ID} && \
-              docker-compose down -v 2>/dev/null || true && \
-              cd .. && \
-              rm -rf ${PREVIEW_ID} && \
-            fi && \
-            # Force remove containers even if directory doesn't exist (handles orphaned containers) \
+            ( [ -d \"${PREVIEW_ID}\" ] && ( cd ${PREVIEW_ID} && docker-compose down -v 2>/dev/null || true && cd .. && rm -rf ${PREVIEW_ID} ) || true ) && \
             docker rm -f maigie-preview-backend-${PREVIEW_ID} maigie-preview-postgres-${PREVIEW_ID} maigie-preview-redis-${PREVIEW_ID} 2>/dev/null || true && \
             docker volume rm ${PREVIEW_ID}_postgres_data 2>/dev/null || true && \
             sudo rm -f /www/server/panel/vhost/nginx/${PREVIEW_ID}.preview.conf && \
