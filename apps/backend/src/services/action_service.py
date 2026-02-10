@@ -376,6 +376,20 @@ class ActionService:
                     "message": "Note has no content to summarize",
                 }
 
+            # Check summary generation limit for FREE tier users
+            from src.services.usage_tracking_service import increment_feature_usage
+            from src.utils.exceptions import SubscriptionLimitError
+
+            try:
+                user_obj = await db.user.find_unique(where={"id": user_id})
+                if user_obj:
+                    await increment_feature_usage(user_obj, "summary_generations", db_client=db)
+            except SubscriptionLimitError as e:
+                return {
+                    "status": "error",
+                    "message": e.message,
+                }
+
             # Strip any action blocks from content before summarizing
             cleaned_content = re.sub(
                 r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",

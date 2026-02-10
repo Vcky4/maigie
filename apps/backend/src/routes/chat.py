@@ -41,6 +41,7 @@ from src.services.llm_service import llm_service
 from src.services.rag_service import rag_service
 from src.services.socket_manager import manager
 from src.services.storage_service import storage_service  # <--- Added
+from src.services.usage_tracking_service import increment_feature_usage
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
 from src.dependencies import CurrentUser, DBDep
@@ -1863,6 +1864,13 @@ async def upload_chat_image(
         )
 
     try:
+        # Check file upload limit for FREE tier users
+        from src.core.database import db
+
+        user_obj = await db.user.find_unique(where={"id": user.id})
+        if user_obj:
+            await increment_feature_usage(user_obj, "file_uploads", db_client=db)
+
         # Upload to BunnyCDN
         upload_result = await storage_service.upload_file(file, path="chat-images")
         image_url = upload_result["url"]
@@ -1871,6 +1879,8 @@ async def upload_chat_image(
 
         return {"url": image_url, "filename": upload_result["filename"]}
 
+    except SubscriptionLimitError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
     except Exception as e:
         print(f"❌ Error in /chat/image/upload: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
