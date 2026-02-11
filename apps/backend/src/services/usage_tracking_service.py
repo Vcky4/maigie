@@ -13,7 +13,7 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from prisma import Prisma
@@ -71,7 +71,7 @@ async def ensure_usage_period(user: User, feature: str, db_client: Prisma | None
     if db_client is None:
         db_client = db
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     tier_str = str(user.tier) if user.tier else "FREE"
 
     # Premium users don't need tracking
@@ -96,7 +96,9 @@ async def ensure_usage_period(user: User, feature: str, db_client: Prisma | None
     if period_start is None:
         needs_reset = True
     else:
-        # Reset if period has expired (30 days)
+        # Normalize: DB may return naive or aware datetimes; ensure we can compare
+        if period_start.tzinfo is None:
+            period_start = period_start.replace(tzinfo=timezone.utc)
         period_end = period_start + timedelta(days=30)
         if now >= period_end:
             needs_reset = True
