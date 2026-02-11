@@ -114,8 +114,43 @@ async def list_my_chat_sessions(
 async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
     """
     Create a new chat session for the current user.
+    Only creates a new session if there is no existing session with no messages.
     """
-    # Mark other sessions inactive (keeps backward compatibility with WS default behavior)
+    # Check for existing empty session (no messages) - reuse it instead of creating new
+    existing_sessions = await db.chatsession.find_many(
+        where={"userId": current_user.id},
+        order={"updatedAt": "desc"},
+        take=50,
+    )
+    for s in existing_sessions:
+        msg_count = await db.chatmessage.count(where={"sessionId": s.id, "userId": current_user.id})
+        if msg_count == 0:
+            # Found empty session - mark it active and return it
+            await db.chatsession.update_many(
+                where={"userId": current_user.id, "isActive": True},
+                data={"isActive": False},
+            )
+            session = await db.chatsession.update(
+                where={"id": s.id},
+                data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
+            )
+            return {
+                "id": session.id,
+                "title": session.title,
+                "isActive": bool(session.isActive),
+                "createdAt": (
+                    session.createdAt.isoformat()
+                    if hasattr(session.createdAt, "isoformat")
+                    else str(session.createdAt)
+                ),
+                "updatedAt": (
+                    session.updatedAt.isoformat()
+                    if hasattr(session.updatedAt, "isoformat")
+                    else str(session.updatedAt)
+                ),
+            }
+
+    # No empty session found - create new one
     await db.chatsession.update_many(
         where={"userId": current_user.id, "isActive": True},
         data={"isActive": False},
@@ -182,6 +217,23 @@ async def activate_my_chat_session(
     )
     session = await db.chatsession.update(where={"id": session_id}, data={"isActive": True})
     return {"id": session.id, "isActive": bool(session.isActive)}
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_chat_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Delete a chat session and all its messages.
+    """
+    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.chatsession.delete(where={"id": session_id})
+    logger.info(f"Deleted chat session {session_id} for user {current_user.id}")
 
 
 @router.get("/sessions/{session_id}/messages", response_model=dict)
