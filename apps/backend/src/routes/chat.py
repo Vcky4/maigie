@@ -1005,23 +1005,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             model_name = usage_info.get("model_name", "gemini-3-flash-preview")
                             input_tokens = usage_info.get("input_tokens", 0)
                             output_tokens = usage_info.get("output_tokens", 0)
-                            greeting_component_data = (
-                                Json(greeting_components) if greeting_components else None
-                            )
-
-                            await db.chatmessage.create(
-                                data={
-                                    "sessionId": session.id,
-                                    "userId": user.id,
-                                    "role": "ASSISTANT",
-                                    "content": clean_greeting,
-                                    "tokenCount": input_tokens + output_tokens,
-                                    "inputTokens": input_tokens,
-                                    "outputTokens": output_tokens,
-                                    "modelName": model_name,
-                                    "componentData": greeting_component_data,
-                                }
-                            )
+                            greeting_data: dict = {
+                                "sessionId": session.id,
+                                "userId": user.id,
+                                "role": "ASSISTANT",
+                                "content": clean_greeting,
+                                "tokenCount": input_tokens + output_tokens,
+                                "inputTokens": input_tokens,
+                                "outputTokens": output_tokens,
+                                "modelName": model_name,
+                            }
+                            if greeting_components:
+                                greeting_data["componentData"] = Json(greeting_components)
+                            await db.chatmessage.create(data=greeting_data)
 
                             # Send final plain-text message (deduped by frontend)
                             await manager.send_personal_message(clean_greeting, user.id)
@@ -1146,22 +1142,17 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             text="Here are your courses:",
                         )
                         onboarding_components = [component]
-                    onboarding_component_data = (
-                        Json(onboarding_components) if onboarding_components else None
-                    )
-
-                    # Persist assistant reply (with component data)
-                    await db.chatmessage.create(
-                        data={
-                            "sessionId": session.id,
-                            "userId": user.id,
-                            "role": "ASSISTANT",
-                            "content": onboarding_result.reply_text,
-                            "tokenCount": 0,
-                            "modelName": "onboarding",
-                            "componentData": onboarding_component_data,
-                        }
-                    )
+                    onboarding_data: dict = {
+                        "sessionId": session.id,
+                        "userId": user.id,
+                        "role": "ASSISTANT",
+                        "content": onboarding_result.reply_text,
+                        "tokenCount": 0,
+                        "modelName": "onboarding",
+                    }
+                    if onboarding_components:
+                        onboarding_data["componentData"] = Json(onboarding_components)
+                    await db.chatmessage.create(data=onboarding_data)
 
                     # Stream reply to the client so the user sees progress (word-by-word)
                     reply_text = onboarding_result.reply_text or ""
@@ -1858,24 +1849,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 assistant_review_item_id = context["reviewItemId"]
 
             all_components = query_component_responses + component_responses
-            component_data_for_db = Json(all_components) if all_components else None
+            create_data: dict = {
+                "sessionId": session.id,
+                "userId": user.id,
+                "reviewItemId": assistant_review_item_id,
+                "role": "ASSISTANT",
+                "content": clean_response,
+                "tokenCount": actual_total_tokens,
+                "inputTokens": actual_input_tokens,
+                "outputTokens": actual_output_tokens,
+                "modelName": model_name,
+                "costUsd": cost_usd,
+                "revenueUsd": revenue_usd,
+            }
+            if all_components:
+                create_data["componentData"] = Json(all_components)
 
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": user.id,
-                    "reviewItemId": assistant_review_item_id,
-                    "role": "ASSISTANT",
-                    "content": clean_response,
-                    "tokenCount": actual_total_tokens,
-                    "inputTokens": actual_input_tokens,
-                    "outputTokens": actual_output_tokens,
-                    "modelName": model_name,
-                    "costUsd": cost_usd,
-                    "revenueUsd": revenue_usd,
-                    "componentData": component_data_for_db,
-                }
-            )
+            await db.chatmessage.create(data=create_data)
 
             # 13. Send text response to client
             # Always send the final message to avoid missing responses when

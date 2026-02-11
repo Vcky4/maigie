@@ -312,7 +312,7 @@ model ChatMessage {
   imageUrl String? // <--- ADDED: Field for uploaded image URL`
   duration Float? // Duration in seconds
 
-  componentData Json? // Stores component metadata for interactive UI elements
+  componentData Json?   @default("[]") // Stores component metadata for interactive UI elements
 
   // Usage tracking (Critical for Free Tier limits)
   tokenCount Int @default(0)
