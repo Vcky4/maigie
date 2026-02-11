@@ -270,20 +270,20 @@ async def get_my_chat_messages(
 
     messages = []
     for m in records:
-        messages.append(
-            {
-                "id": m.id,
-                "role": _map_db_role_to_client(str(m.role)),
-                "content": m.content,
-                "reviewItemId": getattr(m, "reviewItemId", None),
-                "timestamp": (
-                    m.createdAt.isoformat()
-                    if hasattr(m.createdAt, "isoformat")
-                    else str(m.createdAt)
-                ),
-                "imageUrl": getattr(m, "imageUrl", None),
-            }
-        )
+        msg = {
+            "id": m.id,
+            "role": _map_db_role_to_client(str(m.role)),
+            "content": m.content,
+            "reviewItemId": getattr(m, "reviewItemId", None),
+            "timestamp": (
+                m.createdAt.isoformat() if hasattr(m.createdAt, "isoformat") else str(m.createdAt)
+            ),
+            "imageUrl": getattr(m, "imageUrl", None),
+        }
+        component_data = getattr(m, "componentData", None)
+        if component_data is not None:
+            msg["componentData"] = component_data
+        messages.append(msg)
 
     return {"sessionId": session_id, "messages": messages}
 
@@ -990,10 +990,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                         clean_greeting = response_text.strip()
                         if clean_greeting:
-                            # Save greeting as assistant message
+                            # Build greeting components before creating message (for persistence)
+                            greeting_components = []
+                            try:
+                                greeting_components = _build_greeting_components(greeting_ctx)
+                            except Exception as comp_err:
+                                logger.warning("Greeting components error: %s", comp_err)
+
+                            # Save greeting as assistant message (with component data)
                             model_name = usage_info.get("model_name", "gemini-3-flash-preview")
                             input_tokens = usage_info.get("input_tokens", 0)
                             output_tokens = usage_info.get("output_tokens", 0)
+                            greeting_component_data = (
+                                Json(greeting_components) if greeting_components else None
+                            )
 
                             await db.chatmessage.create(
                                 data={
@@ -1005,6 +1015,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     "inputTokens": input_tokens,
                                     "outputTokens": output_tokens,
                                     "modelName": model_name,
+                                    "componentData": greeting_component_data,
                                 }
                             )
 
@@ -1012,12 +1023,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             await manager.send_personal_message(clean_greeting, user.id)
 
                             # Send optional components (e.g. pick-up course, schedule, goals)
-                            try:
-                                greeting_components = _build_greeting_components(greeting_ctx)
-                                for comp in greeting_components:
-                                    await manager.send_json(comp, user.id)
-                            except Exception as comp_err:
-                                logger.warning("Greeting components error: %s", comp_err)
+                            for comp in greeting_components:
+                                await manager.send_json(comp, user.id)
                     except Exception as e:
                         logger.error("Greeting generation error: %s", e, exc_info=True)
                         # Fallback: send a simple greeting
@@ -1126,7 +1133,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         progress_callback=send_onboarding_progress,
                     )
 
-                    # Persist assistant reply
+                    # Build onboarding component (for persistence)
+                    onboarding_components = []
+                    if onboarding_result.created_courses:
+                        component = format_list_component_response(
+                            component_type="CourseListMessage",
+                            items=onboarding_result.created_courses,
+                            text="Here are your courses:",
+                        )
+                        onboarding_components = [component]
+                    onboarding_component_data = (
+                        Json(onboarding_components) if onboarding_components else None
+                    )
+
+                    # Persist assistant reply (with component data)
                     await db.chatmessage.create(
                         data={
                             "sessionId": session.id,
@@ -1135,6 +1155,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             "content": onboarding_result.reply_text,
                             "tokenCount": 0,
                             "modelName": "onboarding",
+                            "componentData": onboarding_component_data,
                         }
                     )
 
@@ -1156,14 +1177,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     if not words:
                         await manager.send_personal_message(reply_text, user.id)
 
-                    # Optionally send created courses as a component list for immediate UI rendering
-                    if onboarding_result.created_courses:
-                        component = format_list_component_response(
-                            component_type="CourseListMessage",
-                            items=onboarding_result.created_courses,
-                            text="Here are your courses:",
-                        )
-                        await manager.send_json(component, user.id)
+                    # Send created courses as component for immediate UI rendering
+                    for comp in onboarding_components:
+                        await manager.send_json(comp, user.id)
 
                     continue
                 except Exception as e:
@@ -1830,12 +1846,15 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
             )
 
-            # 12. Save AI Message to DB
+            # 12. Save AI Message to DB (with component data for persistence)
             assistant_review_item_id = None
             if enriched_context and enriched_context.get("reviewItemId"):
                 assistant_review_item_id = enriched_context["reviewItemId"]
             elif context and context.get("reviewItemId"):
                 assistant_review_item_id = context["reviewItemId"]
+
+            all_components = query_component_responses + component_responses
+            component_data_for_db = Json(all_components) if all_components else None
 
             await db.chatmessage.create(
                 data={
@@ -1850,6 +1869,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     "modelName": model_name,
                     "costUsd": cost_usd,
                     "revenueUsd": revenue_usd,
+                    "componentData": component_data_for_db,
                 }
             )
 
