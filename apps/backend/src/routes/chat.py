@@ -928,9 +928,13 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Try to parse as JSON
                 message_data = json.loads(raw_message)
                 if isinstance(message_data, dict):
+                    if message_data.get("type") == "ping":
+                        await manager.send_json({"type": "pong"}, user.id)
+                        continue
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
-                    print(f"📥 Received context from frontend: {context}")
+                    if context:
+                        print(f"📥 Received context from frontend: {context}")
             except (json.JSONDecodeError, AttributeError):
                 # If not JSON, treat as plain text
                 pass
