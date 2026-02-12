@@ -1241,6 +1241,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         onboarding_data["componentData"] = Json(onboarding_components)
                     await db.chatmessage.create(data=onboarding_data)
 
+                    # Send credit limit error first if present (triggers upgrade modal)
+                    if onboarding_result.credit_limit_error:
+                        await manager.send_personal_message(
+                            json.dumps(onboarding_result.credit_limit_error), user.id
+                        )
+
                     # Stream reply to the client so the user sees progress (word-by-word)
                     reply_text = onboarding_result.reply_text or ""
                     words = reply_text.split()
@@ -1728,6 +1734,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         ),
                     }
                 )
+
+                # Send credit limit error to client (for create_course failures from chat/onboarding)
+                if action_type == "create_course" and action_result.get("credit_limit_error"):
+                    error_data = {
+                        "type": "credit_limit_error",
+                        "message": action_result.get("message", "Credit limit exceeded."),
+                        "tier": action_result.get("tier", "FREE"),
+                        "is_daily_limit": action_result.get("is_daily_limit", False),
+                        "show_referral_option": action_result.get("show_referral_option", True),
+                    }
+                    await manager.send_personal_message(json.dumps(error_data), user.id)
+                    continue
 
                 # Send success event for create actions
                 if action_type == "create_course" and action_result.get("status") == "success":
