@@ -1,0 +1,19 @@
+Your weekly boost, {{ name }}
+
+{{ intro_plain }}
+
+{% if tips %}
+This week's tips:
+{% for tip in tips %}
+• {{ tip }}
+{% endfor %}
+{% endif %}
+
+{% if encouragement %}
+{{ encouragement }}
+{% endif %}
+
+Open Maigie: {{ dashboard_url }}
+
+Best regards,
+Maigie

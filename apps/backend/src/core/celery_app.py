@@ -97,6 +97,7 @@ celery_app = create_celery_app()
 # task modules here to make them discoverable without requiring autodiscovery.
 try:
     from ..tasks import course_generation  # noqa: F401
+    from ..tasks import email_notifications  # noqa: F401
     from ..tasks import resource_recommendations  # noqa: F401
     from ..tasks import schedule_generation  # noqa: F401
     from ..tasks import spaced_repetition  # noqa: F401

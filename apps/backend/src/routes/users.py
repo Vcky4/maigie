@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +24,11 @@ class PreferencesUpdate(BaseModel):
     language: str | None = None
     notifications: bool | None = None
     studyGoals: dict | None = None  # Dynamic JSON for study goals
+    # Email notification preferences
+    timezone: str | None = None  # IANA timezone e.g. "America/New_York"
+    emailMorningSchedule: bool | None = None
+    emailScheduleReminder: bool | None = None
+    emailWeeklyTips: bool | None = None
 
 
 @router.put("/preferences", response_model=UserResponse)
@@ -44,6 +49,20 @@ async def update_preferences(preferences: PreferencesUpdate, current_user: Curre
         "language": preferences.language or "en",
         "notifications": (
             preferences.notifications if preferences.notifications is not None else True
+        ),
+        "timezone": preferences.timezone or "UTC",
+        "emailMorningSchedule": (
+            preferences.emailMorningSchedule
+            if preferences.emailMorningSchedule is not None
+            else True
+        ),
+        "emailScheduleReminder": (
+            preferences.emailScheduleReminder
+            if preferences.emailScheduleReminder is not None
+            else True
+        ),
+        "emailWeeklyTips": (
+            preferences.emailWeeklyTips if preferences.emailWeeklyTips is not None else True
         ),
     }
     if "studyGoals" in update_data:

@@ -191,6 +191,12 @@ model UserPreferences {
   language      String  @default("en")
   notifications Boolean @default(true)
   studyGoals    Json?
+
+  // Email notification preferences
+  timezone              String  @default("UTC") // IANA timezone e.g. "America/New_York"
+  emailMorningSchedule  Boolean @default(true)
+  emailScheduleReminder Boolean @default(true)
+  emailWeeklyTips       Boolean @default(true)
 }
 
 // ==========================================
