@@ -1,6 +1,6 @@
 import logging
 from collections import defaultdict
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -24,6 +24,11 @@ class PreferencesUpdate(BaseModel):
     language: str | None = None
     notifications: bool | None = None
     studyGoals: dict | None = None  # Dynamic JSON for study goals
+    # Email notification preferences
+    timezone: str | None = None  # IANA timezone e.g. "America/New_York"
+    emailMorningSchedule: bool | None = None
+    emailScheduleReminder: bool | None = None
+    emailWeeklyTips: bool | None = None
 
 
 @router.put("/preferences", response_model=UserResponse)
@@ -44,6 +49,20 @@ async def update_preferences(preferences: PreferencesUpdate, current_user: Curre
         "language": preferences.language or "en",
         "notifications": (
             preferences.notifications if preferences.notifications is not None else True
+        ),
+        "timezone": preferences.timezone or "UTC",
+        "emailMorningSchedule": (
+            preferences.emailMorningSchedule
+            if preferences.emailMorningSchedule is not None
+            else True
+        ),
+        "emailScheduleReminder": (
+            preferences.emailScheduleReminder
+            if preferences.emailScheduleReminder is not None
+            else True
+        ),
+        "emailWeeklyTips": (
+            preferences.emailWeeklyTips if preferences.emailWeeklyTips is not None else True
         ),
     }
     if "studyGoals" in update_data:
@@ -241,3 +260,32 @@ async def get_usage(
     except Exception as e:
         logger.error(f"Error in get_usage: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch usage data")
+
+
+@router.get("/feature-usage", response_model=dict)
+async def get_feature_usage(
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)] = None,
+):
+    """
+    Get feature usage information for Free tier limits (file uploads, summaries, etc.).
+    """
+    try:
+        from src.services.usage_tracking_service import get_feature_usage as get_feature_usage_info
+
+        user = await db.user.find_unique(where={"id": current_user.id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        file_uploads = await get_feature_usage_info(user, "file_uploads", db_client=db)
+        summary_generations = await get_feature_usage_info(
+            user, "summary_generations", db_client=db
+        )
+
+        return {
+            "file_uploads": file_uploads,
+            "summary_generations": summary_generations,
+        }
+    except Exception as e:
+        logger.error(f"Error in get_feature_usage: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch feature usage data")

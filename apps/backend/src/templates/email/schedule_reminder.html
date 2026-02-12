@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Reminder: {{ schedule_title }} is starting soon</title>
+</head>
+<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+
+    <div style="max-width: 600px; margin: 0;">
+        {% if logo_url %}
+        <div style="margin-bottom: 30px; text-align: center;">
+            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
+        </div>
+        {% endif %}
+
+        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">
+            Reminder: {{ schedule_title }}
+        </h1>
+
+        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
+
+        <p style="margin-bottom: 25px;">
+            {{ reminder_message | safe }}
+        </p>
+
+        <div style="margin-bottom: 25px; padding: 16px; background-color: #fef3c7; border-radius: 8px; border-left: 4px solid #f59e0b;">
+            <p style="margin: 0; font-size: 16px;">
+                <strong>{{ schedule_title }}</strong><br>
+                <span style="color: #64748b;">{{ schedule_time }}</span>
+                {% if schedule_description %}
+                <br><span style="font-size: 14px; color: #64748b;">{{ schedule_description }}</span>
+                {% endif %}
+            </p>
+        </div>
+
+        <div style="margin-bottom: 30px;">
+            <a href="{{ schedule_url }}" style="
+                background-color: #4F46E5;
+                color: #ffffff;
+                display: inline-block;
+                padding: 12px 24px;
+                border-radius: 5px;
+                font-size: 16px;
+                font-weight: bold;
+                text-decoration: none;">
+                Open schedule
+            </a>
+        </div>
+
+        <p style="font-size: 12px; color: #999999; margin-top: 20px; border-top: 1px solid #eeeeee; padding-top: 20px;">
+            Best regards,<br>
+            The {{ app_name }} Team
+        </p>
+    </div>
+
+</body>
+</html>

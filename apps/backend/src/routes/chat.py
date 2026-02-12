@@ -41,6 +41,7 @@ from src.services.llm_service import llm_service
 from src.services.rag_service import rag_service
 from src.services.socket_manager import manager
 from src.services.storage_service import storage_service  # <--- Added
+from src.services.usage_tracking_service import increment_feature_usage
 from src.services.voice_service import voice_service
 from src.utils.exceptions import SubscriptionLimitError
 from src.dependencies import CurrentUser, DBDep
@@ -48,6 +49,44 @@ from src.dependencies import CurrentUser, DBDep
 router = APIRouter()
 db = Prisma()
 logger = logging.getLogger(__name__)
+
+
+def _extract_suggestion(text: str) -> tuple[str, str | None]:
+    """
+    Extract suggestive follow-up (e.g. "Would you like me to...") from AI response.
+    Returns (main_content, suggestion_text). Suggestion is displayed after components.
+    """
+    if not text or not text.strip():
+        return (text, None)
+    text = text.strip()
+    # Phrases that start the suggestion part - find first occurrence
+    suggestion_phrases = [
+        "How does that look?",
+        "How does that look",
+        "All of these are now",
+        "Would you like me to",
+        "Would you like to",
+        "Should I ",
+        "Or should we ",
+    ]
+    idx = -1
+    for phrase in suggestion_phrases:
+        pos = text.lower().find(phrase.lower())
+        if pos >= 0 and (idx < 0 or pos < idx):
+            idx = pos
+    if idx < 0:
+        return (text, None)
+    # Walk back to the start of the paragraph (double newline or start)
+    para_start = text.rfind("\n\n", 0, idx)
+    if para_start >= 0:
+        split_at = para_start
+    else:
+        split_at = idx
+    main_content = text[:split_at].strip()
+    suggestion_text = text[split_at:].strip()
+    if main_content and suggestion_text and len(suggestion_text) > 15:
+        return (main_content, suggestion_text)
+    return (text, None)
 
 
 def _map_db_role_to_client(role: str) -> str:
@@ -113,8 +152,44 @@ async def list_my_chat_sessions(
 async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
     """
     Create a new chat session for the current user.
+    Only creates a new session if there is no existing session with no messages.
     """
-    # Mark other sessions inactive (keeps backward compatibility with WS default behavior)
+    # Check for existing empty session (no messages) - reuse it instead of creating new
+    existing_sessions = await db.chatsession.find_many(
+        where={"userId": current_user.id},
+        order={"updatedAt": "desc"},
+        take=50,
+    )
+    for s in existing_sessions:
+        msg_count = await db.chatmessage.count(where={"sessionId": s.id, "userId": current_user.id})
+        if msg_count == 0:
+            # Found empty session - mark it active and return it
+            await db.chatsession.update_many(
+                where={"userId": current_user.id, "isActive": True},
+                data={"isActive": False},
+            )
+            session = await db.chatsession.update(
+                where={"id": s.id},
+                data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
+            )
+            # Seeding happens in get_messages only; avoids race when multiple createSession calls.
+            return {
+                "id": session.id,
+                "title": session.title,
+                "isActive": bool(session.isActive),
+                "createdAt": (
+                    session.createdAt.isoformat()
+                    if hasattr(session.createdAt, "isoformat")
+                    else str(session.createdAt)
+                ),
+                "updatedAt": (
+                    session.updatedAt.isoformat()
+                    if hasattr(session.updatedAt, "isoformat")
+                    else str(session.updatedAt)
+                ),
+            }
+
+    # No empty session found - create new one
     await db.chatsession.update_many(
         where={"userId": current_user.id, "isActive": True},
         data={"isActive": False},
@@ -123,10 +198,9 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
         data={"userId": current_user.id, "title": "New Chat", "isActive": True}
     )
 
-    # If the user is not onboarded, proactively send the first assistant message
-    # and initialize onboarding state (stored on the user).
-    try:
-        if not getattr(current_user, "isOnboarded", False):
+    # Seeding happens in get_messages only; avoids race when multiple createSession calls.
+    if False:  # Removed seeding - now only in get_messages
+        if False and not getattr(current_user, "isOnboarded", False):
             from src.services.onboarding_service import ensure_onboarding_initialized
 
             await ensure_onboarding_initialized(db, current_user.id)
@@ -142,9 +216,6 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
                     ),
                 }
             )
-    except Exception as e:
-        # Onboarding is best-effort; don't fail session creation.
-        logger.warning("Failed to seed onboarding message: %s", e)
     return {
         "id": session.id,
         "title": session.title,
@@ -183,6 +254,23 @@ async def activate_my_chat_session(
     return {"id": session.id, "isActive": bool(session.isActive)}
 
 
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_chat_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Delete a chat session and all its messages.
+    """
+    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.chatsession.delete(where={"id": session_id})
+    logger.info(f"Deleted chat session {session_id} for user {current_user.id}")
+
+
 @router.get("/sessions/{session_id}/messages", response_model=dict)
 async def get_my_chat_messages(
     session_id: str,
@@ -207,6 +295,37 @@ async def get_my_chat_messages(
     else:
         where["reviewItemId"] = None
 
+    # For non-onboarded users fetching general chat: if session is empty, seed welcome message.
+    # This is the single source of truth - handles createSession reuse, stored session, etc.
+    if not reviewItemId and not getattr(current_user, "isOnboarded", False):
+        msg_count = await db.chatmessage.count(
+            where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
+        )
+        if msg_count == 0:
+            try:
+                from src.services.onboarding_service import ensure_onboarding_initialized
+
+                await ensure_onboarding_initialized(db, current_user.id)
+                # Re-check count before insert to reduce race (another request may have just seeded)
+                msg_count = await db.chatmessage.count(
+                    where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
+                )
+                if msg_count == 0:
+                    await db.chatmessage.create(
+                        data={
+                            "sessionId": session_id,
+                            "userId": current_user.id,
+                            "role": "ASSISTANT",
+                            "content": (
+                                "Welcome! I'm Maigie.\n\n"
+                                "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                                "Reply with `university` or `self-paced`."
+                            ),
+                        }
+                    )
+            except Exception as e:
+                logger.warning("Failed to seed onboarding message in get_messages: %s", e)
+
     # Get latest `take` messages then return in chronological order
     records = await db.chatmessage.find_many(
         where=where,
@@ -217,20 +336,23 @@ async def get_my_chat_messages(
 
     messages = []
     for m in records:
-        messages.append(
-            {
-                "id": m.id,
-                "role": _map_db_role_to_client(str(m.role)),
-                "content": m.content,
-                "reviewItemId": getattr(m, "reviewItemId", None),
-                "timestamp": (
-                    m.createdAt.isoformat()
-                    if hasattr(m.createdAt, "isoformat")
-                    else str(m.createdAt)
-                ),
-                "imageUrl": getattr(m, "imageUrl", None),
-            }
-        )
+        msg = {
+            "id": m.id,
+            "role": _map_db_role_to_client(str(m.role)),
+            "content": m.content,
+            "reviewItemId": getattr(m, "reviewItemId", None),
+            "timestamp": (
+                m.createdAt.isoformat() if hasattr(m.createdAt, "isoformat") else str(m.createdAt)
+            ),
+            "imageUrl": getattr(m, "imageUrl", None),
+        }
+        component_data = getattr(m, "componentData", None)
+        if component_data is not None:
+            msg["componentData"] = component_data
+        suggestion_text = getattr(m, "suggestionText", None)
+        if suggestion_text:
+            msg["suggestionText"] = suggestion_text
+        messages.append(msg)
 
     return {"sessionId": session_id, "messages": messages}
 
@@ -875,9 +997,13 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Try to parse as JSON
                 message_data = json.loads(raw_message)
                 if isinstance(message_data, dict):
+                    if message_data.get("type") == "ping":
+                        await manager.send_json({"type": "pong"}, user.id)
+                        continue
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
-                    print(f"📥 Received context from frontend: {context}")
+                    if context:
+                        print(f"📥 Received context from frontend: {context}")
             except (json.JSONDecodeError, AttributeError):
                 # If not JSON, treat as plain text
                 pass
@@ -937,34 +1063,37 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
                         clean_greeting = response_text.strip()
                         if clean_greeting:
-                            # Save greeting as assistant message
+                            # Build greeting components before creating message (for persistence)
+                            greeting_components = []
+                            try:
+                                greeting_components = _build_greeting_components(greeting_ctx)
+                            except Exception as comp_err:
+                                logger.warning("Greeting components error: %s", comp_err)
+
+                            # Save greeting as assistant message (with component data)
                             model_name = usage_info.get("model_name", "gemini-3-flash-preview")
                             input_tokens = usage_info.get("input_tokens", 0)
                             output_tokens = usage_info.get("output_tokens", 0)
-
-                            await db.chatmessage.create(
-                                data={
-                                    "sessionId": session.id,
-                                    "userId": user.id,
-                                    "role": "ASSISTANT",
-                                    "content": clean_greeting,
-                                    "tokenCount": input_tokens + output_tokens,
-                                    "inputTokens": input_tokens,
-                                    "outputTokens": output_tokens,
-                                    "modelName": model_name,
-                                }
-                            )
+                            greeting_data: dict = {
+                                "sessionId": session.id,
+                                "userId": user.id,
+                                "role": "ASSISTANT",
+                                "content": clean_greeting,
+                                "tokenCount": input_tokens + output_tokens,
+                                "inputTokens": input_tokens,
+                                "outputTokens": output_tokens,
+                                "modelName": model_name,
+                            }
+                            if greeting_components:
+                                greeting_data["componentData"] = Json(greeting_components)
+                            await db.chatmessage.create(data=greeting_data)
 
                             # Send final plain-text message (deduped by frontend)
                             await manager.send_personal_message(clean_greeting, user.id)
 
                             # Send optional components (e.g. pick-up course, schedule, goals)
-                            try:
-                                greeting_components = _build_greeting_components(greeting_ctx)
-                                for comp in greeting_components:
-                                    await manager.send_json(comp, user.id)
-                            except Exception as comp_err:
-                                logger.warning("Greeting components error: %s", comp_err)
+                            for comp in greeting_components:
+                                await manager.send_json(comp, user.id)
                     except Exception as e:
                         logger.error("Greeting generation error: %s", e, exc_info=True)
                         # Fallback: send a simple greeting
@@ -1073,17 +1202,32 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         progress_callback=send_onboarding_progress,
                     )
 
-                    # Persist assistant reply
-                    await db.chatmessage.create(
-                        data={
-                            "sessionId": session.id,
-                            "userId": user.id,
-                            "role": "ASSISTANT",
-                            "content": onboarding_result.reply_text,
-                            "tokenCount": 0,
-                            "modelName": "onboarding",
-                        }
-                    )
+                    # Build onboarding component (for persistence)
+                    onboarding_components = []
+                    if onboarding_result.created_courses:
+                        component = format_list_component_response(
+                            component_type="CourseListMessage",
+                            items=onboarding_result.created_courses,
+                            text="Here are your courses:",
+                        )
+                        onboarding_components = [component]
+                    onboarding_data: dict = {
+                        "sessionId": session.id,
+                        "userId": user.id,
+                        "role": "ASSISTANT",
+                        "content": onboarding_result.reply_text,
+                        "tokenCount": 0,
+                        "modelName": "onboarding",
+                    }
+                    if onboarding_components:
+                        onboarding_data["componentData"] = Json(onboarding_components)
+                    await db.chatmessage.create(data=onboarding_data)
+
+                    # Send credit limit error first if present (triggers upgrade modal)
+                    if onboarding_result.credit_limit_error:
+                        await manager.send_personal_message(
+                            json.dumps(onboarding_result.credit_limit_error), user.id
+                        )
 
                     # Stream reply to the client so the user sees progress (word-by-word)
                     reply_text = onboarding_result.reply_text or ""
@@ -1103,14 +1247,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     if not words:
                         await manager.send_personal_message(reply_text, user.id)
 
-                    # Optionally send created courses as a component list for immediate UI rendering
-                    if onboarding_result.created_courses:
-                        component = format_list_component_response(
-                            component_type="CourseListMessage",
-                            items=onboarding_result.created_courses,
-                            text="Here are your courses:",
-                        )
-                        await manager.send_json(component, user.id)
+                    # Send created courses as component for immediate UI rendering
+                    for comp in onboarding_components:
+                        await manager.send_json(comp, user.id)
 
                     continue
                 except Exception as e:
@@ -1578,6 +1717,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     }
                 )
 
+                # Send credit limit error to client (for create_course failures from chat/onboarding)
+                if action_type == "create_course" and action_result.get("credit_limit_error"):
+                    error_data = {
+                        "type": "credit_limit_error",
+                        "message": action_result.get("message", "Credit limit exceeded."),
+                        "tier": action_result.get("tier", "FREE"),
+                        "is_daily_limit": action_result.get("is_daily_limit", False),
+                        "show_referral_option": action_result.get("show_referral_option", True),
+                    }
+                    await manager.send_personal_message(json.dumps(error_data), user.id)
+                    continue
+
                 # Send success event for create actions
                 if action_type == "create_course" and action_result.get("status") == "success":
                     course_id = action_result.get("course_id")
@@ -1777,40 +1928,59 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_tier=str(user_obj.tier) if user_obj.tier else "FREE",
             )
 
-            # 12. Save AI Message to DB
+            # 12. Save AI Message to DB (with component data for persistence)
             assistant_review_item_id = None
             if enriched_context and enriched_context.get("reviewItemId"):
                 assistant_review_item_id = enriched_context["reviewItemId"]
             elif context and context.get("reviewItemId"):
                 assistant_review_item_id = context["reviewItemId"]
 
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": user.id,
-                    "reviewItemId": assistant_review_item_id,
-                    "role": "ASSISTANT",
-                    "content": clean_response,
-                    "tokenCount": actual_total_tokens,
-                    "inputTokens": actual_input_tokens,
-                    "outputTokens": actual_output_tokens,
-                    "modelName": model_name,
-                    "costUsd": cost_usd,
-                    "revenueUsd": revenue_usd,
-                }
-            )
+            all_components = query_component_responses + component_responses
+            # When we have components, extract suggestion so it displays after them
+            main_content = clean_response
+            suggestion_text = None
+            if all_components and clean_response:
+                main_content, suggestion_text = _extract_suggestion(clean_response)
 
-            # 13. Send text response to client
-            # Always send the final message to avoid missing responses when
-            # clients don't process streaming events.
-            if clean_response:
-                await manager.send_personal_message(clean_response, user.id)
+            create_data: dict = {
+                "sessionId": session.id,
+                "userId": user.id,
+                "reviewItemId": assistant_review_item_id,
+                "role": "ASSISTANT",
+                "content": main_content,
+                "tokenCount": actual_total_tokens,
+                "inputTokens": actual_input_tokens,
+                "outputTokens": actual_output_tokens,
+                "modelName": model_name,
+                "costUsd": cost_usd,
+                "revenueUsd": revenue_usd,
+            }
+            if all_components:
+                create_data["componentData"] = Json(all_components)
+            if suggestion_text:
+                create_data["suggestionText"] = suggestion_text
+
+            await db.chatmessage.create(data=create_data)
+
+            # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
+            if suggestion_text:
+                # Split response: send structured payload so frontend updates last message
+                await manager.send_json(
+                    {
+                        "type": "assistant_final",
+                        "content": main_content,
+                        "suggestionText": suggestion_text,
+                    },
+                    user.id,
+                )
+            elif main_content:
+                await manager.send_personal_message(main_content, user.id)
 
             # 14. Send component responses (queries and actions)
             for component_response in query_component_responses + component_responses:
-                # component_response already has the correct format from format_list_component_response
-                # or format_action_component_response
                 await manager.send_json(component_response, user.id)
+
+            # 15. When split, suggestion is in assistant_final; no separate send needed
 
             continue  # Skip to next message
 
@@ -1863,6 +2033,13 @@ async def upload_chat_image(
         )
 
     try:
+        # Check file upload limit for FREE tier users
+        from src.core.database import db
+
+        user_obj = await db.user.find_unique(where={"id": user.id})
+        if user_obj:
+            await increment_feature_usage(user_obj, "file_uploads", db_client=db)
+
         # Upload to BunnyCDN
         upload_result = await storage_service.upload_file(file, path="chat-images")
         image_url = upload_result["url"]
@@ -1871,6 +2048,8 @@ async def upload_chat_image(
 
         return {"url": image_url, "filename": upload_result["filename"]}
 
+    except SubscriptionLimitError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
     except Exception as e:
         print(f"❌ Error in /chat/image/upload: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

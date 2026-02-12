@@ -1,0 +1,15 @@
+Good morning, {{ name }}! {{ date_label }}
+
+{{ intro_plain }}
+
+{% if schedules %}
+Today's schedule:
+{% for s in schedules %}
+- {{ s.title }} at {{ s.time }}
+{% endfor %}
+{% endif %}
+
+View your full schedule: {{ schedule_url }}
+
+Best regards,
+The {{ app_name }} Team
