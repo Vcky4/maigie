@@ -172,6 +172,26 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
                 where={"id": s.id},
                 data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
             )
+            # Seed onboarding welcome for non-onboarded users (same as new session path)
+            try:
+                if not getattr(current_user, "isOnboarded", False):
+                    from src.services.onboarding_service import ensure_onboarding_initialized
+
+                    await ensure_onboarding_initialized(db, current_user.id)
+                    await db.chatmessage.create(
+                        data={
+                            "sessionId": session.id,
+                            "userId": current_user.id,
+                            "role": "ASSISTANT",
+                            "content": (
+                                "Welcome! I'm Maigie.\n\n"
+                                "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                                "Reply with `university` or `self-paced`."
+                            ),
+                        }
+                    )
+            except Exception as e:
+                logger.warning("Failed to seed onboarding message (reused session): %s", e)
             return {
                 "id": session.id,
                 "title": session.title,
@@ -297,6 +317,32 @@ async def get_my_chat_messages(
         where["reviewItemId"] = reviewItemId
     else:
         where["reviewItemId"] = None
+
+    # For non-onboarded users fetching general chat: if session is empty, seed welcome message.
+    # This is the single source of truth - handles createSession reuse, stored session, etc.
+    if not reviewItemId and not getattr(current_user, "isOnboarded", False):
+        msg_count = await db.chatmessage.count(
+            where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
+        )
+        if msg_count == 0:
+            try:
+                from src.services.onboarding_service import ensure_onboarding_initialized
+
+                await ensure_onboarding_initialized(db, current_user.id)
+                await db.chatmessage.create(
+                    data={
+                        "sessionId": session_id,
+                        "userId": current_user.id,
+                        "role": "ASSISTANT",
+                        "content": (
+                            "Welcome! I'm Maigie.\n\n"
+                            "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                            "Reply with `university` or `self-paced`."
+                        ),
+                    }
+                )
+            except Exception as e:
+                logger.warning("Failed to seed onboarding message in get_messages: %s", e)
 
     # Get latest `take` messages then return in chronological order
     records = await db.chatmessage.find_many(
