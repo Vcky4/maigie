@@ -51,6 +51,44 @@ db = Prisma()
 logger = logging.getLogger(__name__)
 
 
+def _extract_suggestion(text: str) -> tuple[str, str | None]:
+    """
+    Extract suggestive follow-up (e.g. "Would you like me to...") from AI response.
+    Returns (main_content, suggestion_text). Suggestion is displayed after components.
+    """
+    if not text or not text.strip():
+        return (text, None)
+    text = text.strip()
+    # Phrases that start the suggestion part - find first occurrence
+    suggestion_phrases = [
+        "How does that look?",
+        "How does that look",
+        "All of these are now",
+        "Would you like me to",
+        "Would you like to",
+        "Should I ",
+        "Or should we ",
+    ]
+    idx = -1
+    for phrase in suggestion_phrases:
+        pos = text.lower().find(phrase.lower())
+        if pos >= 0 and (idx < 0 or pos < idx):
+            idx = pos
+    if idx < 0:
+        return (text, None)
+    # Walk back to the start of the paragraph (double newline or start)
+    para_start = text.rfind("\n\n", 0, idx)
+    if para_start >= 0:
+        split_at = para_start
+    else:
+        split_at = idx
+    main_content = text[:split_at].strip()
+    suggestion_text = text[split_at:].strip()
+    if main_content and suggestion_text and len(suggestion_text) > 15:
+        return (main_content, suggestion_text)
+    return (text, None)
+
+
 def _map_db_role_to_client(role: str) -> str:
     if role == "USER":
         return "user"
@@ -283,6 +321,9 @@ async def get_my_chat_messages(
         component_data = getattr(m, "componentData", None)
         if component_data is not None:
             msg["componentData"] = component_data
+        suggestion_text = getattr(m, "suggestionText", None)
+        if suggestion_text:
+            msg["suggestionText"] = suggestion_text
         messages.append(msg)
 
     return {"sessionId": session_id, "messages": messages}
@@ -1849,12 +1890,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 assistant_review_item_id = context["reviewItemId"]
 
             all_components = query_component_responses + component_responses
+            # When we have components, extract suggestion so it displays after them
+            main_content = clean_response
+            suggestion_text = None
+            if all_components and clean_response:
+                main_content, suggestion_text = _extract_suggestion(clean_response)
+
             create_data: dict = {
                 "sessionId": session.id,
                 "userId": user.id,
                 "reviewItemId": assistant_review_item_id,
                 "role": "ASSISTANT",
-                "content": clean_response,
+                "content": main_content,
                 "tokenCount": actual_total_tokens,
                 "inputTokens": actual_input_tokens,
                 "outputTokens": actual_output_tokens,
@@ -1864,20 +1911,30 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             }
             if all_components:
                 create_data["componentData"] = Json(all_components)
+            if suggestion_text:
+                create_data["suggestionText"] = suggestion_text
 
             await db.chatmessage.create(data=create_data)
 
-            # 13. Send text response to client
-            # Always send the final message to avoid missing responses when
-            # clients don't process streaming events.
-            if clean_response:
-                await manager.send_personal_message(clean_response, user.id)
+            # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
+            if suggestion_text:
+                # Split response: send structured payload so frontend updates last message
+                await manager.send_json(
+                    {
+                        "type": "assistant_final",
+                        "content": main_content,
+                        "suggestionText": suggestion_text,
+                    },
+                    user.id,
+                )
+            elif main_content:
+                await manager.send_personal_message(main_content, user.id)
 
             # 14. Send component responses (queries and actions)
             for component_response in query_component_responses + component_responses:
-                # component_response already has the correct format from format_list_component_response
-                # or format_action_component_response
                 await manager.send_json(component_response, user.id)
+
+            # 15. When split, suggestion is in assistant_final; no separate send needed
 
             continue  # Skip to next message
 

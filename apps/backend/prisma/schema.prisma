@@ -307,6 +307,9 @@ model ChatMessage {
   role    ChatRole // USER, ASSISTANT, SYSTEM
   content String // The Markdown text response
 
+  // Suggestion text (e.g. "Would you like me to...") - displayed after components
+  suggestionText String?
+
   // Voice features
   audioUrl String? // S3 URL if this was a voice message
   imageUrl String? // <--- ADDED: Field for uploaded image URL`
