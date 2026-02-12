@@ -63,6 +63,16 @@ class UserPreferencesResponse(BaseModel):
     study_goals: dict | None = Field(
         None, validation_alias="studyGoals", serialization_alias="studyGoals"
     )
+    timezone: str = "UTC"
+    email_morning_schedule: bool = Field(
+        True, validation_alias="emailMorningSchedule", serialization_alias="emailMorningSchedule"
+    )
+    email_schedule_reminder: bool = Field(
+        True, validation_alias="emailScheduleReminder", serialization_alias="emailScheduleReminder"
+    )
+    email_weekly_tips: bool = Field(
+        True, validation_alias="emailWeeklyTips", serialization_alias="emailWeeklyTips"
+    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

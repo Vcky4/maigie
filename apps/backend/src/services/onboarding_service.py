@@ -216,22 +216,44 @@ async def save_onboarding_state(db, user_id: str, state: dict[str, Any]) -> None
     study_goals["onboarding"] = state
 
     # Upsert preferences and set studyGoals.
-    await db.user.update(
-        where={"id": user_id},
-        data={
-            "preferences": {
-                "upsert": {
-                    "create": {
-                        "theme": "light",
-                        "language": "en",
-                        "notifications": True,
-                        "studyGoals": Json(study_goals),
-                    },
-                    "update": {"studyGoals": Json(study_goals)},
+    try:
+        await db.user.update(
+            where={"id": user_id},
+            data={
+                "preferences": {
+                    "upsert": {
+                        "create": {
+                            "theme": "light",
+                            "language": "en",
+                            "notifications": True,
+                            "studyGoals": Json(study_goals),
+                        },
+                        "update": {"studyGoals": Json(study_goals)},
+                    }
                 }
-            }
-        },
-    )
+            },
+        )
+    except Exception as e:
+        # P2002 = unique constraint (UserPreferences.userId) when parallel creates race
+        if getattr(e, "code", None) == "P2002":
+            await db.user.update(
+                where={"id": user_id},
+                data={
+                    "preferences": {
+                        "upsert": {
+                            "create": {
+                                "theme": "light",
+                                "language": "en",
+                                "notifications": True,
+                                "studyGoals": Json(study_goals),
+                            },
+                            "update": {"studyGoals": Json(study_goals)},
+                        }
+                    }
+                },
+            )
+        else:
+            raise
 
 
 async def ensure_onboarding_initialized(db, user_id: str) -> dict[str, Any]:
@@ -246,6 +268,7 @@ class OnboardingResult:
     reply_text: str
     is_complete: bool = False
     created_courses: list[dict[str, Any]] | None = None  # lightweight course list
+    credit_limit_error: dict | None = None  # when set, frontend shows upgrade modal
 
 
 def _welcome_prompt() -> str:
@@ -338,12 +361,12 @@ async def handle_onboarding_message(
         await save_onboarding_state(db, user_id, state)
         return OnboardingResult(
             reply_text=(
-                "Awesome. List your courses for this term/semester (one per line or comma-separated).\n"
-                "You can also upload a screenshot/photo of your course list.\n"
+                "Awesome. Tell me your **first 2 courses** you're struggling with most "
+                "(one per line or comma-separated).\n"
+                "You can also upload a screenshot/photo of your course list — I'll pick the top 2.\n"
                 "Example:\n"
                 "- Calculus\n"
-                "- Data Structures\n"
-                "- Operating Systems"
+                "- Data Structures"
             ),
             is_complete=False,
         )
@@ -360,14 +383,17 @@ async def handle_onboarding_message(
         await save_onboarding_state(db, user_id, state)
         return OnboardingResult(
             reply_text=(
-                "Nice. List the courses/topics you want to study (one per line or comma-separated)."
-                " You can also upload a screenshot/photo."
+                "Nice. What's the **one topic or course** you want to start with?\n"
+                "Example: `Data Structures` or `Machine Learning`\n"
+                "You can also upload a screenshot/photo."
             ),
             is_complete=False,
         )
 
     if stage == "courses":
-        courses = _parse_list_items(text, max_items=10)
+        # Free tier: university max 2 AI courses, self-paced max 1 (uses AI outline)
+        max_courses = 2 if learner_type == "university" else 1
+        courses = _parse_list_items(text, max_items=max_courses)
         first_image = _pick_first_image_url(image_url)
         # If the user sent an image and their text looks like a placeholder (e.g. "here"),
         # prefer extracting from the image.
@@ -379,16 +405,18 @@ async def handle_onboarding_message(
             if progress_callback:
                 await progress_callback("Reading your course list...")
             try:
-                courses = await _extract_courses_from_image(first_image)
+                extracted = await _extract_courses_from_image(first_image)
+                courses = extracted[:max_courses]
             except Exception:
                 courses = []
         if courses and progress_callback:
             await progress_callback("Setting up your courses...")
         if not courses:
-            return OnboardingResult(
-                reply_text="Please list at least 1 course (one per line or comma-separated).",
-                is_complete=False,
-            )
+            if learner_type == "university":
+                reply = "Please list 1 or 2 courses you're struggling with (one per line or comma-separated)."
+            else:
+                reply = "Please tell me the one topic or course you want to start with."
+            return OnboardingResult(reply_text=reply, is_complete=False)
         state["courses"] = courses
         state["stage"] = "creating"
         await save_onboarding_state(db, user_id, state)
@@ -472,6 +500,21 @@ async def handle_onboarding_message(
                     },
                     user_id,
                 )
+                if result and result.get("credit_limit_error"):
+                    # Surface limit error to user and stop creating more
+                    error_payload = {
+                        "type": "credit_limit_error",
+                        "message": result.get("message", "Credit limit reached. Upgrade for more."),
+                        "tier": result.get("tier", "FREE"),
+                        "is_daily_limit": result.get("is_daily_limit", False),
+                        "show_referral_option": result.get("show_referral_option", True),
+                    }
+                    return OnboardingResult(
+                        reply_text=error_payload["message"],
+                        is_complete=False,
+                        created_courses=created_courses_light,
+                        credit_limit_error=error_payload,
+                    )
                 if result and result.get("status") == "success":
                     cid = result.get("courseId") or result.get("course_id")
                     if cid:

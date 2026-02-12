@@ -1,0 +1,16 @@
+Reminder: {{ schedule_title }}
+
+Hi {{ name }},
+
+{{ reminder_message_plain }}
+
+{{ schedule_title }}
+{{ schedule_time }}
+{% if schedule_description %}
+{{ schedule_description }}
+{% endif %}
+
+Open schedule: {{ schedule_url }}
+
+Best regards,
+The {{ app_name }} Team

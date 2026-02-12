@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Your schedule for today</title>
+</head>
+<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+
+    <div style="max-width: 600px; margin: 0;">
+        {% if logo_url %}
+        <div style="margin-bottom: 30px; text-align: center;">
+            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
+        </div>
+        {% endif %}
+
+        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">
+            Good morning, {{ name }}! {{ date_label }}
+        </h1>
+
+        <div style="margin-bottom: 25px;">
+            {{ intro | safe }}
+        </div>
+
+        {% if schedules %}
+        <div style="margin-bottom: 25px; padding: 16px; background-color: #f8fafc; border-radius: 8px; border-left: 4px solid #4F46E5;">
+            <h2 style="color: #222222; font-size: 18px; font-weight: bold; margin-bottom: 12px;">
+                Today's schedule
+            </h2>
+            <ul style="list-style: none; padding: 0; margin: 0;">
+                {% for s in schedules %}
+                <li style="padding: 10px 0; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: flex-start;">
+                    <span style="font-weight: 500;">{{ s.title }}</span>
+                    <span style="color: #64748b; font-size: 14px;">{{ s.time }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div style="margin-bottom: 30px;">
+            <a href="{{ schedule_url }}" style="
+                background-color: #4F46E5;
+                color: #ffffff;
+                display: inline-block;
+                padding: 12px 24px;
+                border-radius: 5px;
+                font-size: 16px;
+                font-weight: bold;
+                text-decoration: none;">
+                View full schedule
+            </a>
+        </div>
+
+        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
+            If you have any questions, feel free to reply to this email.
+        </p>
+
+        <p style="font-size: 12px; color: #999999; margin-top: 20px; border-top: 1px solid #eeeeee; padding-top: 20px;">
+            Best regards,<br>
+            The {{ app_name }} Team
+        </p>
+    </div>
+
+</body>
+</html>

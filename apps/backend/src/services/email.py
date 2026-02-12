@@ -368,3 +368,156 @@ async def send_bulk_email(
     except Exception as e:
         logger.error(f"Failed to send bulk email to {email}: {e}")
         raise
+
+
+def _get_frontend_base_url() -> str:
+    """Base URL for frontend links (schedule, dashboard)."""
+    return (settings.FRONTEND_BASE_URL or settings.FRONTEND_URL or "http://localhost:4200").rstrip(
+        "/"
+    )
+
+
+async def send_morning_schedule_email(
+    email: EmailStr,
+    name: str | None,
+    subject: str,
+    template_data: dict,
+):
+    """
+    Sends the morning schedule digest email using the dedicated template.
+    """
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping morning schedule email to {email}")
+        return
+
+    base_data = {
+        "name": name or "there",
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+        "schedule_url": f"{_get_frontend_base_url()}/schedule",
+        **template_data,
+    }
+
+    html_template = jinja_env.get_template("morning_schedule.html")
+    try:
+        text_template = jinja_env.get_template("morning_schedule.txt")
+        text_body = text_template.render(**base_data)
+    except Exception:
+        text_body = f"Your schedule for today. View at: {base_data['schedule_url']}"
+
+    html_body = html_template.render(**base_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"morning-schedule-{email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(email),
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Morning schedule email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send morning schedule email to {email}: {e}")
+        raise
+
+
+async def send_schedule_reminder_email(
+    email: EmailStr,
+    name: str | None,
+    subject: str,
+    template_data: dict,
+):
+    """Sends a schedule reminder email (15 minutes before start)."""
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping schedule reminder to {email}")
+        return
+
+    base_data = {
+        "name": name or "there",
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+        "schedule_url": f"{_get_frontend_base_url()}/schedule",
+        **template_data,
+    }
+
+    html_template = jinja_env.get_template("schedule_reminder.html")
+    try:
+        text_template = jinja_env.get_template("schedule_reminder.txt")
+        text_body = text_template.render(**base_data)
+    except Exception:
+        text_body = f"Reminder: {template_data.get('schedule_title', 'Your session')} starts soon. {base_data['schedule_url']}"
+
+    html_body = html_template.render(**base_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"schedule-reminder-{email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(email),
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Schedule reminder email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send schedule reminder to {email}: {e}")
+        raise
+
+
+async def send_weekly_tips_email(
+    email: EmailStr,
+    name: str | None,
+    subject: str,
+    template_data: dict,
+):
+    """Sends the weekly encouragement/tips email."""
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping weekly tips email to {email}")
+        return
+
+    base_data = {
+        "name": name or "there",
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+        "dashboard_url": f"{_get_frontend_base_url()}/dashboard",
+        **template_data,
+    }
+
+    html_template = jinja_env.get_template("weekly_tips.html")
+    try:
+        text_template = jinja_env.get_template("weekly_tips.txt")
+        text_body = text_template.render(**base_data)
+    except Exception:
+        text_body = f"Weekly tips. Open Maigie: {base_data['dashboard_url']}"
+
+    html_body = html_template.render(**base_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"weekly-tips-{email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(email),
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Weekly tips email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send weekly tips to {email}: {e}")
+        raise

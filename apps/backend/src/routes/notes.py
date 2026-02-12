@@ -342,6 +342,15 @@ async def add_summary_to_note(
         )
 
     try:
+        # Check summary generation limit for FREE tier users
+        from src.services.usage_tracking_service import increment_feature_usage
+        from src.utils.exceptions import SubscriptionLimitError
+
+        try:
+            await increment_feature_usage(current_user, "summary_generations", db_client=db)
+        except SubscriptionLimitError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
+
         # Strip any action blocks from content before summarizing
         cleaned_content = re.sub(
             r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
