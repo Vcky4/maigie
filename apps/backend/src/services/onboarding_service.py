@@ -216,22 +216,44 @@ async def save_onboarding_state(db, user_id: str, state: dict[str, Any]) -> None
     study_goals["onboarding"] = state
 
     # Upsert preferences and set studyGoals.
-    await db.user.update(
-        where={"id": user_id},
-        data={
-            "preferences": {
-                "upsert": {
-                    "create": {
-                        "theme": "light",
-                        "language": "en",
-                        "notifications": True,
-                        "studyGoals": Json(study_goals),
-                    },
-                    "update": {"studyGoals": Json(study_goals)},
+    try:
+        await db.user.update(
+            where={"id": user_id},
+            data={
+                "preferences": {
+                    "upsert": {
+                        "create": {
+                            "theme": "light",
+                            "language": "en",
+                            "notifications": True,
+                            "studyGoals": Json(study_goals),
+                        },
+                        "update": {"studyGoals": Json(study_goals)},
+                    }
                 }
-            }
-        },
-    )
+            },
+        )
+    except Exception as e:
+        # P2002 = unique constraint (UserPreferences.userId) when parallel creates race
+        if getattr(e, "code", None) == "P2002":
+            await db.user.update(
+                where={"id": user_id},
+                data={
+                    "preferences": {
+                        "upsert": {
+                            "create": {
+                                "theme": "light",
+                                "language": "en",
+                                "notifications": True,
+                                "studyGoals": Json(study_goals),
+                            },
+                            "update": {"studyGoals": Json(study_goals)},
+                        }
+                    }
+                },
+            )
+        else:
+            raise
 
 
 async def ensure_onboarding_initialized(db, user_id: str) -> dict[str, Any]:

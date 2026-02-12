@@ -172,26 +172,7 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
                 where={"id": s.id},
                 data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
             )
-            # Seed onboarding welcome for non-onboarded users (same as new session path)
-            try:
-                if not getattr(current_user, "isOnboarded", False):
-                    from src.services.onboarding_service import ensure_onboarding_initialized
-
-                    await ensure_onboarding_initialized(db, current_user.id)
-                    await db.chatmessage.create(
-                        data={
-                            "sessionId": session.id,
-                            "userId": current_user.id,
-                            "role": "ASSISTANT",
-                            "content": (
-                                "Welcome! I'm Maigie.\n\n"
-                                "Before we start: are you a **university student** or a **self‑paced learner**?\n"
-                                "Reply with `university` or `self-paced`."
-                            ),
-                        }
-                    )
-            except Exception as e:
-                logger.warning("Failed to seed onboarding message (reused session): %s", e)
+            # Seeding happens in get_messages only; avoids race when multiple createSession calls.
             return {
                 "id": session.id,
                 "title": session.title,
@@ -217,10 +198,9 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
         data={"userId": current_user.id, "title": "New Chat", "isActive": True}
     )
 
-    # If the user is not onboarded, proactively send the first assistant message
-    # and initialize onboarding state (stored on the user).
-    try:
-        if not getattr(current_user, "isOnboarded", False):
+    # Seeding happens in get_messages only; avoids race when multiple createSession calls.
+    if False:  # Removed seeding - now only in get_messages
+        if False and not getattr(current_user, "isOnboarded", False):
             from src.services.onboarding_service import ensure_onboarding_initialized
 
             await ensure_onboarding_initialized(db, current_user.id)
@@ -236,9 +216,6 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
                     ),
                 }
             )
-    except Exception as e:
-        # Onboarding is best-effort; don't fail session creation.
-        logger.warning("Failed to seed onboarding message: %s", e)
     return {
         "id": session.id,
         "title": session.title,
@@ -329,18 +306,23 @@ async def get_my_chat_messages(
                 from src.services.onboarding_service import ensure_onboarding_initialized
 
                 await ensure_onboarding_initialized(db, current_user.id)
-                await db.chatmessage.create(
-                    data={
-                        "sessionId": session_id,
-                        "userId": current_user.id,
-                        "role": "ASSISTANT",
-                        "content": (
-                            "Welcome! I'm Maigie.\n\n"
-                            "Before we start: are you a **university student** or a **self‑paced learner**?\n"
-                            "Reply with `university` or `self-paced`."
-                        ),
-                    }
+                # Re-check count before insert to reduce race (another request may have just seeded)
+                msg_count = await db.chatmessage.count(
+                    where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
                 )
+                if msg_count == 0:
+                    await db.chatmessage.create(
+                        data={
+                            "sessionId": session_id,
+                            "userId": current_user.id,
+                            "role": "ASSISTANT",
+                            "content": (
+                                "Welcome! I'm Maigie.\n\n"
+                                "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                                "Reply with `university` or `self-paced`."
+                            ),
+                        }
+                    )
             except Exception as e:
                 logger.warning("Failed to seed onboarding message in get_messages: %s", e)
 
