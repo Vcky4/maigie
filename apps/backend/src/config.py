@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     BUNNY_STORAGE_ZONE: str | None = None
     BUNNY_CDN_HOSTNAME: str = "cdn.maigie.com"
 
+    # --- ElevenLabs (Smart AI Tutor, Exam Prep voice) ---
+    ELEVENLABS_API_KEY: str | None = None
+    ELEVENLABS_VOICE_ID: str = "56AoDkrOh6qfVPDXZ7Pt"  # Default voice
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",

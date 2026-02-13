@@ -158,6 +158,7 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -226,7 +227,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
 
       - name: Load Image and Deploy Preview
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -295,6 +296,7 @@ jobs:
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
             
             cd /opt/maigie/previews
             
@@ -815,6 +817,7 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -854,7 +857,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Production
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -1056,6 +1059,7 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1102,7 +1106,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Staging
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -1170,6 +1174,7 @@ jobs:
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
             
             cd /opt/maigie/staging
             
