@@ -262,7 +262,7 @@ async def gemini_live_websocket(
                                 {
                                     "type": "error",
                                     "session_id": msg_session_id,
-                                    "message": "Insufficient credits. Upgrade or wait for your limit to reset to use voice study.",
+                                    "message": "Insufficient credits. Start a free trial or wait for your limit to reset to use voice study.",
                                 }
                             )
                         )

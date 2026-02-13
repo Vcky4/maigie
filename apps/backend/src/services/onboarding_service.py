@@ -436,11 +436,11 @@ async def handle_onboarding_message(
             to_create_count = sum(1 for t in courses if _normalize_text(t) not in existing_by_norm)
             if current_count + to_create_count > 2:
                 return OnboardingResult(
-                    reply_text="You can only create 2 courses in your current plan. Upgrade to Premium to create unlimited courses.",
+                    reply_text="You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
                     is_complete=False,
                     credit_limit_error={
                         "type": "credit_limit_error",
-                        "message": "You can only create 2 courses in your current plan. Upgrade to Premium to create unlimited courses.",
+                        "message": "You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
                         "tier": tier,
                         "is_daily_limit": False,
                         "show_referral_option": True,
@@ -523,7 +523,9 @@ async def handle_onboarding_message(
                     # Surface limit error to user and stop creating more
                     error_payload = {
                         "type": "credit_limit_error",
-                        "message": result.get("message", "Credit limit reached. Upgrade for more."),
+                        "message": result.get(
+                            "message", "Credit limit reached. Start a free trial for more."
+                        ),
                         "tier": result.get("tier", "FREE"),
                         "is_daily_limit": result.get("is_daily_limit", False),
                         "show_referral_option": result.get("show_referral_option", True),

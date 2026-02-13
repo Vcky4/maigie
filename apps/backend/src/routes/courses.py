@@ -272,7 +272,7 @@ async def generate_ai_course(
         if course_count >= 2:
             raise SubscriptionLimitError(
                 message="You can only create 2 courses in your current plan.",
-                detail="Upgrade to Premium to create unlimited courses.",
+                detail="Start a free trial to create unlimited courses.",
             )
 
     # 2. Check and consume credits for AI course generation
@@ -561,7 +561,7 @@ async def create_course(
         if course_count >= 2:
             raise SubscriptionLimitError(
                 message="You can only create 2 courses in your current plan.",
-                detail="Upgrade to Premium to create unlimited courses.",
+                detail="Start a free trial to create unlimited courses.",
             )
 
     # Create the course

@@ -251,7 +251,15 @@ async def create_user(
         )
 
     # Validate tier
-    valid_tiers = ["FREE", "PREMIUM_MONTHLY", "PREMIUM_YEARLY"]
+    valid_tiers = [
+        "FREE",
+        "PREMIUM_MONTHLY",
+        "PREMIUM_YEARLY",
+        "STUDY_CIRCLE_MONTHLY",
+        "STUDY_CIRCLE_YEARLY",
+        "SQUAD_MONTHLY",
+        "SQUAD_YEARLY",
+    ]
     tier_upper = user_data.tier.upper()
     if tier_upper not in valid_tiers:
         raise HTTPException(

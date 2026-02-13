@@ -32,6 +32,61 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
+# Plan identifiers for checkout (plan_interval format)
+PLAN_IDS = (
+    "maigie_plus_monthly",
+    "maigie_plus_yearly",
+    "study_circle_monthly",
+    "study_circle_yearly",
+    "squad_monthly",
+    "squad_yearly",
+)
+
+
+def get_price_id_and_trial_days(plan_id: str) -> tuple[str, int]:
+    """
+    Get Stripe price ID and trial days for a plan.
+
+    Args:
+        plan_id: Plan identifier (e.g. maigie_plus_monthly, study_circle_yearly)
+
+    Returns:
+        (price_id, trial_days)
+
+    Raises:
+        ValueError: If plan_id is invalid
+    """
+    if plan_id == "maigie_plus_monthly":
+        return settings.STRIPE_PRICE_ID_MONTHLY, settings.TRIAL_DAYS_MAIGIE_PLUS
+    if plan_id == "maigie_plus_yearly":
+        return settings.STRIPE_PRICE_ID_YEARLY, settings.TRIAL_DAYS_MAIGIE_PLUS
+    if plan_id == "study_circle_monthly":
+        return settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY, settings.TRIAL_DAYS_STUDY_CIRCLE
+    if plan_id == "study_circle_yearly":
+        return settings.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY, settings.TRIAL_DAYS_STUDY_CIRCLE
+    if plan_id == "squad_monthly":
+        return settings.STRIPE_PRICE_ID_SQUAD_MONTHLY, settings.TRIAL_DAYS_SQUAD
+    if plan_id == "squad_yearly":
+        return settings.STRIPE_PRICE_ID_SQUAD_YEARLY, settings.TRIAL_DAYS_SQUAD
+    raise ValueError(f"Invalid plan_id: {plan_id}. " f"Must be one of: {', '.join(PLAN_IDS)}")
+
+
+def _price_id_to_tier(price_id: str) -> str:
+    """Map Stripe price ID to tier enum value."""
+    if price_id == settings.STRIPE_PRICE_ID_MONTHLY:
+        return "PREMIUM_MONTHLY"
+    if price_id == settings.STRIPE_PRICE_ID_YEARLY:
+        return "PREMIUM_YEARLY"
+    if price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY:
+        return "STUDY_CIRCLE_MONTHLY"
+    if price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY:
+        return "STUDY_CIRCLE_YEARLY"
+    if price_id == settings.STRIPE_PRICE_ID_SQUAD_MONTHLY:
+        return "SQUAD_MONTHLY"
+    if price_id == settings.STRIPE_PRICE_ID_SQUAD_YEARLY:
+        return "SQUAD_YEARLY"
+    return "FREE"
+
 
 async def get_or_create_stripe_customer(user: User) -> str:
     """
@@ -67,23 +122,25 @@ def _is_upgrade(current_tier: str, new_price_id: str) -> bool:
     Determine if changing from current tier to new price is an upgrade.
 
     Args:
-        current_tier: Current tier (FREE, PREMIUM_MONTHLY, PREMIUM_YEARLY)
+        current_tier: Current tier (FREE, PREMIUM_*, STUDY_CIRCLE_*, SQUAD_*)
         new_price_id: New Stripe price ID
 
     Returns:
         True if upgrade, False if downgrade
     """
-    # Define tier hierarchy: FREE < PREMIUM_MONTHLY < PREMIUM_YEARLY
-    tier_order = {"FREE": 0, "PREMIUM_MONTHLY": 1, "PREMIUM_YEARLY": 2}
+    # Tier hierarchy: FREE < Maigie Plus < Study Circle < Squad (monthly < yearly within each)
+    tier_order = {
+        "FREE": 0,
+        "PREMIUM_MONTHLY": 1,
+        "PREMIUM_YEARLY": 2,
+        "STUDY_CIRCLE_MONTHLY": 3,
+        "STUDY_CIRCLE_YEARLY": 4,
+        "SQUAD_MONTHLY": 5,
+        "SQUAD_YEARLY": 6,
+    }
 
     current_order = tier_order.get(current_tier, 0)
-
-    new_tier = "FREE"
-    if new_price_id == settings.STRIPE_PRICE_ID_MONTHLY:
-        new_tier = "PREMIUM_MONTHLY"
-    elif new_price_id == settings.STRIPE_PRICE_ID_YEARLY:
-        new_tier = "PREMIUM_YEARLY"
-
+    new_tier = _price_id_to_tier(new_price_id)
     new_order = tier_order.get(new_tier, 0)
 
     return new_order > current_order
@@ -259,7 +316,11 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
 
 
 async def create_checkout_session(
-    user: User, price_id: str, success_url: str, cancel_url: str, price_type: str | None = None
+    user: User,
+    price_id: str,
+    success_url: str,
+    cancel_url: str,
+    trial_days: int = 0,
 ) -> dict:
     """
     Create a Stripe checkout session for subscription.
@@ -321,8 +382,12 @@ async def create_checkout_session(
     else:
         # Also check Stripe directly in case database is out of sync
         try:
-            # List active subscriptions for this customer
+            # List active or trialing subscriptions (trialing = in free trial period)
             subscriptions = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
+            if not subscriptions.data:
+                subscriptions = stripe.Subscription.list(
+                    customer=customer_id, status="trialing", limit=1
+                )
             if subscriptions.data and len(subscriptions.data) > 0:
                 active_subscription = subscriptions.data[0]
                 logger.info(
@@ -360,7 +425,13 @@ async def create_checkout_session(
             )
 
     # No existing subscription or modification failed - create new checkout session
-    session_params = {
+    subscription_data: dict = {
+        "metadata": {"user_id": user.id},
+    }
+    if trial_days and trial_days > 0:
+        subscription_data["trial_period_days"] = trial_days
+
+    session_params: dict = {
         "customer": customer_id,
         "payment_method_types": ["card"],
         "line_items": [
@@ -373,14 +444,8 @@ async def create_checkout_session(
         "success_url": success_url,
         "cancel_url": cancel_url,
         "metadata": {"user_id": user.id},
-        "subscription_data": {
-            "metadata": {"user_id": user.id},
-        },
+        "subscription_data": subscription_data,
     }
-
-    # Add coupon code for monthly subscriptions (only for new subscriptions, not modifications)
-    if price_type == "monthly":
-        session_params["discounts"] = [{"coupon": "FIRST_MONTH_2USD_OFF"}]
 
     session = stripe.checkout.Session.create(**session_params)
 
@@ -444,6 +509,48 @@ async def cancel_subscription(user: User) -> dict:
         "cancel_at_period_end": subscription.cancel_at_period_end,
         "current_period_end": datetime.fromtimestamp(subscription.current_period_end),
     }
+
+
+async def sync_subscription_from_checkout_session(
+    session_id: str, user_id: str, db_client: Prisma | None = None
+) -> User | None:
+    """
+    Sync user subscription from a Stripe checkout session (e.g. after free trial signup).
+    Called when user returns from checkout with session_id before webhooks may have fired.
+
+    Args:
+        session_id: Stripe checkout session ID (cs_xxx)
+        user_id: ID of the current user (must own this session)
+        db_client: Optional Prisma client
+
+    Returns:
+        Updated User or None if session invalid/not found
+    """
+    if db_client is None:
+        db_client = db
+    try:
+        session = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
+        subscription_id = session.subscription
+        if isinstance(subscription_id, str):
+            sub_id = subscription_id
+        elif subscription_id and hasattr(subscription_id, "id"):
+            sub_id = subscription_id.id
+        else:
+            logger.warning(f"No subscription in checkout session {session_id}")
+            return None
+        updated = await update_user_subscription_from_stripe(sub_id, db_client)
+        if updated and str(updated.id) != str(user_id):
+            logger.warning(
+                f"Checkout session {session_id} belongs to different user "
+                f"({updated.id}) than requested ({user_id})"
+            )
+        return updated
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error syncing checkout session {session_id}: {e}")
+        raise ValueError(f"Invalid checkout session: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error syncing from checkout session: {e}")
+        raise
 
 
 async def update_user_subscription_from_stripe(
@@ -510,11 +617,7 @@ async def update_user_subscription_from_stripe(
             logger.warning(f"Could not extract price_id from subscription: {e}")
             price_id = None
 
-        tier = "FREE"
-        if price_id == settings.STRIPE_PRICE_ID_MONTHLY:
-            tier = "PREMIUM_MONTHLY"
-        elif price_id == settings.STRIPE_PRICE_ID_YEARLY:
-            tier = "PREMIUM_YEARLY"
+        tier = _price_id_to_tier(price_id) if price_id else "FREE"
 
         # Get subscription ID and status (handle both object and dict)
         sub_id = subscription.id if hasattr(subscription, "id") else subscription.get("id")
@@ -576,7 +679,8 @@ async def update_user_subscription_from_stripe(
         old_tier = str(user.tier) if user.tier else "FREE"
         new_tier = str(updated_user.tier)
 
-        if old_tier == "FREE" and new_tier.startswith("PREMIUM"):
+        PAID_TIER_PREFIXES = ("PREMIUM", "STUDY_CIRCLE", "SQUAD")
+        if old_tier == "FREE" and any(new_tier.startswith(p) for p in PAID_TIER_PREFIXES):
             try:
                 # Run as background task or just await (it's async)
                 await send_subscription_success_email(

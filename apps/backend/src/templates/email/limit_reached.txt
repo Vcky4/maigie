@@ -1,0 +1,20 @@
+Hi {{ name }},
+
+You've reached your monthly limit
+
+You've used all your AI credits for this month. The good news? You can try any of our paid plans free for 7 days — no credit card required to start.
+
+We recommend Maigie Plus — our most popular plan at just $4.99/month. It gives you:
+- Unlimited AI chat
+- Unlimited AI courses & goals
+- Voice conversation mode
+- Smart AI Tutor & Exam Prep
+
+Need more? Study Circle ($9.99/mo) and Squad Plan ($14.99/mo) offer higher limits for power users. Subscribe yearly and get 2 months free.
+
+Start your free trial: {{ subscription_url }}
+
+Your credits will reset at the start of next month. Until then, start a free trial to keep learning without limits.
+
+Best,
+The {{ app_name }} Team
