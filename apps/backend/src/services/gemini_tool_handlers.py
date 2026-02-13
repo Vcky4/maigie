@@ -51,6 +51,7 @@ async def handle_tool_call(
         "add_tags_to_note": handle_add_tags_to_note,
         "complete_review": handle_complete_review,
         "update_course_outline": handle_update_course_outline,
+        "delete_course": handle_delete_course,
     }
 
     handler = handlers.get(tool_name)
@@ -422,6 +423,31 @@ async def handle_create_course(
         action_data, user_id, progress_callback=progress_callback
     )
     return result
+
+
+async def handle_delete_course(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle delete_course tool call."""
+    course_id = args.get("course_id") or (context or {}).get("courseId")
+    if not course_id:
+        return {"status": "error", "message": "No course_id provided."}
+
+    try:
+        from src.services.course_delete_service import delete_course_cascade
+
+        await delete_course_cascade(db, course_id, user_id)
+        return {
+            "status": "success",
+            "action": "delete_course",
+            "courseId": course_id,
+            "message": "Course deleted successfully.",
+        }
+    except Exception as e:
+        logger.exception("delete_course error: %s", e)
+        return {"status": "error", "message": str(e)}
 
 
 async def handle_create_note(

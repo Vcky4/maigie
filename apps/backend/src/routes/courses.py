@@ -266,15 +266,13 @@ async def generate_ai_course(
     """
     user_id = current_user.id
 
-    # 1. Check Subscription Limits (Free Tier = Max 2 AI Courses)
+    # 1. Check Subscription Limits (Free Tier = Max 2 Courses)
     if current_user.tier == "FREE":
-        ai_course_count = await db.course.count(
-            where={"userId": user_id, "isAIGenerated": True, "archived": False}
-        )
-        if ai_course_count >= 2:
+        course_count = await db.course.count(where={"userId": user_id, "archived": False})
+        if course_count >= 2:
             raise SubscriptionLimitError(
-                message="Free tier limit reached.",
-                detail="Upgrade to Premium for unlimited AI courses.",
+                message="You can only create 2 courses in your current plan.",
+                detail="Upgrade to Premium to create unlimited courses.",
             )
 
     # 2. Check and consume credits for AI course generation
@@ -557,18 +555,14 @@ async def create_course(
     """
     user_id = current_user.id
 
-    # Check subscription tier limits for AI-generated courses
-    if course_data.isAIGenerated:
-        if current_user.tier == "FREE":
-            ai_course_count = await db.course.count(
-                where={"userId": user_id, "isAIGenerated": True, "archived": False}
+    # Check subscription tier limits (Free Tier = Max 2 Courses)
+    if current_user.tier == "FREE":
+        course_count = await db.course.count(where={"userId": user_id, "archived": False})
+        if course_count >= 2:
+            raise SubscriptionLimitError(
+                message="You can only create 2 courses in your current plan.",
+                detail="Upgrade to Premium to create unlimited courses.",
             )
-
-            if ai_course_count >= 2:
-                raise SubscriptionLimitError(
-                    message="Free tier users are limited to 2 AI-generated courses.",
-                    detail=f"User has {ai_course_count} AI-generated courses (limit: 2)",
-                )
 
     # Create the course
     course = await db.course.create(
@@ -692,15 +686,11 @@ async def delete_course(
 ):
     """
     Delete a course permanently.
+    Cascade: delete goals, schedule blocks linked to course/topics; notes survive (courseId/topicId set null).
     """
-    user_id = current_user.id
+    from src.services.course_delete_service import delete_course_cascade
 
-    # Check ownership
-    await check_course_ownership(db, course_id, user_id)
-
-    # Delete course (cascading delete handles modules and topics)
-    await db.course.delete(where={"id": course_id})
-
+    await delete_course_cascade(db, course_id, current_user.id)
     return None
 
 

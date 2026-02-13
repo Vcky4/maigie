@@ -633,6 +633,7 @@ class GeminiService:
             "add_tags_to_note": "add_tags",
             "complete_review": "complete_review",
             "update_course_outline": "update_course_outline",
+            "delete_course": "delete_course",
         }
         return mapping.get(tool_name, tool_name)
 
