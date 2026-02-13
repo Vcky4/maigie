@@ -24,20 +24,20 @@ from ..utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
 
-# Feature limits per tier
+# Feature limits per tier (None = unlimited)
+UNLIMITED = {"file_uploads": None, "summary_generations": None}
+
 FEATURE_LIMITS = {
     "FREE": {
         "file_uploads": 5,  # 5 files per month
         "summary_generations": 10,  # 10 summaries per month
     },
-    "PREMIUM_MONTHLY": {
-        "file_uploads": None,  # Unlimited
-        "summary_generations": None,  # Unlimited
-    },
-    "PREMIUM_YEARLY": {
-        "file_uploads": None,  # Unlimited
-        "summary_generations": None,  # Unlimited
-    },
+    "PREMIUM_MONTHLY": UNLIMITED,
+    "PREMIUM_YEARLY": UNLIMITED,
+    "STUDY_CIRCLE_MONTHLY": UNLIMITED,
+    "STUDY_CIRCLE_YEARLY": UNLIMITED,
+    "SQUAD_MONTHLY": UNLIMITED,
+    "SQUAD_YEARLY": UNLIMITED,
 }
 
 

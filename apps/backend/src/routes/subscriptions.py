@@ -16,13 +16,14 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
 from ..dependencies import CurrentUser
 from ..services.subscription_service import (
     cancel_subscription,
     create_checkout_session,
+    get_price_id_and_trial_days,
 )
 from ..services.subscription_service import (
     create_portal_session as create_stripe_portal_session,
@@ -32,11 +33,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["subscriptions"])
 
+# Valid plan IDs for checkout
+PlanId = Literal[
+    "maigie_plus_monthly",
+    "maigie_plus_yearly",
+    "study_circle_monthly",
+    "study_circle_yearly",
+    "squad_monthly",
+    "squad_yearly",
+]
+
 
 class CheckoutSessionRequest(BaseModel):
     """Request model for creating checkout session."""
 
-    price_type: Literal["monthly", "yearly"]
+    plan_id: PlanId = Field(
+        ...,
+        description="Plan identifier (e.g. maigie_plus_monthly, squad_yearly)",
+    )
 
 
 class CheckoutSessionResponse(BaseModel):
@@ -73,8 +87,11 @@ async def create_subscription_checkout(
     """
     Create a Stripe checkout session for subscription.
 
+    Plans: Maigie Plus (7-day trial), Study Circle (3-day trial), Squad Plan (3-day trial).
+    Each plan has monthly and yearly options.
+
     Args:
-        request: Checkout session request with price type
+        request: Checkout session request with plan_id
         current_user: Current authenticated user
         http_request: FastAPI request object
         settings: Application settings
@@ -82,15 +99,12 @@ async def create_subscription_checkout(
     Returns:
         Checkout session with URL
     """
-    # Determine price ID based on type
-    if request.price_type == "monthly":
-        price_id = settings.STRIPE_PRICE_ID_MONTHLY
-    elif request.price_type == "yearly":
-        price_id = settings.STRIPE_PRICE_ID_YEARLY
-    else:
+    try:
+        price_id, trial_days = get_price_id_and_trial_days(request.plan_id)
+    except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid price type. Must be 'monthly' or 'yearly'",
+            detail=str(e),
         )
 
     # Build success and cancel URLs
@@ -104,7 +118,7 @@ async def create_subscription_checkout(
             price_id=price_id,
             success_url=success_url,
             cancel_url=cancel_url,
-            price_type=request.price_type,
+            trial_days=trial_days,
         )
 
         # If subscription was modified directly (not through checkout)

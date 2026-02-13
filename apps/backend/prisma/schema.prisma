@@ -17,8 +17,12 @@ generator client {
 
 enum Tier {
   FREE
-  PREMIUM_MONTHLY
-  PREMIUM_YEARLY
+  PREMIUM_MONTHLY    // Maigie Plus
+  PREMIUM_YEARLY     // Maigie Plus
+  STUDY_CIRCLE_MONTHLY
+  STUDY_CIRCLE_YEARLY
+  SQUAD_MONTHLY
+  SQUAD_YEARLY
 }
 
 enum Difficulty {

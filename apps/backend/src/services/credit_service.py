@@ -47,6 +47,22 @@ CREDIT_LIMITS = {
         "hard_cap": 3600000,  # 3.6M tokens/year (300k/month * 12)
         "soft_cap": 2880000,  # 80% warning threshold
     },
+    "STUDY_CIRCLE_MONTHLY": {
+        "hard_cap": 500000,
+        "soft_cap": 400000,
+    },
+    "STUDY_CIRCLE_YEARLY": {
+        "hard_cap": 6000000,  # 500k/month * 12
+        "soft_cap": 4800000,
+    },
+    "SQUAD_MONTHLY": {
+        "hard_cap": 1000000,
+        "soft_cap": 800000,
+    },
+    "SQUAD_YEARLY": {
+        "hard_cap": 12000000,  # 1M/month * 12
+        "soft_cap": 9600000,
+    },
 }
 
 # Token multiplier - we charge users less than actual tokens consumed
@@ -95,10 +111,11 @@ async def initialize_user_credits(
     limits = await get_credit_limits(tier_str)
 
     # Determine period duration based on tier
-    if tier_str == "PREMIUM_YEARLY":
+    yearly_tiers = ("PREMIUM_YEARLY", "STUDY_CIRCLE_YEARLY", "SQUAD_YEARLY")
+    if tier_str in yearly_tiers:
         period_duration = timedelta(days=365)
     else:
-        period_duration = timedelta(days=30)  # Monthly for FREE and PREMIUM_MONTHLY
+        period_duration = timedelta(days=30)
 
     # Set period start/end
     if period_start is None:
@@ -260,7 +277,8 @@ async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> U
             period_start = now
             # Set period end based on tier
             tier_str = str(user.tier) if user.tier else "FREE"
-            if tier_str == "PREMIUM_YEARLY":
+            yearly_tiers = ("PREMIUM_YEARLY", "STUDY_CIRCLE_YEARLY", "SQUAD_YEARLY")
+            if tier_str in yearly_tiers:
                 period_end = now + timedelta(days=365)
             else:
                 period_end = now + timedelta(days=30)

@@ -146,8 +146,19 @@ class Settings(BaseSettings):
     STRIPE_WEBHOOK_DESTINATION_ID: str = (
         ""  # Webhook destination ID (required when using destinations)
     )
+    # Maigie Plus (7-day trial)
     STRIPE_PRICE_ID_MONTHLY: str = ""
     STRIPE_PRICE_ID_YEARLY: str = ""
+    # Study Circle (3-day trial)
+    STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY: str = ""
+    STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: str = ""
+    # Squad Plan (3-day trial)
+    STRIPE_PRICE_ID_SQUAD_MONTHLY: str = ""
+    STRIPE_PRICE_ID_SQUAD_YEARLY: str = ""
+    # Trial days per plan (used when creating checkout sessions)
+    TRIAL_DAYS_MAIGIE_PLUS: int = 7
+    TRIAL_DAYS_STUDY_CIRCLE: int = 3
+    TRIAL_DAYS_SQUAD: int = 3
     FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
     # --- BunnyCDN Storage ---
     BUNNY_CDN_API_KEY: str | None = None
