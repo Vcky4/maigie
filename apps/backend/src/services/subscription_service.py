@@ -383,9 +383,7 @@ async def create_checkout_session(
         # Also check Stripe directly in case database is out of sync
         try:
             # List active or trialing subscriptions (trialing = in free trial period)
-            subscriptions = stripe.Subscription.list(
-                customer=customer_id, status="active", limit=1
-            )
+            subscriptions = stripe.Subscription.list(customer=customer_id, status="active", limit=1)
             if not subscriptions.data:
                 subscriptions = stripe.Subscription.list(
                     customer=customer_id, status="trialing", limit=1
