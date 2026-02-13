@@ -63,14 +63,12 @@ CREDIT_LIMITS = {
         "soft_cap": 8000,
         "daily_limit": 1500,
     },
-    "PREMIUM_MONTHLY": {
-        "hard_cap": 100000,
-        "soft_cap": 80000,
-    },
-    "PREMIUM_YEARLY": {
-        "hard_cap": 1200000,
-        "soft_cap": 960000,
-    },
+    "PREMIUM_MONTHLY": {"hard_cap": 100000, "soft_cap": 80000},
+    "PREMIUM_YEARLY": {"hard_cap": 1200000, "soft_cap": 960000},
+    "STUDY_CIRCLE_MONTHLY": {"hard_cap": 500000, "soft_cap": 400000},
+    "STUDY_CIRCLE_YEARLY": {"hard_cap": 6000000, "soft_cap": 4800000},
+    "SQUAD_MONTHLY": {"hard_cap": 1000000, "soft_cap": 800000},
+    "SQUAD_YEARLY": {"hard_cap": 12000000, "soft_cap": 9600000},
 }
 
 

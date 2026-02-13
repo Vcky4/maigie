@@ -100,8 +100,24 @@ async def stripe_webhook(
 
     logger.info(f"Received Stripe webhook event: {event_type}")
 
+    # Handle checkout.session.completed - sync subscription immediately when checkout completes
+    # (User may land here before customer.subscription.created, or when success page isn't hit e.g. mobile)
+    if event_type == "checkout.session.completed":
+        session = event_data.get("object", {})
+        subscription_id = session.get("subscription")
+        if subscription_id:
+            try:
+                from ..services.subscription_service import update_user_subscription_from_stripe
+
+                await update_user_subscription_from_stripe(str(subscription_id))
+                logger.info(
+                    f"Synced subscription {subscription_id} from checkout.session.completed"
+                )
+            except Exception as e:
+                logger.error(f"Error syncing from checkout.session.completed: {e}")
+
     # Handle subscription-related events
-    if event_type.startswith("customer.subscription."):
+    elif event_type.startswith("customer.subscription."):
         subscription = event_data.get("object", {})
         try:
             await handle_subscription_webhook(

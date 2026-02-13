@@ -24,20 +24,20 @@ from ..utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
 
-# Feature limits per tier
+# Feature limits per tier (None = unlimited)
+UNLIMITED = {"file_uploads": None, "summary_generations": None}
+
 FEATURE_LIMITS = {
     "FREE": {
         "file_uploads": 5,  # 5 files per month
         "summary_generations": 10,  # 10 summaries per month
     },
-    "PREMIUM_MONTHLY": {
-        "file_uploads": None,  # Unlimited
-        "summary_generations": None,  # Unlimited
-    },
-    "PREMIUM_YEARLY": {
-        "file_uploads": None,  # Unlimited
-        "summary_generations": None,  # Unlimited
-    },
+    "PREMIUM_MONTHLY": UNLIMITED,
+    "PREMIUM_YEARLY": UNLIMITED,
+    "STUDY_CIRCLE_MONTHLY": UNLIMITED,
+    "STUDY_CIRCLE_YEARLY": UNLIMITED,
+    "SQUAD_MONTHLY": UNLIMITED,
+    "SQUAD_YEARLY": UNLIMITED,
 }
 
 
@@ -174,7 +174,7 @@ async def check_feature_limit(
         error_message = (
             f"You've reached your monthly limit of {limit} {feature_name}. "
             f"Your limit will reset on {reset_date}. "
-            f"Upgrade to Premium for unlimited {feature_name}."
+            f"Start a free trial for unlimited {feature_name}."
         )
         return False, error_message
 
@@ -203,7 +203,7 @@ async def increment_feature_usage(
     if not can_use:
         raise SubscriptionLimitError(
             message=error_message or f"Limit reached for {feature}",
-            detail=f"Upgrade to Premium for unlimited {feature}.",
+            detail=f"Start a free trial for unlimited {feature}.",
         )
 
     # Determine which field to increment
