@@ -131,7 +131,7 @@ async def require_premium(current_user: CurrentUser) -> User:
     if str(current_user.tier) not in PAID_TIERS:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This feature requires a paid plan. Upgrade to unlock Smart AI Tutor and Exam Prep.",
+            detail="This feature requires a paid plan. Start a free trial to unlock Smart AI Tutor and Exam Prep.",
         )
     return current_user
 

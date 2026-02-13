@@ -483,6 +483,51 @@ async def send_schedule_reminder_email(
         raise
 
 
+async def send_limit_reached_email(email: EmailStr, name: str | None):
+    """
+    Sends an email when user hits their monthly limit, encouraging them to start a free trial.
+    """
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping limit reached email to {email}")
+        return
+
+    subscription_url = f"{_get_frontend_base_url()}/settings?tab=subscription"
+    template_data = {
+        "name": name or "there",
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+        "subscription_url": subscription_url,
+    }
+
+    html_template = jinja_env.get_template("limit_reached.html")
+    try:
+        text_template = jinja_env.get_template("limit_reached.txt")
+        text_body = text_template.render(**template_data)
+    except Exception:
+        text_body = f"You've reached your monthly limit. Start a free trial: {subscription_url}"
+
+    html_body = html_template.render(**template_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"limit-reached-{email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(email),
+            subject="You've reached your limit — Start a free trial",
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Limit reached email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send limit reached email to {email}: {e}")
+        raise
+
+
 async def send_weekly_tips_email(
     email: EmailStr,
     name: str | None,

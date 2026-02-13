@@ -150,6 +150,9 @@ model User {
   // Referral tracking
   referredByCode String? // Referral code of the user who referred this user (immutable once set)
 
+  // Limit reached email tracking (one email per period)
+  limitReachedEmailLogs LimitReachedEmailLog[]
+
   // Relations
   preferences             UserPreferences?
   courses                 Course[]
@@ -204,6 +207,18 @@ model UserPreferences {
   emailMorningSchedule  Boolean @default(true)
   emailScheduleReminder Boolean @default(true)
   emailWeeklyTips       Boolean @default(true)
+}
+
+/// Tracks when we sent "limit reached" email to avoid spamming (one per credit period).
+model LimitReachedEmailLog {
+  id        String   @id @default(cuid())
+  userId    String
+  periodEnd DateTime
+  sentAt    DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, periodEnd])
+  @@index([userId])
 }
 
 // ==========================================

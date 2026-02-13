@@ -174,7 +174,7 @@ async def check_feature_limit(
         error_message = (
             f"You've reached your monthly limit of {limit} {feature_name}. "
             f"Your limit will reset on {reset_date}. "
-            f"Upgrade to Premium for unlimited {feature_name}."
+            f"Start a free trial for unlimited {feature_name}."
         )
         return False, error_message
 
@@ -203,7 +203,7 @@ async def increment_feature_usage(
     if not can_use:
         raise SubscriptionLimitError(
             message=error_message or f"Limit reached for {feature}",
-            detail=f"Upgrade to Premium for unlimited {feature}.",
+            detail=f"Start a free trial for unlimited {feature}.",
         )
 
     # Determine which field to increment

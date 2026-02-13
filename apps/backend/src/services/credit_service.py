@@ -23,6 +23,7 @@ from prisma.models import User
 from ..config import Settings, get_settings
 from ..core.database import db
 from ..services.referral_service import get_daily_limit_increase
+from ..services.email import send_limit_reached_email
 from ..utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
@@ -424,19 +425,37 @@ async def consume_credits(
             if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
                 raise SubscriptionLimitError(
                     message=f"Daily credit limit exceeded. You've used {credits_used_today:,} of {effective_daily_limit:,} credits today.",
-                    detail=f"This operation requires {credits} credits. Your daily limit resets at midnight UTC. Upgrade to Premium for higher limits.",
+                    detail=f"This operation requires {credits} credits. Your daily limit resets at midnight UTC. Start a free trial for higher limits.",
                 )
 
         # Monthly limit exceeded
         if tier_str == "FREE":
+            # Send limit-reached email once per period (encourage free trial)
+            period_end = user.creditsPeriodEnd
+            if period_end:
+                try:
+                    existing = await db_client.limitreachedemaillog.find_first(
+                        where={"userId": user.id, "periodEnd": period_end}
+                    )
+                    if not existing:
+                        await send_limit_reached_email(
+                            email=user.email,
+                            name=user.name or None,
+                        )
+                        await db_client.limitreachedemaillog.create(
+                            data={"userId": user.id, "periodEnd": period_end}
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to send limit reached email to {user.id}: {e}")
+
             raise SubscriptionLimitError(
                 message=f"Monthly credit limit exceeded. You've used {credits_used:,} of {hard_cap:,} credits this month.",
-                detail=f"This operation requires {credits} credits. Please wait until next month for your credits to reset, or upgrade to Premium for higher limits.",
+                detail=f"This operation requires {credits} credits. Please wait until next month for your credits to reset, or start a free trial for higher limits.",
             )
         else:
             raise SubscriptionLimitError(
                 message=f"Monthly credit limit exceeded. You've used {credits_used:,} of {hard_cap:,} credits this month.",
-                detail=f"This operation requires {credits} credits. Please wait until your credit period resets or upgrade your plan.",
+                detail=f"This operation requires {credits} credits. Please wait until your credit period resets or start a free trial.",
             )
 
     # Prepare update data

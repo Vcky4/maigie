@@ -66,7 +66,7 @@ class ActionService:
                 if course_count >= 2:
                     return {
                         "status": "error",
-                        "message": "You can only create 2 courses in your current plan. Upgrade to Premium to create unlimited courses.",
+                        "message": "You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
                         "credit_limit_error": True,
                         "tier": tier,
                         "is_daily_limit": False,
