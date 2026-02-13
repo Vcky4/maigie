@@ -111,3 +111,29 @@ async def get_admin_user(current_user: CurrentUser) -> User:
 
 # Create a reusable type shortcut for admin users
 AdminUser = Annotated[User, Depends(get_admin_user)]
+
+
+PAID_TIERS = (
+    "PREMIUM_MONTHLY",
+    "PREMIUM_YEARLY",
+    "STUDY_CIRCLE_MONTHLY",
+    "STUDY_CIRCLE_YEARLY",
+    "SQUAD_MONTHLY",
+    "SQUAD_YEARLY",
+)
+
+
+async def require_premium(current_user: CurrentUser) -> User:
+    """
+    Dependency to ensure the current user has a paid subscription.
+    Smart AI Tutor, Exam Prep, and 11labs voice require Maigie Plus or higher.
+    """
+    if str(current_user.tier) not in PAID_TIERS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This feature requires a paid plan. Start a free trial to unlock Smart AI Tutor and Exam Prep.",
+        )
+    return current_user
+
+
+PremiumUser = Annotated[User, Depends(require_premium)]

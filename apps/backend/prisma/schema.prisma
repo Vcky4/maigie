@@ -17,8 +17,12 @@ generator client {
 
 enum Tier {
   FREE
-  PREMIUM_MONTHLY
-  PREMIUM_YEARLY
+  PREMIUM_MONTHLY    // Maigie Plus
+  PREMIUM_YEARLY     // Maigie Plus
+  STUDY_CIRCLE_MONTHLY
+  STUDY_CIRCLE_YEARLY
+  SQUAD_MONTHLY
+  SQUAD_YEARLY
 }
 
 enum Difficulty {
@@ -146,6 +150,9 @@ model User {
   // Referral tracking
   referredByCode String? // Referral code of the user who referred this user (immutable once set)
 
+  // Limit reached email tracking (one email per period)
+  limitReachedEmailLogs LimitReachedEmailLog[]
+
   // Relations
   preferences             UserPreferences?
   courses                 Course[]
@@ -178,6 +185,9 @@ model User {
   // Audit Relations
   auditLogs AuditLog[] @relation("AdminAuditLogs") // Audit logs created by this admin
 
+  // Exam Prep (Maigie Plus)
+  examPreps ExamPrep[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -197,6 +207,18 @@ model UserPreferences {
   emailMorningSchedule  Boolean @default(true)
   emailScheduleReminder Boolean @default(true)
   emailWeeklyTips       Boolean @default(true)
+}
+
+/// Tracks when we sent "limit reached" email to avoid spamming (one per credit period).
+model LimitReachedEmailLog {
+  id        String   @id @default(cuid())
+  userId    String
+  periodEnd DateTime
+  sentAt    DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, periodEnd])
+  @@index([userId])
 }
 
 // ==========================================
@@ -527,6 +549,10 @@ model ScheduleBlock {
   reviewItemId String?     @unique
   reviewItem   ReviewItem? @relation(fields: [reviewItemId], references: [id], onDelete: SetNull)
 
+  // Exam prep: study blocks scheduled before exam
+  examPrepId String?
+  examPrep   ExamPrep? @relation(fields: [examPrepId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -536,6 +562,7 @@ model ScheduleBlock {
   @@index([courseId])
   @@index([topicId])
   @@index([goalId])
+  @@index([examPrepId])
 }
 
 // ==========================================
@@ -613,6 +640,47 @@ model Embedding {
 
   @@index([objectType, objectId])
   @@index([resourceId])
+}
+
+// ==========================================
+//  EXAM PREP MODULE (Maigie Plus)
+// ==========================================
+
+model ExamPrep {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  subject     String
+  examDate    DateTime
+  description String?
+
+  // Relations
+  materials ExamPrepMaterial[]
+  schedules ScheduleBlock[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, examDate])
+  @@index([examDate])
+}
+
+model ExamPrepMaterial {
+  id          String   @id @default(cuid())
+  examPrepId  String
+  examPrep    ExamPrep @relation(fields: [examPrepId], references: [id], onDelete: Cascade)
+
+  filename     String
+  url          String
+  extractedText String? // AI-extracted text content for RAG/quiz
+  fileType     String?  // e.g., pdf, docx
+  size         Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([examPrepId])
 }
 
 // ==========================================

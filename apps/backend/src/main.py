@@ -49,6 +49,8 @@ from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
 from .routes.courses import router as courses_router
 from .routes.dashboard import router as dashboard_router
+from .routes.elevenlabs import router as elevenlabs_router
+from .routes.exam_prep import router as exam_prep_router
 from .routes.examples import router as examples_router
 from .routes.feedback import router as feedback_router
 from .routes.gemini_live import router as gemini_live_router
@@ -394,6 +396,9 @@ def create_app() -> FastAPI:
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")
     app.include_router(feedback_router)
     app.include_router(gemini_live_router, prefix=f"{settings.API_V1_STR}/gemini-live")
+    app.include_router(elevenlabs_router, prefix=f"{settings.API_V1_STR}/elevenlabs")
+    app.include_router(exam_prep_router)
+    app.include_router(exam_prep_router)
     app.include_router(goals_router)
     app.include_router(reviews_router, prefix=f"{settings.API_V1_STR}/review-items")
     app.include_router(schedule_router)

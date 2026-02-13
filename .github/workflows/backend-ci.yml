@@ -153,11 +153,16 @@ jobs:
           STRIPE_WEBHOOK_DESTINATION_ID: ${{secrets.STRIPE_WEBHOOK_DESTINATION_ID}}
           STRIPE_PRICE_ID_MONTHLY: ${{secrets.STRIPE_PRICE_ID_MONTHLY}}
           STRIPE_PRICE_ID_YEARLY: ${{secrets.STRIPE_PRICE_ID_YEARLY}}
+          STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY: ${{secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY}}
+          STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: ${{secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY}}
+          STRIPE_PRICE_ID_SQUAD_MONTHLY: ${{secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY}}
+          STRIPE_PRICE_ID_SQUAD_YEARLY: ${{secrets.STRIPE_PRICE_ID_SQUAD_YEARLY}}
           FRONTEND_URL: ${{secrets.FRONTEND_URL}}
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -226,7 +231,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
 
       - name: Load Image and Deploy Preview
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -290,11 +295,16 @@ jobs:
             export STRIPE_WEBHOOK_DESTINATION_ID="${{ secrets.STRIPE_WEBHOOK_DESTINATION_ID }}"
             export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
             export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
+            export STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY="${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY }}"
+            export STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY="${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}"
+            export STRIPE_PRICE_ID_SQUAD_MONTHLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}"
+            export STRIPE_PRICE_ID_SQUAD_YEARLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
             export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
             
             cd /opt/maigie/previews
             
@@ -810,11 +820,16 @@ jobs:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           STRIPE_PRICE_ID_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_MONTHLY }}
           STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+          STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY }}
+          STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: ${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}
+          STRIPE_PRICE_ID_SQUAD_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}
+          STRIPE_PRICE_ID_SQUAD_YEARLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -854,7 +869,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Production
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -1051,11 +1066,16 @@ jobs:
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           STRIPE_PRICE_ID_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_MONTHLY }}
           STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+          STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY }}
+          STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: ${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}
+          STRIPE_PRICE_ID_SQUAD_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}
+          STRIPE_PRICE_ID_SQUAD_YEARLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1102,7 +1122,7 @@ jobs:
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Staging
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -1165,11 +1185,16 @@ jobs:
             export STRIPE_WEBHOOK_DESTINATION_ID="${{ secrets.STRIPE_WEBHOOK_DESTINATION_ID }}"
             export STRIPE_PRICE_ID_MONTHLY="${{ secrets.STRIPE_PRICE_ID_MONTHLY }}"
             export STRIPE_PRICE_ID_YEARLY="${{ secrets.STRIPE_PRICE_ID_YEARLY }}"
+            export STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY="${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY }}"
+            export STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY="${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}"
+            export STRIPE_PRICE_ID_SQUAD_MONTHLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}"
+            export STRIPE_PRICE_ID_SQUAD_YEARLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
             export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
             
             cd /opt/maigie/staging
             

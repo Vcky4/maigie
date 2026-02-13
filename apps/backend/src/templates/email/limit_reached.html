@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>You've Reached Your Monthly Limit</title>
+</head>
+<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+
+    <div style="max-width: 600px; margin: 0;">
+        {% if logo_url %}
+        <div style="margin-bottom: 30px; text-align: center;">
+            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
+        </div>
+        {% endif %}
+        
+        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">You've reached your monthly limit</h1>
+        
+        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
+        
+        <p style="margin-bottom: 25px;">
+            You've used all your AI credits for this month. The good news? You can try any of our paid plans <strong>free for 7 days</strong> — no credit card required to start.
+        </p>
+        
+        <p style="margin-bottom: 25px;">
+            <strong>We recommend Maigie Plus</strong> — our most popular plan at just <strong>$4.99/month</strong>. It gives you:
+        </p>
+        <ul style="margin-bottom: 25px;">
+            <li>Unlimited AI chat</li>
+            <li>Unlimited AI courses & goals</li>
+            <li>Voice conversation mode</li>
+            <li>Smart AI Tutor & Exam Prep</li>
+        </ul>
+        
+        <p style="margin-bottom: 20px;">
+            Need more? Study Circle ($9.99/mo) and Squad Plan ($14.99/mo) offer higher limits for power users. Subscribe yearly and get <strong>2 months free</strong>.
+        </p>
+        
+        <div style="margin-bottom: 30px;">
+            <a href="{{ subscription_url }}" style="
+                background-color: #4F46E5; 
+                color: #ffffff; 
+                display: inline-block; 
+                padding: 12px 24px; 
+                border-radius: 5px; 
+                font-size: 16px; 
+                font-weight: bold; 
+                text-decoration: none;">
+                Start Free Trial
+            </a>
+        </div>
+
+        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
+            Your credits will reset at the start of next month. Until then, start a free trial to keep learning without limits.
+        </p>
+
+    </div>
+
+</body>
+</html>

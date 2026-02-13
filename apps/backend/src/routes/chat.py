@@ -1847,14 +1847,14 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             f"Daily credit limit exceeded. You've used {used_today:,} "
                             f"of {daily_limit:,} daily credits. "
                             f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
-                            f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
+                            f"Start a free trial for more credits, or refer friends to earn bonus credits!"
                         )
                     else:
                         error_message = (
                             f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
                             f"of {credit_usage['hard_cap']:,} credits. "
                             f"Period resets: {credit_usage['period_end']}. "
-                            f"Upgrade to Premium for unlimited usage, or refer friends to earn bonus credits!"
+                            f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
                         )
 
                     # Send error message with tier information as JSON for frontend handling
@@ -1876,7 +1876,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Enhance error message with referral option
                 enhanced_message = (
                     f"{e.message} "
-                    f"Upgrade to Premium for more credits, or refer friends to earn bonus credits!"
+                    f"Start a free trial for more credits, or refer friends to earn bonus credits!"
                 )
 
                 error_data = {
