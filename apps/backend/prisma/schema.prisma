@@ -375,10 +375,10 @@ model Note {
   summary String? // AI generated summary
 
   courseId String?
-  course   Course? @relation(fields: [courseId], references: [id]) // Optional link to course
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
 
   topicId String? @unique
-  topic   Topic?  @relation(fields: [topicId], references: [id]) // Optional link to topic
+  topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
   archived          Boolean @default(false)
   voiceRecordingUrl String?

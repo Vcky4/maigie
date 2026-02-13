@@ -62,13 +62,11 @@ class ActionService:
 
             tier = str(user_obj.tier) if user_obj.tier else "FREE"
             if tier == "FREE":
-                ai_course_count = await db.course.count(
-                    where={"userId": user_id, "isAIGenerated": True, "archived": False}
-                )
-                if ai_course_count >= 2:
+                course_count = await db.course.count(where={"userId": user_id, "archived": False})
+                if course_count >= 2:
                     return {
                         "status": "error",
-                        "message": "Free tier limit reached. Upgrade to Premium for unlimited AI courses.",
+                        "message": "You can only create 2 courses in your current plan. Upgrade to Premium to create unlimited courses.",
                         "credit_limit_error": True,
                         "tier": tier,
                         "is_daily_limit": False,

@@ -28,6 +28,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 add_tags_to_note_tool(),
                 complete_review_tool(),
                 update_course_outline_tool(),
+                delete_course_tool(),
             ]
         }
     ]
@@ -173,6 +174,24 @@ def get_user_resources_tool() -> dict[str, Any]:
                     ],
                 },
             },
+        },
+    }
+
+
+def delete_course_tool() -> dict[str, Any]:
+    """Tool definition for deleting a course."""
+    return {
+        "name": "delete_course",
+        "description": "Delete a course permanently. Use when the user asks to remove, delete, or get rid of a course. This will also delete linked goals and schedule blocks; notes will be kept.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "course_id": {
+                    "type": "string",
+                    "description": "The ID of the course to delete (required)",
+                },
+            },
+            "required": ["course_id"],
         },
     }
 

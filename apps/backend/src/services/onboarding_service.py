@@ -428,6 +428,25 @@ async def handle_onboarding_message(
             _normalize_text(c.title): c for c in existing if getattr(c, "title", None)
         }
 
+        # FREE tier: max 2 courses total
+        user_obj = await db.user.find_unique(where={"id": user_id})
+        tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
+        if tier == "FREE":
+            current_count = await db.course.count(where={"userId": user_id, "archived": False})
+            to_create_count = sum(1 for t in courses if _normalize_text(t) not in existing_by_norm)
+            if current_count + to_create_count > 2:
+                return OnboardingResult(
+                    reply_text="You can only create 2 courses in your current plan. Upgrade to Premium to create unlimited courses.",
+                    is_complete=False,
+                    credit_limit_error={
+                        "type": "credit_limit_error",
+                        "message": "You can only create 2 courses in your current plan. Upgrade to Premium to create unlimited courses.",
+                        "tier": tier,
+                        "is_daily_limit": False,
+                        "show_referral_option": True,
+                    },
+                )
+
         created_course_ids: list[str] = []
         created_courses_light: list[dict[str, Any]] = []
 
