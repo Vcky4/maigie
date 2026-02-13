@@ -61,6 +61,7 @@ from .routes.reviews import router as reviews_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
+from .routes.paystack_webhook import router as paystack_webhook_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
 from .routes.waitlist import router as waitlist_router
@@ -407,8 +408,9 @@ def create_app() -> FastAPI:
     app.include_router(notes_router, prefix=f"{settings.API_V1_STR}/notes")
     app.include_router(upload_router, prefix=f"{settings.API_V1_STR}/upload")
 
-    # Webhook endpoints (no auth required, verified by Stripe signature)
+    # Webhook endpoints (no auth required, verified by provider signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
+    app.include_router(paystack_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
 
     # Waitlist router
     app.include_router(waitlist_router)

@@ -160,6 +160,17 @@ class Settings(BaseSettings):
     TRIAL_DAYS_STUDY_CIRCLE: int = 3
     TRIAL_DAYS_SQUAD: int = 3
     FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
+
+    # --- Paystack (Nigeria) ---
+    PAYSTACK_SECRET_KEY: str = ""
+    PAYSTACK_PUBLIC_KEY: str = ""
+    # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
+    PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
+    PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""
+    PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: str = ""
+    PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: str = ""
+    PAYSTACK_PLAN_SQUAD_MONTHLY: str = ""
+    PAYSTACK_PLAN_SQUAD_YEARLY: str = ""
     # --- BunnyCDN Storage ---
     BUNNY_CDN_API_KEY: str | None = None
     BUNNY_STORAGE_ZONE: str | None = None

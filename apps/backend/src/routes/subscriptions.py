@@ -29,6 +29,10 @@ from ..services.subscription_service import (
 from ..services.subscription_service import (
     create_portal_session as create_stripe_portal_session,
 )
+from ..services.paystack_subscription_service import (
+    initialize_paystack_subscription,
+    verify_paystack_transaction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +194,86 @@ async def sync_subscription_from_checkout(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to sync subscription",
         )
+
+
+class PaystackInitializeRequest(BaseModel):
+    """Request for Paystack subscription initialization."""
+
+    plan_id: PlanId = Field(..., description="Plan ID (e.g. maigie_plus_monthly)")
+    success_url: str = Field(
+        default="",
+        description="URL to redirect after payment (optional, defaults to subscription success)",
+    )
+    cancel_url: str = Field(
+        default="",
+        description="URL to redirect if user cancels (optional)",
+    )
+
+
+@router.post("/paystack/initialize")
+async def paystack_initialize_subscription(
+    body: PaystackInitializeRequest,
+    current_user: CurrentUser,
+    http_request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """
+    Initialize Paystack subscription for Nigerian users.
+
+    Returns authorization_url - redirect user to complete payment in NGN.
+    """
+    base_url = settings.FRONTEND_URL or str(http_request.base_url).rstrip("/")
+    success_url = body.success_url or f"{base_url}/subscription/paystack/success"
+    cancel_url = body.cancel_url or f"{base_url}/subscription/cancel"
+
+    try:
+        result = await initialize_paystack_subscription(
+            user=current_user,
+            plan_id=body.plan_id,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+        return {
+            "authorization_url": result["authorization_url"],
+            "access_code": result.get("access_code"),
+            "reference": result.get("reference"),
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Paystack initialize error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize Paystack subscription",
+        )
+
+
+@router.get("/paystack/verify")
+async def paystack_verify_subscription(
+    reference: str,
+    current_user: CurrentUser,
+):
+    """
+    Verify Paystack transaction after user returns from payment.
+
+    Call with ?reference=xxx from the redirect URL.
+    """
+    updated = await verify_paystack_transaction(
+        reference=reference,
+        user_id=current_user.id,
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not verify Paystack transaction",
+        )
+    return {
+        "tier": updated.tier,
+        "paystack_subscription_code": updated.paystackSubscriptionCode,
+    }
 
 
 @router.post("/portal", response_model=PortalSessionResponse)

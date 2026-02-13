@@ -122,6 +122,11 @@ model User {
   subscriptionCurrentPeriodStart DateTime?
   subscriptionCurrentPeriodEnd   DateTime?
 
+  // Paystack subscription fields (Nigeria)
+  paystackCustomerCode     String?   @unique
+  paystackSubscriptionCode String?   @unique
+  paymentProvider          String?   // "stripe" | "paystack"
+
   // Credit tracking for subscription limits
   creditsUsed        Int       @default(0) // Credits consumed in current period
   creditsPeriodStart DateTime? // When current credit period started
