@@ -24,6 +24,7 @@ from ..services.subscription_service import (
     cancel_subscription,
     create_checkout_session,
     get_price_id_and_trial_days,
+    sync_subscription_from_checkout_session,
 )
 from ..services.subscription_service import (
     create_portal_session as create_stripe_portal_session,
@@ -144,6 +145,50 @@ async def create_subscription_checkout(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create checkout session",
+        )
+
+
+class SyncCheckoutRequest(BaseModel):
+    """Request model for syncing subscription from checkout session."""
+
+    session_id: str = Field(..., description="Stripe checkout session ID (cs_xxx)")
+
+
+@router.post("/sync-checkout")
+async def sync_subscription_from_checkout(
+    body: SyncCheckoutRequest,
+    current_user: CurrentUser,
+):
+    """
+    Sync user subscription from a completed Stripe checkout session.
+
+    Call this when the user returns from checkout (e.g. /subscription/success?session_id=cs_xxx)
+    to immediately update their tier, since webhooks may not have fired yet.
+    """
+    try:
+        updated = await sync_subscription_from_checkout_session(
+            session_id=body.session_id,
+            user_id=current_user.id,
+        )
+        if not updated:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not sync subscription from checkout session",
+            )
+        return {
+            "tier": updated.tier,
+            "stripe_subscription_id": updated.stripeSubscriptionId,
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Error syncing checkout session: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to sync subscription",
         )
 
 

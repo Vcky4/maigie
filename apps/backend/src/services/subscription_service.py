@@ -511,6 +511,48 @@ async def cancel_subscription(user: User) -> dict:
     }
 
 
+async def sync_subscription_from_checkout_session(
+    session_id: str, user_id: str, db_client: Prisma | None = None
+) -> User | None:
+    """
+    Sync user subscription from a Stripe checkout session (e.g. after free trial signup).
+    Called when user returns from checkout with session_id before webhooks may have fired.
+
+    Args:
+        session_id: Stripe checkout session ID (cs_xxx)
+        user_id: ID of the current user (must own this session)
+        db_client: Optional Prisma client
+
+    Returns:
+        Updated User or None if session invalid/not found
+    """
+    if db_client is None:
+        db_client = db
+    try:
+        session = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
+        subscription_id = session.subscription
+        if isinstance(subscription_id, str):
+            sub_id = subscription_id
+        elif subscription_id and hasattr(subscription_id, "id"):
+            sub_id = subscription_id.id
+        else:
+            logger.warning(f"No subscription in checkout session {session_id}")
+            return None
+        updated = await update_user_subscription_from_stripe(sub_id, db_client)
+        if updated and str(updated.id) != str(user_id):
+            logger.warning(
+                f"Checkout session {session_id} belongs to different user "
+                f"({updated.id}) than requested ({user_id})"
+            )
+        return updated
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error syncing checkout session {session_id}: {e}")
+        raise ValueError(f"Invalid checkout session: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error syncing from checkout session: {e}")
+        raise
+
+
 async def update_user_subscription_from_stripe(
     subscription_id: str, db_client: Prisma | None = None
 ) -> User | None:
