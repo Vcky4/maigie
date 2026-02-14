@@ -88,6 +88,7 @@ async def initialize_paystack_subscription(
         raise ValueError("Paystack is not configured (PAYSTACK_SECRET_KEY missing)")
 
     plan_code = _get_plan_code(plan_id)
+    logger.info(f"Paystack init: plan_id={plan_id}, plan_code={plan_code}")
 
     # Paystack requires 'amount' even when using a plan; the plan overrides it. Use 10000 (100 NGN) as placeholder.
     payload = {
