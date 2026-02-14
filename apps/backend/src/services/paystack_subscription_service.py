@@ -89,24 +89,10 @@ async def initialize_paystack_subscription(
 
     plan_code = _get_plan_code(plan_id)
 
-    # Fetch plan amount from Paystack; transaction/initialize requires amount even when using plan.
-    async with httpx.AsyncClient() as client:
-        plan_resp = await client.get(
-            f"{PAYSTACK_BASE}/plan/{plan_code}",
-            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
-        )
-    plan_data = plan_resp.json()
-    if not plan_data.get("status"):
-        msg = plan_data.get("message", "Failed to fetch plan")
-        logger.error(f"Paystack plan fetch failed for {plan_code}: {msg}")
-        raise ValueError(f"Invalid plan: {msg}")
-    plan_amount = plan_data.get("data", {}).get("amount")
-    if plan_amount is None:
-        raise ValueError(f"Plan {plan_code} has no amount")
-
+    # Paystack requires 'amount' even when using a plan; the plan overrides it. Use 10000 (100 NGN) as placeholder.
     payload = {
         "email": user.email,
-        "amount": str(int(plan_amount)),
+        "amount": "10000",
         "plan": plan_code,
         "callback_url": success_url,
         "metadata": {"user_id": user.id, "plan_id": plan_id},
