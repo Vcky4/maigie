@@ -1,12 +1,14 @@
 """
-ElevenLabs Text-to-Speech API routes.
-Proxies TTS requests to keep API key server-side. Used by Smart AI Tutor and Exam Prep voice mode.
+ElevenLabs Text-to-Speech and Conversational AI API routes.
+Proxies requests to keep API key server-side.
 """
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from src.config import get_settings
 from src.dependencies import CurrentUser, PremiumUser
 from src.services.elevenlabs_service import elevenlabs_service
 from src.services.llm_service import llm_service
@@ -106,3 +108,47 @@ async def tutor_ask(
         context=context,
     )
     return TutorAskResponse(response=response_text or "")
+
+
+# --- Conversational AI: signed WebSocket URL for real-time voice agent ---
+
+
+@router.get("/convai/signed-url")
+async def get_convai_signed_url(current_user: PremiumUser):
+    """
+    Get a signed WebSocket URL for ElevenLabs Conversational AI.
+
+    The signed URL allows the client to open a WebSocket directly to ElevenLabs
+    without exposing the API key. Requires Maigie Plus subscription.
+    """
+    settings = get_settings()
+    if not settings.ELEVENLABS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice agent is not configured (missing API key)",
+        )
+    if not settings.ELEVENLABS_AGENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice agent is not configured (missing agent ID)",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url",
+                params={"agent_id": settings.ELEVENLABS_AGENT_ID},
+                headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+            )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to get signed URL from ElevenLabs",
+            )
+        data = resp.json()
+        return {"signed_url": data["signed_url"]}
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ElevenLabs API error: {str(e)}",
+        )
