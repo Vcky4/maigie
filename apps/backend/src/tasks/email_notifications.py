@@ -26,8 +26,8 @@ TASK_MORNING_SCHEDULE = "email_notifications.send_morning_schedule_emails"
 TASK_SCHEDULE_REMINDER = "email_notifications.send_schedule_reminders"
 TASK_WEEKLY_TIPS = "email_notifications.send_weekly_tips_emails"
 
-# Morning email runs at 7 AM in user's local time; we check every hour
-MORNING_LOCAL_HOUR = 7
+# Morning email runs at 6 AM in user's local time; we check every hour
+MORNING_LOCAL_HOUR = 6
 REMINDER_WINDOW_MINUTES = 15
 
 
@@ -40,9 +40,9 @@ async def _ensure_db_connected() -> None:
 
 async def _send_morning_schedule_emails_impl() -> dict:
     """
-    Send morning schedule emails to users where it's currently 7 AM
+    Send morning schedule emails to users where it's currently 6 AM
     in their timezone. Runs hourly; each run targets users in timezones
-    where local hour is 7.
+    where local hour is 6.
     """
     from src.core.database import db
     from src.services import ai_email_service, email
@@ -232,7 +232,7 @@ async def _send_weekly_tips_emails_impl() -> dict:
 
 @register_task(
     name=TASK_MORNING_SCHEDULE,
-    description="Send morning schedule emails (timezone-aware, 7 AM local)",
+    description="Send morning schedule emails (timezone-aware, 6 AM local)",
     category="email",
     tags=["email", "schedule", "notification"],
 )
@@ -267,7 +267,7 @@ def register_email_notification_beat_tasks() -> None:
     """Register periodic Celery Beat tasks for email notifications."""
     from celery.schedules import crontab
 
-    # Morning: run every hour; task filters by user timezone (7 AM local)
+    # Morning: run every hour; task filters by user timezone (6 AM local)
     register_periodic_task(
         name="email_notifications.morning_schedule.hourly",
         schedule=HOURLY,

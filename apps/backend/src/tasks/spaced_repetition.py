@@ -150,7 +150,10 @@ async def _ai_review_schedules_for_user(user_id: str, db: Any) -> dict[str, Any]
 
 
 async def _ai_review_schedules_daily() -> dict[str, Any]:
-    """For each user with recent activity, run AI schedule review and create suggested blocks."""
+    """
+    For each user with courses (or recent activity), run AI schedule review and create suggested blocks.
+    Includes users who have courses but no schedules—so they don't "run out" of study plans.
+    """
     from src.core.database import db
 
     await _ensure_db_connected()
@@ -164,7 +167,16 @@ async def _ai_review_schedules_daily() -> dict[str, Any]:
         where={"updatedAt": {"gte": since}},
         distinct=["userId"],
     )
-    user_ids = list({r.userId for r in behaviour_user_ids} | {r.userId for r in review_user_ids})
+    # Also include users with at least one non-archived course (they may have run out of schedules)
+    course_user_ids = await db.course.find_many(
+        where={"archived": False},
+        distinct=["userId"],
+    )
+    user_ids = list(
+        {r.userId for r in behaviour_user_ids}
+        | {r.userId for r in review_user_ids}
+        | {c.userId for c in course_user_ids}
+    )
     results = {}
     for uid in user_ids[:50]:  # Cap at 50 users per run
         try:
@@ -194,12 +206,12 @@ def register_spaced_repetition_beat_tasks() -> None:
         schedule=DAILY_AT_8AM,
         task=TASK_CREATE_REVIEW_BLOCKS,
     )
-    # Run AI review 1 hour after review blocks (9 AM)
+    # Run AI review at 4 AM UTC—before morning emails (6 AM local)—so recommended blocks are ready
     from celery.schedules import crontab
 
     register_periodic_task(
         name="spaced_repetition.ai_review_schedules.daily",
-        schedule=crontab(hour=9, minute=0),
+        schedule=crontab(hour=4, minute=0),
         task=TASK_AI_REVIEW_SCHEDULES,
     )
 

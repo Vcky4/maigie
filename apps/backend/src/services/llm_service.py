@@ -1129,9 +1129,12 @@ Tags (JSON array):"""
 
 async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[str, Any]]:
     """
-    For daily AI schedule review: fetch user's recent behaviour and schedule,
-    ask Gemini to suggest 0-3 new schedule blocks for the next 7 days; return list of
+    For daily AI schedule review: fetch user's courses, behaviour, and schedule,
+    ask Gemini to suggest 0-5 new schedule blocks for the next 7 days; return list of
     { title, startAt, endAt, courseId? } for create_schedule.
+
+    When the user has courses but no/few upcoming schedules, the AI recommends study blocks
+    from their course content (e.g. incomplete topics) so they don't run out of study plans.
     """
     import json
     import re
@@ -1141,6 +1144,27 @@ async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[st
         return []
     now = datetime.now(UTC)
     week_end = now + timedelta(days=7)
+
+    # User's courses with progress (for recommending study when schedule is empty)
+    courses = await db.course.find_many(
+        where={"userId": user_id, "archived": False},
+        order={"updatedAt": "desc"},
+        take=10,
+        include={"modules": {"include": {"topics": True}}},
+    )
+    courses_str_parts = []
+    for c in courses:
+        total = sum(len(m.topics) for m in c.modules)
+        completed = sum(1 for m in c.modules for t in m.topics if t.completed)
+        incomplete_topics = [
+            f"{m.title}: {t.title}" for m in c.modules for t in m.topics if not t.completed
+        ][:8]
+        courses_str_parts.append(
+            f"- {c.title} (id={c.id}): {completed}/{total} topics done. "
+            f"Incomplete: {', '.join(incomplete_topics[:4]) or 'none'}"
+        )
+    courses_str = "\n".join(courses_str_parts) if courses_str_parts else "No courses."
+
     # Recent behaviour (last 30)
     behaviour_logs = await db.schedulebehaviourlog.find_many(
         where={"userId": user_id},
@@ -1185,9 +1209,16 @@ async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[st
         or "None."
     )
     current_date = now.strftime("%A, %B %d, %Y at %H:%M UTC")
-    prompt = f"""You are a study schedule assistant. Based on this user's recent behaviour and current schedule, suggest 0-3 new schedule blocks for the next 7 days (e.g. catch-up reviews, buffer time, or focus blocks). Learn from behaviour: COMPLETED_ON_TIME = reliable; COMPLETED_LATE/SKIPPED = suggest easier times or shorter blocks; RESCHEDULED = respect their preferred timing.
+    prompt = f"""You are a study schedule assistant. Recommend schedule blocks for the next 7 days.
+
+IMPORTANT: If the user has courses but NO or very few upcoming schedules, suggest 3-5 study blocks from their course content (incomplete topics, next modules). They should not run out of study plans as long as they have courses to learn.
+
+Otherwise, base suggestions on behaviour and due reviews. Learn from behaviour: COMPLETED_ON_TIME = reliable; COMPLETED_LATE/SKIPPED = suggest easier times or shorter blocks; RESCHEDULED = respect their preferred timing.
 
 Current date and time: {current_date}
+
+User's courses (with progress; use courseId when suggesting blocks for a course):
+{courses_str}
 
 Recent behaviour (last 20):
 {behaviour_str}
@@ -1198,8 +1229,8 @@ Upcoming schedule (next 7 days):
 Reviews due (spaced repetition):
 {reviews_str}
 
-Return ONLY a JSON array of 0-3 blocks. Each block: {{ "title": "string", "startAt": "ISO8601", "endAt": "ISO8601", "courseId": "optional cuid" }}.
-Use times in the next 7 days. No markdown, no code fence, no commentary.
+Return ONLY a JSON array of 0-5 blocks. Each block: {{ "title": "string", "startAt": "ISO8601", "endAt": "ISO8601", "courseId": "optional cuid" }}.
+Use times in the next 7 days. Prefer morning/afternoon slots for study. No markdown, no code fence, no commentary.
 JSON:"""
     try:
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -1222,7 +1253,7 @@ JSON:"""
         if not isinstance(arr, list):
             return []
         out = []
-        for item in arr[:3]:
+        for item in arr[:5]:
             if (
                 not isinstance(item, dict)
                 or "title" not in item
