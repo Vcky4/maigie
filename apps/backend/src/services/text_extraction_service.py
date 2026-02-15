@@ -179,7 +179,7 @@ async def _extract_image_ocr_via_gemini(content: bytes, mime_type: str) -> str |
 
         model = genai.GenerativeModel("gemini-2.0-flash")
 
-        prompt = """Extract ALL text content from this image. This may be a scanned document, 
+        prompt = """Extract ALL text content from this image. This may be a scanned document,
 exam paper, textbook page, or handwritten notes.
 
 IMPORTANT:
