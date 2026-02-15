@@ -29,20 +29,18 @@ async def _ensure_db_connected() -> None:
 async def _emit_progress(user_id: str, exam_prep_id: str, stage: str, progress: int, message: str):
     """Emit WebSocket progress event via Redis."""
     try:
-        import json
-        from src.core.cache import cache
+        from src.services.ws_event_bus import publish_ws_event
 
-        event = json.dumps(
+        await publish_ws_event(
+            user_id,
             {
                 "type": "exam_prep_progress",
                 "examPrepId": exam_prep_id,
-                "userId": user_id,
                 "stage": stage,
                 "progress": progress,
                 "message": message,
-            }
+            },
         )
-        await cache.get_client().publish("ws:events", event)
     except Exception as e:
         logger.warning("Failed to emit progress: %s", e)
 

@@ -286,23 +286,35 @@ async def save_questions(
     questions: list[dict],
 ) -> list[Any]:
     """Save questions for a topic. Appends to existing questions."""
+    from prisma import Json
+
     created = []
     for q in questions:
-        question = await db.examquestion.create(
-            data={
-                "topicId": topic_id,
-                "source": q.get("source", "AI_GENERATED"),
-                "questionText": q["questionText"],
-                "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
-                "options": q.get("options"),
-                "correctAnswer": q.get("correctAnswer"),
-                "explanation": q.get("explanation", ""),
-                "materialId": q.get("materialId"),
-                "year": q.get("year"),
-                "difficulty": q.get("difficulty", "MEDIUM"),
-                "tags": q.get("tags", []),
-            }
-        )
+        # Build create data — use relation connect for required topic,
+        # and prisma Json wrapper for the nullable Json field.
+        options_val = q.get("options")
+        data: dict[str, Any] = {
+            "topic": {"connect": {"id": topic_id}},
+            "source": q.get("source", "AI_GENERATED"),
+            "questionText": q["questionText"],
+            "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
+            "correctAnswer": q.get("correctAnswer"),
+            "explanation": q.get("explanation", ""),
+            "year": q.get("year"),
+            "difficulty": q.get("difficulty", "MEDIUM"),
+            "tags": q.get("tags", []),
+        }
+
+        # Prisma Json fields need explicit Json() wrapper, not raw Python dicts/None
+        if options_val is not None:
+            data["options"] = Json(options_val)
+
+        # Optional material relation
+        material_id = q.get("materialId")
+        if material_id:
+            data["material"] = {"connect": {"id": material_id}}
+
+        question = await db.examquestion.create(data=data)
         created.append(question)
     return created
 
