@@ -88,6 +88,7 @@ class UserResponse(BaseModel):
     isActive: bool  # noqa: N815
     isOnboarded: bool = False  # noqa: N815
     preferences: UserPreferencesResponse | None = None
+    paymentProvider: str | None = None  # "stripe" | "paystack"
 
     model_config = ConfigDict(from_attributes=True)
 

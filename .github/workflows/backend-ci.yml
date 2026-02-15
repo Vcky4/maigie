@@ -34,10 +34,10 @@ jobs:
           script: |
             const branch = context.payload.pull_request?.head?.ref || context.ref.replace('refs/heads/', '');
             const sha = context.payload.pull_request?.head?.sha || context.sha;
-            
+
             // Wait a bit for test workflow to complete if it just started
             await new Promise(resolve => setTimeout(resolve, 10000));
-            
+
             // Check the latest test workflow run for this branch/SHA
             const { data: runs } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
@@ -46,15 +46,15 @@ jobs:
               branch: branch,
               per_page: 5
             });
-            
+
             if (runs.workflow_runs.length === 0) {
               core.setFailed('No test workflow run found. Please ensure tests pass first.');
               return;
             }
-            
+
             // Find the run matching this SHA or the most recent one
             const matchingRun = runs.workflow_runs.find(run => run.head_sha === sha) || runs.workflow_runs[0];
-            
+
             // Wait for workflow to complete if still in progress
             let attempts = 0;
             while (matchingRun.status !== 'completed' && attempts < 30) {
@@ -68,7 +68,7 @@ jobs:
               matchingRun.conclusion = run.conclusion;
               attempts++;
             }
-            
+
             if (matchingRun.conclusion !== 'success') {
               core.setFailed(`Test workflow ${matchingRun.conclusion}. Check the test workflow for details.`);
             } else {
@@ -157,12 +157,21 @@ jobs:
           STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: ${{secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY}}
           STRIPE_PRICE_ID_SQUAD_MONTHLY: ${{secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY}}
           STRIPE_PRICE_ID_SQUAD_YEARLY: ${{secrets.STRIPE_PRICE_ID_SQUAD_YEARLY}}
+          PAYSTACK_SECRET_KEY: ${{secrets.PAYSTACK_SECRET_KEY}}
+          PAYSTACK_PUBLIC_KEY: ${{secrets.PAYSTACK_PUBLIC_KEY}}
+          PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: ${{secrets.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY}}
+          PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: ${{secrets.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY}}
+          PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: ${{secrets.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY}}
+          PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: ${{secrets.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY}}
+          PAYSTACK_PLAN_SQUAD_MONTHLY: ${{secrets.PAYSTACK_PLAN_SQUAD_MONTHLY}}
+          PAYSTACK_PLAN_SQUAD_YEARLY: ${{secrets.PAYSTACK_PLAN_SQUAD_YEARLY}}
           FRONTEND_URL: ${{secrets.FRONTEND_URL}}
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           chmod +x scripts/load-all-secrets.sh
@@ -299,15 +308,24 @@ jobs:
             export STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY="${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}"
             export STRIPE_PRICE_ID_SQUAD_MONTHLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}"
             export STRIPE_PRICE_ID_SQUAD_YEARLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}"
+            export PAYSTACK_SECRET_KEY="${{ secrets.PAYSTACK_SECRET_KEY }}"
+            export PAYSTACK_PUBLIC_KEY="${{ secrets.PAYSTACK_PUBLIC_KEY }}"
+            export PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY="${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY }}"
+            export PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY="${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY }}"
+            export PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY="${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY }}"
+            export PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY="${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY }}"
+            export PAYSTACK_PLAN_SQUAD_MONTHLY="${{ secrets.PAYSTACK_PLAN_SQUAD_MONTHLY }}"
+            export PAYSTACK_PLAN_SQUAD_YEARLY="${{ secrets.PAYSTACK_PLAN_SQUAD_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
             export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
             export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
-            
+            export ELEVENLABS_AGENT_ID="${{ secrets.ELEVENLABS_AGENT_ID }}"
+
             cd /opt/maigie/previews
-            
+
             # Clean up existing preview for this PR if it exists
             if [ -d "${{ steps.preview.outputs.id }}" ]; then
               echo "Cleaning up existing preview environment for ${{ steps.preview.outputs.id }}..."
@@ -333,7 +351,7 @@ jobs:
               rm -rf ${{ steps.preview.outputs.id }}
               echo "✓ Cleaned up existing preview environment"
             fi
-            
+
             # Create preview directory
             mkdir -p ${{ steps.preview.outputs.id }}
             cd ${{ steps.preview.outputs.id }}
@@ -354,14 +372,14 @@ jobs:
               export ENVIRONMENT="preview"
               export PREVIEW_ID="${{ steps.preview.outputs.id }}"
             fi
-            
+
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
-            
+
             # Load Docker image
             docker load < /tmp/preview-image.tar.gz
             rm /tmp/preview-image.tar.gz
-            
+
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
 
@@ -386,7 +404,7 @@ jobs:
               echo "Final .env file contents:"
               cat .env
             fi
-            
+
             # Create docker-compose.yml
             cat > docker-compose.yml << EOF
             services:
@@ -406,7 +424,7 @@ jobs:
                   retries: 5
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
-            
+
               redis:
                 image: redis:7-alpine
                 container_name: maigie-preview-redis-${{ steps.preview.outputs.id }}
@@ -417,7 +435,7 @@ jobs:
                   retries: 5
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
-            
+
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
                 container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
@@ -460,25 +478,25 @@ jobs:
                   sh -c "
                     celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=2 --queues=default --without-gossip --without-mingle --without-heartbeat
                   "
-            
+
             volumes:
               postgres_data_${{ steps.preview.outputs.id }}:
-            
+
             networks:
               preview_net_${{ steps.preview.outputs.id }}:
                 driver: bridge
             EOF
-            
+
             # Start preview environment (this will create fresh database)
             docker-compose up -d
-            
+
             # Give containers a moment to start, then check initial logs
             sleep 5
             echo "Initial container status:"
             docker-compose ps
             echo "Initial backend logs:"
             docker-compose logs --tail=50 backend || true
-            
+
             # Wait for backend container to be running and get port
             echo "Waiting for backend container to start..."
             PORT=""
@@ -492,7 +510,7 @@ jobs:
               fi
               sleep 2
             done
-            
+
             if [ -z "$PORT" ]; then
               echo "❌ Failed to get port after 30 attempts"
               echo "Container logs:"
@@ -501,13 +519,13 @@ jobs:
               docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
               exit 1
             fi
-            
+
             # Wait for backend application to be ready (health check)
             echo "Waiting for backend application to be ready..."
             MAX_HEALTH_CHECKS=60
             HEALTH_CHECK_COUNT=0
             PORT_OPEN=false
-            
+
             while [ $HEALTH_CHECK_COUNT -lt $MAX_HEALTH_CHECKS ]; do
               # Check if container is still running
               if ! docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
@@ -563,7 +581,7 @@ jobs:
               fi
               sleep 2
             done
-            
+
             echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
             echo "Preview deployed on port: $PORT"
 
@@ -575,27 +593,27 @@ jobs:
           PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "cat /tmp/preview_port_${{ steps.preview.outputs.id }}.txt 2>/dev/null | cut -d= -f2")
-          
+
           if [ -z "$PORT" ]; then
             PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
               ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
               "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
           fi
-          
+
           if [ -z "$PORT" ]; then
             echo "❌ Failed to get port for preview backend"
             exit 1
           fi
-          
+
           echo "✓ Backend is running on port: $PORT"
-          
+
           PREVIEW_DOMAIN_VALUE="${{ secrets.PREVIEW_DOMAIN }}"
           if [ -z "$PREVIEW_DOMAIN_VALUE" ]; then
             PREVIEW_DOMAIN_VALUE="maigie.com"
           fi
-          
+
           PREVIEW_DOMAIN="${{ steps.preview.outputs.id }}-api-preview.${PREVIEW_DOMAIN_VALUE}"
-          
+
           # Create Nginx config locally with variables already expanded
           cat > /tmp/nginx-preview.conf << EOF
           server {
@@ -624,19 +642,19 @@ jobs:
               }
           }
           EOF
-          
+
           # Copy config to VPS
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             /tmp/nginx-preview.conf \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf
-          
+
           # Move to Nginx directory and reload
           ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
             "sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo systemctl reload nginx"
-          
+
           echo "✓ Nginx config created and reloaded for ${PREVIEW_DOMAIN} → localhost:${PORT}"
-          
+
           # Add Cloudflare Tunnel route and DNS record via API
           if [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_TUNNEL_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
             echo "Adding Cloudflare Tunnel route and DNS record for ${PREVIEW_DOMAIN}..."
@@ -716,7 +734,7 @@ jobs:
           else
             echo "⚠️  Cloudflare API credentials not configured, skipping tunnel route and DNS creation"
           fi
-          
+
           echo "domain=${PREVIEW_DOMAIN}" >> $GITHUB_OUTPUT
 
       - name: Get Preview URL
@@ -743,7 +761,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const previewUrl = process.env.PREVIEW_URL || 'http://${{ secrets.VPS_HOST }}:8000';
-            
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -824,12 +842,21 @@ jobs:
           STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: ${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}
           STRIPE_PRICE_ID_SQUAD_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}
           STRIPE_PRICE_ID_SQUAD_YEARLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          PAYSTACK_PUBLIC_KEY: ${{ secrets.PAYSTACK_PUBLIC_KEY }}
+          PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: ${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY }}
+          PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: ${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY }}
+          PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: ${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY }}
+          PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: ${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY }}
+          PAYSTACK_PLAN_SQUAD_MONTHLY: ${{ secrets.PAYSTACK_PLAN_SQUAD_MONTHLY }}
+          PAYSTACK_PLAN_SQUAD_YEARLY: ${{ secrets.PAYSTACK_PLAN_SQUAD_YEARLY }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -876,7 +903,7 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             cd /opt/maigie/production
-            
+
             # Load Docker image
             docker load < /tmp/production-image.tar.gz
             rm /tmp/production-image.tar.gz
@@ -885,7 +912,7 @@ jobs:
             if [ -f /tmp/.env ]; then
               mv /tmp/.env .env
             fi
-            
+
             # Ensure environment-specific variables are set correctly
             # Use sed to update existing values or append if not present
             if grep -q "^DATABASE_URL=" .env 2>/dev/null; then
@@ -893,28 +920,28 @@ jobs:
             else
               echo "DATABASE_URL=${{ secrets.PRODUCTION_DATABASE_URL }}" >> .env
             fi
-            
+
             if grep -q "^REDIS_URL=" .env 2>/dev/null; then
               sed -i "s|^REDIS_URL=.*|REDIS_URL=redis://redis:6379/0|" .env
             else
               echo "REDIS_URL=redis://redis:6379/0" >> .env
             fi
-            
+
             if grep -q "^ENVIRONMENT=" .env 2>/dev/null; then
               sed -i "s|^ENVIRONMENT=.*|ENVIRONMENT=production|" .env
             else
               echo "ENVIRONMENT=production" >> .env
             fi
-            
+
             # Tag the loaded image for docker-compose (if needed)
             docker tag maigie-backend:latest maigie-backend:latest || true
-            
+
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
             if [ -f docker-compose.yml ]; then
               cp docker-compose.yml docker-compose.yml.backup
             fi
-            
+
             # Create docker-compose.yml with image references
             cat > docker-compose.yml << 'EOF'
             services:
@@ -931,7 +958,7 @@ jobs:
                   retries: 5
                 networks:
                   - maigie_network
-            
+
               celery-worker:
                 image: maigie-backend:latest
                 container_name: maigie-celery-worker-prod
@@ -943,7 +970,7 @@ jobs:
                 networks:
                   - maigie_network
                 command: celery -A src.core.celery_app worker --loglevel=info
-            
+
               celery-beat:
                 image: maigie-backend:latest
                 container_name: maigie-celery-beat-prod
@@ -955,7 +982,7 @@ jobs:
                 networks:
                   - maigie_network
                 command: celery -A src.core.celery_app beat --loglevel=info
-            
+
               backend:
                 image: maigie-backend:latest
                 container_name: maigie-backend-prod
@@ -974,27 +1001,27 @@ jobs:
                     prisma db push --accept-data-loss &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
-            
+
             volumes:
               redis_data:
-            
+
             networks:
               maigie_network:
                 driver: bridge
             EOF
-            
+
             # Stop existing containers
             docker-compose down || true
-            
+
             # Deploy (no build needed, using pre-loaded image)
             docker-compose up -d
-            
+
             # Wait for services to be ready
             sleep 15
-            
+
             # Run db push
             docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
-            
+
             echo "Production deployment complete!"
 
   deploy-staging:
@@ -1070,12 +1097,21 @@ jobs:
           STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: ${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}
           STRIPE_PRICE_ID_SQUAD_MONTHLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}
           STRIPE_PRICE_ID_SQUAD_YEARLY: ${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          PAYSTACK_PUBLIC_KEY: ${{ secrets.PAYSTACK_PUBLIC_KEY }}
+          PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: ${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY }}
+          PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: ${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY }}
+          PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: ${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY }}
+          PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: ${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY }}
+          PAYSTACK_PLAN_SQUAD_MONTHLY: ${{ secrets.PAYSTACK_PLAN_SQUAD_MONTHLY }}
+          PAYSTACK_PLAN_SQUAD_YEARLY: ${{ secrets.PAYSTACK_PLAN_SQUAD_YEARLY }}
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
           BUNNY_CDN_API_KEY: ${{ secrets.BUNNY_CDN_API_KEY }}
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_AGENT_ID: ${{ secrets.ELEVENLABS_AGENT_ID }}
         run: |
           chmod +x scripts/generate-env-from-secrets.sh
           ./scripts/generate-env-from-secrets.sh .env .env.example
@@ -1189,15 +1225,24 @@ jobs:
             export STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY="${{ secrets.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY }}"
             export STRIPE_PRICE_ID_SQUAD_MONTHLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_MONTHLY }}"
             export STRIPE_PRICE_ID_SQUAD_YEARLY="${{ secrets.STRIPE_PRICE_ID_SQUAD_YEARLY }}"
+            export PAYSTACK_SECRET_KEY="${{ secrets.PAYSTACK_SECRET_KEY }}"
+            export PAYSTACK_PUBLIC_KEY="${{ secrets.PAYSTACK_PUBLIC_KEY }}"
+            export PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY="${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY }}"
+            export PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY="${{ secrets.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY }}"
+            export PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY="${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY }}"
+            export PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY="${{ secrets.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY }}"
+            export PAYSTACK_PLAN_SQUAD_MONTHLY="${{ secrets.PAYSTACK_PLAN_SQUAD_MONTHLY }}"
+            export PAYSTACK_PLAN_SQUAD_YEARLY="${{ secrets.PAYSTACK_PLAN_SQUAD_YEARLY }}"
             export FRONTEND_URL="${{ secrets.FRONTEND_URL }}"
             export BUNNY_CDN_API_KEY="${{ secrets.BUNNY_CDN_API_KEY }}"
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
             export ELEVENLABS_API_KEY="${{ secrets.ELEVENLABS_API_KEY }}"
-            
+            export ELEVENLABS_AGENT_ID="${{ secrets.ELEVENLABS_AGENT_ID }}"
+
             cd /opt/maigie/staging
-            
+
             # Load Docker image
             docker load < /tmp/staging-image.tar.gz
             rm /tmp/staging-image.tar.gz
@@ -1232,16 +1277,16 @@ jobs:
                 mv /tmp/.env .env
               fi
             fi
-            
+
             # Tag the loaded image for docker-compose (if needed)
             docker tag maigie-backend:staging maigie-backend:staging || true
-            
+
             # Update docker-compose.yml to use image instead of build
             # Backup original if it exists
             if [ -f docker-compose.yml ]; then
               cp docker-compose.yml docker-compose.yml.backup
             fi
-            
+
             # Create docker-compose.yml with image references
             cat > docker-compose.yml << 'EOF'
             services:
@@ -1258,7 +1303,7 @@ jobs:
                   retries: 5
                 networks:
                   - maigie_network
-            
+
               celery-worker:
                 image: maigie-backend:staging
                 container_name: maigie-celery-worker-staging
@@ -1270,7 +1315,7 @@ jobs:
                 networks:
                   - maigie_network
                 command: celery -A src.core.celery_app worker --loglevel=info
-            
+
               celery-beat:
                 image: maigie-backend:staging
                 container_name: maigie-celery-beat-staging
@@ -1282,7 +1327,7 @@ jobs:
                 networks:
                   - maigie_network
                 command: celery -A src.core.celery_app beat --loglevel=info
-            
+
               backend:
                 image: maigie-backend:staging
                 container_name: maigie-backend-staging
@@ -1302,29 +1347,29 @@ jobs:
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
-            
+
             volumes:
               redis_data:
-            
+
             networks:
               maigie_network:
                 driver: bridge
             EOF
-            
+
             # Stop existing containers
             docker-compose down || true
-            
+
             # Deploy (no build needed, using pre-loaded image)
             docker-compose up -d
-            
+
             # Wait for services to be ready
             sleep 15
-            
+
             # Run cleanup and db push (already done in container startup, but ensure it's done)
             docker-compose exec -T backend python prisma/cleanup-duplicates.py || echo "No duplicates to clean"
             docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
             docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
-            
+
             echo "Staging deployment complete!"
 
   cleanup-preview:
@@ -1372,7 +1417,7 @@ jobs:
           PREVIEW_ID="${{ steps.preview.outputs.id }}"
           PREVIEW_DOMAIN_VALUE="${PREVIEW_DOMAIN:-maigie.com}"
           PREVIEW_DOMAIN="${PREVIEW_ID}-api-preview.${PREVIEW_DOMAIN_VALUE}"
-          
+
           # Remove Cloudflare Tunnel route and DNS record
           if [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ -n "$CLOUDFLARE_TUNNEL_ID" ] && [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ZONE_ID" ]; then
             echo "Removing Cloudflare Tunnel route and DNS record for ${PREVIEW_DOMAIN}..."
@@ -1432,7 +1477,7 @@ jobs:
               echo "Tunnel route ${PREVIEW_DOMAIN} does not exist, skipping..."
             fi
           fi
-          
+
           # Cleanup VPS resources
           ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \

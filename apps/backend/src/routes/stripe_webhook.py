@@ -111,7 +111,7 @@ async def stripe_webhook(
 
                 await update_user_subscription_from_stripe(str(subscription_id))
                 logger.info(
-                    f"Synced subscription {subscription_id} from checkout.session.completed"
+                    f"Synced subscription {subscription_id} from " "checkout.session.completed"
                 )
             except Exception as e:
                 logger.error(f"Error syncing from checkout.session.completed: {e}")

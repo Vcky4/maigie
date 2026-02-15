@@ -160,14 +160,26 @@ class Settings(BaseSettings):
     TRIAL_DAYS_STUDY_CIRCLE: int = 3
     TRIAL_DAYS_SQUAD: int = 3
     FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
+
+    # --- Paystack (Nigeria) ---
+    PAYSTACK_SECRET_KEY: str = ""
+    PAYSTACK_PUBLIC_KEY: str = ""
+    # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
+    PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
+    PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""
+    PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: str = ""
+    PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: str = ""
+    PAYSTACK_PLAN_SQUAD_MONTHLY: str = ""
+    PAYSTACK_PLAN_SQUAD_YEARLY: str = ""
     # --- BunnyCDN Storage ---
     BUNNY_CDN_API_KEY: str | None = None
     BUNNY_STORAGE_ZONE: str | None = None
     BUNNY_CDN_HOSTNAME: str = "cdn.maigie.com"
 
-    # --- ElevenLabs (Smart AI Tutor, Exam Prep voice) ---
+    # --- ElevenLabs (Smart AI Tutor, Exam Prep voice, Conversational AI agent) ---
     ELEVENLABS_API_KEY: str | None = None
     ELEVENLABS_VOICE_ID: str = "56AoDkrOh6qfVPDXZ7Pt"  # Default voice
+    ELEVENLABS_AGENT_ID: str = ""  # Conversational AI agent ID
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),
