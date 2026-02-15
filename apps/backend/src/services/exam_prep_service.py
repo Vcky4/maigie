@@ -290,29 +290,35 @@ async def save_questions(
 
     created = []
     for q in questions:
-        # Build create data — use relation connect for required topic,
-        # and prisma Json wrapper for the nullable Json field.
-        options_val = q.get("options")
+        # Build create data — only include optional fields when they have a value.
+        # Prisma Python rejects Python None for optional fields; omit them instead.
         data: dict[str, Any] = {
-            "topic": {"connect": {"id": topic_id}},
+            "topicId": topic_id,
             "source": q.get("source", "AI_GENERATED"),
             "questionText": q["questionText"],
             "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
-            "correctAnswer": q.get("correctAnswer"),
             "explanation": q.get("explanation", ""),
-            "year": q.get("year"),
             "difficulty": q.get("difficulty", "MEDIUM"),
             "tags": q.get("tags", []),
         }
 
-        # Prisma Json fields need explicit Json() wrapper, not raw Python dicts/None
+        # Json field: must use prisma.Json() wrapper, and omit if None
+        options_val = q.get("options")
         if options_val is not None:
             data["options"] = Json(options_val)
 
-        # Optional material relation
+        # Optional String fields: only include when truthy
+        correct_answer = q.get("correctAnswer")
+        if correct_answer:
+            data["correctAnswer"] = str(correct_answer)
+
+        year = q.get("year")
+        if year:
+            data["year"] = str(year)
+
         material_id = q.get("materialId")
         if material_id:
-            data["material"] = {"connect": {"id": material_id}}
+            data["materialId"] = str(material_id)
 
         question = await db.examquestion.create(data=data)
         created.append(question)
