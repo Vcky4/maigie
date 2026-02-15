@@ -1,9 +1,11 @@
 """
-Spaced repetition service: review scheduling and behaviour logging.
+Spaced repetition service: SM-2 adaptive review scheduling and behaviour logging.
 
 - Creates ReviewItems when a topic is completed (one review schedule per topic).
-- Advances intervals (1, 3, 7, 14, 30 days) on each completed review.
-- Logs schedule behaviour (on-time, late, skipped, rescheduled) for AI learning.
+- Implements the SM-2 algorithm with adaptive ease factor and quality-based intervals.
+- Handles lapses (quality < 3) by resetting intervals for re-learning.
+- Applies an overdue penalty when reviews are completed significantly late.
+- Logs schedule behaviour (on-time, late, skipped, rescheduled, lapsed) for AI learning.
 """
 
 from __future__ import annotations
@@ -14,17 +16,121 @@ from typing import Any
 from prisma import Prisma
 
 
-# Default spaced repetition intervals (days): 1, 3, 7, 14, 30 then repeat 30
-DEFAULT_INTERVALS_DAYS = [1, 3, 7, 14, 30]
+# ── SM-2 Algorithm Constants ────────────────────────────────────────────────
+INITIAL_EASE_FACTOR = 2.5  # Starting ease for new items
+MIN_EASE_FACTOR = 1.3  # Floor – prevents intervals from shrinking too aggressively
+MAX_INTERVAL_DAYS = 365  # Safety cap – no single interval exceeds ~1 year
+LAPSE_INTERVAL_DAYS = 1  # Interval after a lapse (forgot the material)
+GRADUATING_INTERVAL_DAYS = 1  # First successful review interval
+EASY_BONUS = 1.3  # Multiplier boost for "easy" (quality 5) reviews
+
 REVIEW_BLOCK_DURATION_MINUTES = 30
 
+# Quality scale (0–5):
+#  0 – Complete blackout, no recall at all
+#  1 – Incorrect; upon seeing the answer, remembered "oh right"
+#  2 – Incorrect; the correct answer seemed easy to recall once shown
+#  3 – Correct answer recalled with serious difficulty
+#  4 – Correct answer after some hesitation
+#  5 – Perfect recall, instant answer
 
-def get_next_interval_days(repetition_count: int) -> int:
-    """Return the next interval in days for a given repetition count (0-indexed)."""
-    if repetition_count < 0:
-        return DEFAULT_INTERVALS_DAYS[0]
-    idx = min(repetition_count, len(DEFAULT_INTERVALS_DAYS) - 1)
-    return DEFAULT_INTERVALS_DAYS[idx]
+
+def compute_sm2(
+    quality: int,
+    repetition_count: int,
+    ease_factor: float,
+    interval_days: int,
+) -> tuple[int, float, int]:
+    """
+    Core SM-2 computation.
+
+    Args:
+        quality:          User quality rating 0–5
+        repetition_count: Number of consecutive successful reviews
+        ease_factor:      Current ease factor (≥ 1.3)
+        interval_days:    Current interval in days
+
+    Returns:
+        (new_interval_days, new_ease_factor, new_repetition_count)
+    """
+    quality = max(0, min(5, quality))  # clamp
+
+    if quality < 3:
+        # ── Lapse: user didn't recall well enough ───────────────────────
+        new_repetition_count = 0
+        new_interval = LAPSE_INTERVAL_DAYS
+        # Reduce ease factor on lapse but respect floor
+        new_ef = max(MIN_EASE_FACTOR, ease_factor - 0.2)
+    else:
+        # ── Successful recall ───────────────────────────────────────────
+        new_repetition_count = repetition_count + 1
+
+        if new_repetition_count == 1:
+            new_interval = GRADUATING_INTERVAL_DAYS
+        elif new_repetition_count == 2:
+            new_interval = 6
+        else:
+            new_interval = round(interval_days * ease_factor)
+
+        # Apply easy bonus for quality 5
+        if quality == 5:
+            new_interval = round(new_interval * EASY_BONUS)
+
+        # SM-2 ease factor adjustment:
+        # EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+        new_ef = ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
+        new_ef = max(MIN_EASE_FACTOR, new_ef)
+
+    # Enforce caps
+    new_interval = max(1, min(new_interval, MAX_INTERVAL_DAYS))
+
+    return new_interval, new_ef, new_repetition_count
+
+
+def apply_overdue_penalty(
+    interval_days: int,
+    ease_factor: float,
+    scheduled_at: datetime,
+    completed_at: datetime,
+) -> tuple[int, float]:
+    """
+    If the review was completed significantly after its due date, reduce the
+    next interval proportionally. "Significantly" = more than 25% past the
+    scheduled interval.
+
+    Returns:
+        (adjusted_interval, adjusted_ease_factor)
+    """
+    overdue_seconds = (completed_at - scheduled_at).total_seconds()
+    if overdue_seconds <= 0:
+        return interval_days, ease_factor  # on time or early
+
+    scheduled_interval_seconds = interval_days * 86400
+    overdue_ratio = overdue_seconds / max(scheduled_interval_seconds, 86400)
+
+    if overdue_ratio <= 0.25:
+        return interval_days, ease_factor  # within grace period
+
+    # Scale down: at 2× overdue the interval is halved
+    penalty = max(0.5, 1.0 - (overdue_ratio - 0.25) * 0.5)
+    adjusted_interval = max(1, round(interval_days * penalty))
+    adjusted_ef = max(MIN_EASE_FACTOR, ease_factor - 0.05 * min(overdue_ratio, 2.0))
+
+    return adjusted_interval, adjusted_ef
+
+
+def get_strength_label(ease_factor: float, interval_days: int, lapse_count: int) -> str:
+    """
+    Human-friendly strength label for a review item.
+    Used on the frontend to show per-topic retention strength.
+    """
+    if lapse_count >= 3 and interval_days <= 3:
+        return "weak"
+    if ease_factor < 1.8 or interval_days <= 3:
+        return "weak"
+    if ease_factor < 2.2 or interval_days <= 14:
+        return "moderate"
+    return "strong"
 
 
 async def create_review_item(db: Prisma, user_id: str, topic_id: str) -> Any | None:
@@ -36,14 +142,17 @@ async def create_review_item(db: Prisma, user_id: str, topic_id: str) -> Any | N
     if existing:
         return None
     now = datetime.now(UTC)
-    next_review = now + timedelta(days=1)
+    next_review = now + timedelta(days=GRADUATING_INTERVAL_DAYS)
     return await db.reviewitem.create(
         data={
             "userId": user_id,
             "topicId": topic_id,
             "nextReviewAt": next_review,
-            "intervalDays": 1,
+            "intervalDays": GRADUATING_INTERVAL_DAYS,
             "repetitionCount": 0,
+            "easeFactor": INITIAL_EASE_FACTOR,
+            "lastQuality": -1,
+            "lapseCount": 0,
         }
     )
 
@@ -85,12 +194,20 @@ async def advance_review(
     db: Prisma,
     review_item_id: str,
     user_id: str,
+    quality: int = 4,
     completed_on_time: bool = True,
     actual_at: datetime | None = None,
 ) -> Any:
     """
-    Mark a review as done: log behaviour, update nextReviewAt and repetitionCount.
-    If completed_on_time is False, we still advance but log COMPLETED_LATE.
+    Mark a review as done using SM-2 adaptive scheduling.
+
+    Args:
+        quality: 0–5 rating of recall quality. AI provides this based on quiz performance.
+                 0-2 = lapse (failed), 3 = hard, 4 = good, 5 = easy.
+        completed_on_time: Legacy flag, now derived from quality + timing automatically.
+        actual_at: When the review was actually completed (default: now).
+
+    Updates nextReviewAt, intervalDays, easeFactor, repetitionCount, lapseCount.
     """
     review = await db.reviewitem.find_first(
         where={"id": review_item_id, "userId": user_id},
@@ -98,8 +215,19 @@ async def advance_review(
     )
     if not review:
         raise ValueError("ReviewItem not found")
+
     now = actual_at or datetime.now(UTC)
-    behaviour = "COMPLETED_ON_TIME" if completed_on_time else "COMPLETED_LATE"
+    quality = max(0, min(5, quality))
+
+    # ── Determine behaviour type for logging ────────────────────────────
+    is_lapse = quality < 3
+    if is_lapse:
+        behaviour = "LAPSED"
+    elif review.nextReviewAt and now > review.nextReviewAt + timedelta(days=1):
+        behaviour = "COMPLETED_LATE"
+    else:
+        behaviour = "COMPLETED_ON_TIME"
+
     await log_behaviour(
         db,
         user_id=user_id,
@@ -108,20 +236,50 @@ async def advance_review(
         entity_id=review_item_id,
         scheduled_at=review.nextReviewAt,
         actual_at=now,
-        metadata={"topicId": review.topicId, "topicTitle": review.topic.title},
+        metadata={
+            "topicId": review.topicId,
+            "topicTitle": review.topic.title if review.topic else "",
+            "quality": quality,
+            "previousEaseFactor": review.easeFactor,
+            "previousInterval": review.intervalDays,
+            "previousRepetitionCount": review.repetitionCount,
+        },
     )
-    new_count = review.repetitionCount + 1
-    interval_days = get_next_interval_days(new_count)
-    next_review_at = now + timedelta(days=interval_days)
+
+    # ── SM-2 computation ────────────────────────────────────────────────
+    new_interval, new_ef, new_rep_count = compute_sm2(
+        quality=quality,
+        repetition_count=review.repetitionCount,
+        ease_factor=review.easeFactor,
+        interval_days=review.intervalDays,
+    )
+
+    # ── Overdue penalty (only for successful reviews) ───────────────────
+    if not is_lapse and review.nextReviewAt:
+        new_interval, new_ef = apply_overdue_penalty(
+            interval_days=new_interval,
+            ease_factor=new_ef,
+            scheduled_at=review.nextReviewAt,
+            completed_at=now,
+        )
+
+    # ── Update lapse count ──────────────────────────────────────────────
+    new_lapse_count = review.lapseCount + (1 if is_lapse else 0)
+
+    next_review_at = now + timedelta(days=new_interval)
     updated = await db.reviewitem.update(
         where={"id": review_item_id},
         data={
             "lastReviewedAt": now,
-            "repetitionCount": new_count,
-            "intervalDays": interval_days,
+            "repetitionCount": new_rep_count,
+            "intervalDays": new_interval,
+            "easeFactor": new_ef,
+            "lastQuality": quality,
+            "lapseCount": new_lapse_count,
             "nextReviewAt": next_review_at,
         },
     )
+
     # Unlink the old schedule block from this review (block holds FK; stays in DB for history)
     if review.scheduleBlock:
         await db.scheduleblock.update(
@@ -153,6 +311,72 @@ async def log_behaviour(
             "metadata": metadata,
         }
     )
+
+
+async def get_review_stats(db: Prisma, user_id: str) -> dict[str, Any]:
+    """
+    Compute review statistics for the user dashboard.
+    Returns counts, averages, and a strength breakdown.
+    """
+    now = datetime.now(UTC)
+    items = await db.reviewitem.find_many(
+        where={"userId": user_id},
+        include={"topic": True},
+    )
+
+    total = len(items)
+    due_today = sum(1 for r in items if r.nextReviewAt <= now)
+    due_this_week = sum(1 for r in items if r.nextReviewAt <= now + timedelta(days=7))
+
+    # Strength distribution
+    strong = moderate = weak = 0
+    total_ease = 0.0
+    total_reviewed = 0
+    for r in items:
+        label = get_strength_label(r.easeFactor, r.intervalDays, r.lapseCount)
+        if label == "strong":
+            strong += 1
+        elif label == "moderate":
+            moderate += 1
+        else:
+            weak += 1
+        total_ease += r.easeFactor
+        if r.repetitionCount > 0:
+            total_reviewed += 1
+
+    avg_ease = round(total_ease / total, 2) if total > 0 else INITIAL_EASE_FACTOR
+
+    # Estimated retention (rough heuristic based on ease factor distribution)
+    # Higher ease = better retention. EF 2.5 ≈ 90%, EF 1.3 ≈ 70%
+    if total > 0:
+        retention_estimate = round(min(95, max(50, 60 + (avg_ease - 1.3) * 25)), 1)
+    else:
+        retention_estimate = 0
+
+    # Upcoming load forecast: reviews due in next 7 days by day
+    forecast = []
+    for day_offset in range(7):
+        day_start = (now + timedelta(days=day_offset)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        day_end = day_start + timedelta(days=1)
+        count = sum(1 for r in items if day_start <= r.nextReviewAt < day_end)
+        forecast.append({"date": day_start.isoformat(), "count": count})
+
+    return {
+        "total": total,
+        "dueToday": due_today,
+        "dueThisWeek": due_this_week,
+        "totalReviewed": total_reviewed,
+        "averageEaseFactor": avg_ease,
+        "estimatedRetention": retention_estimate,
+        "strength": {
+            "strong": strong,
+            "moderate": moderate,
+            "weak": weak,
+        },
+        "forecast": forecast,
+    }
 
 
 async def ensure_review_item_for_completed_topic(

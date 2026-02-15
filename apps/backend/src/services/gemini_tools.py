@@ -357,10 +357,16 @@ def create_schedule_tool() -> dict[str, Any]:
 
 
 def complete_review_tool() -> dict[str, Any]:
-    """Tool definition for marking a spaced-repetition review as completed."""
+    """Tool definition for marking a spaced-repetition review as completed with quality rating."""
     return {
         "name": "complete_review",
-        "description": "Mark the current spaced-repetition review as completed. Call this ONLY when the user has finished answering all quiz questions in the review flow (after you have given your final explanation). The review_item_id comes from context when the user is in review mode.",
+        "description": (
+            "Mark the current spaced-repetition review as completed with a quality rating. "
+            "Call this ONLY when the user has finished answering all quiz questions in the review "
+            "flow (after you have given your final explanation). The review_item_id comes from "
+            "context when the user is in review mode. You MUST provide a quality rating based on "
+            "the user's performance across all questions."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -368,8 +374,28 @@ def complete_review_tool() -> dict[str, Any]:
                     "type": "string",
                     "description": "Review item ID from context (required when in review mode)",
                 },
+                "quality": {
+                    "type": "integer",
+                    "description": (
+                        "Quality of recall, 0-5 scale based on user's quiz performance: "
+                        "0 = complete blackout (0% correct, no recognition even after explanation), "
+                        "1 = incorrect but recognised answer after seeing it (≤20% correct), "
+                        "2 = incorrect but answer seemed easy once shown (≤40% correct), "
+                        "3 = correct with serious difficulty (≈60% correct, lots of hesitation), "
+                        "4 = correct with minor hesitation (≈80% correct, mostly smooth), "
+                        "5 = perfect instant recall (100% correct, no hesitation). "
+                        "Base this on the proportion of questions answered correctly and the "
+                        "degree of confidence/hesitation shown."
+                    ),
+                },
+                "score_summary": {
+                    "type": "string",
+                    "description": (
+                        "Brief summary of user's performance, e.g. '3/5 correct, struggled with X topic'"
+                    ),
+                },
             },
-            "required": [],
+            "required": ["quality"],
         },
     }
 
