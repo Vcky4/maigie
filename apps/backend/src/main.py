@@ -399,7 +399,6 @@ def create_app() -> FastAPI:
     app.include_router(gemini_live_router, prefix=f"{settings.API_V1_STR}/gemini-live")
     app.include_router(elevenlabs_router, prefix=f"{settings.API_V1_STR}/elevenlabs")
     app.include_router(exam_prep_router)
-    app.include_router(exam_prep_router)
     app.include_router(goals_router)
     app.include_router(reviews_router, prefix=f"{settings.API_V1_STR}/review-items")
     app.include_router(schedule_router)

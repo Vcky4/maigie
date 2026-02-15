@@ -1127,6 +1127,249 @@ Tags (JSON array):"""
             return "I'm sorry, I encountered an error analyzing that image."
 
 
+async def extract_exam_topics(subject: str, material_texts: list[str]) -> list[dict]:
+    """
+    Extract key topics/chapters from exam prep materials using AI.
+    Returns a list of {title, description} dictionaries.
+    """
+    import json
+    import re
+
+    if genai is None:
+        return []
+
+    # Combine material texts (truncated to avoid token limits)
+    combined = ""
+    for text in material_texts:
+        if text:
+            remaining = 30000 - len(combined)
+            if remaining <= 0:
+                break
+            combined += text[:remaining] + "\n\n---\n\n"
+
+    if not combined.strip():
+        return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
+
+    prompt = f"""Analyze the following study materials for the subject "{subject}" and extract the KEY TOPICS
+that a student should study for their exam.
+
+Study Material:
+{combined[:30000]}
+
+Return ONLY a JSON array of topics. Each topic should have:
+- "title": Short topic name (2-6 words)
+- "description": Brief description (1-2 sentences)
+
+Guidelines:
+- Extract 5-15 distinct topics
+- Group related content under broader topics
+- Order them logically (foundations first, advanced later)
+- Focus on topics that are likely to appear on an exam
+- No markdown, no code fences, no commentary
+
+JSON array:"""
+
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=2000,
+                temperature=0.2,
+            ),
+        )
+        response = await model.generate_content_async(prompt)
+        text = (response.text or "").strip()
+
+        try:
+            topics = json.loads(text)
+        except Exception:
+            match = re.search(r"\[[\s\S]*\]", text)
+            if not match:
+                return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
+            topics = json.loads(match.group(0))
+
+        if isinstance(topics, list):
+            return [
+                {
+                    "title": t.get("title", "Unknown Topic"),
+                    "description": t.get("description", ""),
+                }
+                for t in topics
+                if isinstance(t, dict) and t.get("title")
+            ]
+        return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
+
+    except Exception as e:
+        print(f"extract_exam_topics error: {e}")
+        return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
+
+
+async def extract_past_paper_questions(text: str, subject: str) -> list[dict]:
+    """
+    Parse a past exam paper text into individual questions with answers/options.
+    Returns structured question data ready for storage.
+    """
+    import json
+    import re
+
+    if genai is None:
+        return []
+
+    prompt = f"""You are analyzing a past exam paper for "{subject}". Extract each individual question from this text.
+
+Past Paper Text:
+{text[:25000]}
+
+For EACH question, extract:
+- "questionText": The full question text
+- "questionType": One of "MULTIPLE_CHOICE", "TRUE_FALSE", "SHORT_ANSWER", "FILL_IN_BLANK"
+- "options": For MCQ, an array of {{"label": "A", "text": "option text", "isCorrect": true/false}}. If the correct answer is provided, mark it. If not, make your best educated guess based on subject knowledge.
+- "correctAnswer": The correct answer text (for short answer/fill-in)
+- "explanation": A clear explanation of WHY this is the correct answer (2-4 sentences)
+- "difficulty": "EASY", "MEDIUM", or "HARD"
+- "year": If a year is mentioned in the paper, include it
+
+Return ONLY a JSON array. No markdown, no code fences, no commentary.
+If you can't identify the correct answer with certainty, still provide your best answer with explanation.
+
+JSON array:"""
+
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=4000,
+                temperature=0.1,
+            ),
+        )
+        response = await model.generate_content_async(prompt)
+        text_response = (response.text or "").strip()
+
+        try:
+            questions = json.loads(text_response)
+        except Exception:
+            match = re.search(r"\[[\s\S]*\]", text_response)
+            if not match:
+                return []
+            questions = json.loads(match.group(0))
+
+        if isinstance(questions, list):
+            return [
+                {
+                    "questionText": q.get("questionText", ""),
+                    "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
+                    "options": q.get("options"),
+                    "correctAnswer": q.get("correctAnswer"),
+                    "explanation": q.get("explanation", "No explanation available."),
+                    "difficulty": q.get("difficulty", "MEDIUM"),
+                    "year": q.get("year"),
+                    "source": "PAST_QUESTION",
+                }
+                for q in questions
+                if isinstance(q, dict) and q.get("questionText")
+            ]
+        return []
+
+    except Exception as e:
+        print(f"extract_past_paper_questions error: {e}")
+        return []
+
+
+async def generate_exam_questions(
+    subject: str,
+    topic_title: str,
+    context_text: str,
+    count: int = 5,
+    existing_questions: list[str] | None = None,
+) -> list[dict]:
+    """
+    Generate new exam-style questions from study materials for a specific topic.
+    Returns structured question data.
+    """
+    import json
+    import re
+
+    if genai is None:
+        return []
+
+    existing_str = ""
+    if existing_questions:
+        existing_str = "\n\nAVOID duplicating these existing questions:\n" + "\n".join(
+            f"- {q}" for q in existing_questions[:10]
+        )
+
+    prompt = f"""Generate {count} exam-style questions for the topic "{topic_title}" in the subject "{subject}".
+
+Study Material Context:
+{context_text[:20000]}
+{existing_str}
+
+Requirements:
+- Generate a MIX of question types: mostly MULTIPLE_CHOICE, some TRUE_FALSE, and a few SHORT_ANSWER
+- For MULTIPLE_CHOICE: provide exactly 4 options (A, B, C, D) with ONE correct answer
+- For TRUE_FALSE: correctAnswer should be "TRUE" or "FALSE"
+- For SHORT_ANSWER: correctAnswer should be a concise answer (1-3 words)
+- Include a clear explanation for each answer (2-4 sentences explaining WHY)
+- Vary difficulty: mix of EASY, MEDIUM, and HARD
+- Questions should test understanding, not just recall
+- Make them realistic exam questions
+
+Return ONLY a JSON array with {count} questions. Each question:
+{{
+  "questionText": "string",
+  "questionType": "MULTIPLE_CHOICE" | "TRUE_FALSE" | "SHORT_ANSWER",
+  "options": [{{"label": "A", "text": "...", "isCorrect": false}}, ...] (for MCQ only),
+  "correctAnswer": "string",
+  "explanation": "string",
+  "difficulty": "EASY" | "MEDIUM" | "HARD"
+}}
+
+No markdown, no code fences.
+JSON array:"""
+
+    try:
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=4000,
+                temperature=0.4,
+            ),
+        )
+        response = await model.generate_content_async(prompt)
+        text_response = (response.text or "").strip()
+
+        try:
+            questions = json.loads(text_response)
+        except Exception:
+            match = re.search(r"\[[\s\S]*\]", text_response)
+            if not match:
+                return []
+            questions = json.loads(match.group(0))
+
+        if isinstance(questions, list):
+            return [
+                {
+                    "questionText": q.get("questionText", ""),
+                    "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
+                    "options": q.get("options"),
+                    "correctAnswer": q.get("correctAnswer"),
+                    "explanation": q.get("explanation", "No explanation available."),
+                    "difficulty": q.get("difficulty", "MEDIUM"),
+                    "source": "AI_GENERATED",
+                }
+                for q in questions
+                if isinstance(q, dict) and q.get("questionText")
+            ]
+        return []
+
+    except Exception as e:
+        print(f"generate_exam_questions error: {e}")
+        return []
+
+
 async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[str, Any]]:
     """
     For daily AI schedule review: fetch user's courses, behaviour, and schedule,
