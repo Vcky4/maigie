@@ -210,12 +210,32 @@ def retry_task(
     raise Retry(exc=exc, countdown=countdown)
 
 
+def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
+    """Return a running event loop, creating one if needed.
+
+    Celery's prefork pool closes the parent's event loop after forking.
+    We keep a single loop alive per worker process so that Prisma's
+    internal httpx connection pool (and any other long-lived async
+    resources) can reuse connections across tasks without hitting
+    'Event loop is closed' errors.
+    """
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop
+
+
 def run_async_in_celery(coro: Awaitable[T]) -> T:
     """Run an async coroutine in a Celery worker process.
 
-    This helper function properly handles event loop creation in Celery's
-    prefork pool, where the parent process's event loop is closed after forking.
-    It creates a fresh event loop for each task execution.
+    The event loop is **not** closed after each task so that
+    connection pools (Prisma / httpx) survive between tasks on
+    the same worker.  The loop is created lazily and reused.
 
     Args:
         coro: The async coroutine to run
@@ -234,34 +254,5 @@ def run_async_in_celery(coro: Awaitable[T]) -> T:
             return run_async_in_celery(_run())
         ```
     """
-    # In Celery's prefork pool, the parent process's event loop is closed
-    # when the process forks. We need to create a fresh event loop.
-    try:
-        # Try to get the current event loop
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            # If the loop is closed, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-    except RuntimeError:
-        # No event loop exists, create a new one
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        # Clean up: close the loop and remove it
-        try:
-            # Cancel any remaining tasks
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            # Run until all tasks are cancelled
-            if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        except Exception:
-            pass
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+    loop = _get_or_create_event_loop()
+    return loop.run_until_complete(coro)
