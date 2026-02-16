@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # Request Models
 # --------------------------------------------------
 
+
 class ResourceBankUploadRequest(BaseModel):
     """Metadata fields sent alongside the multipart file upload."""
 
@@ -51,6 +52,7 @@ class ResourceBankReportRequest(BaseModel):
 # --------------------------------------------------
 # Response Models
 # --------------------------------------------------
+
 
 class ResourceBankFileResponse(BaseModel):
     """A single file attached to a resource bank item."""
