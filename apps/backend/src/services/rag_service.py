@@ -154,6 +154,26 @@ class RAGService:
                             "moduleId": topic.moduleId,
                         }
 
+            elif object_type == "resource_bank_item":
+                # Resource bank items are shared (not user-scoped), so no user check needed
+                item = await db.resourcebankitem.find_first(
+                    where={"id": object_id, "status": "APPROVED"},
+                    include={"files": True},
+                )
+                if item:
+                    return {
+                        "id": item.id,
+                        "title": item.title,
+                        "description": item.description,
+                        "type": str(item.type),
+                        "universityName": item.universityName,
+                        "courseName": item.courseName,
+                        "courseCode": item.courseCode,
+                        "fileCount": len(item.files) if item.files else 0,
+                        "downloadCount": item.downloadCount,
+                        "source": "resource_bank",
+                    }
+
             return None
 
         except Exception as e:
@@ -177,6 +197,9 @@ class RAGService:
                 query=query, user_id=user_id, limit=5
             )
 
+            # 1b. Search resource bank for matching academic materials
+            resource_bank_results = await self._search_resource_bank(query, user_id)
+
             # 2. Build context string for LLM
             context_parts = []
             if user_context:
@@ -197,6 +220,17 @@ class RAGService:
                     obj_data = item.get("data", {})
                     context_parts.append(
                         f"{idx}. {obj_data.get('title', 'Unknown')}: {obj_data.get('description') or obj_data.get('content', '')[:200]}"
+                    )
+
+            if resource_bank_results:
+                context_parts.append(
+                    "\nMatching Resources from Resource Bank (academic materials shared by other students):"
+                )
+                for idx, rb_item in enumerate(resource_bank_results[:5], 1):
+                    context_parts.append(
+                        f"{idx}. [{rb_item.get('type', 'OTHER')}] {rb_item.get('title', 'Unknown')} "
+                        f"- {rb_item.get('universityName', '')} {rb_item.get('courseCode', '')} "
+                        f"(Downloads: {rb_item.get('downloadCount', 0)})"
                     )
 
             context_str = (
@@ -329,6 +363,68 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
             traceback.print_exc()
             # Return empty list instead of raising exception for graceful degradation
             # This allows the action service to return a helpful message
+            return []
+
+    async def _search_resource_bank(
+        self,
+        query: str,
+        user_id: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """
+        Search the resource bank for relevant academic materials via Pinecone.
+        Filters by the user's university if available.
+        """
+        try:
+            # Get user's university for filtering
+            user = await db.user.find_unique(where={"id": user_id})
+            university_name = getattr(user, "universityName", None) if user else None
+
+            # Use Pinecone metadata filter for university-scoped search
+            metadata_filter: dict[str, Any] | None = None
+            if university_name:
+                metadata_filter = {"universityName": university_name}
+
+            results = await embedding_service.find_similar(
+                query_text=query,
+                object_type="resource_bank_item",
+                limit=limit,
+                threshold=0.5,
+                metadata_filter=metadata_filter,
+            )
+
+            # Enrich results with actual item data
+            enriched = []
+            for result in results:
+                item_id = result.get("objectId")
+                if not item_id:
+                    continue
+
+                item = await db.resourcebankitem.find_first(
+                    where={"id": item_id, "status": "APPROVED"},
+                    include={"files": True},
+                )
+                if item:
+                    enriched.append(
+                        {
+                            "id": item.id,
+                            "title": item.title,
+                            "description": item.description,
+                            "type": str(item.type),
+                            "universityName": item.universityName,
+                            "courseName": item.courseName,
+                            "courseCode": item.courseCode,
+                            "fileCount": len(item.files) if item.files else 0,
+                            "downloadCount": item.downloadCount,
+                            "similarity": result.get("similarity", 0),
+                            "source": "resource_bank",
+                        }
+                    )
+
+            return enriched
+
+        except Exception as e:
+            print(f"Error searching resource bank from RAG: {e}")
             return []
 
     def _calculate_recommendation_score(

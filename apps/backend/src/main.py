@@ -58,6 +58,7 @@ from .routes.goals import router as goals_router
 from .routes.realtime import router as realtime_router
 from .routes.referrals import router as referrals_router
 from .routes.reviews import router as reviews_router
+from .routes.resource_bank import router as resource_bank_router
 from .routes.resources import router as resources_router
 from .routes.schedule import router as schedule_router
 from .routes.stripe_webhook import router as stripe_webhook_router
@@ -403,6 +404,7 @@ def create_app() -> FastAPI:
     app.include_router(reviews_router, prefix=f"{settings.API_V1_STR}/review-items")
     app.include_router(schedule_router)
     app.include_router(resources_router)
+    app.include_router(resource_bank_router)
     app.include_router(realtime_router)
     app.include_router(notes_router, prefix=f"{settings.API_V1_STR}/notes")
     app.include_router(upload_router, prefix=f"{settings.API_V1_STR}/upload")

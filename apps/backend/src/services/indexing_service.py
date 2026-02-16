@@ -193,6 +193,66 @@ class IndexingService:
         except Exception as e:
             print(f"Error indexing topic {topic_id}: {e}")
 
+    async def index_resource_bank_item(self, item_id: str) -> None:
+        """
+        Index a resource bank item by creating an embedding from its
+        metadata and extracted file text.
+
+        Args:
+            item_id: ID of the ResourceBankItem to index
+        """
+        try:
+            item = await db.resourcebankitem.find_unique(
+                where={"id": item_id},
+                include={"files": True},
+            )
+
+            if not item:
+                print(f"ResourceBankItem {item_id} not found for indexing")
+                return
+
+            # Build content string
+            content_parts = [item.title]
+            if item.description:
+                content_parts.append(item.description)
+            content_parts.append(f"University: {item.universityName}")
+            if item.courseName:
+                content_parts.append(f"Course: {item.courseName}")
+            if item.courseCode:
+                content_parts.append(f"Course Code: {item.courseCode}")
+            content_parts.append(f"Type: {item.type}")
+
+            # Include extracted text from files
+            if item.files:
+                for f in item.files:
+                    if f.extractedText:
+                        content_parts.append(f.extractedText[:2000])
+
+            content = " ".join(content_parts)
+
+            metadata: dict[str, Any] = {
+                "title": item.title,
+                "type": str(item.type),
+                "universityName": item.universityName,
+            }
+            if item.courseName:
+                metadata["courseName"] = item.courseName
+            if item.courseCode:
+                metadata["courseCode"] = item.courseCode
+
+            await embedding_service.update_embedding(
+                object_type="resource_bank_item",
+                object_id=item_id,
+                content=content[:5000],
+                metadata=metadata,
+                resource_bank_item_id=item_id,
+            )
+
+            print(f"✅ Indexed resource bank item: {item_id}")
+
+        except Exception as e:
+            print(f"Error indexing resource bank item {item_id}: {e}")
+
     async def reindex_all_user_content(self, user_id: str) -> dict[str, int]:
         """
         Reindex all content for a user (useful for migration or updates).

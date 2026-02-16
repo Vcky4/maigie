@@ -586,20 +586,55 @@ async def handle_complete_review(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle complete_review tool call. Marks the spaced-repetition review as done."""
+    """Handle complete_review tool call. Marks the spaced-repetition review as done with SM-2 quality rating."""
     from src.services.spaced_repetition_service import advance_review
 
     review_item_id = args.get("review_item_id") or (context or {}).get("reviewItemId")
     if not review_item_id:
         return {"status": "error", "message": "No review item in context."}
+
+    # Quality rating from the AI (0-5), defaults to 4 ("good") for backward compat
+    quality = args.get("quality", 4)
     try:
-        await advance_review(
+        quality = max(0, min(5, int(quality)))
+    except (TypeError, ValueError):
+        quality = 4
+
+    score_summary = args.get("score_summary", "")
+
+    try:
+        updated = await advance_review(
             db,
             review_item_id=review_item_id,
             user_id=user_id,
-            completed_on_time=True,
+            quality=quality,
         )
-        return {"status": "success", "message": "Review completed! Great job."}
+        is_lapse = quality < 3
+        if is_lapse:
+            message = (
+                "Review recorded. It looks like this topic needs more practice — "
+                "it's been rescheduled for tomorrow so you can reinforce it soon."
+            )
+        elif quality == 5:
+            message = "Perfect recall! This topic is well-mastered. Next review pushed further out."
+        elif quality == 4:
+            message = "Good job! Review completed. See you next time."
+        else:
+            message = "Review completed. This one was tough — the next review will come a bit sooner to help reinforce it."
+
+        return {
+            "status": "success",
+            "message": message,
+            "quality": quality,
+            "scoreSummary": score_summary,
+            "nextReviewAt": (
+                updated.nextReviewAt.isoformat()
+                if hasattr(updated.nextReviewAt, "isoformat")
+                else str(updated.nextReviewAt)
+            ),
+            "intervalDays": updated.intervalDays,
+            "easeFactor": updated.easeFactor,
+        }
     except ValueError as e:
         logger.warning("complete_review failed: %s", e)
         return {"status": "error", "message": str(e)}

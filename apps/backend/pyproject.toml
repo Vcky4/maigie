@@ -40,6 +40,7 @@ google-genai = "^0.2.0"
 duckduckgo-search = "^7.0.0"
 pypdf = "^4.0.0"
 python-docx = "^1.1.0"
+pinecone = "^6.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

@@ -1,13 +1,14 @@
 """
 Review (spaced repetition) routes.
 
-List due/upcoming reviews, complete a review, or snooze.
+List due/upcoming reviews (priority-sorted), complete a review with SM-2 quality,
+snooze, and retrieve dashboard stats.
 """
 
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from prisma import Client as PrismaClient
@@ -15,6 +16,8 @@ from prisma import Client as PrismaClient
 from ..dependencies import CurrentUser
 from ..services.spaced_repetition_service import (
     advance_review,
+    get_review_stats,
+    get_strength_label,
     log_behaviour,
 )
 from ..utils.dependencies import get_db_client
@@ -37,6 +40,10 @@ class ReviewItemResponse(BaseModel):
     nextReviewAt: datetime
     intervalDays: int
     repetitionCount: int
+    easeFactor: float
+    lastQuality: int
+    lapseCount: int
+    strength: str  # "strong" | "moderate" | "weak"
     lastReviewedAt: datetime | None
     scheduleBlockId: str | None
 
@@ -50,7 +57,13 @@ class ReviewListResponse(BaseModel):
 
 
 class CompleteReviewRequest(BaseModel):
-    completedOnTime: bool = Field(True, description="True if done on or before due date")
+    quality: int = Field(
+        4,
+        ge=0,
+        le=5,
+        description="SM-2 quality rating: 0=blackout, 1-2=failed, 3=hard, 4=good, 5=easy",
+    )
+    completedOnTime: bool = Field(True, description="Legacy: True if done on or before due date")
     actualAt: datetime | None = Field(
         None, description="When the review was completed (default: now)"
     )
@@ -60,9 +73,78 @@ class SnoozeReviewRequest(BaseModel):
     nextReviewAt: datetime = Field(..., description="New date/time for the next review")
 
 
+class ForecastDay(BaseModel):
+    date: str
+    count: int
+
+
+class StrengthBreakdown(BaseModel):
+    strong: int
+    moderate: int
+    weak: int
+
+
+class ReviewStatsResponse(BaseModel):
+    total: int
+    dueToday: int
+    dueThisWeek: int
+    totalReviewed: int
+    averageEaseFactor: float
+    estimatedRetention: float
+    strength: StrengthBreakdown
+    forecast: list[ForecastDay]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _review_to_response(
+    r: object, topic: object, course: object, schedule_block: object
+) -> ReviewItemResponse:
+    """Convert a ReviewItem DB record to a response model."""
+    return ReviewItemResponse(
+        id=r.id,
+        topicId=r.topicId,
+        topicTitle=topic.title if topic else "",
+        courseId=course.id if course else None,
+        courseTitle=course.title if course else None,
+        nextReviewAt=r.nextReviewAt,
+        intervalDays=r.intervalDays,
+        repetitionCount=r.repetitionCount,
+        easeFactor=r.easeFactor,
+        lastQuality=r.lastQuality,
+        lapseCount=r.lapseCount,
+        strength=get_strength_label(r.easeFactor, r.intervalDays, r.lapseCount),
+        lastReviewedAt=r.lastReviewedAt,
+        scheduleBlockId=schedule_block.id if schedule_block else None,
+    )
+
+
+def _priority_sort_key(r: object) -> tuple:
+    """
+    Sort reviews by priority (most urgent first):
+    1. Most overdue first (nextReviewAt ascending — already past items come first)
+    2. Weakest items first (lowest ease factor)
+    3. Highest lapse count first
+    """
+    return (r.nextReviewAt, r.easeFactor, -r.lapseCount)
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.get("/stats", response_model=ReviewStatsResponse)
+async def review_stats(
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)],
+):
+    """Get review statistics and dashboard data for the current user."""
+    stats = await get_review_stats(db, current_user.id)
+    return ReviewStatsResponse(**stats)
 
 
 @router.get("", response_model=ReviewListResponse)
@@ -77,7 +159,7 @@ async def list_review_items(
         description="Treat as 'due' if nextReviewAt within this many days",
     ),
 ):
-    """List the current user's review items: due (within N days) and upcoming."""
+    """List the current user's review items: due (within N days) and upcoming, priority-sorted."""
     user_id = current_user.id
     now = datetime.now(UTC)
     cutoff = now + timedelta(days=due_within_days)
@@ -90,26 +172,21 @@ async def list_review_items(
         },
         order={"nextReviewAt": "asc"},
     )
+
+    # Sort by priority
+    items.sort(key=_priority_sort_key)
+
     due = []
     upcoming = []
     for r in items:
-        course = r.topic.module.course if r.topic and r.topic.module else None
-        payload = {
-            "id": r.id,
-            "topicId": r.topicId,
-            "topicTitle": r.topic.title if r.topic else "",
-            "courseId": course.id if course else None,
-            "courseTitle": course.title if course else None,
-            "nextReviewAt": r.nextReviewAt,
-            "intervalDays": r.intervalDays,
-            "repetitionCount": r.repetitionCount,
-            "lastReviewedAt": r.lastReviewedAt,
-            "scheduleBlockId": r.scheduleBlock.id if r.scheduleBlock else None,
-        }
+        topic = r.topic
+        course = topic.module.course if topic and topic.module else None
+        schedule_block = r.scheduleBlock
+        payload = _review_to_response(r, topic, course, schedule_block)
         if r.nextReviewAt <= cutoff:
-            due.append(ReviewItemResponse(**payload))
+            due.append(payload)
         else:
-            upcoming.append(ReviewItemResponse(**payload))
+            upcoming.append(payload)
     return ReviewListResponse(due=due, upcoming=upcoming)
 
 
@@ -120,7 +197,7 @@ async def complete_review(
     db: Annotated[PrismaClient, Depends(get_db_client)],
     body: CompleteReviewRequest | None = None,
 ):
-    """Mark a review as completed. Advances spaced repetition and logs behaviour."""
+    """Mark a review as completed with SM-2 quality rating. Advances spaced repetition and logs behaviour."""
     user_id = current_user.id
     req = body or CompleteReviewRequest()
     try:
@@ -128,6 +205,7 @@ async def complete_review(
             db,
             review_item_id=review_item_id,
             user_id=user_id,
+            quality=req.quality,
             completed_on_time=req.completedOnTime,
             actual_at=req.actualAt,
         )
@@ -142,22 +220,8 @@ async def complete_review(
     )
     topic = review_with_topic.topic if review_with_topic else None
     course = topic.module.course if topic and topic.module else None
-    return ReviewItemResponse(
-        id=updated.id,
-        topicId=updated.topicId,
-        topicTitle=topic.title if topic else "",
-        courseId=course.id if course else None,
-        courseTitle=course.title if course else None,
-        nextReviewAt=updated.nextReviewAt,
-        intervalDays=updated.intervalDays,
-        repetitionCount=updated.repetitionCount,
-        lastReviewedAt=updated.lastReviewedAt,
-        scheduleBlockId=(
-            review_with_topic.scheduleBlock.id
-            if review_with_topic and review_with_topic.scheduleBlock
-            else None
-        ),
-    )
+    schedule_block = review_with_topic.scheduleBlock if review_with_topic else None
+    return _review_to_response(review_with_topic, topic, course, schedule_block)
 
 
 @router.post("/{review_item_id}/snooze", response_model=ReviewItemResponse)
@@ -198,24 +262,21 @@ async def snooze_review(
         where={"id": review_item_id},
         data={"nextReviewAt": body.nextReviewAt},
     )
-    # Re-fetch to get scheduleBlock for response (updated has no relation)
+    # Re-fetch to get scheduleBlock for response
     updated_with_block = await db.reviewitem.find_unique(
         where={"id": updated.id},
-        include={"scheduleBlock": True},
+        include={
+            "topic": {"include": {"module": {"include": {"course": True}}}},
+            "scheduleBlock": True,
+        },
     )
-    return ReviewItemResponse(
-        id=updated.id,
-        topicId=updated.topicId,
-        topicTitle=topic.title if topic else "",
-        courseId=course.id if course else None,
-        courseTitle=course.title if course else None,
-        nextReviewAt=updated.nextReviewAt,
-        intervalDays=updated.intervalDays,
-        repetitionCount=updated.repetitionCount,
-        lastReviewedAt=updated.lastReviewedAt,
-        scheduleBlockId=(
-            updated_with_block.scheduleBlock.id
-            if updated_with_block and updated_with_block.scheduleBlock
-            else None
+    return _review_to_response(
+        updated_with_block,
+        updated_with_block.topic if updated_with_block else topic,
+        (
+            updated_with_block.topic.module.course
+            if updated_with_block and updated_with_block.topic and updated_with_block.topic.module
+            else course
         ),
+        updated_with_block.scheduleBlock if updated_with_block else None,
     )
