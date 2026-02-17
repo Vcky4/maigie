@@ -11,7 +11,7 @@ from typing import Annotated, Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from prisma import Client as PrismaClient
+from prisma import Prisma
 from pydantic import BaseModel
 
 from src.config import get_settings
@@ -184,7 +184,7 @@ IMPORTANT DATE CONTEXT:
 
 
 async def _gather_voice_context(
-    db: PrismaClient, user_id: str, user_name: str, section: str | None = None
+    db: Prisma, user_id: str, user_name: str, section: str | None = None
 ) -> dict[str, Any]:
     """
     Gather user context for the voice agent.
@@ -366,7 +366,7 @@ class VoiceContextResponse(BaseModel):
 @router.get("/convai/context", response_model=VoiceContextResponse)
 async def get_voice_agent_context(
     current_user: PremiumUser,
-    db: Annotated[PrismaClient, Depends(get_db_client)],
+    db: Annotated[Prisma, Depends(get_db_client)],
     section: str | None = Query(
         None,
         description="Fetch only a specific section: courses, goals, schedule, reviews, or all",
@@ -382,10 +382,15 @@ async def get_voice_agent_context(
     user_name = getattr(current_user, "name", "") or ""
     ctx = await _gather_voice_context(db, current_user.id, user_name, section)
 
-    system_prompt = VOICE_SYSTEM_PROMPT + "\n" + ctx["promptContext"]
+    prompt_context = ctx["promptContext"]
+    system_prompt = VOICE_SYSTEM_PROMPT + "\n" + prompt_context
+
+    # Cap system prompt to avoid ElevenLabs rejecting oversized overrides
+    if len(system_prompt) > 4000:
+        system_prompt = system_prompt[:4000] + "\n[Context truncated for voice mode]"
 
     return VoiceContextResponse(
-        promptContext=ctx["promptContext"],
+        promptContext=prompt_context,
         systemPrompt=system_prompt,
         structured=ctx["structured"],
     )
