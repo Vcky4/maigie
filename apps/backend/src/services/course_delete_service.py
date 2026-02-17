@@ -5,12 +5,12 @@ Used by both the API route and the AI tool handler.
 
 from typing import Any
 
-from prisma import PrismaClient
+from prisma import Prisma
 
 from src.utils.exceptions import ForbiddenError, ResourceNotFoundError
 
 
-async def delete_course_cascade(db: PrismaClient, course_id: str, user_id: str) -> None:
+async def delete_course_cascade(db: Prisma, course_id: str, user_id: str) -> None:
     """
     Delete a course and its dependent data.
     - Deletes: goals, schedule blocks linked to course/topics/goals

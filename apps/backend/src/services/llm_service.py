@@ -35,8 +35,8 @@ except Exception:  # pragma: no cover - depends on optional dependency
     HarmBlockThreshold = None  # type: ignore[assignment]
     HarmCategory = None  # type: ignore[assignment]
 
-# System instruction to define Maigie's persona
-SYSTEM_INSTRUCTION = """
+# Base system instruction to define Maigie's persona
+_SYSTEM_INSTRUCTION_BASE = """
 You are Maigie, an intelligent study companion.
 Your goal is to help students organize learning, generate courses, manage schedules, create notes, and summarize content.
 
@@ -58,14 +58,37 @@ COURSE OUTLINE UPDATES:
 - If the user says "outline for X" or "here is the outline for X", match X to an existing course.
 - Images may contain course outlines/syllabi — extract the topics from the image and structure them into modules.
 
+PERSONALIZATION & MEMORY:
+- You have access to get_my_profile to retrieve the user's full profile including their name, courses, goals, study streak, and remembered facts about them.
+- When the user asks personal questions like "who am I?", "what do you know about me?", or anything about their profile/progress, use get_my_profile.
+- You have access to save_user_fact to remember important things the user tells you about themselves.
+- When the user shares personal information relevant to their learning (e.g., learning preferences, exam dates, struggles, strengths, personal goals, background), use save_user_fact to remember it.
+- Do NOT save trivial or obvious facts. Focus on information that helps you be a better study companion.
+- Examples of facts worth saving: "I'm a visual learner", "My bar exam is in June", "I struggle with organic chemistry", "I prefer studying in the morning", "I'm a 3rd year medical student".
+
 GUIDELINES:
 - Be friendly, supportive, and encouraging
+- Address the user by their first name when appropriate (their name is provided below)
 - When users ask questions or want to see their data, use the appropriate query tools (get_user_courses, get_user_goals, etc.)
 - When users want to create or modify something, use the appropriate action tools (create_course, create_note, etc.)
 - For casual conversation (greetings, thanks, etc.), respond naturally without using tools
 - Always provide helpful context and explanations in your responses
 - When a user asks for a study plan/schedule for a topic they already have a course for, use the existing course
 """
+
+# Static fallback for cases where user_name is unavailable
+SYSTEM_INSTRUCTION = _SYSTEM_INSTRUCTION_BASE + "\nThe user's name is not available.\n"
+
+
+def build_personalized_system_instruction(user_name: str | None = None) -> str:
+    """Build a personalized system instruction with the user's name."""
+    if user_name:
+        first_name = user_name.strip().split()[0] if user_name.strip() else "there"
+        return (
+            _SYSTEM_INSTRUCTION_BASE
+            + f"\nThe user's name is {user_name} (first name: {first_name}).\n"
+        )
+    return SYSTEM_INSTRUCTION
 
 
 def _convert_proto_to_dict(obj):
@@ -253,6 +276,7 @@ class GeminiService:
         user_message: str,
         context: dict = None,
         user_id: str = None,
+        user_name: str = None,
         image_url: str = None,
         progress_callback=None,
         stream_callback=None,
@@ -265,6 +289,7 @@ class GeminiService:
             user_message: User's text message
             context: Additional context dictionary
             user_id: User ID for tool execution
+            user_name: User's display name for personalization
             image_url: Optional image URL to include in the message
             progress_callback: Optional async callback for progress updates during tool execution
                               Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
@@ -289,10 +314,13 @@ class GeminiService:
             # Get tool definitions
             tools = get_all_tools()
 
+            # Build personalized system instruction with user's name
+            system_instruction = build_personalized_system_instruction(user_name)
+
             # Create model with tools
             model_with_tools = genai.GenerativeModel(
                 model_name="models/gemini-3-flash-preview",
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
                 tools=tools,
             )
 
@@ -702,6 +730,141 @@ class GeminiService:
             enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
 
         return enhanced_message
+
+    async def extract_user_facts_from_conversation(
+        self, messages: list[dict], user_id: str
+    ) -> list[dict]:
+        """
+        Extract personal facts from a conversation that the AI may not have saved via tool.
+        This runs as a background task after meaningful conversations.
+
+        Args:
+            messages: List of conversation messages [{"role": "user"/"assistant", "content": "..."}]
+            user_id: User ID to save facts for
+
+        Returns:
+            List of extracted facts
+        """
+        if not genai:
+            return []
+
+        # Only process user messages for fact extraction
+        user_messages = [
+            m["content"] for m in messages if m.get("role") == "user" and m.get("content")
+        ]
+        if not user_messages or len(user_messages) < 2:
+            return []
+
+        conversation_text = "\n".join(f"User: {msg}" for msg in user_messages[-10:])
+
+        extraction_prompt = f"""Analyze the following user messages from a study conversation and extract any personal facts the user shared about themselves that would be useful for a study companion AI to remember.
+
+Only extract MEANINGFUL facts like:
+- Learning preferences (e.g., "visual learner", "prefers practice problems")
+- Academic background (e.g., "3rd year medical student", "studying for the bar exam")
+- Personal goals or deadlines (e.g., "exam is in March", "wants to finish by summer")
+- Struggles or weaknesses (e.g., "has trouble with calculus", "poor at memorization")
+- Strengths (e.g., "good at writing", "strong in biology")
+- Personal context (e.g., "works part-time", "has ADHD")
+
+Do NOT extract:
+- Trivial greetings or thanks
+- Course names or goal titles (these are tracked separately)
+- Anything already obvious from the conversation context
+
+For each fact, provide a category and content.
+Categories: preference, personal, academic, goal, struggle, strength, other
+
+Return a JSON array of objects with "category" and "content" keys.
+If no meaningful facts are found, return an empty array [].
+
+User messages:
+{conversation_text}
+
+JSON array:"""
+
+        try:
+            model = genai.GenerativeModel(model_name="models/gemini-2.0-flash-lite")
+            response = await asyncio.to_thread(model.generate_content, extraction_prompt)
+
+            if not response or not response.text:
+                return []
+
+            import json
+
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+                text = text.rsplit("```", 1)[0]
+
+            facts = json.loads(text)
+            if not isinstance(facts, list):
+                return []
+
+            from src.core.database import db as db_client
+
+            saved_facts = []
+            for fact in facts[:5]:
+                category = fact.get("category", "other")
+                content = fact.get("content", "").strip()
+                if not content:
+                    continue
+
+                valid_categories = [
+                    "preference",
+                    "personal",
+                    "academic",
+                    "goal",
+                    "struggle",
+                    "strength",
+                    "other",
+                ]
+                if category not in valid_categories:
+                    category = "other"
+
+                try:
+                    # Dedup check
+                    existing = await db_client.userfact.find_many(
+                        where={
+                            "userId": user_id,
+                            "category": category,
+                            "isActive": True,
+                        },
+                        take=20,
+                    )
+                    is_duplicate = False
+                    content_lower = content.lower()
+                    for e in existing:
+                        e_lower = e.content.lower()
+                        new_words = set(content_lower.split())
+                        existing_words = set(e_lower.split())
+                        if new_words and existing_words:
+                            overlap = len(new_words & existing_words) / max(
+                                len(new_words), len(existing_words)
+                            )
+                            if overlap > 0.7:
+                                is_duplicate = True
+                                break
+
+                    if not is_duplicate:
+                        await db_client.userfact.create(
+                            data={
+                                "userId": user_id,
+                                "category": category,
+                                "content": content,
+                                "source": "conversation",
+                                "confidence": 0.7,
+                            }
+                        )
+                        saved_facts.append(fact)
+                except Exception as e:
+                    print(f"Error saving extracted fact: {e}")
+
+            return saved_facts
+
+        except Exception as e:
+            print(f"Error extracting user facts: {e}")
+            return []
 
     async def generate_summary(self, content: str) -> str:
         """

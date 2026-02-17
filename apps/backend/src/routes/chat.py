@@ -3,6 +3,7 @@ Chat Routes & WebSocket Endpoint.
 Handles real-time messaging with Gemini AI and Action Execution.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -1057,6 +1058,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 user_message=greeting_prompt,
                                 context=None,
                                 user_id=user.id,
+                                user_name=getattr(user, "name", None),
                                 stream_callback=stream_greeting,
                             )
                         )
@@ -1612,6 +1614,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         user_message=user_text,
                         context=enriched_context,
                         user_id=user.id,
+                        user_name=getattr(user, "name", None),
                         image_url=file_urls,  # Pass image URL if present
                         progress_callback=send_progress,  # Pass progress callback
                         stream_callback=stream_text,  # Pass stream callback
@@ -1990,6 +1993,27 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 await manager.send_json(component_response, user.id)
 
             # 15. When split, suggestion is in assistant_final; no separate send needed
+
+            # 16. Background fact extraction from conversation (non-blocking)
+            # Only run every 5+ user messages to avoid excessive LLM calls
+            try:
+                user_msg_count = sum(1 for m in formatted_history if m.get("role") == "user")
+                if user_msg_count >= 5 and user_msg_count % 5 == 0:
+                    conversation_for_extraction = [
+                        {
+                            "role": m.get("role", "user"),
+                            "content": m.get("parts", [""])[0] if m.get("parts") else "",
+                        }
+                        for m in formatted_history
+                    ]
+                    conversation_for_extraction.append({"role": "user", "content": user_text})
+                    asyncio.create_task(
+                        llm_service.extract_user_facts_from_conversation(
+                            conversation_for_extraction, user.id
+                        )
+                    )
+            except Exception as fact_err:
+                logger.debug(f"Background fact extraction error (non-critical): {fact_err}")
 
             continue  # Skip to next message
 

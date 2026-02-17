@@ -344,6 +344,97 @@ class UserMemoryService:
                 "preferences": {},
             }
 
+    async def get_user_facts(
+        self, user_id: str, category: str | None = None, limit: int = 30
+    ) -> list[dict[str, Any]]:
+        """
+        Get stored facts about the user.
+
+        Args:
+            user_id: ID of the user
+            category: Optional filter by category
+            limit: Maximum number of facts to return
+
+        Returns:
+            List of fact records
+        """
+        try:
+            where_clause: dict[str, Any] = {"userId": user_id, "isActive": True}
+            if category:
+                where_clause["category"] = category
+
+            facts = await db.userfact.find_many(
+                where=where_clause,
+                order={"updatedAt": "desc"},
+                take=limit,
+            )
+
+            return [
+                {
+                    "id": f.id,
+                    "category": f.category,
+                    "content": f.content,
+                    "source": f.source,
+                    "confidence": f.confidence,
+                    "createdAt": f.createdAt.isoformat(),
+                }
+                for f in facts
+            ]
+        except Exception as e:
+            print(f"Error getting user facts: {e}")
+            return []
+
+    async def save_user_fact(
+        self,
+        user_id: str,
+        category: str,
+        content: str,
+        source: str = "conversation",
+        confidence: float = 0.85,
+    ) -> str:
+        """
+        Save a fact about the user.
+
+        Args:
+            user_id: ID of the user
+            category: Category of the fact
+            content: The fact content
+            source: Source of the fact (conversation, onboarding, manual)
+            confidence: Confidence score (0.0 to 1.0)
+
+        Returns:
+            ID of the created fact record
+        """
+        try:
+            fact = await db.userfact.create(
+                data={
+                    "userId": user_id,
+                    "category": category,
+                    "content": content,
+                    "source": source,
+                    "confidence": confidence,
+                }
+            )
+            return fact.id
+        except Exception as e:
+            print(f"Error saving user fact: {e}")
+            return ""
+
+    async def deactivate_user_fact(self, fact_id: str, user_id: str) -> bool:
+        """Deactivate (soft-delete) a user fact."""
+        try:
+            fact = await db.userfact.find_first(where={"id": fact_id, "userId": user_id})
+            if not fact:
+                return False
+            await db.userfact.update(
+                where={"id": fact_id},
+                data={"isActive": False},
+            )
+            return True
+        except Exception as e:
+            print(f"Error deactivating user fact: {e}")
+            return False
+
 
 # Global instance
 user_memory_service = UserMemoryService()
