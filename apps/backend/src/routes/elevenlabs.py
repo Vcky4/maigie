@@ -348,6 +348,26 @@ async def _gather_voice_context(
         except Exception:
             structured["streak"] = 0
 
+    # -- Remembered Facts about the User --
+    if fetch_all:
+        try:
+            facts = await db.userfact.find_many(
+                where={"userId": user_id, "isActive": True},
+                order={"updatedAt": "desc"},
+                take=15,
+            )
+            if facts:
+                fact_lines = [f"  - {f.content}" for f in facts]
+                prompt_parts.append("Things I remember about this user:\n" + "\n".join(fact_lines))
+                structured["rememberedFacts"] = [
+                    {"category": f.category, "content": f.content} for f in facts
+                ]
+            else:
+                structured["rememberedFacts"] = []
+        except Exception:
+            logger.exception("Failed to fetch user facts for voice context")
+            structured["rememberedFacts"] = []
+
     prompt_context = "\n".join(prompt_parts)
     return {
         "promptContext": prompt_context,

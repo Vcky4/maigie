@@ -40,6 +40,7 @@ async def handle_tool_call(
         "get_user_schedule": handle_get_user_schedule,
         "get_user_notes": handle_get_user_notes,
         "get_user_resources": handle_get_user_resources,
+        "get_my_profile": handle_get_my_profile,
         # Action handlers
         "create_course": handle_create_course,
         "create_note": handle_create_note,
@@ -52,6 +53,7 @@ async def handle_tool_call(
         "complete_review": handle_complete_review,
         "update_course_outline": handle_update_course_outline,
         "delete_course": handle_delete_course,
+        "save_user_fact": handle_save_user_fact,
     }
 
     handler = handlers.get(tool_name)
@@ -718,3 +720,239 @@ async def handle_update_course_outline(
     except Exception as e:
         logger.error(f"update_course_outline error: {e}", exc_info=True)
         return {"status": "error", "message": f"Failed to update outline: {e}"}
+
+
+# ==========================================
+#  Personalization Handlers
+# ==========================================
+
+
+async def handle_get_my_profile(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle get_my_profile tool call. Returns comprehensive user profile with remembered facts."""
+
+    profile: dict[str, Any] = {}
+
+    # Basic user info
+    try:
+        user = await db.user.find_unique(
+            where={"id": user_id},
+            include={"preferences": True},
+        )
+        if user:
+            profile["name"] = user.name or "Unknown"
+            profile["email"] = user.email
+            profile["tier"] = user.tier
+            profile["memberSince"] = user.createdAt.strftime("%B %Y") if user.createdAt else None
+            if user.preferences:
+                profile["timezone"] = user.preferences.timezone
+                profile["language"] = user.preferences.language
+                profile["studyGoals"] = user.preferences.studyGoals
+    except Exception as e:
+        logger.warning(f"Failed to fetch user info for profile: {e}")
+
+    # Course summary
+    try:
+        courses = await db.course.find_many(
+            where={"userId": user_id, "archived": False},
+            include={"modules": {"include": {"topics": True}}},
+            order={"updatedAt": "desc"},
+            take=10,
+        )
+        course_summaries = []
+        total_topics_all = 0
+        completed_topics_all = 0
+        for c in courses:
+            total = sum(len(m.topics) for m in c.modules)
+            completed = sum(1 for m in c.modules for t in m.topics if t.completed)
+            total_topics_all += total
+            completed_topics_all += completed
+            progress = round((completed / total * 100) if total > 0 else 0)
+            course_summaries.append(
+                {
+                    "title": c.title,
+                    "progress": progress,
+                    "completedTopics": completed,
+                    "totalTopics": total,
+                    "difficulty": c.difficulty,
+                }
+            )
+        profile["courses"] = course_summaries
+        profile["totalCourses"] = len(course_summaries)
+        profile["overallProgress"] = round(
+            (completed_topics_all / total_topics_all * 100) if total_topics_all > 0 else 0
+        )
+    except Exception as e:
+        logger.warning(f"Failed to fetch courses for profile: {e}")
+        profile["courses"] = []
+
+    # Active goals
+    try:
+        goals = await db.goal.find_many(
+            where={"userId": user_id, "status": "ACTIVE"},
+            take=10,
+            order={"updatedAt": "desc"},
+        )
+        profile["activeGoals"] = [
+            {
+                "title": g.title,
+                "progress": g.progress or 0,
+                "targetDate": g.targetDate.isoformat() if g.targetDate else None,
+            }
+            for g in goals
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to fetch goals for profile: {e}")
+        profile["activeGoals"] = []
+
+    # Study streak
+    try:
+        streak = await db.userstreak.find_unique(where={"userId": user_id})
+        profile["studyStreak"] = {
+            "currentStreak": streak.currentStreak if streak else 0,
+            "longestStreak": streak.longestStreak if streak else 0,
+            "lastStudyDate": (
+                streak.lastStudyDate.isoformat() if streak and streak.lastStudyDate else None
+            ),
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch streak for profile: {e}")
+        profile["studyStreak"] = {"currentStreak": 0, "longestStreak": 0}
+
+    # Upcoming schedule (next 3 days)
+    try:
+        now = datetime.now(UTC)
+        schedules = await db.scheduleblock.find_many(
+            where={
+                "userId": user_id,
+                "startAt": {"gte": now, "lte": now + timedelta(days=3)},
+            },
+            order={"startAt": "asc"},
+            take=8,
+        )
+        profile["upcomingSchedule"] = [
+            {"title": s.title, "startAt": s.startAt.isoformat()} for s in schedules
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to fetch schedule for profile: {e}")
+        profile["upcomingSchedule"] = []
+
+    # Pending reviews
+    try:
+        now = datetime.now(UTC)
+        pending = await db.reviewitem.count(where={"userId": user_id, "nextReviewAt": {"lte": now}})
+        profile["pendingReviews"] = pending
+    except Exception as e:
+        logger.warning(f"Failed to fetch reviews for profile: {e}")
+        profile["pendingReviews"] = 0
+
+    # Remembered facts about the user
+    try:
+        facts = await db.userfact.find_many(
+            where={"userId": user_id, "isActive": True},
+            order={"updatedAt": "desc"},
+            take=30,
+        )
+        profile["rememberedFacts"] = [{"category": f.category, "content": f.content} for f in facts]
+    except Exception as e:
+        logger.warning(f"Failed to fetch user facts for profile: {e}")
+        profile["rememberedFacts"] = []
+
+    # Achievements
+    try:
+        achievements = await db.achievement.find_many(
+            where={"userId": user_id},
+            order={"unlockedAt": "desc"},
+            take=5,
+        )
+        profile["recentAchievements"] = [
+            {"title": a.title, "description": a.description} for a in achievements
+        ]
+    except Exception as e:
+        logger.warning(f"Failed to fetch achievements for profile: {e}")
+        profile["recentAchievements"] = []
+
+    return {
+        "_query_type": "profile",
+        "profile": profile,
+        "message": "User profile retrieved successfully",
+    }
+
+
+async def handle_save_user_fact(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle save_user_fact tool call. Stores a fact the user shared about themselves."""
+    category = args.get("category", "other")
+    content = args.get("content", "").strip()
+
+    if not content:
+        return {"status": "error", "message": "No fact content provided."}
+
+    valid_categories = [
+        "preference",
+        "personal",
+        "academic",
+        "goal",
+        "struggle",
+        "strength",
+        "other",
+    ]
+    if category not in valid_categories:
+        category = "other"
+
+    try:
+        # Check for duplicate/similar existing facts to avoid redundancy
+        existing_facts = await db.userfact.find_many(
+            where={
+                "userId": user_id,
+                "category": category,
+                "isActive": True,
+            },
+            take=20,
+        )
+
+        # Simple deduplication: if a very similar fact exists, update it instead
+        content_lower = content.lower()
+        for existing in existing_facts:
+            existing_lower = existing.content.lower()
+            # If the new fact is substantially similar (>70% word overlap), update the existing one
+            new_words = set(content_lower.split())
+            existing_words = set(existing_lower.split())
+            if new_words and existing_words:
+                overlap = len(new_words & existing_words) / max(len(new_words), len(existing_words))
+                if overlap > 0.7:
+                    await db.userfact.update(
+                        where={"id": existing.id},
+                        data={"content": content, "confidence": 0.9},
+                    )
+                    return {
+                        "status": "success",
+                        "action": "update_user_fact",
+                        "message": f"Updated remembered fact: {content}",
+                    }
+
+        # Create new fact
+        await db.userfact.create(
+            data={
+                "userId": user_id,
+                "category": category,
+                "content": content,
+                "source": "conversation",
+                "confidence": 0.85,
+            }
+        )
+
+        return {
+            "status": "success",
+            "action": "save_user_fact",
+            "message": f"I'll remember that: {content}",
+        }
+    except Exception as e:
+        logger.error(f"save_user_fact error: {e}", exc_info=True)
+        return {"status": "error", "message": f"Failed to save fact: {e}"}

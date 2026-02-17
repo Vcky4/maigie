@@ -17,6 +17,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 get_user_schedule_tool(),
                 get_user_notes_tool(),
                 get_user_resources_tool(),
+                get_my_profile_tool(),
                 # Action tools
                 create_course_tool(),
                 create_note_tool(),
@@ -29,6 +30,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 complete_review_tool(),
                 update_course_outline_tool(),
                 delete_course_tool(),
+                save_user_fact_tool(),
             ]
         }
     ]
@@ -529,5 +531,67 @@ def update_course_outline_tool() -> dict[str, Any]:
                 },
             },
             "required": ["course_id", "modules"],
+        },
+    }
+
+
+def get_my_profile_tool() -> dict[str, Any]:
+    """Tool definition for getting the user's full profile and remembered facts."""
+    return {
+        "name": "get_my_profile",
+        "description": (
+            "Get the user's full profile including their name, study statistics, "
+            "course summary, active goals, study streak, upcoming schedule, and "
+            "remembered facts about them. Use this when the user asks 'who am I?', "
+            "'what do you know about me?', anything about their profile, progress, "
+            "or when you need personal context to give a better answer."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    }
+
+
+def save_user_fact_tool() -> dict[str, Any]:
+    """Tool definition for saving a fact about the user."""
+    return {
+        "name": "save_user_fact",
+        "description": (
+            "Save an important fact the user has shared about themselves for future reference. "
+            "Use this when the user tells you something personal that would help you be a better "
+            "study companion — like their learning style, exam dates, academic background, "
+            "struggles, strengths, or personal preferences. "
+            "Do NOT save trivial facts or things already tracked elsewhere (like course names or goals). "
+            "Examples: 'I'm a visual learner', 'My LSAT is in June', 'I struggle with calculus', "
+            "'I'm a nursing student', 'I prefer studying at night'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Category of the fact",
+                    "enum": [
+                        "preference",
+                        "personal",
+                        "academic",
+                        "goal",
+                        "struggle",
+                        "strength",
+                        "other",
+                    ],
+                },
+                "content": {
+                    "type": "string",
+                    "description": (
+                        "The fact to remember, written as a clear statement. "
+                        "E.g. 'Prefers visual learning with diagrams', "
+                        "'Is preparing for the bar exam in June 2026', "
+                        "'Struggles with organic chemistry reaction mechanisms'"
+                    ),
+                },
+            },
+            "required": ["category", "content"],
         },
     }

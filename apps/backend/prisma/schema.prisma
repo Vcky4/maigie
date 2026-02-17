@@ -192,6 +192,7 @@ model User {
   reviewItems             ReviewItem[]
   scheduleBehaviourLogs   ScheduleBehaviourLog[]
   userInteractionMemories UserInteractionMemory[]
+  userFacts               UserFact[]
 
   // NEW: Chat Relations
   chatSessions ChatSession[]
@@ -887,6 +888,31 @@ model UserInteractionMemory {
   @@index([userId, interactionType])
   @@index([userId, createdAt])
   @@index([entityType, entityId])
+}
+
+// ==========================================
+//  USER FACTS (AI MEMORY)
+// ==========================================
+
+model UserFact {
+  id String @id @default(cuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category String // "preference", "personal", "academic", "goal", "struggle", "strength", "other"
+  content  String // The fact itself, e.g. "Prefers visual learning", "Exam is in March 2026"
+  source   String @default("conversation") // "conversation", "onboarding", "manual"
+
+  confidence Float @default(0.8) // 0.0 to 1.0 - how confident we are this fact is accurate
+  isActive   Boolean @default(true) // Soft delete / superseded facts
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, category])
+  @@index([userId, isActive])
 }
 
 // ==========================================
