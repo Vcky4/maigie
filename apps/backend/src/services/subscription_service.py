@@ -658,6 +658,7 @@ async def update_user_subscription_from_stripe(
                 "stripeSubscriptionStatus": sub_status,
                 "stripePriceId": price_id,
                 "tier": tier,
+                "paymentProvider": "stripe",
                 "subscriptionCurrentPeriodStart": period_start_dt,
                 "subscriptionCurrentPeriodEnd": period_end_dt,
             },
