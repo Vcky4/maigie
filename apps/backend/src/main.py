@@ -47,6 +47,7 @@ from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
 from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
+from .routes.circles import router as circles_router
 from .routes.courses import router as courses_router
 from .routes.dashboard import router as dashboard_router
 from .routes.elevenlabs import router as elevenlabs_router
@@ -408,6 +409,9 @@ def create_app() -> FastAPI:
     app.include_router(realtime_router)
     app.include_router(notes_router, prefix=f"{settings.API_V1_STR}/notes")
     app.include_router(upload_router, prefix=f"{settings.API_V1_STR}/upload")
+
+    # Circle (study group) routes
+    app.include_router(circles_router)
 
     # Webhook endpoints (no auth required, verified by provider signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
