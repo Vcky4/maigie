@@ -68,6 +68,88 @@ def _plan_code_to_tier(plan_code: str) -> str:
     return "FREE"
 
 
+# Tier hierarchy for upgrade/downgrade comparison
+_TIER_ORDER = {
+    "FREE": 0,
+    "PREMIUM_MONTHLY": 1,
+    "PREMIUM_YEARLY": 2,
+    "STUDY_CIRCLE_MONTHLY": 3,
+    "STUDY_CIRCLE_YEARLY": 4,
+    "SQUAD_MONTHLY": 5,
+    "SQUAD_YEARLY": 6,
+}
+
+
+def _is_upgrade(current_tier: str, new_plan_id: str) -> bool:
+    """Determine if changing from current tier to new plan is an upgrade."""
+    current_order = _TIER_ORDER.get(current_tier, 0)
+    new_tier = _plan_code_to_tier(_get_plan_code(new_plan_id))
+    new_order = _TIER_ORDER.get(new_tier, 0)
+    return new_order > current_order
+
+
+async def disable_paystack_subscription(
+    subscription_code: str,
+    email_token: str,
+    db_client: Prisma | None = None,
+) -> bool:
+    """
+    Disable (cancel) a Paystack subscription.
+
+    Args:
+        subscription_code: Paystack subscription code
+        email_token: Paystack email token for the subscription
+
+    Returns:
+        True if successfully disabled
+    """
+    if db_client is None:
+        db_client = db
+    settings = get_settings()
+    if not settings.PAYSTACK_SECRET_KEY:
+        raise ValueError("Paystack is not configured")
+
+    payload = {
+        "code": subscription_code,
+        "token": email_token,
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYSTACK_BASE}/subscription/disable",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+                "Content-Type": "application/json",
+            },
+        )
+    data = resp.json()
+    if not data.get("status"):
+        msg = data.get("message", "Failed to disable Paystack subscription")
+        logger.error(f"Paystack disable failed: {msg}")
+        raise ValueError(msg)
+
+    logger.info(f"Paystack subscription {subscription_code} disabled")
+    return True
+
+
+async def _get_paystack_subscription_email_token(subscription_code: str) -> str | None:
+    """Fetch the email_token for a Paystack subscription (needed for disable)."""
+    settings = get_settings()
+    if not settings.PAYSTACK_SECRET_KEY:
+        return None
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{PAYSTACK_BASE}/subscription/{subscription_code}",
+            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
+        )
+    data = resp.json()
+    if data.get("status") and data.get("data"):
+        return data["data"].get("email_token")
+    return None
+
+
 async def initialize_paystack_subscription(
     user: User,
     plan_id: str,
@@ -77,6 +159,9 @@ async def initialize_paystack_subscription(
 ) -> dict:
     """
     Initialize a Paystack subscription transaction.
+
+    If user already has a Paystack subscription, it will be disabled first
+    (cancel-and-resubscribe approach for upgrade/downgrade).
 
     Returns authorization_url for the user to complete payment.
     On success, Paystack creates the subscription and fires webhooks.
@@ -90,13 +175,55 @@ async def initialize_paystack_subscription(
     plan_code = _get_plan_code(plan_id)
     logger.info(f"Paystack init: plan_id={plan_id}, plan_code={plan_code}")
 
+    # Check if user already has an active Paystack subscription
+    is_upgrade = None
+    if user.paystackSubscriptionCode:
+        current_tier = str(user.tier) if user.tier else "FREE"
+        # Check if trying to subscribe to the same plan
+        new_tier = _plan_code_to_tier(plan_code)
+        current_tiers = {
+            "maigie_plus": ["PREMIUM_MONTHLY", "PREMIUM_YEARLY"],
+            "study_circle": ["STUDY_CIRCLE_MONTHLY", "STUDY_CIRCLE_YEARLY"],
+            "squad": ["SQUAD_MONTHLY", "SQUAD_YEARLY"],
+        }
+        plan_base = plan_id.rsplit("_", 1)[0]  # e.g. "maigie_plus" from "maigie_plus_monthly"
+        if current_tier in current_tiers.get(plan_base, []):
+            raise ValueError("User is already subscribed to this plan")
+
+        is_upgrade = _is_upgrade(current_tier, plan_id)
+        logger.info(
+            f"User {user.id} has existing Paystack subscription {user.paystackSubscriptionCode}, "
+            f"{'upgrading' if is_upgrade else 'downgrading'} to {plan_id}"
+        )
+
+        # Disable the existing subscription
+        try:
+            email_token = await _get_paystack_subscription_email_token(
+                user.paystackSubscriptionCode
+            )
+            if email_token:
+                await disable_paystack_subscription(
+                    user.paystackSubscriptionCode, email_token, db_client
+                )
+            else:
+                logger.warning(
+                    f"Could not get email_token for subscription {user.paystackSubscriptionCode}, "
+                    "proceeding with new subscription anyway"
+                )
+        except Exception as e:
+            logger.error(f"Failed to disable existing Paystack subscription: {e}")
+            # Continue with new subscription even if disable fails
+
     # Paystack requires 'amount' even when using a plan; the plan overrides it. Use 10000 (100 NGN) as placeholder.
+    metadata: dict[str, Any] = {"user_id": user.id, "plan_id": plan_id}
+    if is_upgrade is not None:
+        metadata["is_upgrade"] = is_upgrade
     payload = {
         "email": user.email,
         "amount": "10000",
         "plan": plan_code,
         "callback_url": success_url,
-        "metadata": {"user_id": user.id, "plan_id": plan_id},
+        "metadata": metadata,
     }
     if user.name:
         payload["metadata"]["name"] = user.name
@@ -121,6 +248,8 @@ async def initialize_paystack_subscription(
         "authorization_url": result.get("authorization_url"),
         "access_code": result.get("access_code"),
         "reference": result.get("reference"),
+        "is_modification": is_upgrade is not None,
+        "is_upgrade": is_upgrade,
     }
 
 

@@ -117,6 +117,18 @@ enum ReportStatus {
   REPORT_DISMISSED
 }
 
+enum CircleRole {
+  OWNER
+  MEMBER
+}
+
+enum CircleInviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
 // ==========================================
 //  USER & AUTH
 // ==========================================
@@ -224,6 +236,9 @@ model User {
   resourceUploadRewards     ResourceUploadReward[]
   resourceUploadRewardClaims ResourceUploadRewardClaim[]
 
+  // Circle Relations
+  circleMembers CircleMember[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -273,8 +288,12 @@ model Course {
   isAIGenerated Boolean    @default(false)
   archived      Boolean    @default(false)
 
-  // Cached progress (0.0 to 100.0)
+  // Cached progress (0.0 to 100.0) — per-user even in circles
   progress Float @default(0.0)
+
+  // Circle: if set, this course is shared within a circle (progress tracked per-user)
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -288,6 +307,7 @@ model Course {
 
   @@index([userId])
   @@index([userId, archived])
+  @@index([circleId])
 }
 
 model Module {
@@ -350,6 +370,9 @@ model ChatSession {
   updatedAt DateTime @updatedAt
 
   messages ChatMessage[]
+
+  // Circle chat group back-relation (if this session belongs to a circle group)
+  circleChatGroup CircleChatGroup?
 
   @@index([userId])
   @@index([updatedAt]) // Useful for sorting "Recent Chats"
@@ -438,6 +461,10 @@ model Note {
   topicId String? @unique
   topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
+  // Circle: if set, this note is shared within a circle
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
+
   archived          Boolean @default(false)
   voiceRecordingUrl String?
 
@@ -451,6 +478,7 @@ model Note {
   @@index([courseId])
   @@index([topicId])
   @@index([userId, archived])
+  @@index([circleId])
 }
 
 model NoteTag {
@@ -542,6 +570,10 @@ model Goal {
   topicId  String?
   topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
+  // Circle: if set, this goal is shared within a circle
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
+
   schedules ScheduleBlock[] // Schedule blocks linked to this goal
 
   createdAt DateTime @default(now())
@@ -552,6 +584,7 @@ model Goal {
   @@index([targetDate])
   @@index([courseId])
   @@index([topicId])
+  @@index([circleId])
 }
 
 // ==========================================
@@ -1232,4 +1265,79 @@ model AuditLog {
   @@index([resourceType])
   @@index([timestamp])
   @@index([resourceType, resourceId])
+}
+
+// ==========================================
+//  CIRCLE MODULE (Study Groups)
+// ==========================================
+
+model Circle {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  avatarUrl   String?
+  createdById String
+  maxMembers  Int     @default(5)
+  maxGroups   Int     @default(5)
+
+  // Relations
+  members    CircleMember[]
+  invites    CircleInvite[]
+  notes      Note[]
+  goals      Goal[]
+  courses    Course[]
+  chatGroups CircleChatGroup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+}
+
+model CircleMember {
+  id       String     @id @default(cuid())
+  circleId String
+  circle   Circle     @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     CircleRole @default(MEMBER)
+  joinedAt DateTime   @default(now())
+
+  @@unique([circleId, userId])
+  @@index([userId])
+  @@index([circleId])
+}
+
+/// Up to 5 named chat groups within a circle
+model CircleChatGroup {
+  id       String @id @default(cuid())
+  circleId String
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  name     String // e.g., "General", "Exam Prep", "Biology"
+
+  // Reuses existing ChatSession model for messages
+  chatSessionId String?      @unique
+  chatSession   ChatSession? @relation(fields: [chatSessionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([circleId])
+}
+
+model CircleInvite {
+  id           String             @id @default(cuid())
+  circleId     String
+  circle       Circle             @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  inviterId    String             // User who sent the invite
+  inviteeEmail String             // Email of the person invited
+  inviteeId    String?            // User ID if they're already on the platform
+  status       CircleInviteStatus @default(PENDING)
+  expiresAt    DateTime
+  createdAt    DateTime           @default(now())
+
+  @@unique([circleId, inviteeEmail])
+  @@index([inviteeEmail])
+  @@index([inviteeId])
+  @@index([circleId])
 }
