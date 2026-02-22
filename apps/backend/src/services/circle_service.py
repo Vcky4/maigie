@@ -158,8 +158,10 @@ async def list_user_circles(db: Prisma, user_id: str):
                 },
             },
         },
-        order_by={"joinedAt": "desc"},
     )
+
+    # Sort by joinedAt descending (Prisma Python may not support order_by on this model)
+    memberships.sort(key=lambda m: m.joinedAt, reverse=True)
 
     return memberships
 
