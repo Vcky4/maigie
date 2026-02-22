@@ -24,6 +24,13 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
+class DemoChatRequest(BaseModel):
+    """Request model for unauthenticated demo chat."""
+
+    message: str
+    history: list = []
+
+
 class SummarizeRequest(BaseModel):
     """Request model for summarize endpoint."""
 
@@ -44,6 +51,35 @@ class PlanRequest(BaseModel):
 
     goal: str
     duration_weeks: int = 4
+
+
+@router.post("/chat/demo")
+async def demo_chat(request: DemoChatRequest):
+    """
+    Unauthenticated chat endpoint for the landing page demo.
+    """
+    AI_USAGE_COUNTER.inc()
+
+    from ..services.llm_service import llm_service
+
+    context = {
+        "pageContext": "Landing Page Public Demo",
+        "instructions": (
+            "You are Maigie, an AI study companion. You are in a public demo mode on the landing page. "
+            "Keep responses extremely brief (1-3 sentences maximum) and focused on showcasing your capabilities "
+            "like explaining concepts, scheduling, or taking notes. Provide plain text responses."
+        ),
+    }
+
+    try:
+        response_text, _ = await llm_service.get_chat_response(
+            history=request.history, user_message=request.message, context=context
+        )
+        return {"response": response_text}
+    except Exception as e:
+        return {
+            "response": "I'm having a little trouble connecting right now, but I'm usually much faster! Try again in a moment."
+        }
 
 
 @router.post("/chat")
