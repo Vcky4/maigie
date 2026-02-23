@@ -238,6 +238,11 @@ async def _send_weekly_tips_emails_impl() -> dict:
 )
 @task(name=TASK_MORNING_SCHEDULE, bind=True, max_retries=2)
 def send_morning_schedule_emails_task(self) -> dict:
+    from src.config import settings
+
+    if settings.ENVIRONMENT == "development":
+        logger.info("Skipping morning schedule emails (env=%s)", settings.ENVIRONMENT)
+        return {"skipped": True, "reason": "development environment"}
     return run_async_in_celery(_send_morning_schedule_emails_impl())
 
 
@@ -249,6 +254,11 @@ def send_morning_schedule_emails_task(self) -> dict:
 )
 @task(name=TASK_SCHEDULE_REMINDER, bind=True, max_retries=2)
 def send_schedule_reminders_task(self) -> dict:
+    from src.config import settings
+
+    if settings.ENVIRONMENT == "development":
+        logger.info("Skipping schedule reminders (env=%s)", settings.ENVIRONMENT)
+        return {"skipped": True, "reason": "development environment"}
     return run_async_in_celery(_send_schedule_reminders_impl())
 
 
@@ -260,6 +270,11 @@ def send_schedule_reminders_task(self) -> dict:
 )
 @task(name=TASK_WEEKLY_TIPS, bind=True, max_retries=2)
 def send_weekly_tips_emails_task(self) -> dict:
+    from src.config import settings
+
+    if settings.ENVIRONMENT == "development":
+        logger.info("Skipping weekly tips emails (env=%s)", settings.ENVIRONMENT)
+        return {"skipped": True, "reason": "development environment"}
     return run_async_in_celery(_send_weekly_tips_emails_impl())
 
 
