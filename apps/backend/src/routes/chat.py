@@ -835,12 +835,39 @@ async def _build_greeting_context(db_client, user) -> dict:
 
     # Pending spaced-repetition reviews
     try:
-        pending_reviews = await db_client.reviewitem.count(
+        pending = await db_client.reviewitem.find_many(
+            where={"userId": user.id, "nextReviewAt": {"lte": now}},
+            order={"nextReviewAt": "asc"},
+            include={"course": True, "topic": True},
+            take=3,
+        )
+        ctx["pendingReviews"] = await db_client.reviewitem.count(
             where={"userId": user.id, "nextReviewAt": {"lte": now}}
         )
-        ctx["pendingReviews"] = pending_reviews
+        ctx["reviews_for_component"] = [
+            {
+                "id": r.id,
+                "reviewItemId": r.id,
+                "topicId": r.topicId,
+                "topicTitle": (
+                    r.topic.title
+                    if getattr(r, "topic", None)
+                    else getattr(r, "topicTitle", "Topic")
+                ),
+                "courseId": r.courseId,
+                "courseTitle": (
+                    r.course.title
+                    if getattr(r, "course", None)
+                    else getattr(r, "courseTitle", "Course")
+                ),
+                "nextReviewAt": r.nextReviewAt.isoformat(),
+                "strength": getattr(r, "strength", "moderate"),
+            }
+            for r in pending
+        ]
     except Exception:
         ctx["pendingReviews"] = 0
+        ctx["reviews_for_component"] = []
 
     return ctx
 
@@ -892,11 +919,13 @@ def _build_greeting_prompt(context: dict) -> str:
 
     return (
         "You are starting a new conversation with the user. Generate a warm, "
-        "personalized greeting as their study companion Maigie.\n\n"
+        "hyper-contextual, encouraging, and highly dynamic greeting as their study companion Maigie.\n\n"
         f"User Context:\n{data_section}\n\n"
         "Guidelines:\n"
         "- Keep it concise (2-4 sentences max)\n"
         "- Address the user by their first name\n"
+        "- Celebrate any recent achievements (streaks, finished topics)\n"
+        "- Offer a brief, powerful piece of encouragement (e.g. 'You showed up today, that matters', or 'Glad to see you!')\n"
         "- Reference specific things they're working on if available\n"
         "- Suggest ONE specific thing they could do next (continue a course, "
         "work on a goal, check their schedule, do their reviews, etc.)\n"
@@ -905,7 +934,7 @@ def _build_greeting_prompt(context: dict) -> str:
         "- If they have a study streak going, briefly mention it to motivate them\n"
         "- If they have pending reviews, suggest they tackle those\n"
         "- If they have upcoming schedules, give them a heads up\n"
-        "- If they have no courses/goals yet, encourage them to create their first course\n"
+        "- If they have no courses/goals yet, encourage them to encourage them to create their first course\n"
         "- Vary your style — don't always structure the greeting the same way\n"
         "- Do NOT use any tools — just respond with the greeting text directly\n"
     )
@@ -915,6 +944,7 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
     """
     Build 0–2 component payloads to send with the greeting (e.g. pick-up course, schedule, goals).
     Each item is a dict with type "component" and component/data/text for the frontend.
+    Priority: Reviews > Schedule > Course Pick-up > Goals
     """
     from src.services.component_response_service import (
         format_component_response,
@@ -922,12 +952,38 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
     )
 
     out = []
+    reviews = greeting_ctx.get("reviews_for_component") or []
+    schedules = greeting_ctx.get("schedules_for_component") or []
     courses = greeting_ctx.get("courses_for_component") or []
     goals = greeting_ctx.get("goals_for_component") or []
-    schedules = greeting_ctx.get("schedules_for_component") or []
 
-    # 1) "Pick up where you left off": single course card with nextTopic (if any)
-    if courses:
+    # 1) Pending Reviews
+    if reviews:
+        # Wrap reviews under the `reviews` key so the frontend generic ListComponent can map it
+        formatted_reviews = []
+        for r in reviews:
+            formatted_reviews.append(r)
+        # Using format_component_response direct because we need "reviews" as the array key
+        out.append(
+            format_component_response(
+                "ReviewListMessage",
+                {"reviews": formatted_reviews},
+                text=None,
+            )
+        )
+
+    # 2) Upcoming schedule
+    if schedules and len(out) < 2:
+        out.append(
+            format_list_component_response(
+                "ScheduleViewMessage",
+                schedules,
+                text=None,
+            )
+        )
+
+    # 3) "Pick up where you left off" Course
+    if courses and len(out) < 2:
         pick_up = next((c for c in courses if c.get("nextTopic")), None)
         if pick_up:
             out.append(
@@ -937,8 +993,8 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
                     text=None,
                 )
             )
-        elif len(courses) > 0:
-            # No next topic; show up to 3 courses as list
+        elif len(courses) > 0 and len(out) == 0:
+            # Only fallback to a giant course list if we literally have nothing else to show
             out.append(
                 format_list_component_response(
                     "CourseListMessage",
@@ -947,16 +1003,8 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
                 )
             )
 
-    # 2) Upcoming schedule or active goals (one more component)
-    if schedules and len(out) < 2:
-        out.append(
-            format_list_component_response(
-                "ScheduleViewMessage",
-                schedules,
-                text=None,
-            )
-        )
-    if not schedules and goals and len(out) < 2:
+    # 4) Active goals (only if empty slots left)
+    if goals and len(out) < 2:
         out.append(
             format_list_component_response(
                 "GoalListMessage",
@@ -1022,19 +1070,40 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # If anything goes wrong, fall back to the current session
                     pass
 
+            # 3.2.0 Check Retroactive Onboarding Need
+            is_onboarded = getattr(user, "isOnboarded", False)
+            if not is_onboarded:
+                try:
+                    fresh = await db.user.find_unique(where={"id": user.id})
+                    if fresh:
+                        is_onboarded = getattr(fresh, "isOnboarded", False)
+                except Exception:
+                    pass
+
+            needs_retro_onboarding = False
+            if is_onboarded and not (context and context.get("reviewItemId")):
+                try:
+                    from src.services.onboarding_service import (
+                        get_onboarding_state,
+                        save_onboarding_state,
+                    )
+
+                    state = await get_onboarding_state(db, user.id)
+                    profile = state.get("profile") or {}
+                    if not profile.get("commitmentRaw"):
+                        needs_retro_onboarding = True
+                        if state.get("stage") == "done":
+                            state["stage"] = "commitment"
+                            await save_onboarding_state(db, user.id, state)
+                except Exception as e:
+                    logger.warning("Retroactive onboarding check failed: %s", e)
+
             # 3.2 Handle AI-initiated greeting for new chats
             if user_text == "__greeting__":
-                # Only generate greeting for onboarded users
-                is_onboarded = getattr(user, "isOnboarded", False)
-                if not is_onboarded:
-                    try:
-                        fresh = await db.user.find_unique(where={"id": user.id})
-                        if fresh:
-                            is_onboarded = getattr(fresh, "isOnboarded", False)
-                    except Exception:
-                        pass
-
-                if is_onboarded:
+                if needs_retro_onboarding:
+                    # Hijack greeting to start retro-onboarding
+                    user_text = ""
+                elif is_onboarded:
                     try:
                         greeting_ctx = await _build_greeting_context(db, user)
                         greeting_prompt = _build_greeting_prompt(greeting_ctx)
@@ -1174,7 +1243,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     pass
 
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
-            if not is_onboarded and not (context and context.get("reviewItemId")):
+            if (not is_onboarded or needs_retro_onboarding) and not (
+                context and context.get("reviewItemId")
+            ):
                 try:
                     from src.services.onboarding_service import (
                         ensure_onboarding_initialized,
