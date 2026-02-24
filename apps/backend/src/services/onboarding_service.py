@@ -181,7 +181,7 @@ async def _extract_courses_from_image(image_url: str) -> list[str]:
 def default_onboarding_state() -> dict[str, Any]:
     return {
         "version": 1,
-        "stage": "welcome",  # welcome | uni_name | uni_details | focus_level | courses | creating | done
+        "stage": "welcome",  # welcome | uni_name | uni_details | focus_level | commitment | courses | creating | done
         "learnerType": None,
         "profile": {},
         "courses": [],
@@ -357,17 +357,10 @@ async def handle_onboarding_message(
             # Store raw; we can continue anyway (don't block users).
             profile["uniDetailsRaw"] = text
         state["profile"] = profile
-        state["stage"] = "courses"
+        state["stage"] = "commitment"
         await save_onboarding_state(db, user_id, state)
         return OnboardingResult(
-            reply_text=(
-                "Awesome. Tell me your **first 2 courses** you're struggling with most "
-                "(one per line or comma-separated).\n"
-                "You can also upload a screenshot/photo of your course list — I'll pick the top 2.\n"
-                "Example:\n"
-                "- Calculus\n"
-                "- Data Structures"
-            ),
+            reply_text="If you could improve one thing this semester, what would it be?",
             is_complete=False,
         )
 
@@ -379,14 +372,26 @@ async def handle_onboarding_message(
         else:
             profile["focusRaw"] = text
         state["profile"] = profile
-        state["stage"] = "courses"
+        state["stage"] = "commitment"
         await save_onboarding_state(db, user_id, state)
         return OnboardingResult(
-            reply_text=(
-                "Nice. What's the **one topic or course** you want to start with?\n"
-                "Example: `Data Structures` or `Machine Learning`\n"
-                "You can also upload a screenshot/photo."
-            ),
+            reply_text="If you could improve one thing this semester, what would it be?",
+            is_complete=False,
+        )
+
+    if stage == "commitment":
+        profile["commitmentRaw"] = text
+        state["profile"] = profile
+        state["stage"] = "courses"
+        await save_onboarding_state(db, user_id, state)
+
+        reply = (
+            "Got it. What course are you currently struggling with?\n"
+            "You can also upload a screenshot/photo.\n"
+            "Example: `Data Structures`"
+        )
+        return OnboardingResult(
+            reply_text=reply,
             is_complete=False,
         )
 
@@ -413,7 +418,7 @@ async def handle_onboarding_message(
             await progress_callback("Setting up your courses...")
         if not courses:
             if learner_type == "university":
-                reply = "Please list 1 or 2 courses you're struggling with (one per line or comma-separated)."
+                reply = "Please tell me what course you're currently struggling with (e.g., Data Structures)."
             else:
                 reply = "Please tell me the one topic or course you want to start with."
             return OnboardingResult(reply_text=reply, is_complete=False)

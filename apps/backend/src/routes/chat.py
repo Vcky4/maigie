@@ -892,11 +892,13 @@ def _build_greeting_prompt(context: dict) -> str:
 
     return (
         "You are starting a new conversation with the user. Generate a warm, "
-        "personalized greeting as their study companion Maigie.\n\n"
+        "hyper-contextual, encouraging, and highly dynamic greeting as their study companion Maigie.\n\n"
         f"User Context:\n{data_section}\n\n"
         "Guidelines:\n"
         "- Keep it concise (2-4 sentences max)\n"
         "- Address the user by their first name\n"
+        "- Celebrate any recent achievements (streaks, finished topics)\n"
+        "- Offer a brief, powerful piece of encouragement (e.g. 'You showed up today, that matters', or 'Glad to see you!')\n"
         "- Reference specific things they're working on if available\n"
         "- Suggest ONE specific thing they could do next (continue a course, "
         "work on a goal, check their schedule, do their reviews, etc.)\n"
@@ -1022,19 +1024,40 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # If anything goes wrong, fall back to the current session
                     pass
 
+            # 3.2.0 Check Retroactive Onboarding Need
+            is_onboarded = getattr(user, "isOnboarded", False)
+            if not is_onboarded:
+                try:
+                    fresh = await db.user.find_unique(where={"id": user.id})
+                    if fresh:
+                        is_onboarded = getattr(fresh, "isOnboarded", False)
+                except Exception:
+                    pass
+
+            needs_retro_onboarding = False
+            if is_onboarded and not (context and context.get("reviewItemId")):
+                try:
+                    from src.services.onboarding_service import (
+                        get_onboarding_state,
+                        save_onboarding_state,
+                    )
+
+                    state = await get_onboarding_state(db, user.id)
+                    profile = state.get("profile") or {}
+                    if not profile.get("commitmentRaw"):
+                        needs_retro_onboarding = True
+                        if state.get("stage") == "done":
+                            state["stage"] = "commitment"
+                            await save_onboarding_state(db, user.id, state)
+                except Exception as e:
+                    logger.warning("Retroactive onboarding check failed: %s", e)
+
             # 3.2 Handle AI-initiated greeting for new chats
             if user_text == "__greeting__":
-                # Only generate greeting for onboarded users
-                is_onboarded = getattr(user, "isOnboarded", False)
-                if not is_onboarded:
-                    try:
-                        fresh = await db.user.find_unique(where={"id": user.id})
-                        if fresh:
-                            is_onboarded = getattr(fresh, "isOnboarded", False)
-                    except Exception:
-                        pass
-
-                if is_onboarded:
+                if needs_retro_onboarding:
+                    # Hijack greeting to start retro-onboarding
+                    user_text = ""
+                elif is_onboarded:
                     try:
                         greeting_ctx = await _build_greeting_context(db, user)
                         greeting_prompt = _build_greeting_prompt(greeting_ctx)
@@ -1173,8 +1196,29 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 except Exception:
                     pass
 
+            # 4.2.1 Retroactive Onboarding Check
+            needs_retro_onboarding = False
+            if is_onboarded and not (context and context.get("reviewItemId")):
+                try:
+                    from src.services.onboarding_service import (
+                        get_onboarding_state,
+                        save_onboarding_state,
+                    )
+
+                    state = await get_onboarding_state(db, user.id)
+                    profile = state.get("profile") or {}
+                    if not profile.get("commitmentRaw"):
+                        needs_retro_onboarding = True
+                        if state.get("stage") == "done":
+                            state["stage"] = "commitment"
+                            await save_onboarding_state(db, user.id, state)
+                except Exception as e:
+                    logger.warning("Retroactive onboarding check failed: %s", e)
+
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
-            if not is_onboarded and not (context and context.get("reviewItemId")):
+            if (not is_onboarded or needs_retro_onboarding) and not (
+                context and context.get("reviewItemId")
+            ):
                 try:
                     from src.services.onboarding_service import (
                         ensure_onboarding_initialized,
