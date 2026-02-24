@@ -835,12 +835,39 @@ async def _build_greeting_context(db_client, user) -> dict:
 
     # Pending spaced-repetition reviews
     try:
-        pending_reviews = await db_client.reviewitem.count(
+        pending = await db_client.reviewitem.find_many(
+            where={"userId": user.id, "nextReviewAt": {"lte": now}},
+            order={"nextReviewAt": "asc"},
+            include={"course": True, "topic": True},
+            take=3,
+        )
+        ctx["pendingReviews"] = await db_client.reviewitem.count(
             where={"userId": user.id, "nextReviewAt": {"lte": now}}
         )
-        ctx["pendingReviews"] = pending_reviews
+        ctx["reviews_for_component"] = [
+            {
+                "id": r.id,
+                "reviewItemId": r.id,
+                "topicId": r.topicId,
+                "topicTitle": (
+                    r.topic.title
+                    if getattr(r, "topic", None)
+                    else getattr(r, "topicTitle", "Topic")
+                ),
+                "courseId": r.courseId,
+                "courseTitle": (
+                    r.course.title
+                    if getattr(r, "course", None)
+                    else getattr(r, "courseTitle", "Course")
+                ),
+                "nextReviewAt": r.nextReviewAt.isoformat(),
+                "strength": getattr(r, "strength", "moderate"),
+            }
+            for r in pending
+        ]
     except Exception:
         ctx["pendingReviews"] = 0
+        ctx["reviews_for_component"] = []
 
     return ctx
 
@@ -907,7 +934,7 @@ def _build_greeting_prompt(context: dict) -> str:
         "- If they have a study streak going, briefly mention it to motivate them\n"
         "- If they have pending reviews, suggest they tackle those\n"
         "- If they have upcoming schedules, give them a heads up\n"
-        "- If they have no courses/goals yet, encourage them to create their first course\n"
+        "- If they have no courses/goals yet, encourage them to encourage them to create their first course\n"
         "- Vary your style — don't always structure the greeting the same way\n"
         "- Do NOT use any tools — just respond with the greeting text directly\n"
     )
@@ -917,6 +944,7 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
     """
     Build 0–2 component payloads to send with the greeting (e.g. pick-up course, schedule, goals).
     Each item is a dict with type "component" and component/data/text for the frontend.
+    Priority: Reviews > Schedule > Course Pick-up > Goals
     """
     from src.services.component_response_service import (
         format_component_response,
@@ -924,12 +952,38 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
     )
 
     out = []
+    reviews = greeting_ctx.get("reviews_for_component") or []
+    schedules = greeting_ctx.get("schedules_for_component") or []
     courses = greeting_ctx.get("courses_for_component") or []
     goals = greeting_ctx.get("goals_for_component") or []
-    schedules = greeting_ctx.get("schedules_for_component") or []
 
-    # 1) "Pick up where you left off": single course card with nextTopic (if any)
-    if courses:
+    # 1) Pending Reviews
+    if reviews:
+        # Wrap reviews under the `reviews` key so the frontend generic ListComponent can map it
+        formatted_reviews = []
+        for r in reviews:
+            formatted_reviews.append(r)
+        # Using format_component_response direct because we need "reviews" as the array key
+        out.append(
+            format_component_response(
+                "ReviewListMessage",
+                {"reviews": formatted_reviews},
+                text=None,
+            )
+        )
+
+    # 2) Upcoming schedule
+    if schedules and len(out) < 2:
+        out.append(
+            format_list_component_response(
+                "ScheduleViewMessage",
+                schedules,
+                text=None,
+            )
+        )
+
+    # 3) "Pick up where you left off" Course
+    if courses and len(out) < 2:
         pick_up = next((c for c in courses if c.get("nextTopic")), None)
         if pick_up:
             out.append(
@@ -939,8 +993,8 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
                     text=None,
                 )
             )
-        elif len(courses) > 0:
-            # No next topic; show up to 3 courses as list
+        elif len(courses) > 0 and len(out) == 0:
+            # Only fallback to a giant course list if we literally have nothing else to show
             out.append(
                 format_list_component_response(
                     "CourseListMessage",
@@ -949,16 +1003,8 @@ def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
                 )
             )
 
-    # 2) Upcoming schedule or active goals (one more component)
-    if schedules and len(out) < 2:
-        out.append(
-            format_list_component_response(
-                "ScheduleViewMessage",
-                schedules,
-                text=None,
-            )
-        )
-    if not schedules and goals and len(out) < 2:
+    # 4) Active goals (only if empty slots left)
+    if goals and len(out) < 2:
         out.append(
             format_list_component_response(
                 "GoalListMessage",
