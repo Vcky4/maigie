@@ -1196,25 +1196,6 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 except Exception:
                     pass
 
-            # 4.2.1 Retroactive Onboarding Check
-            needs_retro_onboarding = False
-            if is_onboarded and not (context and context.get("reviewItemId")):
-                try:
-                    from src.services.onboarding_service import (
-                        get_onboarding_state,
-                        save_onboarding_state,
-                    )
-
-                    state = await get_onboarding_state(db, user.id)
-                    profile = state.get("profile") or {}
-                    if not profile.get("commitmentRaw"):
-                        needs_retro_onboarding = True
-                        if state.get("stage") == "done":
-                            state["stage"] = "commitment"
-                            await save_onboarding_state(db, user.id, state)
-                except Exception as e:
-                    logger.warning("Retroactive onboarding check failed: %s", e)
-
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
             if (not is_onboarded or needs_retro_onboarding) and not (
                 context and context.get("reviewItemId")
