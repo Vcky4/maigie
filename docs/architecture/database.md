@@ -44,7 +44,7 @@ model User {
   email         String    @unique
   name          String?
   passwordHash  String
-  timezone      String    @default("Africa/Lagos")
+  timezone      String    @default("UTC")
   preferences   Json?
   createdAt     DateTime  @default(now())
   courses       Course[]  @relation("owner_courses")

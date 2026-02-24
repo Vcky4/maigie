@@ -135,7 +135,7 @@ Human explanation: ...
 System: <system prompt above>
 User: "I want to learn Data Structures in 6 weeks"
 Task: create_course
-Context: { user_id: U123, timezone: 'Africa/Lagos', active_courses: [...] }
+Context: { user_id: U123, timezone: 'UTC', active_courses: [...] }
 Output Schema: {
   "action": "create_course",
   "payload": {
