@@ -1033,6 +1033,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
     if not session:
         session = await db.chatsession.create(data={"userId": user.id, "title": "New Chat"})
 
+    # 2b. Deliver pending AI nudges on connect
+    try:
+        from src.services.memory_service import get_pending_nudges
+
+        pending = await get_pending_nudges(user.id)
+        if pending:
+            await manager.send_json(
+                {"type": "nudge", "nudges": pending},
+                user.id,
+            )
+    except Exception as e:
+        print(f"⚠️ Failed to deliver nudges: {e}")
+
     try:
         while True:
             # 3. Receive Message (Text or JSON with context)
@@ -1638,6 +1651,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     if len(user_text) > 30
                     else print(f"⏭️ Skipping RAG for simple message: '{user_text}'")
                 )
+
+            # 5b. Inject long-term memory context (conversation summaries + learning insights)
+            try:
+                from src.services.memory_service import get_memory_context
+
+                memory_ctx = await get_memory_context(user.id, query=user_text)
+                if memory_ctx:
+                    if not enriched_context:
+                        enriched_context = {}
+                    enriched_context["memory_context"] = memory_ctx
+            except Exception as e:
+                print(f"⚠️ Memory context retrieval failed: {e}")
 
             # 6. Get AI response with tool calling support
             # Define progress callback for tool execution updates

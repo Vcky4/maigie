@@ -17,8 +17,8 @@ generator client {
 
 enum Tier {
   FREE
-  PREMIUM_MONTHLY    // Maigie Plus
-  PREMIUM_YEARLY     // Maigie Plus
+  PREMIUM_MONTHLY // Maigie Plus
+  PREMIUM_YEARLY // Maigie Plus
   STUDY_CIRCLE_MONTHLY
   STUDY_CIRCLE_YEARLY
   SQUAD_MONTHLY
@@ -159,9 +159,9 @@ model User {
   subscriptionCurrentPeriodEnd   DateTime?
 
   // Paystack subscription fields (Nigeria)
-  paystackCustomerCode     String?   @unique
-  paystackSubscriptionCode String?   @unique
-  paymentProvider          String?   // "stripe" | "paystack"
+  paystackCustomerCode     String? @unique
+  paystackSubscriptionCode String? @unique
+  paymentProvider          String? // "stripe" | "paystack"
 
   // Credit tracking for subscription limits
   creditsUsed        Int       @default(0) // Credits consumed in current period
@@ -231,13 +231,18 @@ model User {
   examPreps ExamPrep[]
 
   // Resource Bank
-  resourceBankItems         ResourceBankItem[]
-  resourceBankReports       ResourceBankReport[]
-  resourceUploadRewards     ResourceUploadReward[]
+  resourceBankItems          ResourceBankItem[]
+  resourceBankReports        ResourceBankReport[]
+  resourceUploadRewards      ResourceUploadReward[]
   resourceUploadRewardClaims ResourceUploadRewardClaim[]
 
   // Circle Relations
   circleMembers CircleMember[]
+
+  // Agentic AI Relations
+  conversationSummaries ConversationSummary[]
+  aiAgentTasks          AIAgentTask[]
+  learningInsights      LearningInsight[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -371,6 +376,9 @@ model ChatSession {
 
   messages ChatMessage[]
 
+  // Conversation summaries for long-term memory
+  conversationSummaries ConversationSummary[]
+
   // Circle chat group back-relation (if this session belongs to a circle group)
   circleChatGroup CircleChatGroup?
 
@@ -402,7 +410,7 @@ model ChatMessage {
   imageUrl String? // <--- ADDED: Field for uploaded image URL`
   duration Float? // Duration in seconds
 
-  componentData Json?   @default("[]") // Stores component metadata for interactive UI elements
+  componentData Json? @default("[]") // Stores component metadata for interactive UI elements
 
   // Usage tracking (Critical for Free Tier limits)
   tokenCount Int @default(0)
@@ -647,11 +655,11 @@ model ReviewItem {
 
   // Next review due (spaced repetition — SM-2 adaptive algorithm)
   nextReviewAt    DateTime
-  intervalDays    Int       @default(1)   // Current interval in days
-  repetitionCount Int       @default(0)   // Number of successful reviews (resets on lapse)
+  intervalDays    Int       @default(1) // Current interval in days
+  repetitionCount Int       @default(0) // Number of successful reviews (resets on lapse)
   easeFactor      Float     @default(2.5) // SM-2 ease factor (minimum 1.3)
-  lastQuality     Int       @default(-1)  // Last review quality 0-5 (-1 = never reviewed)
-  lapseCount      Int       @default(0)   // Total times the user lapsed (forgot / quality < 3)
+  lastQuality     Int       @default(-1) // Last review quality 0-5 (-1 = never reviewed)
+  lapseCount      Int       @default(0) // Total times the user lapsed (forgot / quality < 3)
   lastReviewedAt  DateTime?
 
   // The schedule block we created for the upcoming review (optional; back-relation from ScheduleBlock.reviewItemId)
@@ -833,12 +841,12 @@ model ExamQuestion {
   topicId String
   topic   ExamPrepTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
 
-  source       QuestionSource
-  questionText String
-  questionType QuestionType      @default(MULTIPLE_CHOICE)
-  options      Json? // Array of {label, text, isCorrect} for MCQ
+  source        QuestionSource
+  questionText  String
+  questionType  QuestionType   @default(MULTIPLE_CHOICE)
+  options       Json? // Array of {label, text, isCorrect} for MCQ
   correctAnswer String? // For short answer / fill-in
-  explanation  String // AI-generated explanation
+  explanation   String // AI-generated explanation
 
   // From past questions
   materialId String? // Link back to the source material (if from past question)
@@ -937,7 +945,7 @@ model UserFact {
   content  String // The fact itself, e.g. "Prefers visual learning", "Exam is in March 2026"
   source   String @default("conversation") // "conversation", "onboarding", "manual"
 
-  confidence Float @default(0.8) // 0.0 to 1.0 - how confident we are this fact is accurate
+  confidence Float   @default(0.8) // 0.0 to 1.0 - how confident we are this fact is accurate
   isActive   Boolean @default(true) // Soft delete / superseded facts
 
   createdAt DateTime @default(now())
@@ -1134,10 +1142,10 @@ model ResourceBankItem {
 
   title          String
   description    String?
-  type           ResourceBankType   @default(OTHER)
+  type           ResourceBankType @default(OTHER)
   universityName String
   courseName     String?
-  courseCode      String?
+  courseCode     String?
 
   status          ResourceBankStatus @default(PENDING_REVIEW)
   moderationNotes String?
@@ -1329,9 +1337,9 @@ model CircleInvite {
   id           String             @id @default(cuid())
   circleId     String
   circle       Circle             @relation(fields: [circleId], references: [id], onDelete: Cascade)
-  inviterId    String             // User who sent the invite
-  inviteeEmail String             // Email of the person invited
-  inviteeId    String?            // User ID if they're already on the platform
+  inviterId    String // User who sent the invite
+  inviteeEmail String // Email of the person invited
+  inviteeId    String? // User ID if they're already on the platform
   status       CircleInviteStatus @default(PENDING)
   expiresAt    DateTime
   createdAt    DateTime           @default(now())
@@ -1340,4 +1348,73 @@ model CircleInvite {
   @@index([inviteeEmail])
   @@index([inviteeId])
   @@index([circleId])
+}
+
+// ==========================================
+//  AGENTIC AI MODULE
+// ==========================================
+
+/// Conversation summaries for long-term AI memory
+model ConversationSummary {
+  id        String      @id @default(cuid())
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  summary       String // LLM-generated summary of the conversation
+  keyTopics     String[] @default([]) // Main topics discussed
+  actionsTaken  String[] @default([]) // Actions the AI took (create_course, etc.)
+  emotionalTone String? // User's emotional state (frustrated, motivated, etc.)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([sessionId])
+}
+
+/// AI-initiated background tasks (proactive agent nudges)
+model AIAgentTask {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  taskType    String // "goal_nudge", "review_reminder", "study_gap", "plan_checkpoint"
+  status      String    @default("pending") // "pending", "sent", "dismissed", "acted_on"
+  priority    Int       @default(5) // 1-10 priority
+  title       String
+  message     String // The nudge message
+  actionData  Json? // Suggested action payload
+  scheduledAt DateTime // When to send this nudge
+  sentAt      DateTime?
+  dismissedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([scheduledAt, status])
+}
+
+/// Learning insights derived from user behavior analysis
+model LearningInsight {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  insightType String // "study_pattern", "strength", "weakness", "optimal_time", "strategy_effectiveness"
+  content     String
+  confidence  Float  @default(0.7)
+  dataPoints  Int    @default(1) // How many data points this insight is based on
+  metadata    Json?
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, insightType])
+  @@index([userId, isActive])
 }
