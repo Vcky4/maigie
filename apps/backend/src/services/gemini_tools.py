@@ -23,6 +23,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 create_note_tool(),
                 create_goal_tool(),
                 create_schedule_tool(),
+                check_schedule_conflicts_tool(),
                 recommend_resources_tool(),
                 retake_note_tool(),
                 add_summary_to_note_tool(),
@@ -312,6 +313,28 @@ def create_goal_tool() -> dict[str, Any]:
                 },
             },
             "required": ["title"],
+        },
+    }
+
+
+def check_schedule_conflicts_tool() -> dict[str, Any]:
+    """Tool definition for checking schedule conflicts before creating a schedule."""
+    return {
+        "name": "check_schedule_conflicts",
+        "description": "Check the user's existing schedule for conflicts before proposing or creating new study blocks. ALWAYS use this tool first before calling create_schedule to ensure the time slot is truly free.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "start_at": {
+                    "type": "string",
+                    "description": "Start time to check in ISO format (YYYY-MM-DDTHH:MM:SSZ)",
+                },
+                "end_at": {
+                    "type": "string",
+                    "description": "End time to check in ISO format (YYYY-MM-DDTHH:MM:SSZ)",
+                },
+            },
+            "required": ["start_at", "end_at"],
         },
     }
 
