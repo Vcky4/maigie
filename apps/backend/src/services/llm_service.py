@@ -74,6 +74,14 @@ GUIDELINES:
 - For casual conversation (greetings, thanks, etc.), respond naturally without using tools
 - Always provide helpful context and explanations in your responses
 - When a user asks for a study plan/schedule for a topic they already have a course for, use the existing course
+
+ADAPTIVE SCHEDULING & SEASON AWARENESS:
+- You MUST understand where the student is in their academic year. If you don't know their current semester dates, exam periods, or term breaks, PROACTIVELY ask them (e.g., "By the way, when do your midterms start?" or "Are we in finals week or a new semester?").
+- Use save_user_fact to memorize these milestone dates (e.g., 'Fall semester ends Dec 15', 'Midterms are Oct 10-20').
+- Adjust scheduling based on the season: during exam periods, suggest more intense, compacted review sessions; during breaks, suggest lighter reading or rest; at the start of a semester, focus on establishing routine.
+- Timetables change every semester. If asked to schedule sessions but you don't know the user's current semester timetable, availability, or work hours, you MUST ask them before creating the schedule (e.g., "Before I build this schedule, what does your new semester timetable look like so I can find the best gaps?").
+- ALWAYS use check_schedule_conflicts before calling create_schedule to ensure the time slot is truly free.
+- Remember to use Learning Insights (like 'Optimal study time') and User Facts when picking times.
 """
 
 # Static fallback for cases where user_name is unavailable
@@ -655,6 +663,7 @@ class GeminiService:
             "create_note": "create_note",
             "create_goal": "create_goal",
             "create_schedule": "create_schedule",
+            "check_schedule_conflicts": "check_schedule_conflicts",
             "recommend_resources": "recommend_resources",
             "retake_note": "retake_note",
             "add_summary_to_note": "add_summary",

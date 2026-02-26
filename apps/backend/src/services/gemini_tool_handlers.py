@@ -46,6 +46,7 @@ async def handle_tool_call(
         "create_note": handle_create_note,
         "create_goal": handle_create_goal,
         "create_schedule": handle_create_schedule,
+        "check_schedule_conflicts": handle_check_schedule_conflicts,
         "recommend_resources": handle_recommend_resources,
         "retake_note": handle_retake_note,
         "add_summary_to_note": handle_add_summary_to_note,
@@ -517,6 +518,55 @@ async def handle_create_schedule(
     # Call existing action service
     result = await action_service.create_schedule(action_data, user_id)
     return result
+
+
+async def handle_check_schedule_conflicts(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle check_schedule_conflicts tool call by querying db.studysession."""
+    start_at_str = args.get("start_at")
+    end_at_str = args.get("end_at")
+
+    if not start_at_str or not end_at_str:
+        return {"status": "error", "message": "Missing start_at or end_at"}
+
+    try:
+        from datetime import datetime
+
+        # Parse ISO strings with Z
+        start_at = datetime.fromisoformat(start_at_str.replace("Z", "+00:00"))
+        end_at = datetime.fromisoformat(end_at_str.replace("Z", "+00:00"))
+
+        conflicting_sessions = await db.studysession.find_many(
+            where={
+                "userId": user_id,
+                "AND": [{"startTime": {"lt": end_at}}, {"endTime": {"gt": start_at}}],
+            }
+        )
+
+        if not conflicting_sessions:
+            return {
+                "status": "success",
+                "has_conflicts": False,
+                "message": "No conflicts found. Time slot is free.",
+            }
+
+        conflicts = [
+            f"'{s.title}' from {s.startTime.isoformat()} to {s.endTime.isoformat()}"
+            for s in conflicting_sessions
+        ]
+
+        return {
+            "status": "success",
+            "has_conflicts": True,
+            "conflicting_sessions": conflicts,
+            "message": "Double-booking detected. Suggest alternative times.",
+        }
+    except Exception as e:
+        logger.error("Error checking schedule conflicts: %s", e)
+        return {"status": "error", "message": str(e)}
 
 
 async def handle_recommend_resources(
