@@ -31,6 +31,10 @@ def get_all_tools() -> list[dict[str, Any]]:
                 update_course_outline_tool(),
                 delete_course_tool(),
                 save_user_fact_tool(),
+                # Agentic tools
+                create_study_plan_tool(),
+                get_learning_insights_tool(),
+                get_pending_nudges_tool(),
             ]
         }
     ]
@@ -593,5 +597,80 @@ def save_user_fact_tool() -> dict[str, Any]:
                 },
             },
             "required": ["category", "content"],
+        },
+    }
+
+
+# ==========================================
+#  Agentic AI Tools
+# ==========================================
+
+
+def create_study_plan_tool() -> dict[str, Any]:
+    """Tool definition for creating a multi-step study plan."""
+    return {
+        "name": "create_study_plan",
+        "description": (
+            "Create a comprehensive multi-step study plan for the user. This will decompose "
+            "a study goal into a course (with modules/topics), milestones, goals, and "
+            "scheduled study sessions distributed over the specified time period. "
+            "Use this when the user asks you to create a study plan, prepare for an exam, "
+            "or help them plan their learning over a period of time. "
+            "This is a powerful tool that creates MULTIPLE entities (course + goals + schedules) "
+            "in one step — use it instead of calling create_course, create_goal, and create_schedule separately."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "The study goal or what the user wants to accomplish (e.g., 'Master organic chemistry', 'Prepare for LSAT exam')",
+                },
+                "duration_weeks": {
+                    "type": "integer",
+                    "description": "Duration of the plan in weeks (default: 4, range: 1-16)",
+                },
+            },
+            "required": ["goal"],
+        },
+    }
+
+
+def get_learning_insights_tool() -> dict[str, Any]:
+    """Tool definition for retrieving AI-generated learning insights."""
+    return {
+        "name": "get_learning_insights",
+        "description": (
+            "Retrieve the AI's accumulated knowledge about the user's learning patterns, "
+            "strengths, weaknesses, optimal study times, and strategy effectiveness. "
+            "Use this when the user asks about their study habits, learning patterns, "
+            "what's working, where they're struggling, or when you need behavioral "
+            "context to give personalized advice."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    }
+
+
+def get_pending_nudges_tool() -> dict[str, Any]:
+    """Tool definition for getting proactive AI suggestions."""
+    return {
+        "name": "get_pending_nudges",
+        "description": (
+            "Retrieve proactive suggestions and reminders that the AI has queued for the user. "
+            "These are things like goal deadline reminders, study streak warnings, and review "
+            "due notifications. Use this when the user asks 'what should I do?', 'any suggestions?', "
+            "or when starting a greeting to check if there are urgent items."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of nudges to return (default: 5)",
+                },
+            },
         },
     }

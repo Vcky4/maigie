@@ -19,6 +19,7 @@ from ..dependencies import CurrentUser
 from ..models.analytics import (
     DashboardCourseItem,
     DashboardGoalItem,
+    DashboardNudgeItem,
     DashboardResponse,
     DashboardScheduleItem,
     DashboardStats,
@@ -202,12 +203,41 @@ async def get_dashboard(
             else 0.0
         )
 
+        # ========================================================================
+        # Get Pending AI Nudges
+        # ========================================================================
+        pending_nudges_list = []
+        try:
+            pending_nudges = await db.aiagenttask.find_many(
+                where={
+                    "userId": user_id,
+                    "status": {"in": ["pending", "sent"]},
+                },
+                order={"priority": "desc"},
+                take=5,
+            )
+            pending_nudges_list = [
+                DashboardNudgeItem(
+                    id=n.id,
+                    taskType=n.taskType,
+                    title=n.title,
+                    message=n.message,
+                    priority=n.priority,
+                    actionData=n.actionData if isinstance(n.actionData, dict) else None,
+                    createdAt=n.createdAt.isoformat(),
+                )
+                for n in pending_nudges
+            ]
+        except Exception as nudge_err:
+            logger.warning("Failed to fetch nudges for dashboard: %s", nudge_err)
+
         return DashboardResponse(
             stats=stats,
             recentCourses=recent_courses,
             activeGoals=active_goals_list,
             upcomingSchedules=upcoming_schedules_list,
             dailyGoalProgress=daily_goal_progress,
+            pendingNudges=pending_nudges_list,
         )
 
     except Exception as e:

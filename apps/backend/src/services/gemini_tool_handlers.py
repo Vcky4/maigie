@@ -31,7 +31,7 @@ async def handle_tool_call(
                           Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
     """
     # Handlers that support progress callbacks
-    handlers_with_progress = {"create_course"}
+    handlers_with_progress = {"create_course", "create_study_plan"}
 
     handlers = {
         # Query handlers
@@ -54,6 +54,10 @@ async def handle_tool_call(
         "update_course_outline": handle_update_course_outline,
         "delete_course": handle_delete_course,
         "save_user_fact": handle_save_user_fact,
+        # Agentic handlers
+        "create_study_plan": handle_create_study_plan,
+        "get_learning_insights": handle_get_learning_insights,
+        "get_pending_nudges": handle_get_pending_nudges,
     }
 
     handler = handlers.get(tool_name)
@@ -956,3 +960,120 @@ async def handle_save_user_fact(
     except Exception as e:
         logger.error(f"save_user_fact error: {e}", exc_info=True)
         return {"status": "error", "message": f"Failed to save fact: {e}"}
+
+
+# ==========================================
+#  Agentic AI Handlers
+# ==========================================
+
+
+async def handle_create_study_plan(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+    progress_callback=None,
+) -> dict[str, Any]:
+    """Handle create_study_plan tool call. Creates a multi-step study plan."""
+    from src.services.planning_service import create_study_plan
+
+    goal = args.get("goal", "")
+    if not goal:
+        return {"status": "error", "message": "No study goal specified."}
+
+    duration_weeks = args.get("duration_weeks", 4)
+    try:
+        duration_weeks = max(1, min(16, int(duration_weeks)))
+    except (TypeError, ValueError):
+        duration_weeks = 4
+
+    try:
+        result = await create_study_plan(
+            user_id=user_id,
+            goal=goal,
+            duration_weeks=duration_weeks,
+            context=context,
+            progress_callback=progress_callback,
+        )
+        return result
+    except Exception as e:
+        logger.error("create_study_plan error: %s", e, exc_info=True)
+        return {"status": "error", "message": f"Failed to create study plan: {e}"}
+
+
+async def handle_get_learning_insights(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle get_learning_insights tool call. Returns accumulated learning patterns."""
+    try:
+        insights = await db.learninginsight.find_many(
+            where={"userId": user_id, "isActive": True},
+            order={"updatedAt": "desc"},
+            take=15,
+        )
+
+        if not insights:
+            return {
+                "insights": [],
+                "count": 0,
+                "message": (
+                    "No learning insights generated yet. I'll start building a profile "
+                    "as you study more — tracking your optimal study times, strengths, "
+                    "weaknesses, and what strategies work best for you."
+                ),
+            }
+
+        insights_data = [
+            {
+                "type": ins.insightType,
+                "content": ins.content,
+                "confidence": round(ins.confidence * 100),
+                "dataPoints": ins.dataPoints,
+                "lastUpdated": ins.updatedAt.isoformat() if ins.updatedAt else None,
+            }
+            for ins in insights
+        ]
+
+        return {
+            "insights": insights_data,
+            "count": len(insights_data),
+            "message": f"Found {len(insights_data)} learning insight(s) about this user.",
+        }
+    except Exception as e:
+        logger.error("get_learning_insights error: %s", e, exc_info=True)
+        return {"status": "error", "message": f"Failed to get learning insights: {e}"}
+
+
+async def handle_get_pending_nudges(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle get_pending_nudges tool call. Returns proactive AI suggestions."""
+    from src.services.memory_service import get_pending_nudges
+
+    limit = args.get("limit", 5)
+    try:
+        limit = max(1, min(10, int(limit)))
+    except (TypeError, ValueError):
+        limit = 5
+
+    try:
+        nudges = await get_pending_nudges(user_id, limit=limit)
+
+        if not nudges:
+            return {
+                "nudges": [],
+                "count": 0,
+                "message": "No pending suggestions right now. You're all caught up!",
+            }
+
+        return {
+            "nudges": nudges,
+            "count": len(nudges),
+            "message": f"Found {len(nudges)} suggestion(s) for the user.",
+        }
+    except Exception as e:
+        logger.error("get_pending_nudges error: %s", e, exc_info=True)
+        return {"status": "error", "message": f"Failed to get pending nudges: {e}"}

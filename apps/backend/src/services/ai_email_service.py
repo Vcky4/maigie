@@ -279,3 +279,101 @@ Output only valid JSON."""
             "encouragement": encouragement,
         },
     )
+
+
+# ==========================================
+#  Proactive Agent Nudge Emails
+# ==========================================
+
+
+async def draft_agent_nudge_email(
+    nudge_type: str,
+    nudge_title: str,
+    nudge_message: str,
+    user_name: str,
+    action_data: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """
+    Draft an AI-personalized nudge email for proactive outreach.
+
+    Args:
+        nudge_type: Type of nudge (goal_nudge, study_gap, review_reminder)
+        nudge_title: Short title of the nudge
+        nudge_message: Detailed nudge message
+        user_name: User's first name
+        action_data: Optional contextual data (goalId, streak, etc.)
+
+    Returns:
+        (subject, html_content) tuple ready for send_bulk_email
+    """
+    name = user_name or "there"
+
+    prompt = f"""You are Maigie, a warm and encouraging AI study companion.
+Draft a short, personalized email for a proactive nudge notification.
+
+Nudge type: {nudge_type}
+Title: {nudge_title}
+Message: {nudge_message}
+User's first name: {name}
+Additional context: {json.dumps(action_data or {})}
+
+Write a JSON object with:
+- "subject": email subject line (short, personal, engaging — use emoji sparingly)
+- "body_html": email body in HTML (2-4 short paragraphs max, warm and encouraging tone, include a clear call-to-action to open Maigie)
+
+Keep it brief and actionable. Sound human, not robotic.
+"""
+
+    result = await _call_gemini_for_email(prompt, "json", max_tokens=600)
+
+    if result:
+        subject = result.get("subject", nudge_title)
+        body_html = result.get("body_html", "")
+    else:
+        # Fallback: use the nudge message directly
+        subject = nudge_title
+        body_html = (
+            f"<p>Hi {name},</p>"
+            f"<p>{nudge_message}</p>"
+            f"<p>Open <a href='https://app.maigie.com'>Maigie</a> to take action!</p>"
+            f"<p>— Maigie, your study companion 📚</p>"
+        )
+
+    return subject, body_html
+
+
+async def send_agent_nudge_email(
+    user_email: str,
+    user_name: str | None,
+    nudge_type: str,
+    nudge_title: str,
+    nudge_message: str,
+    action_data: dict[str, Any] | None = None,
+) -> bool:
+    """
+    Draft and send a proactive nudge email to a user.
+
+    Returns True if sent successfully, False otherwise.
+    """
+    from src.services import email
+
+    try:
+        subject, html_content = await draft_agent_nudge_email(
+            nudge_type=nudge_type,
+            nudge_title=nudge_title,
+            nudge_message=nudge_message,
+            user_name=user_name or "there",
+            action_data=action_data,
+        )
+
+        await email.send_bulk_email(
+            email=user_email,
+            name=user_name,
+            subject=subject,
+            content=html_content,
+        )
+        logger.info("Sent agent nudge email (%s) to %s", nudge_type, user_email)
+        return True
+    except Exception as e:
+        logger.error("Failed to send agent nudge email to %s: %s", user_email, e)
+        return False

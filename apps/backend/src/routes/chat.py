@@ -942,78 +942,64 @@ def _build_greeting_prompt(context: dict) -> str:
 
 def _build_greeting_components(greeting_ctx: dict) -> list[dict]:
     """
-    Build 0–2 component payloads to send with the greeting (e.g. pick-up course, schedule, goals).
-    Each item is a dict with type "component" and component/data/text for the frontend.
-    Priority: Reviews > Schedule > Course Pick-up > Goals
+    Build at most **1** focused component payload for the greeting message.
+    Keeps the first impression lean and relevant to what the AI text says.
+    Priority: Reviews > Next session > Course pick-up > Goals (capped at 2)
     """
     from src.services.component_response_service import (
         format_component_response,
         format_list_component_response,
     )
 
-    out = []
     reviews = greeting_ctx.get("reviews_for_component") or []
     schedules = greeting_ctx.get("schedules_for_component") or []
     courses = greeting_ctx.get("courses_for_component") or []
     goals = greeting_ctx.get("goals_for_component") or []
 
-    # 1) Pending Reviews
+    # 1) Pending Reviews — most time-sensitive; cap at 3
     if reviews:
-        # Wrap reviews under the `reviews` key so the frontend generic ListComponent can map it
-        formatted_reviews = []
-        for r in reviews:
-            formatted_reviews.append(r)
-        # Using format_component_response direct because we need "reviews" as the array key
-        out.append(
+        return [
             format_component_response(
                 "ReviewListMessage",
-                {"reviews": formatted_reviews},
+                {"reviews": reviews[:3]},
                 text=None,
             )
-        )
+        ]
 
-    # 2) Upcoming schedule
-    if schedules and len(out) < 2:
-        out.append(
-            format_list_component_response(
-                "ScheduleViewMessage",
-                schedules,
+    # 2) The next upcoming session (not the whole calendar)
+    if schedules:
+        next_session = schedules[0]
+        return [
+            format_component_response(
+                "ScheduleBlockMessage",
+                next_session,
                 text=None,
             )
-        )
+        ]
 
-    # 3) "Pick up where you left off" Course
-    if courses and len(out) < 2:
+    # 3) "Pick up where you left off" — a single course card
+    if courses:
         pick_up = next((c for c in courses if c.get("nextTopic")), None)
         if pick_up:
-            out.append(
+            return [
                 format_component_response(
                     "CourseCardMessage",
                     pick_up,
                     text=None,
                 )
-            )
-        elif len(courses) > 0 and len(out) == 0:
-            # Only fallback to a giant course list if we literally have nothing else to show
-            out.append(
-                format_list_component_response(
-                    "CourseListMessage",
-                    courses[:3],
-                    text=None,
-                )
-            )
+            ]
 
-    # 4) Active goals (only if empty slots left)
-    if goals and len(out) < 2:
-        out.append(
+    # 4) Active goals — keep at most 2 to avoid visual overload
+    if goals:
+        return [
             format_list_component_response(
                 "GoalListMessage",
-                goals,
+                goals[:2],
                 text=None,
             )
-        )
+        ]
 
-    return out
+    return []
 
 
 @router.websocket("/ws")
@@ -1032,6 +1018,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
     if not session:
         session = await db.chatsession.create(data={"userId": user.id, "title": "New Chat"})
+
+    # 2b. Deliver pending AI nudges on connect
+    try:
+        from src.services.memory_service import get_pending_nudges
+
+        pending = await get_pending_nudges(user.id)
+        if pending:
+            await manager.send_json(
+                {"type": "nudge", "nudges": pending},
+                user.id,
+            )
+    except Exception as e:
+        print(f"⚠️ Failed to deliver nudges: {e}")
 
     try:
         while True:
@@ -1638,6 +1637,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     if len(user_text) > 30
                     else print(f"⏭️ Skipping RAG for simple message: '{user_text}'")
                 )
+
+            # 5b. Inject long-term memory context (conversation summaries + learning insights)
+            try:
+                from src.services.memory_service import get_memory_context
+
+                memory_ctx = await get_memory_context(user.id, query=user_text)
+                if memory_ctx:
+                    if not enriched_context:
+                        enriched_context = {}
+                    enriched_context["memory_context"] = memory_ctx
+            except Exception as e:
+                print(f"⚠️ Memory context retrieval failed: {e}")
 
             # 6. Get AI response with tool calling support
             # Define progress callback for tool execution updates

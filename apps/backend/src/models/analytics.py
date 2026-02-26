@@ -528,6 +528,18 @@ class DashboardScheduleItem(BaseModel):
     goalId: str | None
 
 
+class DashboardNudgeItem(BaseModel):
+    """Pending AI nudge item for dashboard."""
+
+    id: str
+    taskType: str
+    title: str
+    message: str
+    priority: int
+    actionData: dict | None = None
+    createdAt: str
+
+
 class DashboardResponse(BaseModel):
     """Complete dashboard response with aggregated data."""
 
@@ -536,3 +548,4 @@ class DashboardResponse(BaseModel):
     activeGoals: list[DashboardGoalItem]  # Active goals (limit 5)
     upcomingSchedules: list[DashboardScheduleItem]  # Next 7 days
     dailyGoalProgress: float | None  # Progress towards daily study goal (0-100)
+    pendingNudges: list[DashboardNudgeItem] = []  # AI agent nudges

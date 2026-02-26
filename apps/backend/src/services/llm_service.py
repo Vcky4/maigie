@@ -724,6 +724,10 @@ class GeminiService:
                     context_parts.append(str(item))
                 context_parts.append("(Use these IDs if the user refers to these items)")
 
+            # Long-term memory context (conversation summaries + learning insights)
+            if context.get("memory_context"):
+                context_parts.append(f"\n{context['memory_context']}")
+
         # Always include context_parts (at minimum current date/time)
         if context_parts:
             context_str = "\n".join(context_parts)
