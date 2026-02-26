@@ -1,18 +1,35 @@
 # Backend (FastAPI)
 
-FastAPI backend application for Maigie.
+FastAPI backend application for Maigie, powering an Agentic AI study companion.
+
+## Architecture Overview
+
+Maigie's backend is built on **FastAPI** and uses **Prisma (PostgreSQL)** for the data layer. It features a robust **Agentic AI** architecture powered by Google Gemini, capable of long-term memory, proactive planning, and executing background tasks via **Celery**.
+
+### Core Pillars
+
+1. **REST API**: Standard endpoints for CRUD operations (courses, goals, schedule).
+2. **Real-time Engine (WebSockets)**: Powers the conversational AI interface, streaming LLM responses, and real-time frontend UI component syncing.
+3. **Agentic AI System**:
+   - **Semantic Memory**: Saves user facts and learning insights.
+   - **Proactive Nudges**: Analyzes progress and pushes interventions to the user.
+   - **Spaced Repetition**: Manages cognitive decay curves using the SM-2 algorithm.
+   - **Tool Calling**: Allows the AI to autonomously create courses, study plans, schedules, and check for calendar conflicts.
+4. **Background Workers (Celery)**: Handles asynchronous heavy lifting like email dispatch, morning schedule generation, and automated daily AI reflections.
 
 ## Setup
 
 ### Quick Setup (Windows PowerShell)
 
 Run the automated setup script:
+
 ```powershell
 cd apps/backend
 .\setup-dev.ps1
 ```
 
 This will:
+
 - Check Python installation
 - Install Poetry if needed
 - Configure Poetry to create virtual environment in project directory (`.venv`)
@@ -23,60 +40,69 @@ This will:
 ### Manual Setup
 
 1. **Install Poetry** (if not already installed):
+
    ```powershell
    # Windows PowerShell
    .\install-poetry.ps1
-   
+
    # Or use the official installer
    (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
    ```
 
 2. **Configure Poetry for in-project virtual environment** (recommended):
+
    ```bash
    poetry config virtualenvs.in-project true
    ```
 
 3. **Install dependencies:**
+
    ```bash
    poetry install
    ```
-   
+
    This will automatically create a `.venv` directory in your project with all dependencies.
 
 4. **Copy environment variables** (optional, defaults are used if not set):
+
    ```powershell
    # Windows PowerShell
    Copy-Item .env.example .env
-   
+
    # Linux/Mac
    cp .env.example .env
    ```
-   
+
    Edit `.env` and set your `DATABASE_URL` (e.g., `postgresql://postgres:postgres@localhost:5432/maigie`)
 
 5. **Generate Prisma Client:**
+
    ```bash
    poetry run prisma generate
    ```
 
 6. **Run database migrations:**
+
    ```bash
    # Create initial migration
    poetry run prisma migrate dev --name init
    ```
 
 7. **Run the development server:**
+
    ```bash
    nx serve backend
    ```
 
    Or directly:
+
    ```bash
    cd apps/backend
    poetry run uvicorn src.main:app --reload
    ```
 
-6. **Start background workers** (optional, for async task processing):
+8. **Start background workers** (optional, for async task processing):
+
    ```bash
    # Start Celery worker (processes background tasks)
    bash scripts/start-worker.sh
@@ -96,6 +122,7 @@ The backend uses Celery for background task processing. Workers run independentl
 ### Starting Workers
 
 **Worker** (processes background tasks):
+
 ```bash
 # Linux/Mac
 bash scripts/start-worker.sh
@@ -108,6 +135,7 @@ bash scripts/start-worker.sh --queue default --concurrency 4 --loglevel info
 ```
 
 **Beat Scheduler** (runs periodic/scheduled tasks):
+
 ```bash
 # Linux/Mac
 bash scripts/start-beat.sh
@@ -115,6 +143,13 @@ bash scripts/start-beat.sh
 # Windows PowerShell
 powershell -ExecutionPolicy Bypass -File scripts/start-beat.ps1
 ```
+
+### Key Scheduled Tasks
+
+- **Morning Agentic Planning (`08:00`)**: AI reviews the user's upcoming exams and creates daily study plans.
+- **Evening Reflection (`20:00`)**: AI reviews the day's completed schedules and generates insights.
+- **Stale Goal Nudges (Daily)**: Identifies goals falling behind and pushes nudge notifications.
+- **Spaced Repetition Prompts (Daily)**: Queues due review items.
 
 ### Creating Tasks
 
@@ -137,6 +172,7 @@ def process_data(data: dict) -> dict:
 ### Task Patterns
 
 **With retry on specific exceptions:**
+
 ```python
 from src.tasks import task, retry_on_exception
 
@@ -148,6 +184,7 @@ def fetch_external_data(self, url: str):
 ```
 
 **Scheduled periodic tasks:**
+
 ```python
 from src.tasks.schedules import register_periodic_task, DAILY_AT_MIDNIGHT
 from celery.schedules import crontab
@@ -163,6 +200,7 @@ def cleanup_old_data():
 ```
 
 **Checking task status:**
+
 ```python
 from src.tasks.utils import get_task_status, get_task_result
 
@@ -200,6 +238,7 @@ python verify_auth.py
 ```
 
 Or run the tests:
+
 ```bash
 nx test backend
 # or
@@ -209,6 +248,7 @@ poetry run pytest
 ## Project Structure
 
 ### Core Application Files
+
 - `src/main.py` - FastAPI app factory and application entry point
 - `src/config.py` - Environment configuration management
 - `src/dependencies.py` - Dependency injection system
@@ -216,6 +256,7 @@ poetry run pytest
 - `src/exceptions.py` - Custom exception classes and handlers
 
 ### Core Utilities (`src/core/`)
+
 - `core/security.py` - JWT utilities, password hashing (bcrypt)
 - `core/oauth.py` - OAuth provider base structure (Google, GitHub)
 - `core/websocket.py` - WebSocket connection manager and event broadcasting
@@ -223,27 +264,38 @@ poetry run pytest
 - `core/cache.py` - Cache connection manager (legacy placeholder)
 
 ### Database & Dependencies (`src/utils/`)
+
 - `utils/dependencies.py` - Dependency injection for Prisma and Redis clients
   - `get_db_client()` - FastAPI dependency for Prisma database client
   - `get_redis_client()` - FastAPI dependency for Redis cache client
   - Lifecycle management functions for startup/shutdown
 
 ### Database Schema (`prisma/`)
+
 - `prisma/schema.prisma` - Prisma schema with database models (User, Course, Goal)
 
 ### Feature Modules
+
 - `src/routes/` - API route handlers
   - `routes/auth.py` - Authentication routes (login, register, OAuth)
+  - `routes/chat.py` - Main WebSocket entry point for the AI conversation
   - `routes/ai.py` - AI assistant routes with exception handling demos
   - `routes/realtime.py` - WebSocket routes for real-time updates
   - `routes/courses.py`, `routes/goals.py`, `routes/schedule.py`, etc.
-- `src/services/` - Business logic
+- `src/services/` - Business logic and Agentic AI Services
+  - `llm_service.py` - Gemini interface, system prompting, and streaming logic
+  - `gemini_tools.py` & `gemini_tool_handlers.py` - AI definitions and handlers
+  - `memory_service.py` - Long-term context retrieval, User Facts, Learning Insights
+  - `spaced_repetition_service.py` - SM-2 algorithm implementation
+  - `planning_service.py` & `reflection_service.py` - Automated AI reasoning loops
 - `src/models/` - Pydantic schemas and ORM models
   - `models/auth.py` - Authentication models (UserRegister, UserLogin, TokenResponse, etc.)
   - `models/error_response.py` - Standardized error response model
   - `models/websocket.py` - WebSocket message models
 - `src/db/` - Database connection and migrations
 - `src/tasks/` - Background tasks framework (Celery)
+  - `tasks/agent_tasks.py` - Celery definitions for Agentic AI cron jobs
+  - `tasks/email_notifications.py` - Postmark email dispatching jobs
   - `tasks/base.py` - Base task classes and decorators
   - `tasks/retry.py` - Retry mechanism framework
   - `tasks/failure.py` - Failed job handling
@@ -258,6 +310,7 @@ poetry run pytest
   - `utils/exceptions.py` - Custom business logic exceptions (SubscriptionLimitError, ResourceNotFoundError, etc.)
 
 ### Tests
+
 - `tests/` - Test files
 - `verify_setup.py` - Application setup verification script
 - `verify_auth.py` - Authentication framework verification script
@@ -305,6 +358,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
 ## API Endpoints
 
 ### Core Endpoints
+
 - `GET /` - Root endpoint with app info
 - `GET /health` - Multi-service health check (validates DB and cache connectivity)
 - `GET /ready` - Readiness check (includes DB and cache status)
@@ -313,6 +367,7 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
 - `GET /openapi.json` - OpenAPI schema
 
 ### Authentication Endpoints
+
 - `POST /api/v1/auth/register` - Register a new user
 - `POST /api/v1/auth/login` - Login with email/password
 - `POST /api/v1/auth/refresh` - Refresh access token
@@ -322,7 +377,9 @@ powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
 - `GET /api/v1/auth/oauth/providers` - List available OAuth providers
 
 ### API Module Endpoints
+
 All module endpoints are registered with `/api/v1` prefix:
+
 - `/api/v1/ai` - AI assistant routes
 - `/api/v1/courses` - Course management routes
 - `/api/v1/goals` - Goal tracking routes
@@ -336,7 +393,9 @@ All module endpoints are registered with `/api/v1` prefix:
 Poetry automatically creates and manages a virtual environment for this project. The setup script configures Poetry to create the virtual environment in the project directory (`.venv`).
 
 **Using the virtual environment:**
+
 - All commands should be run with `poetry run` prefix:
+
   ```bash
   poetry run python verify_setup.py
   poetry run uvicorn src.main:app --reload
@@ -344,10 +403,11 @@ Poetry automatically creates and manages a virtual environment for this project.
   ```
 
 - Or activate the virtual environment manually:
+
   ```powershell
   # Windows PowerShell
   .venv\Scripts\Activate.ps1
-  
+
   # Then run commands directly
   python verify_setup.py
   uvicorn src.main:app --reload
@@ -380,22 +440,26 @@ See `.env.example` for available configuration options. Key settings:
 This project uses Prisma as the ORM for PostgreSQL.
 
 ### Prerequisites
+
 - PostgreSQL installed and running
 - Database created (e.g., `maigie`)
 
 ### Setup Steps
 
 1. **Configure database URL in `.env`:**
+
    ```env
    DATABASE_URL="postgresql://username:password@localhost:5432/maigie"
    ```
 
 2. **Generate Prisma Client:**
+
    ```bash
    poetry run prisma generate
    ```
 
 3. **Run migrations:**
+
    ```bash
    # Create and apply migration
    poetry run prisma migrate dev --name init
@@ -418,6 +482,7 @@ This project uses Prisma as the ORM for PostgreSQL.
 ### Database Models
 
 Current schema includes:
+
 - **User** - User accounts with authentication and subscription tiers
 
 See `prisma/schema.prisma` for the complete schema definition.
@@ -429,12 +494,13 @@ The application implements comprehensive exception handling with standardized er
 ### Error Response Format
 
 All errors follow a consistent format:
+
 ```json
 {
-    "status_code": 403,
-    "code": "SUBSCRIPTION_LIMIT_EXCEEDED",
-    "message": "This feature requires a Premium subscription",
-    "detail": "Optional debug information (only in development)"
+  "status_code": 403,
+  "code": "SUBSCRIPTION_LIMIT_EXCEEDED",
+  "message": "This feature requires a Premium subscription",
+  "detail": "Optional debug information (only in development)"
 }
 ```
 
@@ -471,6 +537,7 @@ poetry run python verify_exceptions.py
 ```
 
 See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
+
 - `DATABASE_URL` - PostgreSQL connection string (for future use)
 - `REDIS_URL` - Redis connection string (default: `redis://localhost:6379/0`)
 - `REDIS_KEY_PREFIX` - Prefix for all cache keys (default: `maigie:`)
@@ -488,4 +555,3 @@ See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
 - `CELERY_RESULT_SERIALIZER` - Result serialization format (default: `json`)
 - `CELERY_TIMEZONE` - Timezone for scheduled tasks (default: `UTC`)
 - `CELERY_TASK_ALWAYS_EAGER` - Run tasks synchronously (default: `false`, set to `true` for testing)
-
