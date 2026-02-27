@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from src.core.database import db
 from src.dependencies import CurrentUser
+from src.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ async def oauth_discovery(request: Request):
 
     return {
         "issuer": base_url,
-        "authorization_endpoint": f"{base_url}/api/v1/mcp/oauth/authorize",
+        "authorization_endpoint": f"{settings.FRONTEND_URL.rstrip('/')}/api/v1/mcp/oauth/authorize",
         "token_endpoint": f"{base_url}/api/v1/mcp/oauth/token",
         "registration_endpoint": f"{base_url}/api/v1/mcp/oauth/register",
         "scopes_supported": ["tools"],
