@@ -56,9 +56,16 @@ async def oauth_discovery(request: Request):
     if "api/v1" in base_url:
         base_url = base_url.split("/api/v1")[0]
 
+    # Determine the correct frontend authorization endpoint based on the backend environment
+    frontend_domain = settings.FRONTEND_URL.rstrip("/")
+    if "staging-api.maigie.com" in base_url:
+        frontend_domain = "https://dev.maigie.com"
+    elif "api.maigie.com" in base_url and "staging" not in base_url:
+        frontend_domain = "https://maigie.com"
+
     return {
         "issuer": base_url,
-        "authorization_endpoint": f"{settings.FRONTEND_URL.rstrip('/')}/api/v1/mcp/oauth/authorize",
+        "authorization_endpoint": f"{frontend_domain}/api/v1/mcp/oauth/authorize",
         "token_endpoint": f"{base_url}/api/v1/mcp/oauth/token",
         "registration_endpoint": f"{base_url}/api/v1/mcp/oauth/register",
         "scopes_supported": ["tools"],
