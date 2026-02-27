@@ -40,7 +40,7 @@ async def test_oauth_flow():
         print(json.dumps(client_data, indent=2))
 
         print("\n--- Next Steps ---")
-        print(f"To test authorization, you would navigate a user to your frontend URL:")
+        print("To test authorization, you would navigate a user to your frontend URL:")
         print(
             f"http://localhost:4200/chatgpt/authorize?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&state=test-state-123&code_challenge=test-challenge&code_challenge_method=S256"
         )

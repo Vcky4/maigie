@@ -336,6 +336,13 @@ def create_app() -> FastAPI:
             settings = get_settings()
         return {"message": settings.APP_NAME, "version": settings.APP_VERSION}
 
+    # OAuth 2.1 Discovery (Must be at the root of the domain for ChatGPT Apps SDK)
+    @app.get("/.well-known/oauth-authorization-server")
+    async def oauth_discovery_root(request: Request):
+        from src.routes.mcp_oauth import oauth_discovery
+
+        return await oauth_discovery(request)
+
     # Metrics
     @app.get("/metrics")
     async def metrics() -> Response:
