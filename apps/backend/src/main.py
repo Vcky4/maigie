@@ -45,6 +45,8 @@ from .models.error_response import ErrorResponse
 # --- Route Imports ---
 from .routes.admin import router as admin_router
 from .routes.ai import router as ai_router
+from .routes.mcp_routes import mcp as mcp_server
+from .routes.mcp_oauth import router as mcp_oauth_router
 from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
 from .routes.circles import router as circles_router
@@ -394,6 +396,9 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
 
     app.include_router(ai_router)
+    # Mount MCP Server on /mcp
+    app.mount("/mcp", mcp_server.streamable_http_app())
+    app.include_router(mcp_oauth_router, prefix=f"{settings.API_V1_STR}/mcp")
     app.include_router(analytics_router)
     app.include_router(dashboard_router)
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")

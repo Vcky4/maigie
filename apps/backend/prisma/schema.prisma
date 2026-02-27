@@ -244,8 +244,101 @@ model User {
   aiAgentTasks          AIAgentTask[]
   learningInsights      LearningInsight[]
 
+  // OAuth 2.1 Provider Relations (ChatGPT Integration)
+  oauthClients OAuthClient[] // Clients created by this user (optional)
+  oauthCodes   OAuthCode[] // Auth codes issued to this user
+  oauthTokens  OAuthToken[] // Access tokens issued to this user
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ==========================================
+//  OAUTH 2.1 PROVIDER MODELS
+// ==========================================
+
+model OAuthClient {
+  id           String  @id @default(uuid())
+  clientId     String  @unique
+  clientSecret String? // Optional for public clients (like ChatGPT Apps)
+
+  clientName   String
+  redirectUris String[] // Array of allowed redirect URIs
+  clientUri    String?
+  logoUri      String?
+
+  // Dynamic Client Registration fields
+  tokenEndpointAuthMethod String   @default("none") // "none" for public, "client_secret_post", "client_secret_basic"
+  grantTypes              String[] @default(["authorization_code", "refresh_token"])
+  responseTypes           String[] @default(["code"])
+
+  // Who registered this client
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Tokens & Codes issued to this client
+  codes  OAuthCode[]
+  tokens OAuthToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+}
+
+model OAuthCode {
+  id String @id @default(uuid())
+
+  code     String      @unique
+  clientId String
+  client   OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  redirectUri String
+  scope       String?
+
+  // PKCE fields
+  codeChallenge       String?
+  codeChallengeMethod String? // e.g. "S256"
+
+  expiresAt DateTime
+
+  // Safety: ensure code is only used once
+  isUsed Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([code])
+  @@index([clientId])
+  @@index([userId])
+}
+
+model OAuthToken {
+  id String @id @default(uuid())
+
+  accessToken  String  @unique
+  refreshToken String? @unique
+
+  clientId String
+  client   OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  scope String?
+
+  accessTokenExpiresAt  DateTime
+  refreshTokenExpiresAt DateTime?
+
+  // Optional linkage to an auth code if one produced it
+  createdAt DateTime @default(now())
+
+  @@index([accessToken])
+  @@index([refreshToken])
+  @@index([clientId])
+  @@index([userId])
 }
 
 model UserPreferences {
