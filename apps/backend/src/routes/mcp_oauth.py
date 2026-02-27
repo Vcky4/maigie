@@ -43,6 +43,15 @@ async def oauth_discovery(request: Request):
     """
     # Use request.base_url or configured domain
     base_url = str(request.base_url).rstrip("/")
+
+    # Force HTTPS for external domains behind proxy
+    if (
+        "localhost" not in base_url
+        and "127.0.0.1" not in base_url
+        and base_url.startswith("http://")
+    ):
+        base_url = base_url.replace("http://", "https://")
+
     if "api/v1" in base_url:
         base_url = base_url.split("/api/v1")[0]
 
