@@ -318,8 +318,17 @@ class GeminiService:
             request_start = time.perf_counter()
             request_id = f"agentic_{int(request_start * 1000)}"
 
-            # Get tool definitions
-            tools = get_all_tools()
+            # Get tool definitions and convert to new SDK format
+            raw_tools = get_all_tools()
+            # raw_tools is [{"function_declarations": [...]}] (old format)
+            # New SDK expects a list of types.Tool objects
+            all_declarations = []
+            for tool_group in raw_tools:
+                if isinstance(tool_group, dict) and "function_declarations" in tool_group:
+                    all_declarations.extend(tool_group["function_declarations"])
+            tools = (
+                [_types.Tool(function_declarations=all_declarations)] if all_declarations else None
+            )
 
             # Build personalized system instruction with user's name
             system_instruction = build_personalized_system_instruction(user_name)
@@ -415,7 +424,7 @@ class GeminiService:
                 history=processed_history,
                 config=_types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    tools=[tools] if tools else None,
+                    tools=tools,
                     safety_settings=self.safety_settings,
                 ),
             )
