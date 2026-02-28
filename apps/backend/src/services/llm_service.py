@@ -509,22 +509,29 @@ class GeminiService:
 
                     async for chunk in response_stream:
                         last_response = chunk
-                        print(f"DEBUG: stream chunk parts: {getattr(chunk, 'parts', None)}")
                         try:
+                            # In the new SDK, reading .text when a function call is present throws a ValueError
                             chunk_text = chunk.text
-                            print(f"DEBUG: chunk_text={repr(chunk_text)}")
-                        except ValueError as e:
-                            print(f"DEBUG: ValueError reading chunk.text: {e}")
-                            # Ignore non-text parts (e.g., function_call)
+                        except ValueError:
                             chunk_text = None
-                        except Exception as e:
-                            print(f"DEBUG: Unexpected error reading chunk.text: {e}")
+                        except Exception:
                             chunk_text = None
 
-                        if hasattr(chunk, "parts") and chunk.parts is not None:
-                            for part in chunk.parts:
+                        # Extract function calls using the built-in property on GenerateContentResponse
+                        if hasattr(chunk, "function_calls") and chunk.function_calls:
+                            streamed_function_calls.extend(chunk.function_calls)
+
+                        # Fallback for parts if exposed differently in some models
+                        elif (
+                            hasattr(chunk, "candidates")
+                            and chunk.candidates
+                            and chunk.candidates[0].content
+                            and chunk.candidates[0].content.parts
+                        ):
+                            for part in chunk.candidates[0].content.parts:
                                 if hasattr(part, "function_call") and part.function_call:
                                     streamed_function_calls.append(part.function_call)
+
                         if chunk_text:
                             streamed_text_parts.append(chunk_text)
                             if last_chunk_text is not None:

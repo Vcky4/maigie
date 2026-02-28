@@ -31,10 +31,10 @@ def get_genai_client():
     return _client
 
 
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "embedding-001"
 
-# Gemini embedding-001 produces 3072-dimensional vectors
-EMBEDDING_DIMENSION = 3072
+# Gemini embedding-001 produces 768-dimensional vectors
+EMBEDDING_DIMENSION = 768
 
 
 def _get_pinecone_index():
