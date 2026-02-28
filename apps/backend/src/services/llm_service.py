@@ -29,13 +29,6 @@ with warnings.catch_warnings():
         # We'll raise a clearer error when the service is actually used.
         genai = None
 
-try:
-    # Only available when google-generativeai is installed
-    HarmBlockThreshold = _types.HarmBlockThreshold
-    HarmCategory = _types.HarmCategory
-except Exception:  # pragma: no cover - depends on optional dependency
-    HarmBlockThreshold = None  # type: ignore[assignment]
-    HarmCategory = None  # type: ignore[assignment]
 
 # Base system instruction to define Maigie's persona
 _SYSTEM_INSTRUCTION_BASE = """
@@ -155,15 +148,17 @@ class GeminiService:
         self.system_instruction = SYSTEM_INSTRUCTION
         self.client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-        # Safety settings (block hate speech, etc.)
-        if HarmCategory is None or HarmBlockThreshold is None:
-            raise RuntimeError(
-                "google-generativeai types are unavailable; cannot configure safety settings."
-            )
-        self.safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
-        }
+        # Safety settings (new google.genai SDK format)
+        self.safety_settings = [
+            _types.SafetySetting(
+                category="HARM_CATEGORY_HARASSMENT",
+                threshold="BLOCK_MEDIUM_AND_ABOVE",
+            ),
+            _types.SafetySetting(
+                category="HARM_CATEGORY_HATE_SPEECH",
+                threshold="BLOCK_MEDIUM_AND_ABOVE",
+            ),
+        ]
 
     async def get_chat_response(
         self, history: list, user_message: str, context: dict = None
