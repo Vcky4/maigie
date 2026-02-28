@@ -4,16 +4,17 @@ This guide explains how to deploy the Maigie backend to Contabo VPS using Docker
 
 ## Architecture Overview
 
-- **Production/Staging**: Deploy to Contabo VPS with external managed databases (Neon/Supabase)
-- **PR Previews**: Each PR gets its own temporary Docker container with embedded Postgres DB
+- **Production**: Deploys to a **dedicated Contabo VPS** with external managed database (Neon/Supabase)
+- **Staging**: Deploys to the **shared Contabo VPS** with external managed database
+- **PR Previews**: Each PR gets its own temporary Docker container on the **shared VPS** with embedded Postgres DB
 - **CI/CD**: GitHub Actions handles testing, building, and deployment
 
 ## Prerequisites
 
-1. **Contabo VPS** with SSH access
+1. **Two Contabo VPS instances**: One dedicated for production, one shared for staging/previews
 2. **External Database** (Neon, Supabase, or PlanetScale) for production/staging
 3. **GitHub Repository** with Actions enabled
-4. **SSH Key** for VPS access
+4. **SSH Keys** for both VPS instances
  
 ## Initial VPS Setup 
 
@@ -57,13 +58,19 @@ This guide explains how to deploy the Maigie backend to Contabo VPS using Docker
 
 Add these secrets in your GitHub repository settings (Settings → Secrets and variables → Actions):
 
-### Required Secrets
+### Shared VPS Secrets (Staging & Previews)
 
-- `VPS_HOST` - Your Contabo VPS IP address or domain name
-- `VPS_USER` - SSH username (usually `root` or `ubuntu`)
-- `VPS_SSH_KEY` - Private SSH key for VPS access (generate with `ssh-keygen -t ed25519`)
-- `PRODUCTION_DATABASE_URL` - Full PostgreSQL connection string for production
+- `VPS_HOST` - Shared Contabo VPS IP address or domain name
+- `VPS_USER` - SSH username on the shared VPS
+- `VPS_SSH_KEY` - Private SSH key for the shared VPS
 - `STAGING_DATABASE_URL` - Full PostgreSQL connection string for staging
+
+### Production VPS Secrets
+
+- `PRODUCTION_VPS_HOST` - Production Contabo VPS IP address or domain name
+- `PRODUCTION_VPS_USER` - SSH username on the production VPS
+- `PRODUCTION_VPS_SSH_KEY` - Private SSH key for the production VPS
+- `PRODUCTION_DATABASE_URL` - Full PostgreSQL connection string for production
 
 ### Generating SSH Key
 
@@ -132,7 +139,7 @@ When code is pushed to `development` branch:
 When code is pushed to `main` branch:
 1. GitHub Actions runs tests and linting
 2. Builds Docker image tagged as `latest`
-3. Deploys to VPS in `/opt/maigie/production/`
+3. Deploys to **production VPS** in `/opt/maigie/production/`
 4. Connects to external production database
 5. Runs migrations (no seed in production)
 
@@ -212,9 +219,9 @@ crontab -e
 
 ### Health Checks
 
-- Production: `https://api.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:8000/health`
-- Staging: `https://staging-api.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:8001/health`
-- Preview: `https://pr-{PR_NUMBER}-api-preview.maigie.com/health` (via Cloudflare Tunnel) or `http://your-vps-ip:{DYNAMIC_PORT}/health`
+- Production: `https://api.maigie.com/health` (via Cloudflare Tunnel on production VPS)
+- Staging: `https://staging-api.maigie.com/health` (via Cloudflare Tunnel on shared VPS)
+- Preview: `https://pr-{PR_NUMBER}-api-preview.maigie.com/health` (via Cloudflare Tunnel on shared VPS)
 
 ## Cloudflare Tunnel Setup (Recommended)
 
@@ -223,11 +230,17 @@ Cloudflare Tunnel provides automatic SSL, DDoS protection, and eliminates the ne
 ### Architecture
 
 ```
-Internet → Cloudflare Tunnel → Nginx (port 80) → Docker Containers
-                                    ↓
-                    ┌───────────────┼───────────────┐
-                    ↓               ↓               ↓
-            Production:8000  Staging:8001  Preview:{PORT}
+Production VPS:
+  Internet → Cloudflare Tunnel → Nginx (port 80) → Production Container
+                                      ↓
+                              Production:8000
+
+Shared VPS (Staging & Previews):
+  Internet → Cloudflare Tunnel → Nginx (port 80) → Docker Containers
+                                      ↓
+                      ┌───────────────┼───────────────┐
+                      ↓                               ↓
+              Staging:8001                    Preview:{PORT}
 ```
 
 ### Setup Steps
