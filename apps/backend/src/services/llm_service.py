@@ -321,11 +321,27 @@ class GeminiService:
             # Get tool definitions and convert to new SDK format
             raw_tools = get_all_tools()
             # raw_tools is [{"function_declarations": [...]}] (old format)
-            # New SDK expects a list of types.Tool objects
+            # New SDK expects a list of types.Tool objects with UPPERCASE type strings
             all_declarations = []
             for tool_group in raw_tools:
                 if isinstance(tool_group, dict) and "function_declarations" in tool_group:
                     all_declarations.extend(tool_group["function_declarations"])
+
+            def _uppercase_types(obj):
+                """Recursively convert lowercase type strings to uppercase for new SDK."""
+                if isinstance(obj, dict):
+                    result = {}
+                    for k, v in obj.items():
+                        if k == "type" and isinstance(v, str):
+                            result[k] = v.upper()
+                        else:
+                            result[k] = _uppercase_types(v)
+                    return result
+                elif isinstance(obj, list):
+                    return [_uppercase_types(item) for item in obj]
+                return obj
+
+            all_declarations = [_uppercase_types(d) for d in all_declarations]
             tools = (
                 [_types.Tool(function_declarations=all_declarations)] if all_declarations else None
             )
