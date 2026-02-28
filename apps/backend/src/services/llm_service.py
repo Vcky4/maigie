@@ -151,9 +151,6 @@ class GeminiService:
                 "google-generativeai is not installed. Install it to enable Gemini features."
             )
 
-        # Configure API lazily (prevents import-time failures in worker contexts)
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
         self.model_name = "gemini-3-flash-preview"
         self.system_instruction = SYSTEM_INSTRUCTION
         self.client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))

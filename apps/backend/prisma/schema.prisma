@@ -249,6 +249,9 @@ model User {
   oauthCodes   OAuthCode[] // Auth codes issued to this user
   oauthTokens  OAuthToken[] // Access tokens issued to this user
 
+  // Knowledge Base (user uploads indexed for RAG context)
+  userUploads UserUpload[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -499,9 +502,10 @@ model ChatMessage {
   suggestionText String?
 
   // Voice features
-  audioUrl String? // S3 URL if this was a voice message
-  imageUrl String? // <--- ADDED: Field for uploaded image URL`
-  duration Float? // Duration in seconds
+  audioUrl  String? // S3 URL if this was a voice message
+  imageUrl  String? // Legacy: single image URL (backward compat)
+  imageUrls String[] // Multiple image URLs per message
+  duration  Float? // Duration in seconds
 
   componentData Json? @default("[]") // Stores component metadata for interactive UI elements
 
@@ -1510,4 +1514,27 @@ model LearningInsight {
   @@index([userId])
   @@index([userId, insightType])
   @@index([userId, isActive])
+}
+
+// ==========================================
+//  KNOWLEDGE BASE (User Uploads)
+// ==========================================
+
+model UserUpload {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  url           String // CDN URL of the uploaded file
+  filename      String
+  mimeType      String?
+  size          Int? // File size in bytes
+  extractedText String? // Text extracted via OCR / Gemini Vision
+  embeddingId   String? // Reference to Embedding record (if indexed)
+  chatMessageId String? // Which chat message triggered this upload
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
 }

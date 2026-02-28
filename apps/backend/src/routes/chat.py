@@ -346,6 +346,7 @@ async def get_my_chat_messages(
                 m.createdAt.isoformat() if hasattr(m.createdAt, "isoformat") else str(m.createdAt)
             ),
             "imageUrl": getattr(m, "imageUrl", None),
+            "imageUrls": getattr(m, "imageUrls", None) or [],
         }
         component_data = getattr(m, "componentData", None)
         if component_data is not None:
@@ -1185,10 +1186,26 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Skip the rest of the loop for greeting messages
                 continue
 
-            # 4. Extract fileUrls from context (if any)
-            file_urls = context.get("fileUrls") if context else None
+            # 4. Extract fileUrls from context (if any) — may be a JSON array or single string
+            raw_file_urls = context.get("fileUrls") if context else None
+            file_urls_list: list[str] = []
+            if raw_file_urls:
+                if isinstance(raw_file_urls, list):
+                    file_urls_list = raw_file_urls
+                elif isinstance(raw_file_urls, str):
+                    # Try to parse as JSON array, otherwise treat as single URL
+                    try:
+                        import json as _json
 
-            # 4.1 Save User Message to DB (with imageUrl if provided)
+                        parsed = _json.loads(raw_file_urls)
+                        if isinstance(parsed, list):
+                            file_urls_list = parsed
+                        else:
+                            file_urls_list = [raw_file_urls]
+                    except (ValueError, TypeError):
+                        file_urls_list = [raw_file_urls]
+
+            # 4.1 Save User Message to DB (with imageUrl + imageUrls)
             user_message_data = {
                 "sessionId": session.id,
                 "userId": user.id,
@@ -1198,11 +1215,27 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # If this message was sent from a review, persist the review thread ID
             if context and context.get("reviewItemId"):
                 user_message_data["reviewItemId"] = context["reviewItemId"]
-            if file_urls:
-                user_message_data["imageUrl"] = file_urls
-                print(f"🖼️ Message includes image: {file_urls}")
+            if file_urls_list:
+                user_message_data["imageUrl"] = file_urls_list[0]  # backward compat
+                user_message_data["imageUrls"] = file_urls_list
+                print(f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
+
+            # 4.1b Index uploaded images into knowledge base (fire-and-forget)
+            if file_urls_list:
+                try:
+                    from src.services.knowledge_base_service import index_user_uploads
+
+                    asyncio.create_task(
+                        index_user_uploads(
+                            user_id=user.id,
+                            image_urls=file_urls_list,
+                            chat_message_id=user_message.id,
+                        )
+                    )
+                except Exception as e:
+                    logger.warning("Failed to start KB indexing: %s", e)
 
             # Keep ChatSession title meaningful when the frontend relies on DB history.
             # Update it from the very first general-chat USER message (not review threads).
@@ -1350,9 +1383,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 # Map DB roles to Gemini roles ('user' or 'model')
                 role = "user" if msg.role == "USER" else "model"
                 parts = [msg.content]
-                # Include image if present
-                if msg.imageUrl:
-                    parts.append(msg.imageUrl)
+                # Include images if present (imageUrls preferred, fallback to imageUrl)
+                msg_images = getattr(msg, "imageUrls", None) or []
+                if not msg_images and getattr(msg, "imageUrl", None):
+                    msg_images = [msg.imageUrl]
+                for img_url in msg_images:
+                    parts.append(img_url)
                 formatted_history.append({"role": role, "parts": parts})
 
             # 5.5. Enrich context with topic/course/note details if IDs are provided
@@ -2125,43 +2161,74 @@ async def handle_voice_upload(file: UploadFile = File(...), token: str = Query(.
     return {"text": transcript}
 
 
-# 👇 ENDPOINT: Upload image only (for eager upload)
-@router.post("/image/upload", summary="Upload an image and return URL")
+# 👇 ENDPOINT: Upload image(s) (for eager upload — supports multiple files)
+@router.post("/image/upload", summary="Upload one or more images and return URLs")
 async def upload_chat_image(
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(None),
+    file: UploadFile = File(None),
     token: str = Query(...),
 ):
     """
-    Upload an image to storage and return the URL.
-    Used for eager upload - upload immediately when user selects image.
+    Upload one or more images to storage and return URLs.
+    Accepts either `files` (multiple) or `file` (single, backward compat).
+    Returns: { urls: [{url, filename}] }
     """
     # Validate user
     user = await get_current_user_ws(token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    # Validate Image Type
-    if file.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+    # Collect all files (support both single and multiple)
+    all_files: list[UploadFile] = []
+    if files:
+        all_files.extend(files)
+    if file:
+        all_files.append(file)
+
+    if not all_files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only JPEG, PNG, or WebP images are allowed.",
+            detail="No files provided.",
         )
 
+    # Cap at 5 images per upload
+    if len(all_files) > 5:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum 5 images per upload.",
+        )
+
+    # Validate all image types
+    for f in all_files:
+        if f.content_type not in ["image/jpeg", "image/png", "image/webp"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Only JPEG, PNG, or WebP images are allowed. Got: {f.content_type}",
+            )
+
     try:
-        # Check file upload limit for FREE tier users
+        # Check file upload limit for FREE tier users (count all files)
         from src.core.database import db
 
         user_obj = await db.user.find_unique(where={"id": user.id})
         if user_obj:
-            await increment_feature_usage(user_obj, "file_uploads", db_client=db)
+            for _ in all_files:
+                await increment_feature_usage(user_obj, "file_uploads", db_client=db)
 
-        # Upload to BunnyCDN
-        upload_result = await storage_service.upload_file(file, path="chat-images")
-        image_url = upload_result["url"]
+        # Upload each file to BunnyCDN
+        results = []
+        for f in all_files:
+            upload_result = await storage_service.upload_file(f, path="chat-images")
+            results.append({"url": upload_result["url"], "filename": upload_result["filename"]})
+            print(f"🔵 Image pre-uploaded: {upload_result['url']}")
 
-        print(f"🔵 Image pre-uploaded: {image_url}")
+        # Backward compat: if single file, also return top-level url/filename
+        response = {"urls": results}
+        if len(results) == 1:
+            response["url"] = results[0]["url"]
+            response["filename"] = results[0]["filename"]
 
-        return {"url": image_url, "filename": upload_result["filename"]}
+        return response
 
     except SubscriptionLimitError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
