@@ -21,7 +21,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/", response_model=dict)
+@router.get("", response_model=dict)
 async def list_uploads(current_user: CurrentUser):
     """List all knowledge base uploads for the current user with stats."""
     uploads = await get_user_uploads(current_user.id)

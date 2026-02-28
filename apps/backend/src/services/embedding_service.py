@@ -27,13 +27,15 @@ _client = None
 def get_genai_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        _client = genai.Client(
+            api_key=os.getenv("GEMINI_API_KEY"), http_options={"api_version": "v1alpha"}
+        )
     return _client
 
 
-EMBEDDING_MODEL = "embedding-001"
+EMBEDDING_MODEL = "text-embedding-004"
 
-# Gemini embedding-001 produces 768-dimensional vectors
+# Gemini text-embedding-004 produces 768-dimensional vectors
 EMBEDDING_DIMENSION = 768
 
 
