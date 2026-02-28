@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check Test Workflow Status
-        uses: actions/github-script@v7
+        uses: actions/github-script@v6
         with:
           script: |
             const branch = context.payload.pull_request?.head?.ref || context.ref.replace('refs/heads/', '');
@@ -463,7 +463,7 @@ jobs:
                 command: >
                   sh -c "
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss &&
+                    prisma db push --accept-data-loss --skip-generate &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
@@ -761,7 +761,7 @@ jobs:
           echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
 
       - name: Comment Preview URL on PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v6
         if: github.event_name == 'pull_request'
         env:
           PREVIEW_URL: ${{ steps.get-preview-url.outputs.url }}
@@ -884,11 +884,11 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          echo "${{ secrets.PRODUCTION_VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
           # Retry ssh-keyscan with delays to handle connection issues
           for i in {1..5}; do
-            if ssh-keyscan -H -T 10 ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+            if ssh-keyscan -H -T 10 ${{ secrets.PRODUCTION_VPS_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
               echo "Successfully added host key"
               break
             else
@@ -905,14 +905,14 @@ jobs:
         run: |
           scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             production-image.tar.gz .env \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+            ${{ secrets.PRODUCTION_VPS_USER }}@${{ secrets.PRODUCTION_VPS_HOST }}:/tmp/
 
       - name: Load Image and Deploy Production
         uses: appleboy/ssh-action@v1.2.5
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
+          host: ${{ secrets.PRODUCTION_VPS_HOST }}
+          username: ${{ secrets.PRODUCTION_VPS_USER }}
+          key: ${{ secrets.PRODUCTION_VPS_SSH_KEY }}
           script: |
             cd /opt/maigie/production
 
@@ -1010,7 +1010,7 @@ jobs:
                 command: >
                   sh -c "
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss &&
+                    prisma db push --accept-data-loss --skip-generate &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
@@ -1032,7 +1032,7 @@ jobs:
             sleep 15
 
             # Run db push
-            docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
+            docker-compose exec -T backend prisma db push --accept-data-loss --skip-generate || echo "Schema push failed"
 
             echo "Production deployment complete!"
 
@@ -1363,7 +1363,7 @@ jobs:
                 command: >
                   sh -c "
                     python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss &&
+                    prisma db push --accept-data-loss --skip-generate &&
                     python prisma/seed.py &&
                     uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
@@ -1387,7 +1387,7 @@ jobs:
 
             # Run cleanup and db push (already done in container startup, but ensure it's done)
             docker-compose exec -T backend python prisma/cleanup-duplicates.py || echo "No duplicates to clean"
-            docker-compose exec -T backend prisma db push --accept-data-loss || echo "Schema push failed"
+            docker-compose exec -T backend prisma db push --accept-data-loss --skip-generate || echo "Schema push failed"
             docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
 
             echo "Staging deployment complete!"
@@ -1511,7 +1511,7 @@ jobs:
             echo '✓ Cleaned up preview environment'"
 
       - name: Comment on PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v6
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
