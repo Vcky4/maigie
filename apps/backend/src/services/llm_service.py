@@ -509,12 +509,19 @@ class GeminiService:
 
                     async for chunk in response_stream:
                         last_response = chunk
+                        print(f"DEBUG: stream chunk parts: {getattr(chunk, 'parts', None)}")
                         try:
                             chunk_text = chunk.text
-                        except ValueError:
+                            print(f"DEBUG: chunk_text={repr(chunk_text)}")
+                        except ValueError as e:
+                            print(f"DEBUG: ValueError reading chunk.text: {e}")
                             # Ignore non-text parts (e.g., function_call)
                             chunk_text = None
-                        if hasattr(chunk, "parts"):
+                        except Exception as e:
+                            print(f"DEBUG: Unexpected error reading chunk.text: {e}")
+                            chunk_text = None
+
+                        if hasattr(chunk, "parts") and chunk.parts is not None:
                             for part in chunk.parts:
                                 if hasattr(part, "function_call") and part.function_call:
                                     streamed_function_calls.append(part.function_call)
