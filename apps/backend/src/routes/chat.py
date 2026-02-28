@@ -1303,7 +1303,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         user=user,
                         session_id=session.id,
                         user_text=user_text,
-                        image_url=file_urls,
+                        image_url=file_urls_list[0] if file_urls_list else None,
                         progress_callback=send_onboarding_progress,
                     )
 
@@ -1733,7 +1733,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         context=enriched_context,
                         user_id=user.id,
                         user_name=getattr(user, "name", None),
-                        image_url=file_urls,  # Pass image URL if present
+                        image_url=file_urls_list[0] if file_urls_list else None,
                         progress_callback=send_progress,  # Pass progress callback
                         stream_callback=stream_text,  # Pass stream callback
                     )
