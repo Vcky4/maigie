@@ -466,7 +466,7 @@ class GeminiService:
                 streamed_text = ""
 
                 async def _send_streaming_request(payload):
-                    response_stream = await chat.send_message_stream(payload)
+                    response_stream = chat._send_message_stream(payload)
                     last_response = None
                     streamed_text_parts = []
                     last_chunk_text = None
