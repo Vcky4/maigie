@@ -232,10 +232,28 @@ class GeminiService:
                 context_str = "\n".join(context_parts)
                 enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
 
+            # Process history - replace image URLs with downloaded data (if any) or just format to Content objects
+            processed_history = []
+            for msg_idx, hist_msg in enumerate(history):
+                if isinstance(hist_msg, dict) and "parts" in hist_msg:
+                    processed_parts = []
+                    for part_idx, part in enumerate(hist_msg["parts"]):
+                        if isinstance(part, str):
+                            processed_parts.append(_types.Part(text=part))
+                        elif isinstance(part, dict):
+                            processed_parts.append(part)
+                        else:
+                            processed_parts.append(part)
+                    processed_history.append(
+                        _types.Content(role=hist_msg.get("role", "user"), parts=processed_parts)
+                    )
+                else:
+                    processed_history.append(hist_msg)
+
             # Start a chat session with history
             chat = self.client.aio.chats.create(
                 model=self.model_name,
-                history=history,
+                history=processed_history,
                 config=_types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
                     safety_settings=self.safety_settings,
@@ -405,12 +423,16 @@ class GeminiService:
                             print(f"🖼️ Downloaded image: {url[:50]}...")
 
             # Prepare message content (multimodal if image_url provided)
-            message_content = enhanced_message_text
+            message_content = [_types.Part(text=enhanced_message_text)]
             if image_url and image_url in downloaded_images:
                 img_data = downloaded_images[image_url]
                 message_content = [
-                    enhanced_message_text,
-                    {"mime_type": img_data["mime_type"], "data": img_data["data"]},
+                    _types.Part(text=enhanced_message_text),
+                    _types.Part(
+                        inline_data=_types.Blob(
+                            mime_type=img_data["mime_type"], data=img_data["data"]
+                        )
+                    ),
                 ]
                 print(f"🖼️ Including image in message: {image_url}")
 
@@ -424,13 +446,26 @@ class GeminiService:
                             if part.startswith(("http://", "https://")) and _is_image_url(part):
                                 # Replace URL with downloaded image data
                                 if part in downloaded_images:
-                                    processed_parts.append(downloaded_images[part])
+                                    img_data = downloaded_images[part]
+                                    processed_parts.append(
+                                        _types.Part(
+                                            inline_data=_types.Blob(
+                                                mime_type=img_data["mime_type"],
+                                                data=img_data["data"],
+                                            )
+                                        )
+                                    )
                                 # Skip if download failed
                             else:
-                                processed_parts.append(part)
+                                processed_parts.append(_types.Part(text=part))
+                        elif isinstance(part, dict):
+                            # Function calls or other dicts. For safety, pass them in if they match schema
+                            processed_parts.append(part)
                         else:
                             processed_parts.append(part)
-                    processed_history.append({**hist_msg, "parts": processed_parts})
+                    processed_history.append(
+                        _types.Content(role=hist_msg.get("role", "user"), parts=processed_parts)
+                    )
                 else:
                     processed_history.append(hist_msg)
 
