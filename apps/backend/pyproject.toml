@@ -35,7 +35,6 @@ itsdangerous = "^2.2.0"
 fastapi-mail = "^1.5.8"
 bcrypt = "4.0.1"
 stripe = "^10.0.0"
-google-generativeai = "^0.8.6"
 google-genai = "^0.2.0"
 duckduckgo-search = "^7.0.0"
 pypdf = "^4.0.0"
@@ -89,8 +88,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"  
 testpaths = ["tests"]
 filterwarnings = [
-    "ignore::DeprecationWarning:httplib2.*",
-    "ignore::FutureWarning:google.generativeai.*"
+    "ignore::DeprecationWarning:httplib2.*"
 ]
 
 

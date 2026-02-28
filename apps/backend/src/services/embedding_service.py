@@ -12,17 +12,26 @@ import logging
 import os
 from typing import Any
 
-import google.generativeai as genai
 from fastapi import HTTPException
+from google import genai
+from google.genai import types
 
 from src.core.database import db
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Configure Gemini API client
+_client = None
 
-EMBEDDING_MODEL = "gemini-embedding-001"
+
+def get_genai_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    return _client
+
+
+EMBEDDING_MODEL = "text-embedding-004"
 
 # Gemini embedding-001 produces 3072-dimensional vectors
 EMBEDDING_DIMENSION = 3072
@@ -82,12 +91,13 @@ class EmbeddingService:
     async def generate_embedding(self, text: str) -> list[float]:
         """Generate a document embedding vector via Gemini."""
         try:
-            result = genai.embed_content(
+            client = get_genai_client()
+            result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
-                content=text,
-                task_type="retrieval_document",
+                contents=text,
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
             )
-            return result["embedding"]
+            return result.embeddings[0].values
         except Exception as e:
             logger.error(f"Embedding generation error: {e}")
             raise HTTPException(status_code=500, detail="Failed to generate embedding")
@@ -95,12 +105,13 @@ class EmbeddingService:
     async def generate_query_embedding(self, text: str) -> list[float]:
         """Generate a query embedding vector via Gemini."""
         try:
-            result = genai.embed_content(
+            client = get_genai_client()
+            result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
-                content=text,
-                task_type="retrieval_query",
+                contents=text,
+                config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
             )
-            return result["embedding"]
+            return result.embeddings[0].values
         except Exception as e:
             logger.error(f"Query embedding generation error: {e}")
             raise HTTPException(status_code=500, detail="Failed to generate query embedding")

@@ -22,7 +22,8 @@ async def _call_gemini_for_email(
 ) -> dict[str, Any] | None:
     """Call Gemini to generate email content. Returns parsed JSON or None."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
         import os
 
         api_key = os.getenv("GEMINI_API_KEY")
@@ -30,15 +31,15 @@ async def _call_gemini_for_email(
             logger.warning("GEMINI_API_KEY not set; skipping AI email draft")
             return None
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            "models/gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        client = genai.Client(api_key=api_key)
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 max_output_tokens=max_tokens,
                 temperature=0.7,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text = (response.text or "").strip()
         if not text:
             return None

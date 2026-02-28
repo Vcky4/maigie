@@ -20,7 +20,8 @@ genai = None
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")
     try:
-        import google.generativeai as _genai
+        from google import genai as _genai
+        from google.genai import types as _types
 
         genai = _genai
     except Exception:
@@ -30,7 +31,8 @@ with warnings.catch_warnings():
 
 try:
     # Only available when google-generativeai is installed
-    from google.generativeai.types import HarmBlockThreshold, HarmCategory
+    HarmBlockThreshold = _types.HarmBlockThreshold
+    HarmCategory = _types.HarmCategory
 except Exception:  # pragma: no cover - depends on optional dependency
     HarmBlockThreshold = None  # type: ignore[assignment]
     HarmCategory = None  # type: ignore[assignment]
@@ -152,9 +154,9 @@ class GeminiService:
         # Configure API lazily (prevents import-time failures in worker contexts)
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-        self.model = genai.GenerativeModel(
-            model_name="models/gemini-3-flash-preview", system_instruction=SYSTEM_INSTRUCTION
-        )
+        self.model_name = "gemini-3-flash-preview"
+        self.system_instruction = SYSTEM_INSTRUCTION
+        self.client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
         # Safety settings (block hate speech, etc.)
         if HarmCategory is None or HarmBlockThreshold is None:
@@ -239,12 +241,17 @@ class GeminiService:
                 enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
 
             # Start a chat session with history
-            chat = self.model.start_chat(history=history)
+            chat = self.client.aio.chats.create(
+                model=self.model_name,
+                history=history,
+                config=_types.GenerateContentConfig(
+                    system_instruction=self.system_instruction,
+                    safety_settings=self.safety_settings,
+                ),
+            )
 
             # Send the enhanced message
-            response = await chat.send_message_async(
-                enhanced_message, safety_settings=self.safety_settings
-            )
+            response = await chat.send_message(enhanced_message)
 
             # Extract token usage from response
             usage_info = {
@@ -325,12 +332,8 @@ class GeminiService:
             # Build personalized system instruction with user's name
             system_instruction = build_personalized_system_instruction(user_name)
 
-            # Create model with tools
-            model_with_tools = genai.GenerativeModel(
-                model_name="models/gemini-3-flash-preview",
-                system_instruction=system_instruction,
-                tools=tools,
-            )
+            # Create client
+            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
             # Build enhanced message with context
             enhanced_message_text = self._build_enhanced_message(user_message, context)
@@ -415,7 +418,15 @@ class GeminiService:
                     processed_history.append(hist_msg)
 
             # Start chat session
-            chat = model_with_tools.start_chat(history=processed_history)
+            chat = client.aio.chats.create(
+                model="gemini-3-flash-preview",
+                history=processed_history,
+                config=_types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    tools=[tools] if tools else None,
+                    safety_settings=self.safety_settings,
+                ),
+            )
 
             # Track executed actions and query results
             executed_actions = []
@@ -438,9 +449,7 @@ class GeminiService:
                 streamed_text = ""
 
                 async def _send_streaming_request(payload):
-                    response_stream = await chat.send_message_async(
-                        payload, safety_settings=self.safety_settings, stream=True
-                    )
+                    response_stream = await chat.send_message_stream(payload)
                     last_response = None
                     streamed_text_parts = []
                     last_chunk_text = None
@@ -475,9 +484,7 @@ class GeminiService:
                             await _send_streaming_request(message_content)
                         )
                     else:
-                        response = await chat.send_message_async(
-                            message_content, safety_settings=self.safety_settings
-                        )
+                        response = await chat.send_message(message_content)
                     total_llm_time += time.perf_counter() - llm_start
                     last_payload = message_content
                 else:
@@ -488,9 +495,7 @@ class GeminiService:
                             await _send_streaming_request(tool_results)
                         )
                     else:
-                        response = await chat.send_message_async(
-                            tool_results, safety_settings=self.safety_settings
-                        )
+                        response = await chat.send_message(tool_results)
                     total_llm_time += time.perf_counter() - llm_start
                     last_payload = tool_results
 
@@ -632,7 +637,7 @@ class GeminiService:
                             )
 
                     tool_results.append(
-                        genai.protos.FunctionResponse(name=tool_name, response=tool_result)
+                        _types.Part.from_function_response(name=tool_name, response=tool_result)
                     )
             else:
                 # Max iterations reached
@@ -797,8 +802,10 @@ User messages:
 JSON array:"""
 
         try:
-            model = genai.GenerativeModel(model_name="models/gemini-2.0-flash-lite")
-            response = await asyncio.to_thread(model.generate_content, extraction_prompt)
+            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash-lite", contents=extraction_prompt
+            )
 
             if not response or not response.text:
                 return []
@@ -896,8 +903,10 @@ Content:
 
 Summary:"""
 
-            response = await self.model.generate_content_async(
-                summary_prompt, safety_settings=self.safety_settings
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=summary_prompt,
+                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
             )
 
             # Clean up any remaining conversational text that might have been added
@@ -963,17 +972,15 @@ Summary:"""
         """
         try:
             # Use Flash model for minimal responses (faster and cheaper)
-            minimal_model = genai.GenerativeModel(
-                "gemini-2.0-flash-lite",
-                generation_config=genai.types.GenerationConfig(
+            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash-lite",
+                contents=prompt,
+                config=_types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
                     temperature=0.7,
+                    safety_settings=self.safety_settings,
                 ),
-                safety_settings=self.safety_settings,
-            )
-
-            response = await minimal_model.generate_content_async(
-                prompt, safety_settings=self.safety_settings
             )
 
             # Calculate tokens used
@@ -1009,16 +1016,6 @@ Summary:"""
             difficulty_norm = (difficulty or "BEGINNER").upper()
 
             # Use a fast/cheap model for structured outline generation.
-            outline_model = genai.GenerativeModel(
-                "gemini-2.0-flash",
-                system_instruction=SYSTEM_INSTRUCTION,
-                generation_config=genai.types.GenerationConfig(
-                    max_output_tokens=900,
-                    temperature=0.2,
-                ),
-                safety_settings=self.safety_settings,
-            )
-
             user_msg = user_message or ""
             prompt = f"""Generate a course outline for the topic below.
 
@@ -1051,8 +1048,16 @@ User message: {user_msg}
 
 JSON:"""
 
-            response = await outline_model.generate_content_async(
-                prompt, safety_settings=self.safety_settings
+            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=_types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    max_output_tokens=900,
+                    temperature=0.2,
+                    safety_settings=self.safety_settings,
+                ),
             )
             text = (response.text or "").strip()
 
@@ -1146,8 +1151,10 @@ Begin directly with the first heading or paragraph.
 
 Rewritten Content:"""
 
-            response = await self.model.generate_content_async(
-                rewrite_prompt, safety_settings=self.safety_settings
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=rewrite_prompt,
+                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
             )
 
             rewritten_text = response.text.strip()
@@ -1234,8 +1241,10 @@ Just return the array, for example: ["Tag1", "Tag2", "Tag3"]
 
 Tags (JSON array):"""
 
-            response = await self.model.generate_content_async(
-                tag_prompt, safety_settings=self.safety_settings
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=tag_prompt,
+                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
             )
 
             tags_text = response.text.strip()
@@ -1289,8 +1298,15 @@ Tags (JSON array):"""
             content = [prompt, {"mime_type": mime_type, "data": image_data}]
 
             # 3. Generate response
-            response = await self.model.generate_content_async(
-                content, safety_settings=self.safety_settings
+            # Convert image bytes to part and prepare content list properly
+            from google.genai import types as genai_types
+
+            img_part = genai_types.Part.from_bytes(data=image_data, mime_type=mime_type)
+            new_content = [prompt, img_part]
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=new_content,
+                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
             )
 
             return response.text
@@ -1346,15 +1362,17 @@ Guidelines:
 JSON array:"""
 
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from google.genai import types as genai_types
+
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
                 max_output_tokens=2000,
                 temperature=0.2,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text = (response.text or "").strip()
 
         try:
@@ -1412,15 +1430,17 @@ If you can't identify the correct answer with certainty, still provide your best
 JSON array:"""
 
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from google.genai import types as genai_types
+
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
                 max_output_tokens=4000,
                 temperature=0.1,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text_response = (response.text or "").strip()
 
         try:
@@ -1506,15 +1526,17 @@ No markdown, no code fences.
 JSON array:"""
 
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(
-            "gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from google.genai import types as genai_types
+
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
                 max_output_tokens=4000,
                 temperature=0.4,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text_response = (response.text or "").strip()
 
         try:
@@ -1652,15 +1674,17 @@ Return ONLY a JSON array of 0-5 blocks. Each block: {{ "title": "string", "start
 Use times in the next 7 days. Prefer morning/afternoon slots for study. No markdown, no code fence, no commentary.
 JSON:"""
     try:
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel(
-            "models/gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from google.genai import types as genai_types
+
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
                 max_output_tokens=600,
                 temperature=0.3,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text = (response.text or "").strip()
         try:
             arr = json.loads(text)

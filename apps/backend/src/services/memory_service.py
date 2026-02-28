@@ -30,22 +30,23 @@ logger = logging.getLogger(__name__)
 async def _call_gemini(prompt: str, max_tokens: int = 600) -> dict[str, Any] | None:
     """Call Gemini for JSON output. Returns parsed dict or None on failure."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
         import os
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            "models/gemini-2.0-flash-lite",
-            generation_config=genai.types.GenerationConfig(
+        client = genai.Client(api_key=api_key)
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash-lite",
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 max_output_tokens=max_tokens,
                 temperature=0.3,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text = (response.text or "").strip()
         if not text:
             return None

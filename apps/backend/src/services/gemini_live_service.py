@@ -347,10 +347,9 @@ async def post_gemini_live_session(
         if not transcript.strip():
             return
 
-        import google.generativeai as genai
+        from google import genai
 
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("models/gemini-3-flash-preview")
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         prompt = (
             "From this voice study conversation transcript, create a short structured study note "
             "as the student would write from what they learnt. Output exactly two lines:\n"
@@ -359,7 +358,10 @@ async def post_gemini_live_session(
             "Do not add any other text.\n\nTranscript:\n"
         ) + transcript[:12000]
 
-        response = await model.generate_content_async(prompt)
+        response = await client.aio.models.generate_content(
+            model="gemini-3-flash-preview",
+            contents=prompt,
+        )
         text = (response.text or "").strip()
         title = "Study session notes"
         content = ""
