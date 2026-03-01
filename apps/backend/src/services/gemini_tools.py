@@ -36,9 +36,32 @@ def get_all_tools() -> list[dict[str, Any]]:
                 create_study_plan_tool(),
                 get_learning_insights_tool(),
                 get_pending_nudges_tool(),
+                get_email_user_tool(),
             ]
         }
     ]
+
+
+def get_email_user_tool() -> dict[str, Any]:
+    """Tool definition for sending an email to the user."""
+    return {
+        "name": "email_user",
+        "description": "Send a personalized email to the user. Use this when the user asks to email them something (e.g., their schedule, a summary, or a direct message).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "type": "string",
+                    "description": "Email subject line",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Email body content in Markdown or HTML format",
+                },
+            },
+            "required": ["subject", "content"],
+        },
+    }
 
 
 def get_user_courses_tool() -> dict[str, Any]:

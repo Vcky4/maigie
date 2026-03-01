@@ -59,6 +59,7 @@ async def handle_tool_call(
         "create_study_plan": handle_create_study_plan,
         "get_learning_insights": handle_get_learning_insights,
         "get_pending_nudges": handle_get_pending_nudges,
+        "email_user": handle_email_user,
     }
 
     handler = handlers.get(tool_name)
@@ -1127,3 +1128,41 @@ async def handle_get_pending_nudges(
     except Exception as e:
         logger.error("get_pending_nudges error: %s", e, exc_info=True)
         return {"status": "error", "message": f"Failed to get pending nudges: {e}"}
+
+
+async def handle_email_user(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle email_user tool call. Sends an email to the user."""
+    from src.services import email
+
+    subject = args.get("subject")
+    content = args.get("content")
+
+    if not subject or not content:
+        return {"status": "error", "message": "Subject and content are required."}
+
+    try:
+        # Get user for email address and name
+        user = await db.user.find_unique(where={"id": user_id})
+        if not user or not user.email:
+            return {"status": "error", "message": "User or user email not found."}
+
+        # Send the email
+        await email.send_bulk_email(
+            email=user.email,
+            name=user.name,
+            subject=subject,
+            content=content,
+        )
+
+        return {
+            "status": "success",
+            "action": "email_user",
+            "message": f"Email sent successfully to {user.email}",
+        }
+    except Exception as e:
+        logger.error("email_user error: %s", e, exc_info=True)
+        return {"status": "error", "message": f"Failed to send email: {e}"}
