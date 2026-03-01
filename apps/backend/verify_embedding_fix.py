@@ -12,7 +12,7 @@ async def verify():
 
     client = genai.Client(api_key=api_key, http_options={"api_version": "v1"})
 
-    print(f"Testing embedding with text-embedding-004 on API version v1...")
+    print("Testing embedding with text-embedding-004 on API version v1...")
     try:
         response = client.models.embed_content(model="text-embedding-004", contents="Hello world")
         print("✅ Success! Embedding generated.")
