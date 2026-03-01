@@ -144,7 +144,7 @@ class GeminiService:
                 "google-generativeai is not installed. Install it to enable Gemini features."
             )
 
-        self.model_name = "gemini-3-flash-preview"
+        self.model_name = "gemini-2.5-flash"
         self.system_instruction = SYSTEM_INSTRUCTION
         self.client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
@@ -239,13 +239,13 @@ class GeminiService:
                     processed_parts = []
                     for part_idx, part in enumerate(hist_msg["parts"]):
                         if isinstance(part, str):
-                            processed_parts.append(_types.Part(text=part))
+                            processed_parts.append({"text": part})
                         elif isinstance(part, dict):
                             processed_parts.append(part)
                         else:
                             processed_parts.append(part)
                     processed_history.append(
-                        _types.Content(role=hist_msg.get("role", "user"), parts=processed_parts)
+                        {"role": hist_msg.get("role", "user"), "parts": processed_parts}
                     )
                 else:
                     processed_history.append(hist_msg)
@@ -448,30 +448,30 @@ class GeminiService:
                                 if part in downloaded_images:
                                     img_data = downloaded_images[part]
                                     processed_parts.append(
-                                        _types.Part(
-                                            inline_data=_types.Blob(
-                                                mime_type=img_data["mime_type"],
-                                                data=img_data["data"],
-                                            )
-                                        )
+                                        {
+                                            "inline_data": {
+                                                "mime_type": img_data["mime_type"],
+                                                "data": img_data["data"],
+                                            }
+                                        }
                                     )
                                 # Skip if download failed
                             else:
-                                processed_parts.append(_types.Part(text=part))
+                                processed_parts.append({"text": part})
                         elif isinstance(part, dict):
                             # Function calls or other dicts. For safety, pass them in if they match schema
                             processed_parts.append(part)
                         else:
                             processed_parts.append(part)
                     processed_history.append(
-                        _types.Content(role=hist_msg.get("role", "user"), parts=processed_parts)
+                        {"role": hist_msg.get("role", "user"), "parts": processed_parts}
                     )
                 else:
                     processed_history.append(hist_msg)
 
             # Start chat session
             chat = client.aio.chats.create(
-                model="gemini-3-flash-preview",
+                model="gemini-2.5-flash",
                 history=processed_history,
                 config=_types.GenerateContentConfig(
                     system_instruction=system_instruction,
