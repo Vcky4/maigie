@@ -10,7 +10,7 @@ async def verify():
         print("❌ Error: GEMINI_API_KEY environment variable not found.")
         return
 
-    client = genai.Client(api_key=api_key, http_options={"api_version": "v1"})
+    client = genai.Client(api_key=api_key)
 
     print("Testing embedding with text-embedding-004 on API version v1...")
     try:
