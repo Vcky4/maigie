@@ -32,14 +32,33 @@ async def _call_gemini_for_email(
             return None
 
         client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.7,
-            ),
-        )
+
+        # Try gemini-2.5-flash first, then fallback to gemini-1.5-flash on rate limits
+        try:
+            response = await client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.7,
+                ),
+            )
+        except Exception as e:
+            if "429" in str(e) or "503" in str(e):
+                logger.warning(
+                    f"Rate limited or unavailable on primary model, falling back to gemini-1.5-flash: {e}"
+                )
+                response = await client.aio.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        max_output_tokens=max_tokens,
+                        temperature=0.7,
+                    ),
+                )
+            else:
+                raise e
+
         text = (response.text or "").strip()
         if not text:
             return None
