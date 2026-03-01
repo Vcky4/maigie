@@ -1,0 +1,206 @@
+--- a/src/services/llm_service.py
++++ b/src/services/llm_service.py
+@@ -245,11 +245,11 @@
+                 model=self.model_name,
+                 history=history,
+                 config=_types.GenerateContentConfig(
+                     system_instruction=self.system_instruction,
+                     safety_settings=self.safety_settings,
+-                )
++                ),
+             )
+ 
+             # Send the enhanced message
+             response = await chat.send_message(enhanced_message)
+ 
+@@ -423,11 +423,11 @@
+                 history=processed_history,
+                 config=_types.GenerateContentConfig(
+                     system_instruction=system_instruction,
+                     tools=[tools] if tools else None,
+                     safety_settings=self.safety_settings,
+-                )
++                ),
+             )
+ 
+             # Track executed actions and query results
+             executed_actions = []
+             query_results = []
+@@ -802,12 +802,11 @@
+ JSON array:"""
+ 
+         try:
+             client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+             response = await client.aio.models.generate_content(
+-                model="gemini-2.0-flash-lite",
+-                contents=extraction_prompt
++                model="gemini-2.0-flash-lite", contents=extraction_prompt
+             )
+ 
+             if not response or not response.text:
+                 return []
+ 
+@@ -905,11 +904,11 @@
+ Summary:"""
+ 
+             response = await self.client.aio.models.generate_content(
+                 model=self.model_name,
+                 contents=summary_prompt,
+-                config=_types.GenerateContentConfig(safety_settings=self.safety_settings)
++                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
+             )
+ 
+             # Clean up any remaining conversational text that might have been added
+             summary_text = response.text.strip()
+ 
+@@ -979,11 +978,11 @@
+                 contents=prompt,
+                 config=_types.GenerateContentConfig(
+                     max_output_tokens=max_tokens,
+                     temperature=0.7,
+                     safety_settings=self.safety_settings,
+-                )
++                ),
+             )
+ 
+             # Calculate tokens used
+             input_tokens = len(prompt) // 4  # Rough estimate
+             output_tokens = len(response.text) // 4 if response.text else 0
+@@ -1056,11 +1055,11 @@
+                 config=_types.GenerateContentConfig(
+                     system_instruction=SYSTEM_INSTRUCTION,
+                     max_output_tokens=900,
+                     temperature=0.2,
+                     safety_settings=self.safety_settings,
+-                )
++                ),
+             )
+             text = (response.text or "").strip()
+ 
+             # Parse JSON robustly (extract first {...} block if needed)
+             import json
+@@ -1153,11 +1152,11 @@
+ Rewritten Content:"""
+ 
+             response = await self.client.aio.models.generate_content(
+                 model=self.model_name,
+                 contents=rewrite_prompt,
+-                config=_types.GenerateContentConfig(safety_settings=self.safety_settings)
++                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
+             )
+ 
+             rewritten_text = response.text.strip()
+ 
+             # Clean up any conversational text that might have been added
+@@ -1243,11 +1242,11 @@
+ Tags (JSON array):"""
+ 
+             response = await self.client.aio.models.generate_content(
+                 model=self.model_name,
+                 contents=tag_prompt,
+-                config=_types.GenerateContentConfig(safety_settings=self.safety_settings)
++                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
+             )
+ 
+             tags_text = response.text.strip()
+ 
+             # Try to extract JSON array from the response
+@@ -1299,16 +1298,17 @@
+             content = [prompt, {"mime_type": mime_type, "data": image_data}]
+ 
+             # 3. Generate response
+             # Convert image bytes to part and prepare content list properly
+             from google.genai import types as genai_types
++
+             img_part = genai_types.Part.from_bytes(data=image_data, mime_type=mime_type)
+             new_content = [prompt, img_part]
+             response = await self.client.aio.models.generate_content(
+                 model=self.model_name,
+                 contents=new_content,
+-                config=_types.GenerateContentConfig(safety_settings=self.safety_settings)
++                config=_types.GenerateContentConfig(safety_settings=self.safety_settings),
+             )
+ 
+             return response.text
+ 
+         except Exception as e:
+@@ -1362,17 +1362,18 @@
+ JSON array:"""
+ 
+     try:
+         client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+         from google.genai import types as genai_types
++
+         response = await client.aio.models.generate_content(
+             model="gemini-2.0-flash",
+             contents=prompt,
+             config=genai_types.GenerateContentConfig(
+                 max_output_tokens=2000,
+                 temperature=0.2,
+-            )
++            ),
+         )
+         text = (response.text or "").strip()
+ 
+         try:
+             topics = json.loads(text)
+@@ -1429,17 +1430,18 @@
+ JSON array:"""
+ 
+     try:
+         client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+         from google.genai import types as genai_types
++
+         response = await client.aio.models.generate_content(
+             model="gemini-2.0-flash",
+             contents=prompt,
+             config=genai_types.GenerateContentConfig(
+                 max_output_tokens=4000,
+                 temperature=0.1,
+-            )
++            ),
+         )
+         text_response = (response.text or "").strip()
+ 
+         try:
+             questions = json.loads(text_response)
+@@ -1524,17 +1526,18 @@
+ JSON array:"""
+ 
+     try:
+         client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+         from google.genai import types as genai_types
++
+         response = await client.aio.models.generate_content(
+             model="gemini-2.0-flash",
+             contents=prompt,
+             config=genai_types.GenerateContentConfig(
+                 max_output_tokens=4000,
+                 temperature=0.4,
+-            )
++            ),
+         )
+         text_response = (response.text or "").strip()
+ 
+         try:
+             questions = json.loads(text_response)
+@@ -1671,17 +1674,18 @@
+ Use times in the next 7 days. Prefer morning/afternoon slots for study. No markdown, no code fence, no commentary.
+ JSON:"""
+     try:
+         client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+         from google.genai import types as genai_types
++
+         response = await client.aio.models.generate_content(
+             model="gemini-2.0-flash",
+             contents=prompt,
+             config=genai_types.GenerateContentConfig(
+                 max_output_tokens=600,
+                 temperature=0.3,
+-            )
++            ),
+         )
+         text = (response.text or "").strip()
+         try:
+             arr = json.loads(text)
+         except Exception:

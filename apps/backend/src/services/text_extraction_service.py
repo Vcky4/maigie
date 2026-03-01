@@ -173,11 +173,10 @@ async def _extract_image_ocr_via_gemini(content: bytes, mime_type: str) -> str |
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
 
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
         prompt = """Extract ALL text content from this image. This may be a scanned document,
 exam paper, textbook page, or handwritten notes.
@@ -192,8 +191,9 @@ IMPORTANT:
 
 Extracted text:"""
 
-        response = await model.generate_content_async(
-            [prompt, {"mime_type": mime_type, "data": content}]
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[prompt, types.Part.from_bytes(data=content, mime_type=mime_type)],
         )
 
         if response.text:

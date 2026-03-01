@@ -25,22 +25,23 @@ logger = logging.getLogger(__name__)
 async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | None:
     """Call Gemini for plan generation. Returns parsed JSON or None."""
     try:
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
         import os
 
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             return None
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            "models/gemini-2.0-flash",
-            generation_config=genai.types.GenerationConfig(
+        client = genai.Client(api_key=api_key)
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 max_output_tokens=max_tokens,
                 temperature=0.5,
             ),
         )
-        response = await model.generate_content_async(prompt)
         text = (response.text or "").strip()
         if not text:
             return None

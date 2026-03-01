@@ -58,6 +58,7 @@ from .routes.examples import router as examples_router
 from .routes.feedback import router as feedback_router
 from .routes.gemini_live import router as gemini_live_router
 from .routes.goals import router as goals_router
+from .routes.knowledge_base import router as knowledge_base_router
 from .routes.realtime import router as realtime_router
 from .routes.referrals import router as referrals_router
 from .routes.reviews import router as reviews_router
@@ -421,6 +422,11 @@ def create_app() -> FastAPI:
     app.include_router(realtime_router)
     app.include_router(notes_router, prefix=f"{settings.API_V1_STR}/notes")
     app.include_router(upload_router, prefix=f"{settings.API_V1_STR}/upload")
+    app.include_router(
+        knowledge_base_router,
+        prefix=f"{settings.API_V1_STR}/knowledge-base",
+        tags=["Knowledge Base"],
+    )
 
     # Circle (study group) routes
     app.include_router(circles_router)

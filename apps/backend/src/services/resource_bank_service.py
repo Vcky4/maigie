@@ -247,10 +247,9 @@ async def _ai_moderate_content(content: str) -> dict:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            import google.generativeai as genai
+            from google import genai
 
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("gemini-2.0-flash")
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
         prompt = f"""You are a content moderator for an academic resource bank used by university students.
 Review the following uploaded resource and determine if it should be APPROVED or REJECTED.
@@ -272,7 +271,9 @@ Respond with EXACTLY this JSON format (no markdown, no extra text):
 Resource to review:
 {content[:3000]}"""
 
-        response = await model.generate_content_async(prompt)
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash", contents=prompt
+        )
 
         if response.text:
             import json
