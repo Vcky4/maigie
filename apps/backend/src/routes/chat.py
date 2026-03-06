@@ -2500,6 +2500,9 @@ async def handle_image_chat(
             }
         )
 
+        # Bump session updatedAt to move it to the top of history (Interaction based)
+        await db.chatsession.update(where={"id": session.id}, data={"updatedAt": datetime.now(UTC)})
+
         # 4. Get AI Analysis (Gemini Vision)
         print("🔵 Asking Gemini to analyze...")
         ai_response_text = await llm_service.analyze_image(text, image_url)
