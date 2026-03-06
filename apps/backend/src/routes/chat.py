@@ -235,7 +235,7 @@ async def create_my_chat_session(
             )
             session = await db.chatsession.update(
                 where={"id": existing_res_session.id},
-                data={"isActive": True, "updatedAt": datetime.now(UTC)},
+                data={"isActive": True},
             )
             return {
                 "id": session.id,
@@ -350,7 +350,7 @@ async def create_my_chat_session(
         )
         session = await db.chatsession.update(
             where={"id": master_session.id},
-            data={"isActive": True, "updatedAt": datetime.now(UTC), "title": "Chat"},
+            data={"isActive": True, "title": "Chat"},
         )
         return {
             "id": session.id,
@@ -1394,6 +1394,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 print(f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
+
+            # Bump session updatedAt to move it to the top of history (Interaction based)
+            await db.chatsession.update(
+                where={"id": session.id}, data={"updatedAt": datetime.now(UTC)}
+            )
 
             # 4.1b Index uploaded images into knowledge base (fire-and-forget)
             if file_urls_list:
