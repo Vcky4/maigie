@@ -98,6 +98,42 @@ def _map_db_role_to_client(role: str) -> str:
     return "system"
 
 
+async def merge_generic_sessions(user_id: str, db: Prisma):
+    """
+    Finds all generic sessions for a user. If multiple exist (legacy),
+    merges them JIT into the oldest session and deletes the duplicates.
+    """
+    generic_sessions = await db.chatsession.find_many(
+        where={
+            "userId": user_id,
+            "courseId": None,
+            "topicId": None,
+            "examPrepId": None,
+            "noteId": None,
+        },
+        order={"createdAt": "asc"},
+    )
+
+    if not generic_sessions:
+        return None
+
+    if len(generic_sessions) == 1:
+        return generic_sessions[0]
+
+    master_session = generic_sessions[0]
+    sessions_to_merge_from = generic_sessions[1:]
+
+    for session in sessions_to_merge_from:
+        # Move all messages to the master session
+        await db.chatmessage.update_many(
+            where={"sessionId": session.id}, data={"sessionId": master_session.id}
+        )
+        # Delete the now-empty session
+        await db.chatsession.delete(where={"id": session.id})
+
+    return master_session
+
+
 @router.get("/sessions", response_model=dict)
 async def list_my_chat_sessions(
     current_user: CurrentUser,
@@ -107,6 +143,9 @@ async def list_my_chat_sessions(
     """
     List the current user's chat sessions (for conversation history UI).
     """
+    # Trigger JIT merge for generic sessions before listing
+    await merge_generic_sessions(current_user.id, db)
+
     sessions = await db.chatsession.find_many(
         where={
             "userId": current_user.id,
