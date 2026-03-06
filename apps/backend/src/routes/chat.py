@@ -150,6 +150,7 @@ async def list_my_chat_sessions(
         where={
             "userId": current_user.id,
         },
+        include={"topic": {"include": {"module": True}}},
         order={"updatedAt": "desc"},
         take=take,
     )
@@ -184,8 +185,10 @@ async def list_my_chat_sessions(
                 "lastMessagePreview": (
                     last_msg.content[:140] if last_msg and last_msg.content else None
                 ),
-                "courseId": getattr(s, "courseId", None),
+                "courseId": getattr(s, "courseId", None)
+                or (s.topic.module.courseId if s.topic and s.topic.module else None),
                 "topicId": getattr(s, "topicId", None),
+                "moduleId": (s.topic.moduleId if s.topic else None),
                 "examPrepId": getattr(s, "examPrepId", None),
                 "noteId": getattr(s, "noteId", None),
             }
@@ -233,16 +236,23 @@ async def create_my_chat_session(
                 where={"userId": current_user.id, "isActive": True},
                 data={"isActive": False},
             )
-            session = await db.chatsession.update(
+            # Fetch full session with relations to get moduleId/courseId
+            session = await db.chatsession.find_unique(
                 where={"id": existing_res_session.id},
-                data={"isActive": True},
+                include={"topic": {"include": {"module": True}}},
             )
             return {
                 "id": session.id,
                 "title": session.title,
                 "isActive": bool(session.isActive),
-                "courseId": getattr(session, "courseId", None),
+                "courseId": getattr(session, "courseId", None)
+                or (
+                    session.topic.module.courseId
+                    if session.topic and session.topic.module
+                    else None
+                ),
                 "topicId": getattr(session, "topicId", None),
+                "moduleId": session.topic.moduleId if session.topic else None,
                 "examPrepId": getattr(session, "examPrepId", None),
                 "noteId": getattr(session, "noteId", None),
                 "createdAt": (
@@ -259,14 +269,18 @@ async def create_my_chat_session(
 
         # If not found, fetch resource title for naming
         title = "Chat"
+        actual_moduleId = None
         if courseId:
             res = await db.course.find_unique(where={"id": courseId})
             if res:
                 title = res.title
         elif topicId:
-            res = await db.topic.find_unique(where={"id": topicId})
+            res = await db.topic.find_unique(where={"id": topicId}, include={"module": True})
             if res:
                 title = res.title
+                actual_moduleId = res.moduleId
+                if res.module and not courseId:
+                    courseId = res.module.courseId
         elif examPrepId:
             res = await db.examprep.find_unique(where={"id": examPrepId})
             if res:
@@ -302,6 +316,7 @@ async def create_my_chat_session(
             "isActive": bool(session.isActive),
             "courseId": getattr(session, "courseId", None),
             "topicId": getattr(session, "topicId", None),
+            "moduleId": actual_moduleId,
             "examPrepId": getattr(session, "examPrepId", None),
             "noteId": getattr(session, "noteId", None),
             "createdAt": (
