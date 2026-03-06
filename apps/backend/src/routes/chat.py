@@ -227,31 +227,63 @@ async def create_my_chat_session(
         )
 
         if existing_res_session:
-            # Optionally mark as active, though resource sessions might not need to be 'active' in the same list
+            # Bump updatedAt to make it appear recent in history
+            # and mark as active (deactivating others)
+            await db.chatsession.update_many(
+                where={"userId": current_user.id, "isActive": True},
+                data={"isActive": False},
+            )
+            session = await db.chatsession.update(
+                where={"id": existing_res_session.id},
+                data={"isActive": True, "updatedAt": datetime.now(UTC)},
+            )
             return {
-                "id": existing_res_session.id,
-                "title": existing_res_session.title,
-                "isActive": bool(existing_res_session.isActive),
-                "courseId": getattr(existing_res_session, "courseId", None),
-                "topicId": getattr(existing_res_session, "topicId", None),
-                "examPrepId": getattr(existing_res_session, "examPrepId", None),
-                "noteId": getattr(existing_res_session, "noteId", None),
+                "id": session.id,
+                "title": session.title,
+                "isActive": bool(session.isActive),
+                "courseId": getattr(session, "courseId", None),
+                "topicId": getattr(session, "topicId", None),
+                "examPrepId": getattr(session, "examPrepId", None),
+                "noteId": getattr(session, "noteId", None),
                 "createdAt": (
-                    existing_res_session.createdAt.isoformat()
-                    if hasattr(existing_res_session.createdAt, "isoformat")
-                    else str(existing_res_session.createdAt)
+                    session.createdAt.isoformat()
+                    if hasattr(session.createdAt, "isoformat")
+                    else str(session.createdAt)
                 ),
                 "updatedAt": (
-                    existing_res_session.updatedAt.isoformat()
-                    if hasattr(existing_res_session.updatedAt, "isoformat")
-                    else str(existing_res_session.updatedAt)
+                    session.updatedAt.isoformat()
+                    if hasattr(session.updatedAt, "isoformat")
+                    else str(session.updatedAt)
                 ),
             }
 
-        # If not found, create a new resource-scoped session
+        # If not found, fetch resource title for naming
+        title = "Chat"
+        if courseId:
+            res = await db.course.find_unique(where={"id": courseId})
+            if res:
+                title = res.title
+        elif topicId:
+            res = await db.topic.find_unique(where={"id": topicId})
+            if res:
+                title = res.title
+        elif examPrepId:
+            res = await db.examprep.find_unique(where={"id": examPrepId})
+            if res:
+                title = res.subject
+        elif noteId:
+            res = await db.note.find_unique(where={"id": noteId})
+            if res:
+                title = res.title
+
+        # Create a new resource-scoped session
+        await db.chatsession.update_many(
+            where={"userId": current_user.id, "isActive": True},
+            data={"isActive": False},
+        )
         data = {
             "userId": current_user.id,
-            "title": "Chat",
+            "title": title,
             "isActive": True,
         }
         if courseId:
