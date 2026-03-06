@@ -246,8 +246,7 @@ async def create_my_chat_session(
         }
 
     # 2. Generic session logic
-    # Check for existing empty session (no messages) - reuse it instead of creating new
-    # Only check among generic sessions (no resource IDs)
+    # Find all generic sessions. If multiple exist (legacy), merge them JIT.
     existing_sessions = await db.chatsession.find_many(
         where={
             "userId": current_user.id,
@@ -256,44 +255,55 @@ async def create_my_chat_session(
             "examPrepId": None,
             "noteId": None,
         },
-        order={"updatedAt": "desc"},
-        take=50,
+        order={"createdAt": "asc"},
     )
-    for s in existing_sessions:
-        msg_count = await db.chatmessage.count(where={"sessionId": s.id, "userId": current_user.id})
-        if msg_count == 0:
-            # Found empty session - mark it active and return it
-            await db.chatsession.update_many(
-                where={"userId": current_user.id, "isActive": True},
-                data={"isActive": False},
-            )
-            session = await db.chatsession.update(
-                where={"id": s.id},
-                data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
-            )
-            return {
-                "id": session.id,
-                "title": session.title,
-                "isActive": bool(session.isActive),
-                "createdAt": (
-                    session.createdAt.isoformat()
-                    if hasattr(session.createdAt, "isoformat")
-                    else str(session.createdAt)
-                ),
-                "updatedAt": (
-                    session.updatedAt.isoformat()
-                    if hasattr(session.updatedAt, "isoformat")
-                    else str(session.updatedAt)
-                ),
-            }
 
-    # No empty session found - create new one
+    if existing_sessions:
+        master_session = existing_sessions[0]
+
+        # JIT Migration: If multiple generic sessions exist, merge them into the master
+        if len(existing_sessions) > 1:
+            sessions_to_merge_from = existing_sessions[1:]
+            for session in sessions_to_merge_from:
+                # Move all messages to the master session
+                await db.chatmessage.update_many(
+                    where={"sessionId": session.id}, data={"sessionId": master_session.id}
+                )
+                # Delete the now-empty session
+                await db.chatsession.delete(where={"id": session.id})
+
+        # Mark it active and return it
+        await db.chatsession.update_many(
+            where={"userId": current_user.id, "isActive": True},
+            data={"isActive": False},
+        )
+        session = await db.chatsession.update(
+            where={"id": master_session.id},
+            data={"isActive": True, "updatedAt": datetime.now(UTC), "title": "Chat"},
+        )
+        return {
+            "id": session.id,
+            "title": session.title,
+            "isActive": bool(session.isActive),
+            "createdAt": (
+                session.createdAt.isoformat()
+                if hasattr(session.createdAt, "isoformat")
+                else str(session.createdAt)
+            ),
+            "updatedAt": (
+                session.updatedAt.isoformat()
+                if hasattr(session.updatedAt, "isoformat")
+                else str(session.updatedAt)
+            ),
+        }
+
+    # No generic session found - create one
     await db.chatsession.update_many(
         where={"userId": current_user.id, "isActive": True},
         data={"isActive": False},
     )
     session = await db.chatsession.create(
-        data={"userId": current_user.id, "title": "New Chat", "isActive": True}
+        data={"userId": current_user.id, "title": "Chat", "isActive": True}
     )
 
     return {
