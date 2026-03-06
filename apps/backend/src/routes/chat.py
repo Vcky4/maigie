@@ -110,10 +110,6 @@ async def list_my_chat_sessions(
     sessions = await db.chatsession.find_many(
         where={
             "userId": current_user.id,
-            "courseId": None,
-            "topicId": None,
-            "examPrepId": None,
-            "noteId": None,
         },
         order={"updatedAt": "desc"},
         take=take,
@@ -149,6 +145,10 @@ async def list_my_chat_sessions(
                 "lastMessagePreview": (
                     last_msg.content[:140] if last_msg and last_msg.content else None
                 ),
+                "courseId": getattr(s, "courseId", None),
+                "topicId": getattr(s, "topicId", None),
+                "examPrepId": getattr(s, "examPrepId", None),
+                "noteId": getattr(s, "noteId", None),
             }
         )
 
