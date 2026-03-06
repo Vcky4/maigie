@@ -405,6 +405,7 @@ model Course {
   goals         Goal[] // Goals linked to this course
   schedules     ScheduleBlock[] // Schedule blocks linked to this course
   studySessions StudySession[] // Study sessions for this course
+  chatSessions  ChatSession[]
 
   @@index([userId])
   @@index([userId, archived])
@@ -448,8 +449,9 @@ model Topic {
   studySessions StudySession[] // Study sessions for this topic
   reviewItems   ReviewItem[] // Spaced repetition: one review schedule per completed topic
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  chatSessions ChatSession[]
 
   @@index([moduleId])
   @@index([moduleId, order])
@@ -467,6 +469,19 @@ model ChatSession {
   title    String? // Auto-generated summary (e.g. "Biology Study Plan")
   isActive Boolean @default(true) // False if archived/deleted
 
+  // Resource linkage (New: for per-page history persistence)
+  courseId String?
+  course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
+
+  topicId String?
+  topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  examPrepId String?
+  examPrep   ExamPrep? @relation(fields: [examPrepId], references: [id], onDelete: SetNull)
+
+  noteId String?
+  note   Note?   @relation(fields: [noteId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -479,6 +494,10 @@ model ChatSession {
   circleChatGroup CircleChatGroup?
 
   @@index([userId])
+  @@index([courseId])
+  @@index([topicId])
+  @@index([examPrepId])
+  @@index([noteId])
   @@index([updatedAt]) // Useful for sorting "Recent Chats"
 }
 
@@ -576,8 +595,9 @@ model Note {
   tags        NoteTag[]
   attachments NoteAttachment[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  chatSessions ChatSession[]
 
   @@index([userId])
   @@index([courseId])
@@ -886,8 +906,9 @@ model ExamPrep {
   topics       ExamPrepTopic[]
   quizSessions ExamQuizSession[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  chatSessions ChatSession[]
 
   @@index([userId])
   @@index([userId, examDate])

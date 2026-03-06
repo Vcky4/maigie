@@ -108,7 +108,13 @@ async def list_my_chat_sessions(
     List the current user's chat sessions (for conversation history UI).
     """
     sessions = await db.chatsession.find_many(
-        where={"userId": current_user.id},
+        where={
+            "userId": current_user.id,
+            "courseId": None,
+            "topicId": None,
+            "examPrepId": None,
+            "noteId": None,
+        },
         order={"updatedAt": "desc"},
         take=take,
     )
@@ -150,14 +156,106 @@ async def list_my_chat_sessions(
 
 
 @router.post("/sessions", response_model=dict)
-async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
+async def create_my_chat_session(
+    current_user: CurrentUser,
+    db: DBDep,
+    courseId: str | None = Query(None),
+    topicId: str | None = Query(None),
+    examPrepId: str | None = Query(None),
+    noteId: str | None = Query(None),
+):
     """
     Create a new chat session for the current user.
-    Only creates a new session if there is no existing session with no messages.
+    If resource IDs are provided, acts as a "get or create": returns the existing session for that resource if found.
+    Otherwise, creates a generic session, reusing empty ones if possible.
     """
+    is_resource_scoped = any([courseId, topicId, examPrepId, noteId])
+
+    # 1. Resource-scoped session logic
+    if is_resource_scoped:
+        where_res = {"userId": current_user.id}
+        if courseId:
+            where_res["courseId"] = courseId
+        if topicId:
+            where_res["topicId"] = topicId
+        if examPrepId:
+            where_res["examPrepId"] = examPrepId
+        if noteId:
+            where_res["noteId"] = noteId
+
+        existing_res_session = await db.chatsession.find_first(
+            where=where_res, order={"updatedAt": "desc"}
+        )
+
+        if existing_res_session:
+            # Optionally mark as active, though resource sessions might not need to be 'active' in the same list
+            return {
+                "id": existing_res_session.id,
+                "title": existing_res_session.title,
+                "isActive": bool(existing_res_session.isActive),
+                "courseId": getattr(existing_res_session, "courseId", None),
+                "topicId": getattr(existing_res_session, "topicId", None),
+                "examPrepId": getattr(existing_res_session, "examPrepId", None),
+                "noteId": getattr(existing_res_session, "noteId", None),
+                "createdAt": (
+                    existing_res_session.createdAt.isoformat()
+                    if hasattr(existing_res_session.createdAt, "isoformat")
+                    else str(existing_res_session.createdAt)
+                ),
+                "updatedAt": (
+                    existing_res_session.updatedAt.isoformat()
+                    if hasattr(existing_res_session.updatedAt, "isoformat")
+                    else str(existing_res_session.updatedAt)
+                ),
+            }
+
+        # If not found, create a new resource-scoped session
+        data = {
+            "userId": current_user.id,
+            "title": "Chat",
+            "isActive": True,
+        }
+        if courseId:
+            data["courseId"] = courseId
+        if topicId:
+            data["topicId"] = topicId
+        if examPrepId:
+            data["examPrepId"] = examPrepId
+        if noteId:
+            data["noteId"] = noteId
+
+        session = await db.chatsession.create(data=data)
+        return {
+            "id": session.id,
+            "title": session.title,
+            "isActive": bool(session.isActive),
+            "courseId": getattr(session, "courseId", None),
+            "topicId": getattr(session, "topicId", None),
+            "examPrepId": getattr(session, "examPrepId", None),
+            "noteId": getattr(session, "noteId", None),
+            "createdAt": (
+                session.createdAt.isoformat()
+                if hasattr(session.createdAt, "isoformat")
+                else str(session.createdAt)
+            ),
+            "updatedAt": (
+                session.updatedAt.isoformat()
+                if hasattr(session.updatedAt, "isoformat")
+                else str(session.updatedAt)
+            ),
+        }
+
+    # 2. Generic session logic
     # Check for existing empty session (no messages) - reuse it instead of creating new
+    # Only check among generic sessions (no resource IDs)
     existing_sessions = await db.chatsession.find_many(
-        where={"userId": current_user.id},
+        where={
+            "userId": current_user.id,
+            "courseId": None,
+            "topicId": None,
+            "examPrepId": None,
+            "noteId": None,
+        },
         order={"updatedAt": "desc"},
         take=50,
     )
@@ -173,7 +271,6 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
                 where={"id": s.id},
                 data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
             )
-            # Seeding happens in get_messages only; avoids race when multiple createSession calls.
             return {
                 "id": session.id,
                 "title": session.title,
@@ -199,24 +296,6 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
         data={"userId": current_user.id, "title": "New Chat", "isActive": True}
     )
 
-    # Seeding happens in get_messages only; avoids race when multiple createSession calls.
-    if False:  # Removed seeding - now only in get_messages
-        if False and not getattr(current_user, "isOnboarded", False):
-            from src.services.onboarding_service import ensure_onboarding_initialized
-
-            await ensure_onboarding_initialized(db, current_user.id)
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": current_user.id,
-                    "role": "ASSISTANT",
-                    "content": (
-                        "Welcome! I’m Maigie.\n\n"
-                        "Before we start: are you a **university student** or a **self‑paced learner**?\n"
-                        "Reply with `university` or `self-paced`."
-                    ),
-                }
-            )
     return {
         "id": session.id,
         "title": session.title,
@@ -296,9 +375,22 @@ async def get_my_chat_messages(
     else:
         where["reviewItemId"] = None
 
+    is_resource_scoped = any(
+        [
+            getattr(session, "courseId", None),
+            getattr(session, "topicId", None),
+            getattr(session, "examPrepId", None),
+            getattr(session, "noteId", None),
+        ]
+    )
+
     # For non-onboarded users fetching general chat: if session is empty, seed welcome message.
     # This is the single source of truth - handles createSession reuse, stored session, etc.
-    if not reviewItemId and not getattr(current_user, "isOnboarded", False):
+    if (
+        not reviewItemId
+        and not is_resource_scoped
+        and not getattr(current_user, "isOnboarded", False)
+    ):
         msg_count = await db.chatmessage.count(
             where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
         )
