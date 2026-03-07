@@ -231,17 +231,33 @@ jobs:
 
       - name: Upload env template and generator for preview
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            .env.example \
-            .env \
-            scripts/generate-env-from-secrets.sh \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/maigie/previews/
+          for i in {1..5}; do
+            if scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectionAttempts=5 -o ConnectTimeout=30 \
+              .env.example .env scripts/generate-env-from-secrets.sh \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/maigie/previews/; then
+              echo "Successfully uploaded env and scripts"
+              break
+            else
+              echo "Attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+            if [ $i -eq 5 ]; then exit 1; fi
+          done
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            preview-image.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz
+          for i in {1..5}; do
+            if scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectionAttempts=5 -o ConnectTimeout=60 \
+              preview-image.tar.gz \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/preview-image.tar.gz; then
+              echo "Successfully uploaded docker image"
+              break
+            else
+              echo "Attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+            if [ $i -eq 5 ]; then exit 1; fi
+          done
 
       - name: Load Image and Deploy Preview
         uses: appleboy/ssh-action@v1.2.5
@@ -903,9 +919,18 @@ jobs:
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            production-image.tar.gz .env \
-            ${{ secrets.PRODUCTION_VPS_USER }}@${{ secrets.PRODUCTION_VPS_HOST }}:/tmp/
+          for i in {1..5}; do
+            if scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectionAttempts=5 -o ConnectTimeout=60 \
+              production-image.tar.gz .env \
+              ${{ secrets.PRODUCTION_VPS_USER }}@${{ secrets.PRODUCTION_VPS_HOST }}:/tmp/; then
+              echo "Successfully uploaded production artifacts"
+              break
+            else
+              echo "Attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+            if [ $i -eq 5 ]; then exit 1; fi
+          done
 
       - name: Load Image and Deploy Production
         uses: appleboy/ssh-action@v1.2.5
@@ -1162,16 +1187,34 @@ jobs:
 
       - name: Upload env template and generator for staging
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            .env.example \
-            scripts/generate-env-from-secrets.sh \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/maigie/staging/
+          for i in {1..5}; do
+            if scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectionAttempts=5 -o ConnectTimeout=30 \
+              .env.example \
+              scripts/generate-env-from-secrets.sh \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/opt/maigie/staging/; then
+              echo "Successfully uploaded staging env template"
+              break
+            else
+              echo "Attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+            if [ $i -eq 5 ]; then exit 1; fi
+          done
 
       - name: Deploy to Contabo VPS
         run: |
-          scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            staging-image.tar.gz \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/
+          for i in {1..5}; do
+            if scp -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectionAttempts=5 -o ConnectTimeout=60 \
+              staging-image.tar.gz \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/tmp/; then
+              echo "Successfully uploaded staging docker image"
+              break
+            else
+              echo "Attempt $i failed, retrying in 5 seconds..."
+              sleep 5
+            fi
+            if [ $i -eq 5 ]; then exit 1; fi
+          done
 
       - name: Load Image and Deploy Staging
         uses: appleboy/ssh-action@v1.2.5

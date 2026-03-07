@@ -98,6 +98,89 @@ def _map_db_role_to_client(role: str) -> str:
     return "system"
 
 
+async def merge_generic_sessions(user_id: str, db: Prisma):
+    """
+    Finds all generic sessions for a user. If multiple exist (legacy),
+    merges them JIT into the oldest session and deletes the duplicates.
+    """
+    generic_sessions = await db.chatsession.find_many(
+        where={
+            "userId": user_id,
+            "courseId": None,
+            "topicId": None,
+            "examPrepId": None,
+            "noteId": None,
+        },
+        order={"createdAt": "asc"},
+    )
+
+    if not generic_sessions:
+        return None
+
+    if len(generic_sessions) == 1:
+        return generic_sessions[0]
+
+    master_session = generic_sessions[0]
+    sessions_to_merge_from = generic_sessions[1:]
+
+    for session in sessions_to_merge_from:
+        # Move all messages to the master session
+        await db.chatmessage.update_many(
+            where={"sessionId": session.id}, data={"sessionId": master_session.id}
+        )
+        # Delete the now-empty session
+        await db.chatsession.delete(where={"id": session.id})
+
+    return master_session
+
+
+@router.get("/my-messages", response_model=dict)
+async def get_my_general_session(
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Get the general chat session for the current user.
+    Creates one if it doesn't exist.
+    """
+    session = await merge_generic_sessions(current_user.id, db)
+
+    if not session:
+        # No generic session found - create one
+        # Deactivate others first
+        await db.chatsession.update_many(
+            where={"userId": current_user.id, "isActive": True},
+            data={"isActive": False},
+        )
+        session = await db.chatsession.create(
+            data={"userId": current_user.id, "title": "Chat", "isActive": True}
+        )
+    else:
+        # Mark it active if it wasn't
+        if not session.isActive:
+            await db.chatsession.update_many(
+                where={"userId": current_user.id, "isActive": True},
+                data={"isActive": False},
+            )
+            session = await db.chatsession.update(where={"id": session.id}, data={"isActive": True})
+
+    return {
+        "id": session.id,
+        "title": session.title,
+        "isActive": bool(session.isActive),
+        "createdAt": (
+            session.createdAt.isoformat()
+            if hasattr(session.createdAt, "isoformat")
+            else str(session.createdAt)
+        ),
+        "updatedAt": (
+            session.updatedAt.isoformat()
+            if hasattr(session.updatedAt, "isoformat")
+            else str(session.updatedAt)
+        ),
+    }
+
+
 @router.get("/sessions", response_model=dict)
 async def list_my_chat_sessions(
     current_user: CurrentUser,
@@ -107,8 +190,14 @@ async def list_my_chat_sessions(
     """
     List the current user's chat sessions (for conversation history UI).
     """
+    # Trigger JIT merge for generic sessions before listing
+    await merge_generic_sessions(current_user.id, db)
+
     sessions = await db.chatsession.find_many(
-        where={"userId": current_user.id},
+        where={
+            "userId": current_user.id,
+        },
+        include={"topic": {"include": {"module": True}}},
         order={"updatedAt": "desc"},
         take=take,
     )
@@ -143,6 +232,12 @@ async def list_my_chat_sessions(
                 "lastMessagePreview": (
                     last_msg.content[:140] if last_msg and last_msg.content else None
                 ),
+                "courseId": getattr(s, "courseId", None)
+                or (s.topic.module.courseId if s.topic and s.topic.module else None),
+                "topicId": getattr(s, "topicId", None),
+                "moduleId": (s.topic.moduleId if s.topic else None),
+                "examPrepId": getattr(s, "examPrepId", None),
+                "noteId": getattr(s, "noteId", None),
             }
         )
 
@@ -150,34 +245,63 @@ async def list_my_chat_sessions(
 
 
 @router.post("/sessions", response_model=dict)
-async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
+async def create_my_chat_session(
+    current_user: CurrentUser,
+    db: DBDep,
+    courseId: str | None = Query(None),
+    topicId: str | None = Query(None),
+    examPrepId: str | None = Query(None),
+    noteId: str | None = Query(None),
+):
     """
     Create a new chat session for the current user.
-    Only creates a new session if there is no existing session with no messages.
+    If resource IDs are provided, acts as a "get or create": returns the existing session for that resource if found.
+    Otherwise, creates a generic session, reusing empty ones if possible.
     """
-    # Check for existing empty session (no messages) - reuse it instead of creating new
-    existing_sessions = await db.chatsession.find_many(
-        where={"userId": current_user.id},
-        order={"updatedAt": "desc"},
-        take=50,
-    )
-    for s in existing_sessions:
-        msg_count = await db.chatmessage.count(where={"sessionId": s.id, "userId": current_user.id})
-        if msg_count == 0:
-            # Found empty session - mark it active and return it
+    is_resource_scoped = any([courseId, topicId, examPrepId, noteId])
+
+    # 1. Resource-scoped session logic
+    if is_resource_scoped:
+        where_res = {"userId": current_user.id}
+        if courseId:
+            where_res["courseId"] = courseId
+        if topicId:
+            where_res["topicId"] = topicId
+        if examPrepId:
+            where_res["examPrepId"] = examPrepId
+        if noteId:
+            where_res["noteId"] = noteId
+
+        existing_res_session = await db.chatsession.find_first(
+            where=where_res, order={"updatedAt": "desc"}
+        )
+
+        if existing_res_session:
+            # Bump updatedAt to make it appear recent in history
+            # and mark as active (deactivating others)
             await db.chatsession.update_many(
                 where={"userId": current_user.id, "isActive": True},
                 data={"isActive": False},
             )
-            session = await db.chatsession.update(
-                where={"id": s.id},
-                data={"isActive": True, "title": "New Chat", "updatedAt": datetime.now(UTC)},
+            # Fetch full session with relations to get moduleId/courseId
+            session = await db.chatsession.find_unique(
+                where={"id": existing_res_session.id},
+                include={"topic": {"include": {"module": True}}},
             )
-            # Seeding happens in get_messages only; avoids race when multiple createSession calls.
             return {
                 "id": session.id,
                 "title": session.title,
                 "isActive": bool(session.isActive),
+                "courseId": getattr(session, "courseId", None)
+                or (
+                    session.topic.module.courseId
+                    if session.topic and session.topic.module
+                    else None
+                ),
+                "topicId": getattr(session, "topicId", None),
+                "moduleId": session.topic.moduleId if session.topic else None,
+                "examPrepId": getattr(session, "examPrepId", None),
+                "noteId": getattr(session, "noteId", None),
                 "createdAt": (
                     session.createdAt.isoformat()
                     if hasattr(session.createdAt, "isoformat")
@@ -190,33 +314,131 @@ async def create_my_chat_session(current_user: CurrentUser, db: DBDep):
                 ),
             }
 
-    # No empty session found - create new one
+        # If not found, fetch resource title for naming
+        title = "Chat"
+        actual_moduleId = None
+        if courseId:
+            res = await db.course.find_unique(where={"id": courseId})
+            if res:
+                title = res.title
+        elif topicId:
+            res = await db.topic.find_unique(where={"id": topicId}, include={"module": True})
+            if res:
+                title = res.title
+                actual_moduleId = res.moduleId
+                if res.module and not courseId:
+                    courseId = res.module.courseId
+        elif examPrepId:
+            res = await db.examprep.find_unique(where={"id": examPrepId})
+            if res:
+                title = res.subject
+        elif noteId:
+            res = await db.note.find_unique(where={"id": noteId})
+            if res:
+                title = res.title
+
+        # Create a new resource-scoped session
+        await db.chatsession.update_many(
+            where={"userId": current_user.id, "isActive": True},
+            data={"isActive": False},
+        )
+        data = {
+            "userId": current_user.id,
+            "title": title,
+            "isActive": True,
+        }
+        if courseId:
+            data["courseId"] = courseId
+        if topicId:
+            data["topicId"] = topicId
+        if examPrepId:
+            data["examPrepId"] = examPrepId
+        if noteId:
+            data["noteId"] = noteId
+
+        session = await db.chatsession.create(data=data)
+        return {
+            "id": session.id,
+            "title": session.title,
+            "isActive": bool(session.isActive),
+            "courseId": getattr(session, "courseId", None),
+            "topicId": getattr(session, "topicId", None),
+            "moduleId": actual_moduleId,
+            "examPrepId": getattr(session, "examPrepId", None),
+            "noteId": getattr(session, "noteId", None),
+            "createdAt": (
+                session.createdAt.isoformat()
+                if hasattr(session.createdAt, "isoformat")
+                else str(session.createdAt)
+            ),
+            "updatedAt": (
+                session.updatedAt.isoformat()
+                if hasattr(session.updatedAt, "isoformat")
+                else str(session.updatedAt)
+            ),
+        }
+
+    # 2. Generic session logic
+    # Find all generic sessions. If multiple exist (legacy), merge them JIT.
+    existing_sessions = await db.chatsession.find_many(
+        where={
+            "userId": current_user.id,
+            "courseId": None,
+            "topicId": None,
+            "examPrepId": None,
+            "noteId": None,
+        },
+        order={"createdAt": "asc"},
+    )
+
+    if existing_sessions:
+        master_session = existing_sessions[0]
+
+        # JIT Migration: If multiple generic sessions exist, merge them into the master
+        if len(existing_sessions) > 1:
+            sessions_to_merge_from = existing_sessions[1:]
+            for session in sessions_to_merge_from:
+                # Move all messages to the master session
+                await db.chatmessage.update_many(
+                    where={"sessionId": session.id}, data={"sessionId": master_session.id}
+                )
+                # Delete the now-empty session
+                await db.chatsession.delete(where={"id": session.id})
+
+        # Mark it active and return it
+        await db.chatsession.update_many(
+            where={"userId": current_user.id, "isActive": True},
+            data={"isActive": False},
+        )
+        session = await db.chatsession.update(
+            where={"id": master_session.id},
+            data={"isActive": True, "title": "Chat"},
+        )
+        return {
+            "id": session.id,
+            "title": session.title,
+            "isActive": bool(session.isActive),
+            "createdAt": (
+                session.createdAt.isoformat()
+                if hasattr(session.createdAt, "isoformat")
+                else str(session.createdAt)
+            ),
+            "updatedAt": (
+                session.updatedAt.isoformat()
+                if hasattr(session.updatedAt, "isoformat")
+                else str(session.updatedAt)
+            ),
+        }
+
+    # No generic session found - create one
     await db.chatsession.update_many(
         where={"userId": current_user.id, "isActive": True},
         data={"isActive": False},
     )
     session = await db.chatsession.create(
-        data={"userId": current_user.id, "title": "New Chat", "isActive": True}
+        data={"userId": current_user.id, "title": "Chat", "isActive": True}
     )
 
-    # Seeding happens in get_messages only; avoids race when multiple createSession calls.
-    if False:  # Removed seeding - now only in get_messages
-        if False and not getattr(current_user, "isOnboarded", False):
-            from src.services.onboarding_service import ensure_onboarding_initialized
-
-            await ensure_onboarding_initialized(db, current_user.id)
-            await db.chatmessage.create(
-                data={
-                    "sessionId": session.id,
-                    "userId": current_user.id,
-                    "role": "ASSISTANT",
-                    "content": (
-                        "Welcome! I’m Maigie.\n\n"
-                        "Before we start: are you a **university student** or a **self‑paced learner**?\n"
-                        "Reply with `university` or `self-paced`."
-                    ),
-                }
-            )
     return {
         "id": session.id,
         "title": session.title,
@@ -278,7 +500,8 @@ async def get_my_chat_messages(
     current_user: CurrentUser,
     db: DBDep,
     reviewItemId: str | None = Query(default=None),
-    take: int = Query(200, ge=1, le=500),
+    take: int = Query(20, ge=1, le=500),
+    skip: int = Query(0, ge=0),
 ):
     """
     Fetch messages for a given session.
@@ -296,9 +519,22 @@ async def get_my_chat_messages(
     else:
         where["reviewItemId"] = None
 
+    is_resource_scoped = any(
+        [
+            getattr(session, "courseId", None),
+            getattr(session, "topicId", None),
+            getattr(session, "examPrepId", None),
+            getattr(session, "noteId", None),
+        ]
+    )
+
     # For non-onboarded users fetching general chat: if session is empty, seed welcome message.
     # This is the single source of truth - handles createSession reuse, stored session, etc.
-    if not reviewItemId and not getattr(current_user, "isOnboarded", False):
+    if (
+        not reviewItemId
+        and not is_resource_scoped
+        and not getattr(current_user, "isOnboarded", False)
+    ):
         msg_count = await db.chatmessage.count(
             where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
         )
@@ -327,11 +563,12 @@ async def get_my_chat_messages(
             except Exception as e:
                 logger.warning("Failed to seed onboarding message in get_messages: %s", e)
 
-    # Get latest `take` messages then return in chronological order
+    # Get latest `take` messages with optional skip for pagination
     records = await db.chatmessage.find_many(
         where=where,
         order={"createdAt": "desc"},
         take=take,
+        skip=skip,
     )
     records = list(reversed(records))
 
@@ -1041,6 +1278,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Parse message - can be plain text or JSON with context
             user_text = raw_message
             context = None
+            temp_id = None
 
             try:
                 # Try to parse as JSON
@@ -1051,6 +1289,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         continue
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
+                    temp_id = message_data.get("tempId")
                     if context:
                         print(f"📥 Received context from frontend: {context}")
             except (json.JSONDecodeError, AttributeError):
@@ -1221,6 +1460,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 print(f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
+
+            # 4.1a Send confirmation to client for ID correlation
+            await manager.send_json(
+                {
+                    "type": "message_saved",
+                    "payload": {
+                        "id": user_message.id,
+                        "tempId": temp_id,
+                        "role": "user",
+                        "sessionId": session.id,
+                    },
+                },
+                user.id,
+            )
+
+            # Bump session updatedAt to move it to the top of history (Interaction based)
+            await db.chatsession.update(
+                where={"id": session.id}, data={"updatedAt": datetime.now(UTC)}
+            )
 
             # 4.1b Index uploaded images into knowledge base (fire-and-forget)
             if file_urls_list:
@@ -2090,7 +2348,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             if suggestion_text:
                 create_data["suggestionText"] = suggestion_text
 
-            await db.chatmessage.create(data=create_data)
+            assistant_message = await db.chatmessage.create(data=create_data)
 
             # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
             if suggestion_text:
@@ -2098,13 +2356,27 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 await manager.send_json(
                     {
                         "type": "assistant_final",
+                        "id": assistant_message.id,
                         "content": main_content,
                         "suggestionText": suggestion_text,
                     },
                     user.id,
                 )
-            elif main_content:
-                await manager.send_personal_message(main_content, user.id)
+            else:
+                if main_content:
+                    await manager.send_personal_message(main_content, user.id)
+                # Send confirmation with ID
+                await manager.send_json(
+                    {
+                        "type": "message_saved",
+                        "payload": {
+                            "id": assistant_message.id,
+                            "role": "assistant",
+                            "sessionId": session.id,
+                        },
+                    },
+                    user.id,
+                )
 
             # 14. Send component responses (queries and actions)
             for component_response in query_component_responses + component_responses:
@@ -2321,6 +2593,9 @@ async def handle_image_chat(
                 "modelName": "user-upload",
             }
         )
+
+        # Bump session updatedAt to move it to the top of history (Interaction based)
+        await db.chatsession.update(where={"id": session.id}, data={"updatedAt": datetime.now(UTC)})
 
         # 4. Get AI Analysis (Gemini Vision)
         print("🔵 Asking Gemini to analyze...")

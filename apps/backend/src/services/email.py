@@ -326,6 +326,12 @@ async def send_bulk_email(
         logger.warning(f"SMTP not configured. Skipping bulk email to {email}")
         return
 
+    if settings.ENVIRONMENT != "production":
+        logger.info(
+            f"Skipping bulk email to {email} (subject: {subject}) - ENVIRONMENT is {settings.ENVIRONMENT}"
+        )
+        return
+
     template_data = {
         "name": name,
         "subject": subject,
@@ -398,6 +404,12 @@ async def send_morning_schedule_email(
         logger.warning(f"SMTP not configured. Skipping morning schedule email to {email}")
         return
 
+    if settings.ENVIRONMENT != "production":
+        logger.info(
+            f"Skipping morning schedule email to {email} - ENVIRONMENT is {settings.ENVIRONMENT}"
+        )
+        return
+
     base_data = {
         "name": name or "there",
         "app_name": "Maigie",
@@ -444,6 +456,12 @@ async def send_schedule_reminder_email(
     """Sends a schedule reminder email (15 minutes before start)."""
     if not settings.SMTP_HOST:
         logger.warning(f"SMTP not configured. Skipping schedule reminder to {email}")
+        return
+
+    if settings.ENVIRONMENT != "production":
+        logger.info(
+            f"Skipping schedule reminder email to {email} - ENVIRONMENT is {settings.ENVIRONMENT}"
+        )
         return
 
     base_data = {
@@ -537,6 +555,12 @@ async def send_weekly_tips_email(
     """Sends the weekly encouragement/tips email."""
     if not settings.SMTP_HOST:
         logger.warning(f"SMTP not configured. Skipping weekly tips email to {email}")
+        return
+
+    if settings.ENVIRONMENT != "production":
+        logger.info(
+            f"Skipping weekly tips email to {email} - ENVIRONMENT is {settings.ENVIRONMENT}"
+        )
         return
 
     base_data = {
