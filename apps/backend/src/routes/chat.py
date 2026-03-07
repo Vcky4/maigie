@@ -1278,6 +1278,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Parse message - can be plain text or JSON with context
             user_text = raw_message
             context = None
+            temp_id = None
 
             try:
                 # Try to parse as JSON
@@ -1288,6 +1289,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         continue
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
+                    temp_id = message_data.get("tempId")
                     if context:
                         print(f"📥 Received context from frontend: {context}")
             except (json.JSONDecodeError, AttributeError):
@@ -1458,6 +1460,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 print(f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}")
 
             user_message = await db.chatmessage.create(data=user_message_data)
+
+            # 4.1a Send confirmation to client for ID correlation
+            await manager.send_json(
+                {
+                    "type": "message_saved",
+                    "payload": {
+                        "id": user_message.id,
+                        "tempId": temp_id,
+                        "role": "user",
+                        "sessionId": session.id,
+                    },
+                },
+                user.id,
+            )
 
             # Bump session updatedAt to move it to the top of history (Interaction based)
             await db.chatsession.update(
@@ -2332,7 +2348,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             if suggestion_text:
                 create_data["suggestionText"] = suggestion_text
 
-            await db.chatmessage.create(data=create_data)
+            assistant_message = await db.chatmessage.create(data=create_data)
 
             # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
             if suggestion_text:
@@ -2340,13 +2356,27 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 await manager.send_json(
                     {
                         "type": "assistant_final",
+                        "id": assistant_message.id,
                         "content": main_content,
                         "suggestionText": suggestion_text,
                     },
                     user.id,
                 )
-            elif main_content:
-                await manager.send_personal_message(main_content, user.id)
+            else:
+                if main_content:
+                    await manager.send_personal_message(main_content, user.id)
+                # Send confirmation with ID
+                await manager.send_json(
+                    {
+                        "type": "message_saved",
+                        "payload": {
+                            "id": assistant_message.id,
+                            "role": "assistant",
+                            "sessionId": session.id,
+                        },
+                    },
+                    user.id,
+                )
 
             # 14. Send component responses (queries and actions)
             for component_response in query_component_responses + component_responses:
