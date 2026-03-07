@@ -134,6 +134,53 @@ async def merge_generic_sessions(user_id: str, db: Prisma):
     return master_session
 
 
+@router.get("/my-messages", response_model=dict)
+async def get_my_general_session(
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Get the general chat session for the current user.
+    Creates one if it doesn't exist.
+    """
+    session = await merge_generic_sessions(current_user.id, db)
+
+    if not session:
+        # No generic session found - create one
+        # Deactivate others first
+        await db.chatsession.update_many(
+            where={"userId": current_user.id, "isActive": True},
+            data={"isActive": False},
+        )
+        session = await db.chatsession.create(
+            data={"userId": current_user.id, "title": "Chat", "isActive": True}
+        )
+    else:
+        # Mark it active if it wasn't
+        if not session.isActive:
+            await db.chatsession.update_many(
+                where={"userId": current_user.id, "isActive": True},
+                data={"isActive": False},
+            )
+            session = await db.chatsession.update(where={"id": session.id}, data={"isActive": True})
+
+    return {
+        "id": session.id,
+        "title": session.title,
+        "isActive": bool(session.isActive),
+        "createdAt": (
+            session.createdAt.isoformat()
+            if hasattr(session.createdAt, "isoformat")
+            else str(session.createdAt)
+        ),
+        "updatedAt": (
+            session.updatedAt.isoformat()
+            if hasattr(session.updatedAt, "isoformat")
+            else str(session.updatedAt)
+        ),
+    }
+
+
 @router.get("/sessions", response_model=dict)
 async def list_my_chat_sessions(
     current_user: CurrentUser,
@@ -453,7 +500,8 @@ async def get_my_chat_messages(
     current_user: CurrentUser,
     db: DBDep,
     reviewItemId: str | None = Query(default=None),
-    take: int = Query(200, ge=1, le=500),
+    take: int = Query(20, ge=1, le=500),
+    skip: int = Query(0, ge=0),
 ):
     """
     Fetch messages for a given session.
@@ -515,11 +563,12 @@ async def get_my_chat_messages(
             except Exception as e:
                 logger.warning("Failed to seed onboarding message in get_messages: %s", e)
 
-    # Get latest `take` messages then return in chronological order
+    # Get latest `take` messages with optional skip for pagination
     records = await db.chatmessage.find_many(
         where=where,
         order={"createdAt": "desc"},
         take=take,
+        skip=skip,
     )
     records = list(reversed(records))
 
