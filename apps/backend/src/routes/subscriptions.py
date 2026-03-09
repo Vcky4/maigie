@@ -32,6 +32,7 @@ from ..services.subscription_service import (
 from ..services.paystack_subscription_service import (
     initialize_paystack_subscription,
     verify_paystack_transaction,
+    cancel_paystack_subscription,
 )
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,26 @@ async def cancel_user_subscription(current_user: CurrentUser):
     Returns:
         Subscription cancellation details
     """
+    if current_user.paymentProvider == "paystack":
+        try:
+            result = await cancel_paystack_subscription(user=current_user)
+            return CancelSubscriptionResponse(
+                status=result["status"],
+                cancel_at_period_end=result["cancel_at_period_end"],
+                current_period_end=result["current_period_end"].isoformat(),
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+        except Exception as e:
+            logger.error(f"Error canceling Paystack subscription: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to cancel Paystack subscription",
+            )
+
     if not current_user.stripeSubscriptionId:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

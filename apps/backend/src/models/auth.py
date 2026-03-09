@@ -7,7 +7,9 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
+
 
 # --- Token Schemas ---
 
@@ -89,6 +91,7 @@ class UserResponse(BaseModel):
     isOnboarded: bool = False  # noqa: N815
     preferences: UserPreferencesResponse | None = None
     paymentProvider: str | None = None  # "stripe" | "paystack"
+    subscriptionCurrentPeriodEnd: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

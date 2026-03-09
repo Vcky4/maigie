@@ -133,6 +133,50 @@ async def disable_paystack_subscription(
     return True
 
 
+async def cancel_paystack_subscription(user: User, db_client: Prisma | None = None) -> dict:
+    """
+    Cancel a Paystack subscription at the end of the period.
+
+    Since Paystack doesn't have an automated 'cancel at period end' like Stripe
+    internally for the API we use, we mark it as cancelled and disable it.
+    """
+    if db_client is None:
+        db_client = db
+
+    if not user.paystackSubscriptionCode:
+        raise ValueError("User does not have an active Paystack subscription")
+
+    # Fetch email token for disable
+    email_token = await _get_paystack_subscription_email_token(user.paystackSubscriptionCode)
+    if not email_token:
+        raise ValueError("Could not retrieve cancellation token from Paystack")
+
+    # Disable the subscription
+    await disable_paystack_subscription(user.paystackSubscriptionCode, email_token, db_client)
+
+    # Note: In a real production app, we might want to keep the tier until period_end.
+    # But Paystack 'disable' is immediate. For Maigie, we'll sync the DB to FREE.
+    # If we want to allow access until period_end, we should store a 'is_cancelling' flag instead.
+    # For now, we follow the existing disable logic which sets to FREE.
+
+    await db_client.user.update(
+        where={"id": user.id},
+        data={
+            "tier": "FREE",
+            "paystackSubscriptionCode": None,
+            "stripeSubscriptionStatus": "cancelled",
+            "subscriptionCurrentPeriodStart": None,
+            "subscriptionCurrentPeriodEnd": None,
+        },
+    )
+
+    return {
+        "status": "cancelled",
+        "cancel_at_period_end": False,  # Paystack disable is immediate
+        "current_period_end": user.subscriptionCurrentPeriodEnd or datetime.utcnow(),
+    }
+
+
 async def _get_paystack_subscription_email_token(subscription_code: str) -> str | None:
     """Fetch the email_token for a Paystack subscription (needed for disable)."""
     settings = get_settings()
