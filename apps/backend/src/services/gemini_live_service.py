@@ -231,7 +231,7 @@ async def run_gemini_live_bridge(
             )
 
             response = await client.aio.models.generate_content(
-                model="gemini-1.5-flash",
+                model="gemini-2.5-flash",
                 contents=prompt,
             )
 
@@ -553,7 +553,7 @@ async def post_gemini_live_session(
         ) + transcript[:12000]
 
         response = await client.aio.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=prompt,
         )
         text = (response.text or "").strip()
