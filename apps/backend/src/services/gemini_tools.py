@@ -10,7 +10,7 @@ def get_all_tools() -> list[dict[str, Any]]:
     """Return all tool definitions for Gemini."""
     return [
         {
-            "function_declarations": [
+            "functionDeclarations": [
                 # Query tools
                 get_user_courses_tool(),
                 get_user_goals_tool(),
