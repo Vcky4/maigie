@@ -110,6 +110,24 @@ async def delete_session(session_id: str) -> None:
         _sessions.pop(session_id, None)
 
 
+async def update_session_context(
+    session_id: str, topic_id: str | None = None, course_id: str | None = None
+) -> None:
+    """Update active session context (e.g. when user manually navigates to a new topic)."""
+    async with _sessions_lock:
+        if session_id in _sessions:
+            if topic_id:
+                _sessions[session_id]["topic_id"] = topic_id
+            if course_id:
+                _sessions[session_id]["course_id"] = course_id
+            logger.info(
+                "Updated context for session %s: topic_id=%s course_id=%s",
+                session_id,
+                topic_id,
+                course_id,
+            )
+
+
 async def list_sessions_for_user(user_id: str) -> list[dict[str, Any]]:
     """List active session ids for a user."""
     async with _sessions_lock:
@@ -325,37 +343,33 @@ async def run_gemini_live_bridge(
                     fc = part["functionCall"]
                     name = fc.get("name")
                     args = fc.get("args", {})
-                    
+
                     import src.services.gemini_tool_handlers as tool_handlers
+
                     try:
                         result = await tool_handlers.handle_tool_call(
-                            name,
-                            args,
-                            user_id,
-                            {"courseId": course_id, "topicId": topic_id}
+                            name, args, user_id, {"courseId": course_id, "topicId": topic_id}
                         )
                     except Exception as e:
                         result = {"error": str(e)}
 
                     if result.get("action") == "navigate_next":
-                        await send_to_client(json.dumps({
-                            "type": "navigate_next_topic",
-                            "session_id": session_id,
-                        }))
+                        await send_to_client(
+                            json.dumps(
+                                {
+                                    "type": "navigate_next_topic",
+                                    "session_id": session_id,
+                                }
+                            )
+                        )
 
                     tool_resp = {
-                        "toolResponse": {
-                            "functionResponses": [
-                                {
-                                    "name": name,
-                                    "response": result
-                                }
-                            ]
-                        }
+                        "toolResponse": {"functionResponses": [{"name": name, "response": result}]}
                     }
                     await ws_conn.send(json.dumps(tool_resp))
 
     from src.services.gemini_tools import get_all_tools
+
     setup = {
         "setup": {
             "model": model,
@@ -421,7 +435,12 @@ async def run_gemini_live_bridge(
                                 if msg_data.get("type") == "client_message":
                                     payload = {
                                         "clientContent": {
-                                            "turns": [{"role": "user", "parts": [{"text": msg_data.get("text")}]}],
+                                            "turns": [
+                                                {
+                                                    "role": "user",
+                                                    "parts": [{"text": msg_data.get("text")}],
+                                                }
+                                            ],
                                             "turnComplete": True,
                                         }
                                     }

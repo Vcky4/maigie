@@ -29,6 +29,7 @@ from src.services.gemini_live_service import (
     list_sessions_for_user,
     post_gemini_live_session,
     run_gemini_live_bridge,
+    update_session_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -301,6 +302,16 @@ async def gemini_live_websocket(
 
                 if msg_type == "ping":
                     await send_to_client(json.dumps({"type": "pong", "session_id": msg_session_id}))
+                    continue
+
+                if msg_type == "update_context" and msg_session_id == current_session_id:
+                    new_topic_id = data.get("topic_id")
+                    new_course_id = data.get("course_id")
+                    await update_session_context(
+                        msg_session_id, topic_id=new_topic_id, course_id=new_course_id
+                    )
+                    current_topic_id = new_topic_id or current_topic_id
+                    current_course_id = new_course_id or current_course_id
                     continue
 
             if "bytes" in raw and raw["bytes"]:
