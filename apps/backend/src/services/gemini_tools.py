@@ -32,6 +32,7 @@ def get_all_tools() -> list[dict[str, Any]]:
                 update_course_outline_tool(),
                 delete_course_tool(),
                 save_user_fact_tool(),
+                complete_topic_and_continue_tool(),
                 # Agentic tools
                 create_study_plan_tool(),
                 get_learning_insights_tool(),
@@ -644,6 +645,15 @@ def save_user_fact_tool() -> dict[str, Any]:
             },
             "required": ["category", "content"],
         },
+    }
+
+
+def complete_topic_and_continue_tool() -> dict[str, Any]:
+    """Tool definition for marking a topic as completed and navigating to the next."""
+    return {
+        "name": "complete_topic_and_continue",
+        "description": "Mark the current study topic as completed and navigate the user to the next topic in the course. Use this ONLY when the user explicitly agrees to finish the current topic and move on.",
+        "parameters": {"type": "object", "properties": {}},
     }
 
 

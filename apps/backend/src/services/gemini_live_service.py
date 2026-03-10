@@ -271,7 +271,7 @@ async def run_gemini_live_bridge(
                 if session_id in _sessions:
                     _sessions[session_id]["is_updating_note"] = False
 
-    async def handle_server_content(sc: dict[str, Any]) -> None:
+    async def handle_server_content(sc: dict[str, Any], ws_conn: Any = None) -> None:
         if sc.get("interrupted"):
             await send_to_client(json.dumps({"type": "interrupted", "session_id": session_id}))
         if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
@@ -321,13 +321,48 @@ async def run_gemini_live_bridge(
                         await send_to_client(audio_bytes)
                     except Exception as e:
                         logger.warning("Failed to decode audio from modelTurn: %s", e)
+                if "functionCall" in part and ws_conn:
+                    fc = part["functionCall"]
+                    name = fc.get("name")
+                    args = fc.get("args", {})
+                    
+                    import src.services.gemini_tool_handlers as tool_handlers
+                    try:
+                        result = await tool_handlers.handle_tool_call(
+                            name,
+                            args,
+                            user_id,
+                            {"courseId": course_id, "topicId": topic_id}
+                        )
+                    except Exception as e:
+                        result = {"error": str(e)}
 
+                    if result.get("action") == "navigate_next":
+                        await send_to_client(json.dumps({
+                            "type": "navigate_next_topic",
+                            "session_id": session_id,
+                        }))
+
+                    tool_resp = {
+                        "toolResponse": {
+                            "functionResponses": [
+                                {
+                                    "name": name,
+                                    "response": result
+                                }
+                            ]
+                        }
+                    }
+                    await ws_conn.send(json.dumps(tool_resp))
+
+    from src.services.gemini_tools import get_all_tools
     setup = {
         "setup": {
             "model": model,
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
             },
+            "tools": get_all_tools(),
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
             "systemInstruction": {
@@ -350,7 +385,7 @@ async def run_gemini_live_bridge(
                     setup_done = True
                     break
                 if "serverContent" in msg:
-                    await handle_server_content(msg["serverContent"])
+                    await handle_server_content(msg["serverContent"], ws_conn=ws)
 
             # Notify client that session is ready for audio
             await send_to_client(json.dumps({"type": "session_started", "session_id": session_id}))
@@ -380,6 +415,19 @@ async def run_gemini_live_bridge(
                                 }
                             }
                             await ws.send(json.dumps(payload))
+                        elif isinstance(client_msg, str):
+                            try:
+                                msg_data = json.loads(client_msg)
+                                if msg_data.get("type") == "client_message":
+                                    payload = {
+                                        "clientContent": {
+                                            "turns": [{"role": "user", "parts": [{"text": msg_data.get("text")}]}],
+                                            "turnComplete": True,
+                                        }
+                                    }
+                                    await ws.send(json.dumps(payload))
+                            except Exception as e:
+                                logger.warning("Failed to process client text message: %s", e)
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
@@ -393,7 +441,7 @@ async def run_gemini_live_bridge(
                             raw = raw.decode("utf-8")
                         msg = json.loads(raw)
                         if "serverContent" in msg:
-                            await handle_server_content(msg["serverContent"])
+                            await handle_server_content(msg["serverContent"], ws_conn=ws)
                 except asyncio.CancelledError:
                     pass
                 except websockets.exceptions.ConnectionClosed:
