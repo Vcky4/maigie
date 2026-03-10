@@ -346,9 +346,20 @@ async def run_gemini_live_bridge(
 
                     import src.services.gemini_tool_handlers as tool_handlers
 
+                    # Fetch current context from in-memory store dynamically to ensure it's up to date
+                    current_course_id = None
+                    current_topic_id = None
+                    async with _sessions_lock:
+                        session_data = _sessions.get(session_id, {})
+                        current_course_id = session_data.get("course_id")
+                        current_topic_id = session_data.get("topic_id")
+
                     try:
                         result = await tool_handlers.handle_tool_call(
-                            name, args, user_id, {"courseId": course_id, "topicId": topic_id}
+                            name,
+                            args,
+                            user_id,
+                            {"courseId": current_course_id, "topicId": current_topic_id},
                         )
                     except Exception as e:
                         result = {"error": str(e)}
