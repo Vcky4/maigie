@@ -343,6 +343,9 @@ async def run_gemini_live_bridge(
                     fc = part["functionCall"]
                     name = fc.get("name")
                     args = fc.get("args", {})
+                    call_id = fc.get("id")
+                    
+                    logger.info("Received functionCall from Gemini: name=%s, id=%s, args=%s", name, call_id, args)
 
                     import src.services.gemini_tool_handlers as tool_handlers
 
@@ -355,16 +358,20 @@ async def run_gemini_live_bridge(
                         current_topic_id = session_data.get("topic_id")
 
                     try:
+                        logger.info("Executing tool %s with context courseId=%s, topicId=%s", name, current_course_id, current_topic_id)
                         result = await tool_handlers.handle_tool_call(
                             name,
                             args,
                             user_id,
                             {"courseId": current_course_id, "topicId": current_topic_id},
                         )
+                        logger.info("Tool %s executed successfully, result: %s", name, result)
                     except Exception as e:
+                        logger.error("Error executing tool %s: %s", name, e, exc_info=True)
                         result = {"error": str(e)}
 
                     if result.get("action") == "navigate_next":
+                        logger.info("Tool returned navigate_next, sending to client")
                         await send_to_client(
                             json.dumps(
                                 {
@@ -374,10 +381,15 @@ async def run_gemini_live_bridge(
                             )
                         )
 
+                    func_resp = {"name": name, "response": result}
+                    if call_id:
+                        func_resp["id"] = call_id
+
                     tool_resp = {
-                        "toolResponse": {"functionResponses": [{"name": name, "response": result}]}
+                        "toolResponse": {"functionResponses": [func_resp]}
                     }
                     await ws_conn.send(json.dumps(tool_resp))
+                    logger.info("Sent toolResponse back to Gemini: %s", tool_resp)
 
     from src.services.gemini_tools import get_all_tools
 
