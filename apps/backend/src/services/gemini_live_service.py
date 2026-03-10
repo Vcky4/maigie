@@ -344,8 +344,13 @@ async def run_gemini_live_bridge(
                     name = fc.get("name")
                     args = fc.get("args", {})
                     call_id = fc.get("id")
-                    
-                    logger.info("Received functionCall from Gemini: name=%s, id=%s, args=%s", name, call_id, args)
+
+                    logger.info(
+                        "Received functionCall from Gemini: name=%s, id=%s, args=%s",
+                        name,
+                        call_id,
+                        args,
+                    )
 
                     import src.services.gemini_tool_handlers as tool_handlers
 
@@ -358,7 +363,12 @@ async def run_gemini_live_bridge(
                         current_topic_id = session_data.get("topic_id")
 
                     try:
-                        logger.info("Executing tool %s with context courseId=%s, topicId=%s", name, current_course_id, current_topic_id)
+                        logger.info(
+                            "Executing tool %s with context courseId=%s, topicId=%s",
+                            name,
+                            current_course_id,
+                            current_topic_id,
+                        )
                         result = await tool_handlers.handle_tool_call(
                             name,
                             args,
@@ -385,9 +395,7 @@ async def run_gemini_live_bridge(
                     if call_id:
                         func_resp["id"] = call_id
 
-                    tool_resp = {
-                        "toolResponse": {"functionResponses": [func_resp]}
-                    }
+                    tool_resp = {"toolResponse": {"functionResponses": [func_resp]}}
                     await ws_conn.send(json.dumps(tool_resp))
                     logger.info("Sent toolResponse back to Gemini: %s", tool_resp)
 
