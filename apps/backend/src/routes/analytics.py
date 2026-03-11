@@ -1341,14 +1341,15 @@ async def _check_and_unlock_achievements(db: PrismaClient, user_id: str, session
             should_unlock = total_messages >= milestone_value
 
         if should_unlock:
+            from prisma import Json
             await db.achievement.create(
                 data={
-                    "userId": user_id,
+                    "user": {"connect": {"id": user_id}},
                     "achievementType": achievement_type,
                     "title": title,
                     "description": description,
                     "icon": icon,
-                    "metadata": metadata,
+                    "metadata": Json(metadata),
                 }
             )
             unlocked_types.add(achievement_type)
