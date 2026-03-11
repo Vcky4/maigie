@@ -1342,6 +1342,7 @@ async def _check_and_unlock_achievements(db: PrismaClient, user_id: str, session
 
         if should_unlock:
             from prisma import Json
+
             await db.achievement.create(
                 data={
                     "user": {"connect": {"id": user_id}},
