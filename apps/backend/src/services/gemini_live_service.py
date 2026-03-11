@@ -145,6 +145,7 @@ async def run_gemini_live_bridge(
     system_instruction: str | None = None,
     on_done: Callable[[], Any] | None = None,
     conversation_turns: list[dict[str, str]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> None:
     """
     Connect to Google Live API and bridge messages between client and Gemini.
@@ -399,13 +400,15 @@ async def run_gemini_live_bridge(
 
     from src.services.gemini_tools import get_all_tools
 
+    session_tools = tools if tools is not None else get_all_tools()
+
     setup = {
         "setup": {
             "model": model,
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
             },
-            "tools": get_all_tools(),
+            "tools": session_tools,
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
             "systemInstruction": {

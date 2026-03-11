@@ -652,9 +652,28 @@ def complete_topic_and_continue_tool() -> dict[str, Any]:
     """Tool definition for marking a topic as completed and navigating to the next."""
     return {
         "name": "complete_topic_and_continue",
-        "description": "Mark the current study topic as completed and navigate the user to the next topic in the course. Use this ONLY when the user explicitly agrees to finish the current topic and move on.",
+        "description": (
+            "Mark the current study topic as completed and navigate the user to the next topic. "
+            "Call this tool when the user agrees to move on to the next topic, says they are done "
+            "with the current topic, or explicitly asks to continue to the next one."
+        ),
         "parameters": {"type": "object", "properties": {}},
     }
+
+
+def get_study_tools() -> list[dict[str, Any]]:
+    """Return only study-relevant tools for Gemini Live voice sessions.
+
+    Keeping the tool list minimal improves reliability of function calling
+    in the native audio model.
+    """
+    return [
+        {
+            "functionDeclarations": [
+                complete_topic_and_continue_tool(),
+            ]
+        }
+    ]
 
 
 # ==========================================
