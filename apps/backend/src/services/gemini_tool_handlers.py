@@ -60,6 +60,7 @@ async def handle_tool_call(
         "get_learning_insights": handle_get_learning_insights,
         "get_pending_nudges": handle_get_pending_nudges,
         "email_user": handle_email_user,
+        "complete_topic_and_continue": handle_complete_topic_and_continue,
     }
 
     handler = handlers.get(tool_name)
@@ -775,6 +776,34 @@ async def handle_update_course_outline(
     except Exception as e:
         logger.error(f"update_course_outline error: {e}", exc_info=True)
         return {"status": "error", "message": f"Failed to update outline: {e}"}
+
+
+async def handle_complete_topic_and_continue(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle complete_topic_and_continue tool call.
+    Marks the topic completed in the DB and returns an action to navigate next.
+    """
+    topic_id = (context or {}).get("topicId")
+    if topic_id:
+        import asyncio
+
+        async def mark_complete() -> None:
+            try:
+                await db.topic.update(where={"id": topic_id}, data={"completed": True})
+            except Exception as e:
+                logger.warning(f"Failed to mark topic {topic_id} complete: {e}")
+
+        # Run DB update in background to notify client faster
+        asyncio.create_task(mark_complete())
+
+    return {
+        "status": "success",
+        "action": "navigate_next",
+        "message": "System has marked the topic as completed, notifying client to navigate to the next topic.",
+    }
 
 
 # ==========================================

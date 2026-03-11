@@ -24,9 +24,7 @@ logger = logging.getLogger(__name__)
 # See https://ai.google.dev/gemini-api/docs/live for current model names.
 DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 GEMINI_LIVE_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-DEFAULT_LIVE_GREETING_PROMPT = (
-    "Start with a brief greeting and ask what the learner wants to study."
-)
+DEFAULT_LIVE_GREETING_PROMPT = "Start with a brief, warm greeting and immediately begin discussing the topic. Keep it concise - no more than two sentences."
 
 
 def _get_api_key() -> str | None:
@@ -48,17 +46,45 @@ async def create_session(
     study_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Create a new Gemini Live conversation session. Returns session_id and metadata."""
+    # Ensure only one active session per user - clear existing ones
+    async with _sessions_lock:
+        to_delete = [sid for sid, data in _sessions.items() if data.get("user_id") == user_id]
+        if to_delete:
+            logger.info("Ending previous sessions for user %s: %s", user_id, to_delete)
+            for sid in to_delete:
+                _sessions.pop(sid, None)
+
+    # Fetch existing note content if topic_id is provided
+    note_content = ""
+    if topic_id:
+        try:
+            from src.core.database import db
+
+            topic = await db.topic.find_unique(where={"id": topic_id}, include={"note": True})
+            if topic and topic.note and topic.note.content:
+                note_content = topic.note.content
+                logger.info("Fetched existing note content for topic %s", topic_id)
+        except Exception as e:
+            logger.warning("Failed to fetch existing note for session context: %s", e)
+
     session_id = str(uuid.uuid4())
+
+    # Enrich system instruction with note context
+    final_instruction = system_instruction or "You are a helpful and friendly AI academic mentor."
+    if note_content:
+        final_instruction += f"\n\nHere are the current notes for this topic that you should reference:\n{note_content}"
+
     async with _sessions_lock:
         _sessions[session_id] = {
             "user_id": user_id,
-            "system_instruction": system_instruction
-            or "You are a helpful and friendly AI assistant.",
+            "system_instruction": final_instruction,
             "course_id": course_id,
             "topic_id": topic_id,
             "chat_session_id": chat_session_id,
             "study_session_id": study_session_id,
             "created_at": asyncio.get_event_loop().time(),
+            "turns_since_last_note_update": 0,
+            "is_updating_note": False,
         }
     return {
         "session_id": session_id,
@@ -82,6 +108,24 @@ async def delete_session(session_id: str) -> None:
         _sessions.pop(session_id, None)
 
 
+async def update_session_context(
+    session_id: str, topic_id: str | None = None, course_id: str | None = None
+) -> None:
+    """Update active session context (e.g. when user manually navigates to a new topic)."""
+    async with _sessions_lock:
+        if session_id in _sessions:
+            if topic_id:
+                _sessions[session_id]["topic_id"] = topic_id
+            if course_id:
+                _sessions[session_id]["course_id"] = course_id
+            logger.info(
+                "Updated context for session %s: topic_id=%s course_id=%s",
+                session_id,
+                topic_id,
+                course_id,
+            )
+
+
 async def list_sessions_for_user(user_id: str) -> list[dict[str, Any]]:
     """List active session ids for a user."""
     async with _sessions_lock:
@@ -101,6 +145,7 @@ async def run_gemini_live_bridge(
     system_instruction: str | None = None,
     on_done: Callable[[], Any] | None = None,
     conversation_turns: list[dict[str, str]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> None:
     """
     Connect to Google Live API and bridge messages between client and Gemini.
@@ -144,7 +189,106 @@ async def run_gemini_live_bridge(
                 return
         conversation_turns.append({"role": role, "text": normalized})
 
-    async def handle_server_content(sc: dict[str, Any]) -> None:
+        # Real-time note update logic
+        asyncio.create_task(check_and_trigger_note_update())
+
+    async def check_and_trigger_note_update():
+        async with _sessions_lock:
+            session = _sessions.get(session_id)
+            if not session or not session.get("topic_id") or session.get("is_updating_note"):
+                return
+
+            session["turns_since_last_note_update"] += 1
+            # Update every 6 turns (roughly 3 user, 3 assistant exchanges)
+            if session["turns_since_last_note_update"] >= 6:
+                session["turns_since_last_note_update"] = 0
+                session["is_updating_note"] = True
+                # Trigger the actual update in a separate task so we don't block
+                asyncio.create_task(perform_realtime_note_update(session))
+
+    async def perform_realtime_note_update(session: dict[str, Any]):
+        try:
+            topic_id = session.get("topic_id")
+            course_id = session.get("course_id")
+            # Get last 10 turns for context
+            recent_turns = conversation_turns[-10:] if conversation_turns else []
+            if len(recent_turns) < 4:
+                return
+
+            transcript = "\n".join(f"{t['role'].upper()}: {t['text']}" for t in recent_turns)
+
+            from google import genai
+
+            client = genai.Client(api_key=_get_api_key())
+
+            prompt = (
+                "You are an expert note-taker. Below is a snippet of a voice study conversation transcript between a student and a mentor.\n"
+                "Extract the most important new academic points or insights that should be added to the student's study note.\n"
+                "Format the output as concise bullet points. ONLY output the bullet points, no other text.\n"
+                "If no new important points are found, respond with 'NO_NEW_POINTS'.\n\n"
+                f"Transcript snippet:\n{transcript}"
+            )
+
+            response = await client.aio.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+
+            new_points = (response.text or "").strip()
+            if not new_points or "NO_NEW_POINTS" in new_points:
+                return
+
+            # Update database
+            from src.core.database import db
+
+            # Fetch existing note or create one
+            note = await db.note.find_first(where={"topicId": topic_id})
+
+            if note:
+                # Append to existing note
+                current_content = note.content or ""
+                updated_content = f"{current_content}\n\n### Insights from discussion\n{new_points}"
+                # Trim if too long
+                if len(updated_content) > 50000:
+                    updated_content = updated_content[-50000:]
+
+                updated_note = await db.note.update(
+                    where={"id": note.id}, data={"content": updated_content}
+                )
+            else:
+                # Create new note
+                from src.models.notes import NoteCreate
+                from src.services import note_service
+
+                topic = await db.topic.find_unique(where={"id": topic_id})
+                title = f"Notes: {topic.title}" if topic else "Study Session Notes"
+
+                note_data = NoteCreate(
+                    title=title, content=new_points, topicId=topic_id, courseId=course_id
+                )
+                updated_note = await note_service.create_note(db, user_id, note_data)
+
+            # Notify client
+            await send_to_client(
+                json.dumps(
+                    {
+                        "type": "note_updated",
+                        "session_id": session_id,
+                        "note_id": updated_note.id,
+                        "content": updated_note.content,
+                    }
+                )
+            )
+            logger.info("Real-time note update completed for session %s", session_id)
+
+        except Exception as e:
+            logger.error("Failed to perform real-time note update: %s", e)
+        finally:
+            async with _sessions_lock:
+                if session_id in _sessions:
+                    _sessions[session_id]["is_updating_note"] = False
+
+    async def handle_server_content(sc: dict[str, Any], ws_conn: Any = None) -> None:
         if sc.get("interrupted"):
             await send_to_client(json.dumps({"type": "interrupted", "session_id": session_id}))
         if "inputTranscription" in sc and sc["inputTranscription"].get("text"):
@@ -194,8 +338,70 @@ async def run_gemini_live_bridge(
                         await send_to_client(audio_bytes)
                     except Exception as e:
                         logger.warning("Failed to decode audio from modelTurn: %s", e)
+                if "functionCall" in part and ws_conn:
+                    fc = part["functionCall"]
+                    name = fc.get("name")
+                    args = fc.get("args", {})
+                    call_id = fc.get("id")
 
-    setup = {
+                    logger.info(
+                        "Received functionCall from Gemini: name=%s, id=%s, args=%s",
+                        name,
+                        call_id,
+                        args,
+                    )
+
+                    import src.services.gemini_tool_handlers as tool_handlers
+
+                    current_course_id = None
+                    current_topic_id = None
+                    async with _sessions_lock:
+                        session_data = _sessions.get(session_id, {})
+                        current_course_id = session_data.get("course_id")
+                        current_topic_id = session_data.get("topic_id")
+
+                    try:
+                        logger.info(
+                            "Executing tool %s with context courseId=%s, topicId=%s",
+                            name,
+                            current_course_id,
+                            current_topic_id,
+                        )
+                        result = await tool_handlers.handle_tool_call(
+                            name,
+                            args,
+                            user_id,
+                            {"courseId": current_course_id, "topicId": current_topic_id},
+                        )
+                        logger.info("Tool %s executed successfully, result: %s", name, result)
+                    except Exception as e:
+                        logger.error("Error executing tool %s: %s", name, e, exc_info=True)
+                        result = {"error": str(e)}
+
+                    if result.get("action") == "navigate_next":
+                        logger.info("Tool returned navigate_next, sending to client")
+                        await send_to_client(
+                            json.dumps(
+                                {
+                                    "type": "navigate_next_topic",
+                                    "session_id": session_id,
+                                }
+                            )
+                        )
+
+                    func_resp = {"name": name, "response": result}
+                    if call_id:
+                        func_resp["id"] = call_id
+
+                    tool_resp = {"toolResponse": {"functionResponses": [func_resp]}}
+                    await ws_conn.send(json.dumps(tool_resp))
+                    logger.info("Sent toolResponse back to Gemini: %s", tool_resp)
+
+    from src.services.gemini_tools import get_all_tools
+
+    session_tools = tools if tools is not None else get_all_tools()
+
+    setup: dict[str, Any] = {
         "setup": {
             "model": model,
             "generationConfig": {
@@ -208,6 +414,9 @@ async def run_gemini_live_bridge(
             },
         }
     }
+
+    if session_tools:
+        setup["setup"]["tools"] = session_tools
 
     try:
         async with websockets.connect(url) as ws:  # type: ignore[union-attr]
@@ -223,7 +432,7 @@ async def run_gemini_live_bridge(
                     setup_done = True
                     break
                 if "serverContent" in msg:
-                    await handle_server_content(msg["serverContent"])
+                    await handle_server_content(msg["serverContent"], ws_conn=ws)
 
             # Notify client that session is ready for audio
             await send_to_client(json.dumps({"type": "session_started", "session_id": session_id}))
@@ -253,6 +462,24 @@ async def run_gemini_live_bridge(
                                 }
                             }
                             await ws.send(json.dumps(payload))
+                        elif isinstance(client_msg, str):
+                            try:
+                                msg_data = json.loads(client_msg)
+                                if msg_data.get("type") == "client_message":
+                                    payload = {
+                                        "clientContent": {
+                                            "turns": [
+                                                {
+                                                    "role": "user",
+                                                    "parts": [{"text": msg_data.get("text")}],
+                                                }
+                                            ],
+                                            "turnComplete": True,
+                                        }
+                                    }
+                                    await ws.send(json.dumps(payload))
+                            except Exception as e:
+                                logger.warning("Failed to process client text message: %s", e)
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
@@ -266,7 +493,7 @@ async def run_gemini_live_bridge(
                             raw = raw.decode("utf-8")
                         msg = json.loads(raw)
                         if "serverContent" in msg:
-                            await handle_server_content(msg["serverContent"])
+                            await handle_server_content(msg["serverContent"], ws_conn=ws)
                 except asyncio.CancelledError:
                     pass
                 except websockets.exceptions.ConnectionClosed:
@@ -359,7 +586,7 @@ async def post_gemini_live_session(
         ) + transcript[:12000]
 
         response = await client.aio.models.generate_content(
-            model="gemini-3-flash-preview",
+            model="gemini-2.5-flash",
             contents=prompt,
         )
         text = (response.text or "").strip()

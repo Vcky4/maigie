@@ -29,6 +29,7 @@ from src.services.gemini_live_service import (
     list_sessions_for_user,
     post_gemini_live_session,
     run_gemini_live_bridge,
+    update_session_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -277,6 +278,11 @@ async def gemini_live_websocket(
                     async def receive_from_client() -> str | bytes | None:
                         return await client_queue.get()
 
+                    # No tools for voice study sessions — the native audio model
+                    # doesn't reliably emit functionCalls. Topic completion is
+                    # detected client-side from the AI's spoken output instead.
+                    session_tools: list[dict] | None = [] if session.get("topic_id") else None
+
                     bridge_task = asyncio.create_task(
                         run_gemini_live_bridge(
                             session_id=msg_session_id,
@@ -286,6 +292,7 @@ async def gemini_live_websocket(
                             system_instruction=session.get("system_instruction"),
                             on_done=on_bridge_done,
                             conversation_turns=conversation_turns,
+                            tools=session_tools,
                         )
                     )
                     continue
@@ -301,6 +308,16 @@ async def gemini_live_websocket(
 
                 if msg_type == "ping":
                     await send_to_client(json.dumps({"type": "pong", "session_id": msg_session_id}))
+                    continue
+
+                if msg_type == "update_context" and msg_session_id == current_session_id:
+                    new_topic_id = data.get("topic_id")
+                    new_course_id = data.get("course_id")
+                    await update_session_context(
+                        msg_session_id, topic_id=new_topic_id, course_id=new_course_id
+                    )
+                    current_topic_id = new_topic_id or current_topic_id
+                    current_course_id = new_course_id or current_course_id
                     continue
 
             if "bytes" in raw and raw["bytes"]:

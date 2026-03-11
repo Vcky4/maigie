@@ -321,6 +321,8 @@ async def create_my_chat_session(
             res = await db.course.find_unique(where={"id": courseId})
             if res:
                 title = res.title
+            else:
+                courseId = None
         elif topicId:
             res = await db.topic.find_unique(where={"id": topicId}, include={"module": True})
             if res:
@@ -328,14 +330,20 @@ async def create_my_chat_session(
                 actual_moduleId = res.moduleId
                 if res.module and not courseId:
                     courseId = res.module.courseId
+            else:
+                topicId = None
         elif examPrepId:
             res = await db.examprep.find_unique(where={"id": examPrepId})
             if res:
                 title = res.subject
+            else:
+                examPrepId = None
         elif noteId:
             res = await db.note.find_unique(where={"id": noteId})
             if res:
                 title = res.title
+            else:
+                noteId = None
 
         # Create a new resource-scoped session
         await db.chatsession.update_many(
