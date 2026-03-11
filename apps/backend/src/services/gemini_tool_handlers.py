@@ -788,10 +788,16 @@ async def handle_complete_topic_and_continue(
     """
     topic_id = (context or {}).get("topicId")
     if topic_id:
-        try:
-            await db.topic.update(where={"id": topic_id}, data={"completed": True})
-        except Exception as e:
-            logger.warning(f"Failed to mark topic {topic_id} complete: {e}")
+        import asyncio
+
+        async def mark_complete() -> None:
+            try:
+                await db.topic.update(where={"id": topic_id}, data={"completed": True})
+            except Exception as e:
+                logger.warning(f"Failed to mark topic {topic_id} complete: {e}")
+
+        # Run DB update in background to notify client faster
+        asyncio.create_task(mark_complete())
 
     return {
         "status": "success",
