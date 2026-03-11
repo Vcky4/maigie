@@ -24,9 +24,7 @@ logger = logging.getLogger(__name__)
 # See https://ai.google.dev/gemini-api/docs/live for current model names.
 DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
 GEMINI_LIVE_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-DEFAULT_LIVE_GREETING_PROMPT = (
-    "Start with a brief greeting and ask what the learner wants to study."
-)
+DEFAULT_LIVE_GREETING_PROMPT = "Start with a brief, warm greeting and immediately begin discussing the topic. Keep it concise - no more than two sentences."
 
 
 def _get_api_key() -> str | None:
