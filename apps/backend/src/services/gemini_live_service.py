@@ -353,7 +353,6 @@ async def run_gemini_live_bridge(
 
                     import src.services.gemini_tool_handlers as tool_handlers
 
-                    # Fetch current context from in-memory store dynamically to ensure it's up to date
                     current_course_id = None
                     current_topic_id = None
                     async with _sessions_lock:
@@ -402,13 +401,12 @@ async def run_gemini_live_bridge(
 
     session_tools = tools if tools is not None else get_all_tools()
 
-    setup = {
+    setup: dict[str, Any] = {
         "setup": {
             "model": model,
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
             },
-            "tools": session_tools,
             "inputAudioTranscription": {},
             "outputAudioTranscription": {},
             "systemInstruction": {
@@ -416,6 +414,9 @@ async def run_gemini_live_bridge(
             },
         }
     }
+
+    if session_tools:
+        setup["setup"]["tools"] = session_tools
 
     try:
         async with websockets.connect(url) as ws:  # type: ignore[union-attr]

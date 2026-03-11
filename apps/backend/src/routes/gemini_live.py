@@ -278,13 +278,10 @@ async def gemini_live_websocket(
                     async def receive_from_client() -> str | bytes | None:
                         return await client_queue.get()
 
-                    # Use minimal study-only tools for voice study sessions
-                    # to improve tool-calling reliability in the native audio model
-                    session_tools = None
-                    if session.get("topic_id"):
-                        from src.services.gemini_tools import get_study_tools
-
-                        session_tools = get_study_tools()
+                    # No tools for voice study sessions — the native audio model
+                    # doesn't reliably emit functionCalls. Topic completion is
+                    # detected client-side from the AI's spoken output instead.
+                    session_tools: list[dict] | None = [] if session.get("topic_id") else None
 
                     bridge_task = asyncio.create_task(
                         run_gemini_live_bridge(
