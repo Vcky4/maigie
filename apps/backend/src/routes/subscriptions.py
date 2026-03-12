@@ -329,7 +329,8 @@ async def cancel_user_subscription(current_user: CurrentUser):
     """
     Cancel the current user's subscription.
 
-    The subscription will remain active until the end of the current billing period.
+    The subscription will remain active until the end of the current billing period
+    for Stripe, but is cancelled immediately for Paystack.
 
     Args:
         current_user: Current authenticated user
@@ -337,7 +338,17 @@ async def cancel_user_subscription(current_user: CurrentUser):
     Returns:
         Subscription cancellation details
     """
-    if current_user.paymentProvider == "paystack":
+    # Determine the effective payment provider
+    provider = current_user.paymentProvider
+
+    # If provider is not explicitly set, try to infer it from existing subscription IDs
+    if not provider:
+        if current_user.paystackSubscriptionCode:
+            provider = "paystack"
+        elif current_user.stripeSubscriptionId:
+            provider = "stripe"
+
+    if provider == "paystack":
         try:
             result = await cancel_paystack_subscription(user=current_user)
             return CancelSubscriptionResponse(
@@ -357,6 +368,7 @@ async def cancel_user_subscription(current_user: CurrentUser):
                 detail="Failed to cancel Paystack subscription",
             )
 
+    # For Stripe or default fallback
     if not current_user.stripeSubscriptionId:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
