@@ -147,8 +147,10 @@ async def cancel_paystack_subscription(user: User, db_client: Prisma | None = No
         raise ValueError("User does not have an active Paystack subscription")
 
     # Fetch email token for disable
+    logger.info(f"Fetching Paystack email token for sub {user.paystackSubscriptionCode}")
     email_token = await _get_paystack_subscription_email_token(user.paystackSubscriptionCode)
     if not email_token:
+        logger.warning(f"Could not retrieve cancellation token from Paystack for {user.id}")
         raise ValueError("Could not retrieve cancellation token from Paystack")
 
     # Disable the subscription
@@ -189,6 +191,9 @@ async def _get_paystack_subscription_email_token(subscription_code: str) -> str 
             headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
         )
     data = resp.json()
+    logger.info(
+        f"Paystack subscription fetch response status: {resp.status_code}, status_field: {data.get('status')}"
+    )
     if data.get("status") and data.get("data"):
         return data["data"].get("email_token")
     return None
