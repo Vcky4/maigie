@@ -392,28 +392,55 @@ async def create_checkout_session(
                 active_subscription = subscriptions.data[0]
                 logger.info(
                     f"Found active Stripe subscription {active_subscription.id} for customer {customer_id}, "
-                    f"but user {user.id} doesn't have it in database. Updating database and modifying subscription."
+                    f"but user {user.id} doesn't have it in database. Performing full synchronization."
                 )
-                # Update user record with subscription ID
-                await db.user.update(
-                    where={"id": user.id},
-                    data={"stripeSubscriptionId": active_subscription.id},
+
+                # Perform full synchronization from Stripe
+                updated_user = await update_user_subscription_from_stripe(
+                    active_subscription.id, db
                 )
-                # Refresh user object
-                user.stripeSubscriptionId = active_subscription.id
-                # Now try to modify
-                result = await modify_existing_subscription(user, price_id)
-                logger.info(
-                    f"Successfully modified subscription for user {user.id} after syncing: "
-                    f"upgrade={result['is_upgrade']}, subscription_id={result['subscription_id']}"
-                )
-                return {
-                    "session_id": result["subscription_id"],
-                    "url": None,
-                    "modified": True,
-                    "is_upgrade": result["is_upgrade"],
-                    "current_period_end": result["current_period_end"].isoformat(),
-                }
+                if not updated_user:
+                    # Fallback to manual ID update if standard sync fails
+                    await db.user.update(
+                        where={"id": user.id},
+                        data={"stripeSubscriptionId": active_subscription.id},
+                    )
+                    user.stripeSubscriptionId = active_subscription.id
+                else:
+                    user = updated_user
+
+                # Check if we still need to modify (maybe sync already put them on the right tier)
+                try:
+                    result = await modify_existing_subscription(user, price_id)
+                    logger.info(
+                        f"Successfully modified subscription for user {user.id} after syncing: "
+                        f"upgrade={result['is_upgrade']}, subscription_id={result['subscription_id']}"
+                    )
+                    return {
+                        "session_id": result["subscription_id"],
+                        "url": None,
+                        "modified": True,
+                        "is_upgrade": result["is_upgrade"],
+                        "current_period_end": result["current_period_end"].isoformat(),
+                    }
+                except ValueError as e:
+                    if "already subscribed to this plan" in str(e).lower():
+                        logger.info(
+                            f"User {user.id} is already subscribed to the requested plan after sync."
+                        )
+                        return {
+                            "session_id": user.stripeSubscriptionId,
+                            "url": None,
+                            "modified": False,
+                            "is_upgrade": False,
+                            "current_period_end": (
+                                user.subscriptionCurrentPeriodEnd.isoformat()
+                                if user.subscriptionCurrentPeriodEnd
+                                else None
+                            ),
+                        }
+                    # For other ValueErrors, re-raise to catch in outer block
+                    raise
         except stripe.error.StripeError as e:
             logger.warning(
                 f"Could not check Stripe for existing subscriptions for customer {customer_id}: {e}"
