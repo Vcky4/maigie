@@ -362,7 +362,27 @@ async def create_checkout_session(
                 "current_period_end": result["current_period_end"].isoformat(),
             }
         except ValueError as e:
-            # If same plan or other validation error, raise it
+            if "already subscribed to this plan" in str(e).lower():
+                # User already has this plan — sync tier from Stripe and return success
+                logger.info(
+                    f"User {user.id} already subscribed to requested plan. "
+                    "Syncing subscription data from Stripe."
+                )
+                updated_user = await update_user_subscription_from_stripe(user.stripeSubscriptionId)
+                if updated_user:
+                    user = updated_user
+                return {
+                    "session_id": user.stripeSubscriptionId,
+                    "url": None,
+                    "modified": False,
+                    "is_upgrade": False,
+                    "current_period_end": (
+                        user.subscriptionCurrentPeriodEnd.isoformat()
+                        if user.subscriptionCurrentPeriodEnd
+                        else None
+                    ),
+                }
+            # For other validation errors, raise as before
             logger.warning(f"Cannot modify subscription for user {user.id}: {e}")
             raise
         except stripe.error.StripeError as e:
