@@ -341,25 +341,15 @@ async def cancel_user_subscription(current_user: CurrentUser):
     # Determine the effective payment provider
     provider = current_user.paymentProvider
 
-    logger.info(
-        f"Canceling subscription for user {current_user.id}. "
-        f"paymentProvider={provider}, "
-        f"stripeSubscriptionId={current_user.stripeSubscriptionId}, "
-        f"paystackSubscriptionCode={current_user.paystackSubscriptionCode}"
-    )
-
     # If provider is not explicitly set, try to infer it from existing subscription IDs
     if not provider:
         if current_user.paystackSubscriptionCode:
             provider = "paystack"
-            logger.info(f"Inferred provider 'paystack' for user {current_user.id}")
         elif current_user.stripeSubscriptionId:
             provider = "stripe"
-            logger.info(f"Inferred provider 'stripe' for user {current_user.id}")
 
     if provider == "paystack":
         try:
-            logger.info(f"Using Paystack cancellation for user {current_user.id}")
             result = await cancel_paystack_subscription(user=current_user)
             return CancelSubscriptionResponse(
                 status=result["status"],
@@ -367,15 +357,12 @@ async def cancel_user_subscription(current_user: CurrentUser):
                 current_period_end=result["current_period_end"].isoformat(),
             )
         except ValueError as e:
-            logger.warning(f"ValueError in Paystack cancellation for {current_user.id}: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),
             )
         except Exception as e:
-            logger.error(
-                f"Error canceling Paystack subscription for {current_user.id}: {e}", exc_info=True
-            )
+            logger.error(f"Error canceling Paystack subscription: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to cancel Paystack subscription",

@@ -149,12 +149,23 @@ async def cancel_paystack_subscription(user: User, db_client: Prisma | None = No
     # Fetch email token for disable
     logger.info(f"Fetching Paystack email token for sub {user.paystackSubscriptionCode}")
     email_token = await _get_paystack_subscription_email_token(user.paystackSubscriptionCode)
-    if not email_token:
-        logger.warning(f"Could not retrieve cancellation token from Paystack for {user.id}")
-        raise ValueError("Could not retrieve cancellation token from Paystack")
 
-    # Disable the subscription
-    await disable_paystack_subscription(user.paystackSubscriptionCode, email_token, db_client)
+    if not email_token:
+        logger.warning(
+            f"Could not retrieve cancellation token from Paystack for user {user.id} "
+            f"(sub: {user.paystackSubscriptionCode}). Proceeding with local-only cancellation."
+        )
+    else:
+        # Disable the subscription on Paystack
+        try:
+            await disable_paystack_subscription(
+                user.paystackSubscriptionCode, email_token, db_client
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to disable Paystack subscription {user.paystackSubscriptionCode}: {e}"
+            )
+            # We still proceed with local cleanup to avoid blocking the user
 
     # Note: In a real production app, we might want to keep the tier until period_end.
     # But Paystack 'disable' is immediate. For Maigie, we'll sync the DB to FREE.
@@ -191,9 +202,6 @@ async def _get_paystack_subscription_email_token(subscription_code: str) -> str 
             headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
         )
     data = resp.json()
-    logger.info(
-        f"Paystack subscription fetch response status: {resp.status_code}, status_field: {data.get('status')}"
-    )
     if data.get("status") and data.get("data"):
         return data["data"].get("email_token")
     return None
