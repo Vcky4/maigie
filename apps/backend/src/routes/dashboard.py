@@ -17,6 +17,7 @@ from prisma import Client as PrismaClient
 
 from ..dependencies import CurrentUser
 from ..models.analytics import (
+    ActivityDataItem,
     DashboardCourseItem,
     DashboardGoalItem,
     DashboardNudgeItem,
@@ -72,11 +73,28 @@ async def get_dashboard(
         active_goals = await db.goal.count(where={"userId": user_id, "status": "ACTIVE"})
         completed_goals = await db.goal.count(where={"userId": user_id, "status": "COMPLETED"})
 
-        # Get study sessions for total study time
+        # Get study sessions for total study time and activity graph
         sessions = await db.studysession.find_many(
             where={"userId": user_id, "endTime": {"not": None}},
         )
         total_study_minutes = sum(s.duration or 0 for s in sessions)
+
+        # Calculate activityData for the last 7 days
+        seven_days_ago = now - timedelta(days=6)
+        # Create map preserving order from 6 days ago to today
+        activity_map = {(seven_days_ago + timedelta(days=i)).strftime("%a"): 0 for i in range(7)}
+
+        for s in sessions:
+            if s.startTime and s.startTime >= seven_days_ago.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ):
+                day_name = s.startTime.strftime("%a")
+                if day_name in activity_map:
+                    activity_map[day_name] += (s.duration or 0) / 60.0
+
+        activity_data = [
+            ActivityDataItem(name=day, hours=round(hours, 1)) for day, hours in activity_map.items()
+        ]
 
         # Get streak
         streak = await db.userstreak.find_unique(where={"userId": user_id})
@@ -238,6 +256,7 @@ async def get_dashboard(
             upcomingSchedules=upcoming_schedules_list,
             dailyGoalProgress=daily_goal_progress,
             pendingNudges=pending_nudges_list,
+            activityData=activity_data,
         )
 
     except Exception as e:

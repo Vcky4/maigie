@@ -540,6 +540,11 @@ class DashboardNudgeItem(BaseModel):
     createdAt: str
 
 
+class ActivityDataItem(BaseModel):
+    name: str
+    hours: float
+
+
 class DashboardResponse(BaseModel):
     """Complete dashboard response with aggregated data."""
 
@@ -549,3 +554,4 @@ class DashboardResponse(BaseModel):
     upcomingSchedules: list[DashboardScheduleItem]  # Next 7 days
     dailyGoalProgress: float | None  # Progress towards daily study goal (0-100)
     pendingNudges: list[DashboardNudgeItem] = []  # AI agent nudges
+    activityData: list[ActivityDataItem] = []  # Last 7 days activity

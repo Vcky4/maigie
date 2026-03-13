@@ -265,6 +265,9 @@ model User {
   // Knowledge Base (user uploads indexed for RAG context)
   userUploads UserUpload[]
 
+  // Gamification
+  points Int @default(0) // Global contribution/study points
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
