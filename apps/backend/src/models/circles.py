@@ -137,3 +137,59 @@ class CircleListResponse(BaseModel):
 
     circles: list[CircleResponse]
     total: int
+
+
+class CircleImportRequest(BaseModel):
+    """Schema for importing items into a circle."""
+
+    resourceIds: list[str] = []
+    courseIds: list[str] = []
+    noteIds: list[str] = []
+
+
+# --- Circle Session Models ---
+
+
+class CircleSessionCreate(BaseModel):
+    """Schema for creating a group session."""
+
+    title: str = Field(..., min_length=1, max_length=100)
+    description: str | None = None
+    scheduledAt: datetime
+    duration: int = 60
+    chatGroupId: str | None = None
+    topicId: str | None = None
+    goalId: str | None = None
+
+
+class CircleSessionUpdate(BaseModel):
+    """Schema for updating a group session."""
+
+    title: str | None = None
+    description: str | None = None
+    scheduledAt: datetime | None = None
+    duration: int | None = None
+    status: str | None = None
+    chatGroupId: str | None = None
+    topicId: str | None = None
+    goalId: str | None = None
+
+
+class CircleSessionResponse(BaseModel):
+    """Response schema for a group session."""
+
+    id: str
+    circleId: str
+    title: str
+    description: str | None = None
+    scheduledAt: datetime
+    duration: int
+    status: str
+    chatGroupId: str | None = None
+    topicId: str | None = None
+    goalId: str | None = None
+    createdById: str
+    createdAt: datetime
+    updatedAt: datetime
+
+    model_config = ConfigDict(from_attributes=True)

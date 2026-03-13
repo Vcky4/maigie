@@ -14,6 +14,9 @@ from src.models.circles import (
     CircleInviteCreate,
     CircleUpdate,
     TransferOwnershipRequest,
+    CircleImportRequest,
+    CircleSessionCreate,
+    CircleSessionUpdate,
 )
 
 
@@ -55,6 +58,28 @@ async def _verify_owner(db: Prisma, circle_id: str, user_id: str):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the circle owner can perform this action.",
+        )
+    return member
+
+
+async def _verify_admin(db: Prisma, circle_id: str, user_id: str):
+    """Verify user is an ADMIN or OWNER of the circle."""
+    member = await _verify_membership(db, circle_id, user_id)
+    if member.role not in ("OWNER", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only circle admins can perform this action.",
+        )
+    return member
+
+
+async def _verify_tutor(db: Prisma, circle_id: str, user_id: str):
+    """Verify user is a TUTOR, ADMIN or OWNER of the circle."""
+    member = await _verify_membership(db, circle_id, user_id)
+    if member.role not in ("OWNER", "ADMIN", "TUTOR"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only circle tutors or admins can perform this action.",
         )
     return member
 
@@ -630,3 +655,105 @@ async def list_circle_courses(
     )
 
     return courses, total
+
+
+async def award_contribution_points(db: Prisma, circle_id: str, user_id: str, points: int):
+    """Award contribution points to a circle member."""
+    stat = await db.circlememberstat.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
+    )
+    if not stat:
+        await db.circlememberstat.create(
+            data={"circleId": circle_id, "userId": user_id, "contributionPoints": points}
+        )
+    else:
+        await db.circlememberstat.update(
+            where={"id": stat.id}, data={"contributionPoints": stat.contributionPoints + points}
+        )
+
+
+async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: CircleImportRequest):
+    """Import items (notes, courses, resources) into a circle."""
+    await _verify_admin(db, circle_id, user_id)
+
+    imported_stats = {"notes": 0, "courses": 0, "resources": 0}
+
+    # Import Notes
+    for note_id in data.noteIds:
+        note = await db.note.find_unique(where={"id": note_id})
+        if note and note.userId == user_id and not note.circleId:
+            await db.note.update(where={"id": note_id}, data={"circleId": circle_id})
+            imported_stats["notes"] += 1
+
+    # Import Courses
+    for course_id in data.courseIds:
+        course = await db.course.find_unique(where={"id": course_id})
+        if course and course.userId == user_id and not course.circleId:
+            await db.course.update(where={"id": course_id}, data={"circleId": circle_id})
+            imported_stats["courses"] += 1
+
+    # Import Resources
+    for resource_id in data.resourceIds:
+        resource = await db.resource.find_unique(where={"id": resource_id})
+        if resource and resource.userId == user_id and not resource.circleId:
+            await db.resource.update(where={"id": resource_id}, data={"circleId": circle_id})
+            imported_stats["resources"] += 1
+
+    return imported_stats
+
+
+# --- Group Sessions ---
+
+
+async def create_group_session(db: Prisma, circle_id: str, user_id: str, data: CircleSessionCreate):
+    """Create a new scheduled group session."""
+    await _verify_admin(db, circle_id, user_id)
+
+    session = await db.circlesession.create(
+        data={
+            "circleId": circle_id,
+            "title": data.title,
+            "description": data.description,
+            "scheduledAt": data.scheduledAt,
+            "duration": data.duration,
+            "chatGroupId": data.chatGroupId,
+            "topicId": data.topicId,
+            "goalId": data.goalId,
+            "createdById": user_id,
+        }
+    )
+    return session
+
+
+async def list_group_sessions(db: Prisma, circle_id: str, user_id: str):
+    """List all group sessions for a circle."""
+    await _verify_membership(db, circle_id, user_id)
+
+    sessions = await db.circlesession.find_many(
+        where={"circleId": circle_id},
+        order_by={"scheduledAt": "asc"},
+    )
+    return sessions
+
+
+async def update_group_session(
+    db: Prisma, circle_id: str, session_id: str, user_id: str, data: CircleSessionUpdate
+):
+    """Update a group session."""
+    await _verify_admin(db, circle_id, user_id)
+
+    session = await db.circlesession.find_unique(where={"id": session_id})
+    if not session or session.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    update_data = data.model_dump(exclude_unset=True)
+    if update_data:
+        session = await db.circlesession.update(
+            where={"id": session_id},
+            data=update_data,
+        )
+
+    return session

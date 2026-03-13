@@ -119,6 +119,8 @@ enum ReportStatus {
 
 enum CircleRole {
   OWNER
+  ADMIN
+  TUTOR
   MEMBER
 }
 
@@ -127,6 +129,13 @@ enum CircleInviteStatus {
   ACCEPTED
   DECLINED
   EXPIRED
+}
+
+enum CircleSessionStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
 }
 
 // ==========================================
@@ -198,6 +207,8 @@ model User {
   preferences             UserPreferences?
   courses                 Course[]
   notes                   Note[]
+  editedNotes             Note[] @relation("NoteLastEditedBy")
+  noteHistories           NoteHistory[]
   resources               Resource[]
   goals                   Goal[]
   schedules               ScheduleBlock[]
@@ -238,6 +249,8 @@ model User {
 
   // Circle Relations
   circleMembers CircleMember[]
+  circleStats   CircleMemberStat[]
+  circleSessions CircleSession[]
 
   // Agentic AI Relations
   conversationSummaries ConversationSummary[]
@@ -448,6 +461,7 @@ model Topic {
   schedules     ScheduleBlock[] // Schedule blocks linked to this topic
   studySessions StudySession[] // Study sessions for this topic
   reviewItems   ReviewItem[] // Spaced repetition: one review schedule per completed topic
+  groupSessions CircleSession[] // Group sessions linked to this topic
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -589,11 +603,16 @@ model Note {
   circleId String?
   circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
 
+  // Tracking ownership and changes
+  lastEditedById String?
+  lastEditedBy   User? @relation("NoteLastEditedBy", fields: [lastEditedById], references: [id], onDelete: SetNull)
+
   archived          Boolean @default(false)
   voiceRecordingUrl String?
 
   tags        NoteTag[]
   attachments NoteAttachment[]
+  history     NoteHistory[]
 
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -614,6 +633,19 @@ model NoteTag {
 
   @@index([noteId])
   @@index([tag])
+}
+
+model NoteHistory {
+  id        String   @id @default(cuid())
+  noteId    String
+  note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String?  // Rich text content at this version
+  createdAt DateTime @default(now())
+
+  @@index([noteId])
+  @@index([userId])
 }
 
 model NoteAttachment {
@@ -656,6 +688,10 @@ model Resource {
   topicId  String?
   topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
+  // Circle sharing
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
+
   // User interaction tracking
   clickCount     Int       @default(0)
   bookmarkCount  Int       @default(0)
@@ -672,6 +708,7 @@ model Resource {
   @@index([type])
   @@index([courseId])
   @@index([topicId])
+  @@index([circleId])
 }
 
 // ==========================================
@@ -699,7 +736,8 @@ model Goal {
   circleId String?
   circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
 
-  schedules ScheduleBlock[] // Schedule blocks linked to this goal
+  schedules     ScheduleBlock[] // Schedule blocks linked to this goal
+  groupSessions CircleSession[] // Group sessions linked to this goal
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -900,6 +938,10 @@ model ExamPrep {
   description String?
   status      ExamPrepStatus @default(SETUP)
 
+  // Circle sharing
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
+
   // Relations
   materials    ExamPrepMaterial[]
   schedules    ScheduleBlock[]
@@ -914,6 +956,7 @@ model ExamPrep {
   @@index([userId, examDate])
   @@index([userId, status])
   @@index([examDate])
+  @@index([circleId])
 }
 
 model ExamPrepMaterial {
@@ -1095,6 +1138,10 @@ model StudySession {
   topicId  String?
   topic    Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
+  // Circle context
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
+
   // Metadata
   metadata Json? // Additional context (device, location, etc.)
 
@@ -1106,6 +1153,7 @@ model StudySession {
   @@index([courseId])
   @@index([topicId])
   @@index([startTime])
+  @@index([circleId])
 }
 
 model UserStreak {
@@ -1406,6 +1454,10 @@ model Circle {
   maxMembers  Int     @default(5)
   maxGroups   Int     @default(5)
 
+  // Credits & Wallet
+  credits      Int  @default(0)
+  creditsLimit Int?
+
   // Relations
   members    CircleMember[]
   invites    CircleInvite[]
@@ -1413,6 +1465,11 @@ model Circle {
   goals      Goal[]
   courses    Course[]
   chatGroups CircleChatGroup[]
+  resources  Resource[]
+  examPreps  ExamPrep[]
+  studySessions StudySession[]
+  memberStats CircleMemberStat[]
+  groupSessions CircleSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1445,6 +1502,8 @@ model CircleChatGroup {
   chatSessionId String?      @unique
   chatSession   ChatSession? @relation(fields: [chatSessionId], references: [id], onDelete: SetNull)
 
+  groupSessions CircleSession[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1466,6 +1525,64 @@ model CircleInvite {
   @@index([inviteeEmail])
   @@index([inviteeId])
   @@index([circleId])
+}
+
+model CircleMemberStat {
+  id       String @id @default(cuid())
+  circleId String
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  contributionPoints Int @default(0)
+  coursesCompleted   Int @default(0)
+  notesAdded         Int @default(0)
+  resourcesShared    Int @default(0)
+  quizAverage        Float @default(0.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([circleId, userId])
+  @@index([circleId])
+  @@index([userId])
+}
+
+model CircleSession {
+  id          String   @id @default(cuid())
+  circleId    String
+  circle      Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  
+  title       String
+  description String?
+  
+  scheduledAt DateTime
+  duration    Int      @default(60) // minutes
+  status      CircleSessionStatus @default(SCHEDULED)
+  
+  // Optional linkage to a specific chat group where the session takes place
+  chatGroupId String?
+  chatGroup   CircleChatGroup? @relation(fields: [chatGroupId], references: [id], onDelete: SetNull)
+
+  // Optional linkage to a topic or goal
+  topicId     String?
+  topic       Topic?   @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  goalId      String?
+  goal        Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([circleId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@index([chatGroupId])
+  @@index([topicId])
+  @@index([goalId])
+  @@index([createdById])
 }
 
 // ==========================================

@@ -24,6 +24,10 @@ from src.models.circles import (
     CircleResponse,
     CircleUpdate,
     TransferOwnershipRequest,
+    CircleImportRequest,
+    CircleSessionCreate,
+    CircleSessionResponse,
+    CircleSessionUpdate,
 )
 from src.services import circle_service
 
@@ -319,6 +323,61 @@ async def list_circle_courses(
         db, circle_id, current_user.id, page, size
     )
     return {"courses": courses, "total": total, "page": page, "size": size}
+
+
+@router.post("/{circle_id}/import")
+async def import_to_circle(
+    circle_id: str,
+    data: CircleImportRequest,
+    current_user: CurrentUser,
+):
+    """Import personal items (courses, notes, resources) into a circle."""
+    result = await circle_service.import_to_circle(db, circle_id, current_user.id, data)
+    return {"success": True, "imported": result}
+
+
+# ==========================================
+# Group Sessions
+# ==========================================
+
+
+@router.post(
+    "/{circle_id}/sessions",
+    response_model=CircleSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_group_session(
+    circle_id: str,
+    data: CircleSessionCreate,
+    current_user: CurrentUser,
+):
+    """Create a new group session (admin only)."""
+    session = await circle_service.create_group_session(db, circle_id, current_user.id, data)
+    return CircleSessionResponse.model_validate(session)
+
+
+@router.get("/{circle_id}/sessions", response_model=list[CircleSessionResponse])
+async def list_group_sessions(
+    circle_id: str,
+    current_user: CurrentUser,
+):
+    """List group sessions in a circle."""
+    sessions = await circle_service.list_group_sessions(db, circle_id, current_user.id)
+    return [CircleSessionResponse.model_validate(s) for s in sessions]
+
+
+@router.put("/{circle_id}/sessions/{session_id}", response_model=CircleSessionResponse)
+async def update_group_session(
+    circle_id: str,
+    session_id: str,
+    data: CircleSessionUpdate,
+    current_user: CurrentUser,
+):
+    """Update a group session (admin only)."""
+    session = await circle_service.update_group_session(
+        db, circle_id, session_id, current_user.id, data
+    )
+    return CircleSessionResponse.model_validate(session)
 
 
 # ==========================================

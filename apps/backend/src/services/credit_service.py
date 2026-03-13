@@ -290,15 +290,16 @@ async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> U
 
 
 async def check_credit_availability(
-    user: User, credits_needed: int, db_client: Prisma | None = None
+    user: User, credits_needed: int, db_client: Prisma | None = None, circle_id: str | None = None
 ) -> tuple[bool, str | None]:
     """
-    Check if user has enough credits available.
+    Check if user (or circle) has enough credits available.
 
     Args:
         user: User model instance
         credits_needed: Number of credits required (raw tokens - multiplier will be applied)
         db_client: Optional Prisma client (defaults to global db)
+        circle_id: Optional ID of the circle to check credits for
 
     Returns:
         Tuple of (is_available, warning_message)
@@ -310,6 +311,17 @@ async def check_credit_availability(
 
     # Apply token multiplier to get actual credits that will be consumed
     credits_needed = apply_token_multiplier(credits_needed)
+
+    # Check circle credits if circle_id is provided
+    if circle_id:
+        circle = await db_client.circle.find_unique(where={"id": circle_id})
+        if not circle:
+            raise ValueError(f"Circle {circle_id} not found")
+
+        # In a circle context, limits might be defined per circle. For now, checking if limit exists
+        if circle.creditsLimit and circle.credits + credits_needed > circle.creditsLimit:
+            return False, f"Circle credit limit reached."
+        return True, None
 
     # Ensure credit period is active
     user = await ensure_credit_period(user, db_client)
@@ -376,16 +388,21 @@ def apply_token_multiplier(tokens: int) -> int:
 
 
 async def consume_credits(
-    user: User, credits: int, operation: str = "unknown", db_client: Prisma | None = None
+    user: User,
+    credits: int,
+    operation: str = "unknown",
+    db_client: Prisma | None = None,
+    circle_id: str | None = None,
 ) -> User:
     """
-    Consume credits for a user operation.
+    Consume credits for a user or circle operation.
 
     Args:
         user: User model instance
         credits: Number of credits to consume (raw tokens - multiplier will be applied)
         operation: Description of the operation (for logging)
         db_client: Optional Prisma client (defaults to global db)
+        circle_id: Optional ID of the circle to consume credits from
 
     Returns:
         Updated User object
@@ -398,6 +415,24 @@ async def consume_credits(
 
     # Apply token multiplier to reduce credits charged
     credits = apply_token_multiplier(credits)
+
+    # Check availability before consuming
+    is_available, warning_message = await check_credit_availability(
+        user, credits, db_client, circle_id
+    )
+
+    if circle_id:
+        if not is_available:
+            raise SubscriptionLimitError(
+                message=f"Circle credit limit exceeded.",
+                detail=f"This operation requires {credits} credits, which exceeds the circle's limit.",
+            )
+
+        await db_client.circle.update(
+            where={"id": circle_id}, data={"credits": {"increment": credits}}
+        )
+        logger.info(f"Consumed {credits} credits for circle {circle_id} (operation: {operation})")
+        return user
 
     # Ensure credit period is active
     user = await ensure_credit_period(user, db_client)
