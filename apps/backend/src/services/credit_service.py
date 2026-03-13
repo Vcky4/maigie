@@ -320,7 +320,7 @@ async def check_credit_availability(
 
         # In a circle context, limits might be defined per circle. For now, checking if limit exists
         if circle.creditsLimit and circle.credits + credits_needed > circle.creditsLimit:
-            return False, f"Circle credit limit reached."
+            return False, "Circle credit limit reached."
         return True, None
 
     # Ensure credit period is active
@@ -424,7 +424,7 @@ async def consume_credits(
     if circle_id:
         if not is_available:
             raise SubscriptionLimitError(
-                message=f"Circle credit limit exceeded.",
+                message="Circle credit limit exceeded.",
                 detail=f"This operation requires {credits} credits, which exceeds the circle's limit.",
             )
 
