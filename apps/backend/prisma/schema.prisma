@@ -266,7 +266,7 @@ model User {
   userUploads UserUpload[]
 
   // Gamification
-  points Int @default(0) // Global contribution/study points
+  // points Int @default(0) // Note: using dynamic calculation for now
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -545,6 +545,13 @@ class ActivityDataItem(BaseModel):
     hours: float
 
 
+class DashboardLeaderboardItem(BaseModel):
+    id: str
+    name: str
+    points: int
+    isYou: bool
+
+
 class DashboardResponse(BaseModel):
     """Complete dashboard response with aggregated data."""
 
@@ -555,3 +562,4 @@ class DashboardResponse(BaseModel):
     dailyGoalProgress: float | None  # Progress towards daily study goal (0-100)
     pendingNudges: list[DashboardNudgeItem] = []  # AI agent nudges
     activityData: list[ActivityDataItem] = []  # Last 7 days activity
+    leaderboard: list[DashboardLeaderboardItem] = []  # Global rank data

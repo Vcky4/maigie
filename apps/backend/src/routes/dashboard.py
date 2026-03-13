@@ -20,6 +20,7 @@ from ..models.analytics import (
     ActivityDataItem,
     DashboardCourseItem,
     DashboardGoalItem,
+    DashboardLeaderboardItem,
     DashboardNudgeItem,
     DashboardResponse,
     DashboardScheduleItem,
@@ -249,6 +250,56 @@ async def get_dashboard(
         except Exception as nudge_err:
             logger.warning("Failed to fetch nudges for dashboard: %s", nudge_err)
 
+        # ========================================================================
+        # Get Global Leaderboard (Proxy using UserStreak for MVP)
+        # ========================================================================
+        leaderboard_items = []
+        try:
+            # Fetch top 50 users by longest streak
+            top_streaks = await db.userstreak.find_many(
+                include={"user": True}, order={"longestStreak": "desc"}, take=50
+            )
+
+            for rank_item in top_streaks:
+                if not rank_item.user:
+                    continue
+
+                # Simple points calculation logic for gamification XP
+                points = (rank_item.longestStreak * 100) + (rank_item.currentStreak * 50) + 150
+
+                leaderboard_items.append(
+                    DashboardLeaderboardItem(
+                        id=rank_item.userId,
+                        name=rank_item.user.name or "Anonymous Scholar",
+                        points=points,
+                        isYou=rank_item.userId == user_id,
+                    )
+                )
+
+            # Ensure current user is included if they don't have a record or missed the top 50
+            if not any(item.isYou for item in leaderboard_items):
+                my_points = (longest_streak * 100) + (current_streak * 50) + 150
+                leaderboard_items.append(
+                    DashboardLeaderboardItem(
+                        id=user_id, name=current_user.name or "You", points=my_points, isYou=True
+                    )
+                )
+
+            # Re-sort descending by points
+            leaderboard_items.sort(key=lambda x: x.points, reverse=True)
+
+            # Limit to top 5, but keep "You" in the list if they aren't in top 4
+            if len(leaderboard_items) > 5:
+                you_index = next((i for i, item in enumerate(leaderboard_items) if item.isYou), -1)
+                if you_index < 5:
+                    leaderboard_items = leaderboard_items[:5]
+                else:
+                    you_item = leaderboard_items[you_index]
+                    leaderboard_items = leaderboard_items[:4] + [you_item]
+
+        except Exception as leaderboard_err:
+            logger.warning("Failed to fetch leaderboard for dashboard: %s", leaderboard_err)
+
         return DashboardResponse(
             stats=stats,
             recentCourses=recent_courses,
@@ -257,6 +308,7 @@ async def get_dashboard(
             dailyGoalProgress=daily_goal_progress,
             pendingNudges=pending_nudges_list,
             activityData=activity_data,
+            leaderboard=leaderboard_items,
         )
 
     except Exception as e:
