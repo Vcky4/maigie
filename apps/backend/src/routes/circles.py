@@ -26,6 +26,7 @@ from src.models.circles import (
     CircleListResponse,
     CircleMemberResponse,
     CircleResponse,
+    CircleSessionSuggestionResponse,
     CircleUpdate,
     TransferOwnershipRequest,
     CircleImportRequest,
@@ -369,6 +370,16 @@ async def list_group_sessions(
     """List group sessions in a circle."""
     sessions = await circle_service.list_group_sessions(db, circle_id, current_user.id)
     return [CircleSessionResponse.model_validate(s) for s in sessions]
+
+
+@router.get("/{circle_id}/sessions/suggest", response_model=CircleSessionSuggestionResponse)
+async def suggest_group_sessions(
+    circle_id: str,
+    current_user: CurrentUser,
+):
+    """Suggest new group sessions based on circle activity."""
+    suggestions = await circle_service.suggest_group_sessions(db, circle_id, current_user.id)
+    return CircleSessionSuggestionResponse(suggestions=suggestions)
 
 
 @router.put("/{circle_id}/sessions/{session_id}", response_model=CircleSessionResponse)

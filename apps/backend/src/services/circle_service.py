@@ -757,3 +757,97 @@ async def update_group_session(
         )
 
     return session
+
+
+async def suggest_group_sessions(db: Prisma, circle_id: str, user_id: str) -> list[dict]:
+    """Generate AI suggestions for group sessions based on circle's recent activity."""
+    await _verify_membership(db, circle_id, user_id)
+
+    # Gather some context: recent courses and goals in the circle
+    recent_courses = await db.course.find_many(
+        where={"circleId": circle_id},
+        order_by={"updatedAt": "desc"},
+        take=3,
+        include={"modules": {"include": {"topics": True}}},
+    )
+
+    recent_goals = await db.goal.find_many(
+        where={"circleId": circle_id}, order_by={"updatedAt": "desc"}, take=3
+    )
+
+    context_lines = []
+    if recent_courses:
+        context_lines.append("Recent Courses:")
+        for c in recent_courses:
+            context_lines.append(f"- {c.title}")
+
+    if recent_goals:
+        context_lines.append("Recent Goals:")
+        for g in recent_goals:
+            context_lines.append(f"- {g.title}")
+
+    context_text = "\n".join(context_lines)
+    if not context_text:
+        context_text = "The circle is new and doesn't have much activity yet."
+
+    prompt = f"""You are an AI study assistant managing a study circle.
+Based on the circle's recent activity, suggest 3 relevant group study sessions or discussion topics.
+
+Circle Activity:
+{context_text}
+
+Provide your response strictly as valid JSON matching this schema:
+[
+  {{
+    "title": "Short catchy title",
+    "description": "Brief description of what the group will do",
+    "duration": 60, // integer, minutes (30, 45, or 60)
+    "reason": "Why this is a good idea right now"
+  }}
+]
+"""
+    try:
+        import os
+        import json
+        import re
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=800,
+                temperature=0.7,
+                response_mime_type="application/json",
+            ),
+        )
+        text = (response.text or "").strip()
+
+        try:
+            return json.loads(text)
+        except Exception:
+            match = re.search(r"\[[\s\S]*\]", text)
+            if match:
+                return json.loads(match.group(0))
+            return []
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).error(f"Failed to generate session suggestions: {e}")
+        # Fallback to generic suggestions
+        return [
+            {
+                "title": "Weekly Review & Planning",
+                "description": "Let's meet to review what we learned this week and set goals for the next.",
+                "duration": 45,
+                "reason": "Good for weekly alignment",
+            },
+            {
+                "title": "Q&A Study Jam",
+                "description": "Bring your hardest questions and let's solve them together.",
+                "duration": 60,
+                "reason": "Helps clear blockers",
+            },
+        ]
