@@ -17,8 +17,10 @@ from prisma import Client as PrismaClient
 
 from ..dependencies import CurrentUser
 from ..models.analytics import (
+    ActivityDataItem,
     DashboardCourseItem,
     DashboardGoalItem,
+    DashboardLeaderboardItem,
     DashboardNudgeItem,
     DashboardResponse,
     DashboardScheduleItem,
@@ -72,11 +74,28 @@ async def get_dashboard(
         active_goals = await db.goal.count(where={"userId": user_id, "status": "ACTIVE"})
         completed_goals = await db.goal.count(where={"userId": user_id, "status": "COMPLETED"})
 
-        # Get study sessions for total study time
+        # Get study sessions for total study time and activity graph
         sessions = await db.studysession.find_many(
             where={"userId": user_id, "endTime": {"not": None}},
         )
         total_study_minutes = sum(s.duration or 0 for s in sessions)
+
+        # Calculate activityData for the last 7 days
+        seven_days_ago = now - timedelta(days=6)
+        # Create map preserving order from 6 days ago to today
+        activity_map = {(seven_days_ago + timedelta(days=i)).strftime("%a"): 0 for i in range(7)}
+
+        for s in sessions:
+            if s.startTime and s.startTime >= seven_days_ago.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ):
+                day_name = s.startTime.strftime("%a")
+                if day_name in activity_map:
+                    activity_map[day_name] += (s.duration or 0) / 60.0
+
+        activity_data = [
+            ActivityDataItem(name=day, hours=round(hours, 1)) for day, hours in activity_map.items()
+        ]
 
         # Get streak
         streak = await db.userstreak.find_unique(where={"userId": user_id})
@@ -231,6 +250,56 @@ async def get_dashboard(
         except Exception as nudge_err:
             logger.warning("Failed to fetch nudges for dashboard: %s", nudge_err)
 
+        # ========================================================================
+        # Get Global Leaderboard (Proxy using UserStreak for MVP)
+        # ========================================================================
+        leaderboard_items = []
+        try:
+            # Fetch top 50 users by longest streak
+            top_streaks = await db.userstreak.find_many(
+                include={"user": True}, order={"longestStreak": "desc"}, take=50
+            )
+
+            for rank_item in top_streaks:
+                if not rank_item.user:
+                    continue
+
+                # Simple points calculation logic for gamification XP
+                points = (rank_item.longestStreak * 100) + (rank_item.currentStreak * 50) + 150
+
+                leaderboard_items.append(
+                    DashboardLeaderboardItem(
+                        id=rank_item.userId,
+                        name=rank_item.user.name or "Anonymous Scholar",
+                        points=points,
+                        isYou=rank_item.userId == user_id,
+                    )
+                )
+
+            # Ensure current user is included if they don't have a record or missed the top 50
+            if not any(item.isYou for item in leaderboard_items):
+                my_points = (longest_streak * 100) + (current_streak * 50) + 150
+                leaderboard_items.append(
+                    DashboardLeaderboardItem(
+                        id=user_id, name=current_user.name or "You", points=my_points, isYou=True
+                    )
+                )
+
+            # Re-sort descending by points
+            leaderboard_items.sort(key=lambda x: x.points, reverse=True)
+
+            # Limit to top 5, but keep "You" in the list if they aren't in top 4
+            if len(leaderboard_items) > 5:
+                you_index = next((i for i, item in enumerate(leaderboard_items) if item.isYou), -1)
+                if you_index < 5:
+                    leaderboard_items = leaderboard_items[:5]
+                else:
+                    you_item = leaderboard_items[you_index]
+                    leaderboard_items = leaderboard_items[:4] + [you_item]
+
+        except Exception as leaderboard_err:
+            logger.warning("Failed to fetch leaderboard for dashboard: %s", leaderboard_err)
+
         return DashboardResponse(
             stats=stats,
             recentCourses=recent_courses,
@@ -238,6 +307,8 @@ async def get_dashboard(
             upcomingSchedules=upcoming_schedules_list,
             dailyGoalProgress=daily_goal_progress,
             pendingNudges=pending_nudges_list,
+            activityData=activity_data,
+            leaderboard=leaderboard_items,
         )
 
     except Exception as e:

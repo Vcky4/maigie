@@ -11,7 +11,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.database import db
 from src.dependencies import CurrentUser
+from datetime import UTC, datetime, timedelta
+
 from src.models.circles import (
+    CircleActivityDataItem,
     CircleChatGroupCreate,
     CircleChatGroupResponse,
     CircleChatGroupUpdate,
@@ -19,11 +22,17 @@ from src.models.circles import (
     CircleDetailResponse,
     CircleInviteCreate,
     CircleInviteResponse,
+    CircleLeaderboardItem,
     CircleListResponse,
     CircleMemberResponse,
     CircleResponse,
+    CircleSessionSuggestionResponse,
     CircleUpdate,
     TransferOwnershipRequest,
+    CircleImportRequest,
+    CircleSessionCreate,
+    CircleSessionResponse,
+    CircleSessionUpdate,
 )
 from src.services import circle_service
 
@@ -79,9 +88,10 @@ async def get_circle(
     circle_id: str,
     current_user: CurrentUser,
 ):
-    """Get circle details (members, chat groups)."""
+    """Get circle details (members, chat groups, activity, leaderboard)."""
     circle = await circle_service.get_circle_detail(db, circle_id, current_user.id)
-    return _circle_detail_to_response(circle, current_user.id)
+    activity_data, leaderboard = await _fetch_circle_dashboard_data(db, circle_id, circle)
+    return _circle_detail_to_response(circle, current_user.id, activity_data, leaderboard)
 
 
 @router.put("/{circle_id}", response_model=CircleDetailResponse)
@@ -321,12 +331,124 @@ async def list_circle_courses(
     return {"courses": courses, "total": total, "page": page, "size": size}
 
 
+@router.post("/{circle_id}/import")
+async def import_to_circle(
+    circle_id: str,
+    data: CircleImportRequest,
+    current_user: CurrentUser,
+):
+    """Import personal items (courses, notes, resources) into a circle."""
+    result = await circle_service.import_to_circle(db, circle_id, current_user.id, data)
+    return {"success": True, "imported": result}
+
+
+# ==========================================
+# Group Sessions
+# ==========================================
+
+
+@router.post(
+    "/{circle_id}/sessions",
+    response_model=CircleSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_group_session(
+    circle_id: str,
+    data: CircleSessionCreate,
+    current_user: CurrentUser,
+):
+    """Create a new group session (admin only)."""
+    session = await circle_service.create_group_session(db, circle_id, current_user.id, data)
+    return CircleSessionResponse.model_validate(session)
+
+
+@router.get("/{circle_id}/sessions", response_model=list[CircleSessionResponse])
+async def list_group_sessions(
+    circle_id: str,
+    current_user: CurrentUser,
+):
+    """List group sessions in a circle."""
+    sessions = await circle_service.list_group_sessions(db, circle_id, current_user.id)
+    return [CircleSessionResponse.model_validate(s) for s in sessions]
+
+
+@router.get("/{circle_id}/sessions/suggest", response_model=CircleSessionSuggestionResponse)
+async def suggest_group_sessions(
+    circle_id: str,
+    current_user: CurrentUser,
+):
+    """Suggest new group sessions based on circle activity."""
+    suggestions = await circle_service.suggest_group_sessions(db, circle_id, current_user.id)
+    return CircleSessionSuggestionResponse(suggestions=suggestions)
+
+
+@router.put("/{circle_id}/sessions/{session_id}", response_model=CircleSessionResponse)
+async def update_group_session(
+    circle_id: str,
+    session_id: str,
+    data: CircleSessionUpdate,
+    current_user: CurrentUser,
+):
+    """Update a group session (admin only)."""
+    session = await circle_service.update_group_session(
+        db, circle_id, session_id, current_user.id, data
+    )
+    return CircleSessionResponse.model_validate(session)
+
+
 # ==========================================
 # Helpers
 # ==========================================
 
 
-def _circle_detail_to_response(circle, current_user_id: str) -> CircleDetailResponse:
+async def _fetch_circle_dashboard_data(db, circle_id: str, circle) -> tuple[list, list]:
+    """Fetch activityData and leaderboard for circle dashboard."""
+    now = datetime.now(UTC)
+    seven_days_ago = now - timedelta(days=6)
+    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+    # Activity: StudySession with circleId, last 7 days, aggregate by day
+    sessions = await db.studysession.find_many(
+        where={
+            "circleId": circle_id,
+            "startTime": {"gte": seven_days_ago.replace(hour=0, minute=0, second=0, microsecond=0)},
+            "endTime": {"not": None},
+        },
+    )
+    activity_map = {d: 0.0 for d in day_names}
+    for s in sessions:
+        if s.startTime:
+            day_name = day_names[s.startTime.weekday()]
+            activity_map[day_name] = activity_map.get(day_name, 0) + (s.duration or 0) / 60.0
+    activity_data = [
+        CircleActivityDataItem(name=d, hours=round(activity_map[d], 1)) for d in day_names
+    ]
+
+    # Leaderboard: CircleMemberStat ordered by contributionPoints
+    member_role_map = {m.userId: m.role for m in (circle.members or [])}
+    stats = await db.circlememberstat.find_many(
+        where={"circleId": circle_id},
+        include={"user": True},
+        order={"contributionPoints": "desc"},
+        take=10,
+    )
+    leaderboard = [
+        CircleLeaderboardItem(
+            userId=s.userId,
+            name=s.user.name if s.user else "Anonymous",
+            points=s.contributionPoints or 0,
+            role=member_role_map.get(s.userId, "MEMBER"),
+        )
+        for s in stats
+        if s.user
+    ][:10]
+
+    return activity_data, leaderboard
+
+
+def _circle_detail_to_response(
+    circle, current_user_id: str, activity_data: list | None = None, leaderboard: list | None = None
+) -> CircleDetailResponse:
     """Convert a Prisma circle object (with includes) to CircleDetailResponse."""
     members = []
     current_role = None
@@ -366,6 +488,10 @@ def _circle_detail_to_response(circle, current_user_id: str) -> CircleDetailResp
         members=members,
         chatGroups=chat_groups,
         role=current_role,
+        credits=getattr(circle, "credits", None),
+        creditsLimit=getattr(circle, "creditsLimit", None),
+        activityData=activity_data or [],
+        leaderboard=leaderboard or [],
         createdAt=circle.createdAt,
         updatedAt=circle.updatedAt,
     )

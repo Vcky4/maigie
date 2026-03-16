@@ -14,6 +14,9 @@ from src.models.circles import (
     CircleInviteCreate,
     CircleUpdate,
     TransferOwnershipRequest,
+    CircleImportRequest,
+    CircleSessionCreate,
+    CircleSessionUpdate,
 )
 
 
@@ -55,6 +58,28 @@ async def _verify_owner(db: Prisma, circle_id: str, user_id: str):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the circle owner can perform this action.",
+        )
+    return member
+
+
+async def _verify_admin(db: Prisma, circle_id: str, user_id: str):
+    """Verify user is an ADMIN or OWNER of the circle."""
+    member = await _verify_membership(db, circle_id, user_id)
+    if member.role not in ("OWNER", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only circle admins can perform this action.",
+        )
+    return member
+
+
+async def _verify_tutor(db: Prisma, circle_id: str, user_id: str):
+    """Verify user is a TUTOR, ADMIN or OWNER of the circle."""
+    member = await _verify_membership(db, circle_id, user_id)
+    if member.role not in ("OWNER", "ADMIN", "TUTOR"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only circle tutors or admins can perform this action.",
         )
     return member
 
@@ -350,7 +375,7 @@ async def list_pending_invites(db: Prisma, user_id: str):
         include={
             "circle": True,
         },
-        order_by={"createdAt": "desc"},
+        order={"createdAt": "desc"},
     )
 
     return invites
@@ -517,7 +542,7 @@ async def list_chat_groups(db: Prisma, circle_id: str, user_id: str):
 
     groups = await db.circlechatgroup.find_many(
         where={"circleId": circle_id},
-        order_by={"createdAt": "asc"},
+        order={"createdAt": "asc"},
     )
 
     return groups
@@ -584,7 +609,7 @@ async def list_circle_notes(
         where=where,
         skip=skip,
         take=size,
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
         include={"tags": True, "attachments": True},
     )
 
@@ -605,7 +630,7 @@ async def list_circle_goals(
         where=where,
         skip=skip,
         take=size,
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
     )
 
     return goals, total
@@ -625,8 +650,219 @@ async def list_circle_courses(
         where=where,
         skip=skip,
         take=size,
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
         include={"modules": True},
     )
 
     return courses, total
+
+
+async def award_contribution_points(db: Prisma, circle_id: str, user_id: str, points: int):
+    """Award contribution points to a circle member."""
+    stat = await db.circlememberstat.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
+    )
+    if not stat:
+        await db.circlememberstat.create(
+            data={"circleId": circle_id, "userId": user_id, "contributionPoints": points}
+        )
+    else:
+        await db.circlememberstat.update(
+            where={"id": stat.id}, data={"contributionPoints": stat.contributionPoints + points}
+        )
+
+
+async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: CircleImportRequest):
+    """Import items (notes, courses, resources) into a circle."""
+    await _verify_admin(db, circle_id, user_id)
+
+    imported_stats = {"notes": 0, "courses": 0, "resources": 0}
+
+    # Import Notes
+    for note_id in data.noteIds:
+        note = await db.note.find_unique(where={"id": note_id})
+        if note and note.userId == user_id and not note.circleId:
+            await db.note.update(where={"id": note_id}, data={"circleId": circle_id})
+            imported_stats["notes"] += 1
+
+    # Import Courses
+    for course_id in data.courseIds:
+        course = await db.course.find_unique(where={"id": course_id})
+        if course and course.userId == user_id and not course.circleId:
+            await db.course.update(where={"id": course_id}, data={"circleId": circle_id})
+            imported_stats["courses"] += 1
+
+    # Import Resources
+    for resource_id in data.resourceIds:
+        resource = await db.resource.find_unique(where={"id": resource_id})
+        if resource and resource.userId == user_id and not resource.circleId:
+            await db.resource.update(where={"id": resource_id}, data={"circleId": circle_id})
+            imported_stats["resources"] += 1
+
+    return imported_stats
+
+
+# --- Group Sessions ---
+
+
+async def create_group_session(db: Prisma, circle_id: str, user_id: str, data: CircleSessionCreate):
+    """Create a new scheduled group session."""
+    await _verify_admin(db, circle_id, user_id)
+
+    chat_group = await db.circlechatgroup.find_unique(where={"id": data.chatGroupId})
+    if not chat_group or chat_group.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please select a valid chat destination for this circle.",
+        )
+
+    session = await db.circlesession.create(
+        data={
+            "circleId": circle_id,
+            "title": data.title,
+            "description": data.description,
+            "scheduledAt": data.scheduledAt,
+            "duration": data.duration,
+            "chatGroupId": chat_group.id,
+            "topicId": data.topicId,
+            "goalId": data.goalId,
+            "createdById": user_id,
+        }
+    )
+    return session
+
+
+async def list_group_sessions(db: Prisma, circle_id: str, user_id: str):
+    """List all group sessions for a circle."""
+    await _verify_membership(db, circle_id, user_id)
+
+    sessions = await db.circlesession.find_many(
+        where={"circleId": circle_id},
+        order={"scheduledAt": "asc"},
+    )
+    return sessions
+
+
+async def update_group_session(
+    db: Prisma, circle_id: str, session_id: str, user_id: str, data: CircleSessionUpdate
+):
+    """Update a group session."""
+    await _verify_admin(db, circle_id, user_id)
+
+    session = await db.circlesession.find_unique(where={"id": session_id})
+    if not session or session.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    update_data = data.model_dump(exclude_unset=True)
+    if "chatGroupId" in update_data and update_data["chatGroupId"]:
+        chat_group = await db.circlechatgroup.find_unique(where={"id": update_data["chatGroupId"]})
+        if not chat_group or chat_group.circleId != circle_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please select a valid chat destination for this circle.",
+            )
+
+    if update_data:
+        session = await db.circlesession.update(
+            where={"id": session_id},
+            data=update_data,
+        )
+
+    return session
+
+
+async def suggest_group_sessions(db: Prisma, circle_id: str, user_id: str) -> list[dict]:
+    """Generate AI suggestions for group sessions based on circle's recent activity."""
+    await _verify_membership(db, circle_id, user_id)
+
+    # Gather some context: recent courses and goals in the circle
+    recent_courses = await db.course.find_many(
+        where={"circleId": circle_id},
+        order={"updatedAt": "desc"},
+        take=3,
+        include={"modules": {"include": {"topics": True}}},
+    )
+
+    recent_goals = await db.goal.find_many(
+        where={"circleId": circle_id}, order={"updatedAt": "desc"}, take=3
+    )
+
+    context_lines = []
+    if recent_courses:
+        context_lines.append("Recent Courses:")
+        for c in recent_courses:
+            context_lines.append(f"- {c.title}")
+
+    if recent_goals:
+        context_lines.append("Recent Goals:")
+        for g in recent_goals:
+            context_lines.append(f"- {g.title}")
+
+    context_text = "\n".join(context_lines)
+    if not context_text:
+        context_text = "The circle is new and doesn't have much activity yet."
+
+    prompt = f"""You are an AI study assistant managing a study circle.
+Based on the circle's recent activity, suggest 3 relevant group study sessions or discussion topics.
+
+Circle Activity:
+{context_text}
+
+Provide your response strictly as valid JSON matching this schema:
+[
+  {{
+    "title": "Short catchy title",
+    "description": "Brief description of what the group will do",
+    "duration": 60, // integer, minutes (30, 45, or 60)
+    "reason": "Why this is a good idea right now"
+  }}
+]
+"""
+    try:
+        import os
+        import json
+        import re
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        response = await client.aio.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=800,
+                temperature=0.7,
+                response_mime_type="application/json",
+            ),
+        )
+        text = (response.text or "").strip()
+
+        try:
+            return json.loads(text)
+        except Exception:
+            match = re.search(r"\[[\s\S]*\]", text)
+            if match:
+                return json.loads(match.group(0))
+            return []
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).error(f"Failed to generate session suggestions: {e}")
+        # Fallback to generic suggestions
+        return [
+            {
+                "title": "Weekly Review & Planning",
+                "description": "Let's meet to review what we learned this week and set goals for the next.",
+                "duration": 45,
+                "reason": "Good for weekly alignment",
+            },
+            {
+                "title": "Q&A Study Jam",
+                "description": "Bring your hardest questions and let's solve them together.",
+                "duration": 60,
+                "reason": "Helps clear blockers",
+            },
+        ]
