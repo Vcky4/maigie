@@ -25,6 +25,14 @@ logger = logging.getLogger(__name__)
 TASK_MORNING_SCHEDULE = "email_notifications.send_morning_schedule_emails"
 TASK_SCHEDULE_REMINDER = "email_notifications.send_schedule_reminders"
 TASK_WEEKLY_TIPS = "email_notifications.send_weekly_tips_emails"
+PAID_TIERS = {
+    "PREMIUM_MONTHLY",
+    "PREMIUM_YEARLY",
+    "STUDY_CIRCLE_MONTHLY",
+    "STUDY_CIRCLE_YEARLY",
+    "SQUAD_MONTHLY",
+    "SQUAD_YEARLY",
+}
 
 # Morning email runs at 6 AM in user's local time; we check every hour
 MORNING_LOCAL_HOUR = 6
@@ -148,6 +156,8 @@ async def _send_schedule_reminders_impl() -> dict:
         try:
             user = block.user
             if not user or not user.email:
+                continue
+            if str(getattr(user, "tier", "FREE")) not in PAID_TIERS:
                 continue
             prefs = user.preferences
             if prefs and not getattr(prefs, "emailScheduleReminder", True):
