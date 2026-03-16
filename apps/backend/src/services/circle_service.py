@@ -375,7 +375,7 @@ async def list_pending_invites(db: Prisma, user_id: str):
         include={
             "circle": True,
         },
-        order_by={"createdAt": "desc"},
+        order={"createdAt": "desc"},
     )
 
     return invites
@@ -542,7 +542,7 @@ async def list_chat_groups(db: Prisma, circle_id: str, user_id: str):
 
     groups = await db.circlechatgroup.find_many(
         where={"circleId": circle_id},
-        order_by={"createdAt": "asc"},
+        order={"createdAt": "asc"},
     )
 
     return groups
@@ -609,7 +609,7 @@ async def list_circle_notes(
         where=where,
         skip=skip,
         take=size,
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
         include={"tags": True, "attachments": True},
     )
 
@@ -630,7 +630,7 @@ async def list_circle_goals(
         where=where,
         skip=skip,
         take=size,
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
     )
 
     return goals, total
@@ -650,7 +650,7 @@ async def list_circle_courses(
         where=where,
         skip=skip,
         take=size,
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
         include={"modules": True},
     )
 
@@ -731,7 +731,7 @@ async def list_group_sessions(db: Prisma, circle_id: str, user_id: str):
 
     sessions = await db.circlesession.find_many(
         where={"circleId": circle_id},
-        order_by={"scheduledAt": "asc"},
+        order={"scheduledAt": "asc"},
     )
     return sessions
 
@@ -766,13 +766,13 @@ async def suggest_group_sessions(db: Prisma, circle_id: str, user_id: str) -> li
     # Gather some context: recent courses and goals in the circle
     recent_courses = await db.course.find_many(
         where={"circleId": circle_id},
-        order_by={"updatedAt": "desc"},
+        order={"updatedAt": "desc"},
         take=3,
         include={"modules": {"include": {"topics": True}}},
     )
 
     recent_goals = await db.goal.find_many(
-        where={"circleId": circle_id}, order_by={"updatedAt": "desc"}, take=3
+        where={"circleId": circle_id}, order={"updatedAt": "desc"}, take=3
     )
 
     context_lines = []
