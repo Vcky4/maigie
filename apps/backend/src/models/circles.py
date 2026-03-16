@@ -177,7 +177,7 @@ class CircleSessionCreate(BaseModel):
     description: str | None = None
     scheduledAt: datetime
     duration: int = 60
-    chatGroupId: str | None = None
+    chatGroupId: str = Field(..., min_length=1)
     topicId: str | None = None
     goalId: str | None = None
 

@@ -709,6 +709,13 @@ async def create_group_session(db: Prisma, circle_id: str, user_id: str, data: C
     """Create a new scheduled group session."""
     await _verify_admin(db, circle_id, user_id)
 
+    chat_group = await db.circlechatgroup.find_unique(where={"id": data.chatGroupId})
+    if not chat_group or chat_group.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please select a valid chat destination for this circle.",
+        )
+
     session = await db.circlesession.create(
         data={
             "circleId": circle_id,
@@ -716,7 +723,7 @@ async def create_group_session(db: Prisma, circle_id: str, user_id: str, data: C
             "description": data.description,
             "scheduledAt": data.scheduledAt,
             "duration": data.duration,
-            "chatGroupId": data.chatGroupId,
+            "chatGroupId": chat_group.id,
             "topicId": data.topicId,
             "goalId": data.goalId,
             "createdById": user_id,
@@ -750,6 +757,14 @@ async def update_group_session(
         )
 
     update_data = data.model_dump(exclude_unset=True)
+    if "chatGroupId" in update_data and update_data["chatGroupId"]:
+        chat_group = await db.circlechatgroup.find_unique(where={"id": update_data["chatGroupId"]})
+        if not chat_group or chat_group.circleId != circle_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please select a valid chat destination for this circle.",
+            )
+
     if update_data:
         session = await db.circlesession.update(
             where={"id": session_id},
