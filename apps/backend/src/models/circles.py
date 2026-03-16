@@ -97,6 +97,22 @@ class CircleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CircleActivityDataItem(BaseModel):
+    """Activity data point for circle dashboard graph."""
+
+    name: str
+    hours: float
+
+
+class CircleLeaderboardItem(BaseModel):
+    """Leaderboard entry for circle dashboard."""
+
+    userId: str
+    name: str
+    points: int
+    role: str
+
+
 class CircleDetailResponse(BaseModel):
     """Detailed response schema for a circle (detail view)."""
 
@@ -110,6 +126,10 @@ class CircleDetailResponse(BaseModel):
     members: list[CircleMemberResponse]
     chatGroups: list[CircleChatGroupResponse]
     role: str | None = None  # Current user's role in this circle
+    credits: int | None = None
+    creditsLimit: int | None = None
+    activityData: list[CircleActivityDataItem] = []
+    leaderboard: list[CircleLeaderboardItem] = []
     createdAt: datetime
     updatedAt: datetime
 
