@@ -774,6 +774,20 @@ async def update_group_session(
     return session
 
 
+async def delete_group_session(db: Prisma, circle_id: str, session_id: str, user_id: str) -> None:
+    """Delete a group session."""
+    await _verify_admin(db, circle_id, user_id)
+
+    session = await db.circlesession.find_unique(where={"id": session_id})
+    if not session or session.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    await db.circlesession.delete(where={"id": session_id})
+
+
 async def suggest_group_sessions(db: Prisma, circle_id: str, user_id: str) -> list[dict]:
     """Generate AI suggestions for group sessions based on circle's recent activity."""
     await _verify_membership(db, circle_id, user_id)

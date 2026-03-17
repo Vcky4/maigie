@@ -396,6 +396,16 @@ async def update_group_session(
     return CircleSessionResponse.model_validate(session)
 
 
+@router.delete("/{circle_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group_session(
+    circle_id: str,
+    session_id: str,
+    current_user: CurrentUser,
+):
+    """Delete a group session (admin only)."""
+    await circle_service.delete_group_session(db, circle_id, session_id, current_user.id)
+
+
 # ==========================================
 # Helpers
 # ==========================================
