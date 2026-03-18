@@ -239,7 +239,8 @@ model User {
   auditLogs AuditLog[] @relation("AdminAuditLogs") // Audit logs created by this admin
 
   // Exam Prep (Maigie Plus)
-  examPreps ExamPrep[]
+  examPreps       ExamPrep[]
+  examQuizSessions ExamQuizSession[]
 
   // Resource Bank
   resourceBankItems          ResourceBankItem[]
