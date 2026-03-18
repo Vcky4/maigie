@@ -11,6 +11,7 @@ import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from src.dependencies import CurrentUser, DBDep
 from src.models.notes import (
@@ -379,9 +380,6 @@ async def add_summary_to_note(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to add summary to note",
         )
-
-
-from pydantic import BaseModel
 
 
 class NoteImportRequest(BaseModel):

@@ -57,11 +57,13 @@ async def create_exam_prep(
     subject: str,
     exam_date: datetime,
     description: str | None = None,
+    circle_id: str | None = None,
 ) -> Any:
     """Create an ExamPrep in SETUP status."""
     exam_prep = await db.examprep.create(
         data={
             "userId": user_id,
+            "circleId": circle_id,
             "subject": subject,
             "examDate": exam_date,
             "description": description,
@@ -78,7 +80,7 @@ async def update_exam_prep(
     data: dict,
 ) -> Any:
     """Update exam prep fields. Only owner can update."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -105,7 +107,7 @@ async def transition_status(
     new_status: str,
 ) -> Any:
     """Transition exam prep to a new status."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -133,7 +135,7 @@ async def add_material(
     size: int | None = None,
 ) -> Any:
     """Add a material to an exam prep."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
     return await db.examprepmaterial.create(
@@ -158,7 +160,7 @@ async def update_material(
     data: dict,
 ) -> Any:
     """Update material category/label."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -189,7 +191,7 @@ async def delete_material(
     user_id: str,
 ) -> None:
     """Delete a material from an exam prep."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -238,7 +240,7 @@ async def update_topic(
     data: dict,
 ) -> Any:
     """Update an exam prep topic."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -264,7 +266,7 @@ async def delete_topic(
     user_id: str,
 ) -> None:
     """Delete an exam prep topic (cascades to questions)."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -333,7 +335,7 @@ async def save_questions(
 async def generate_study_plan(db: Prisma, exam_prep_id: str, user_id: str) -> int:
     """Regenerate study blocks for exam prep. Returns count of blocks created."""
     exam_prep = await db.examprep.find_first(
-        where={"id": exam_prep_id, "userId": user_id},
+        where={"id": exam_prep_id},
         include={"topics": True},
     )
     if not exam_prep:
@@ -377,10 +379,16 @@ async def generate_study_plan(db: Prisma, exam_prep_id: str, user_id: str) -> in
 async def get_exam_prep_progress(db: Prisma, exam_prep_id: str, user_id: str) -> dict:
     """Calculate overall progress and readiness for an exam prep."""
     exam_prep = await db.examprep.find_first(
-        where={"id": exam_prep_id, "userId": user_id},
+        where={"id": exam_prep_id},
         include={
-            "topics": {"include": {"questions": {"include": {"attempts": True}}}},
-            "quizSessions": {"where": {"completedAt": {"not": None}}},
+            "topics": {
+                "include": {
+                    "questions": {
+                        "include": {"attempts": {"where": {"quizSession": {"userId": user_id}}}}
+                    }
+                }
+            },
+            "quizSessions": {"where": {"completedAt": {"not": None}, "userId": user_id}},
         },
     )
     if not exam_prep:
@@ -457,7 +465,7 @@ async def get_exam_prep_progress(db: Prisma, exam_prep_id: str, user_id: str) ->
 
 async def get_weak_areas(db: Prisma, exam_prep_id: str, user_id: str) -> list[dict]:
     """Get questions the user struggles with most."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -465,7 +473,10 @@ async def get_weak_areas(db: Prisma, exam_prep_id: str, user_id: str) -> list[di
     questions = await db.examquestion.find_many(
         where={"topic": {"examPrepId": exam_prep_id}},
         include={
-            "attempts": {"order_by": {"createdAt": "desc"}},
+            "attempts": {
+                "where": {"quizSession": {"userId": user_id}},
+                "order_by": {"createdAt": "desc"},
+            },
             "topic": True,
         },
     )
@@ -497,12 +508,12 @@ async def get_weak_areas(db: Prisma, exam_prep_id: str, user_id: str) -> list[di
 
 async def get_quiz_history(db: Prisma, exam_prep_id: str, user_id: str) -> list[dict]:
     """Get quiz session history for an exam prep."""
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
     sessions = await db.examquizsession.find_many(
-        where={"examPrepId": exam_prep_id, "completedAt": {"not": None}},
+        where={"examPrepId": exam_prep_id, "completedAt": {"not": None}, "userId": user_id},
         order={"createdAt": "desc"},
         take=50,
     )

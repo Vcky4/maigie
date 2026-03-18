@@ -43,8 +43,8 @@ async def start_quiz(
     Returns:
         dict with quizSession info and selected questionIds
     """
-    # Verify ownership
-    exam_prep = await db.examprep.find_first(where={"id": exam_prep_id, "userId": user_id})
+    # Verify exam prep exists (access control is enforced at route layer)
+    exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
 
@@ -52,7 +52,7 @@ async def start_quiz(
     count = question_count or QUIZ_COUNTS.get(mode, 15)
 
     # Select questions based on mode
-    question_ids = await _select_questions(db, exam_prep_id, mode, topic_id, count)
+    question_ids = await _select_questions(db, exam_prep_id, user_id, mode, topic_id, count)
 
     if not question_ids:
         raise ValueError(
@@ -63,6 +63,7 @@ async def start_quiz(
     session = await db.examquizsession.create(
         data={
             "examPrepId": exam_prep_id,
+            "userId": user_id,
             "mode": mode,
             "totalQuestions": len(question_ids),
             "topicId": topic_id,
@@ -102,6 +103,7 @@ async def start_quiz(
 async def submit_answer(
     db: Prisma,
     quiz_session_id: str,
+    user_id: str,
     question_id: str,
     user_answer: str,
     time_taken_seconds: int | None = None,
@@ -110,6 +112,11 @@ async def submit_answer(
     Submit an answer for a question in a quiz session.
     Returns correctness, correct answer, and explanation.
     """
+    # Ensure session belongs to current user
+    session = await db.examquizsession.find_first(where={"id": quiz_session_id, "userId": user_id})
+    if not session:
+        raise ValueError("Quiz session not found")
+
     # Get the question
     question = await db.examquestion.find_unique(where={"id": question_id})
     if not question:
@@ -151,6 +158,7 @@ async def submit_answer(
 async def complete_quiz(
     db: Prisma,
     quiz_session_id: str,
+    user_id: str,
     duration_seconds: int | None = None,
 ) -> dict:
     """
@@ -161,6 +169,8 @@ async def complete_quiz(
         include={"attempts": {"include": {"question": {"include": {"topic": True}}}}},
     )
     if not session:
+        raise ValueError("Quiz session not found")
+    if session.userId != user_id:
         raise ValueError("Quiz session not found")
 
     # Calculate score
@@ -243,6 +253,7 @@ async def complete_quiz(
 async def _select_questions(
     db: Prisma,
     exam_prep_id: str,
+    user_id: str,
     mode: str,
     topic_id: str | None,
     count: int,
@@ -252,20 +263,22 @@ async def _select_questions(
     if mode == "TOPIC_FOCUS" and topic_id:
         return await _select_topic_focus(db, topic_id, count)
     elif mode == "WEAK_AREAS":
-        return await _select_weak_areas(db, exam_prep_id, count)
+        return await _select_weak_areas(db, exam_prep_id, user_id, count)
     elif mode == "PAST_PAPER_SIM":
         return await _select_past_paper(db, exam_prep_id, count)
     elif mode == "QUICK_REVIEW":
-        return await _select_quick_review(db, exam_prep_id, count)
+        return await _select_quick_review(db, exam_prep_id, user_id, count)
     else:  # FULL_PRACTICE
-        return await _select_full_practice(db, exam_prep_id, count)
+        return await _select_full_practice(db, exam_prep_id, user_id, count)
 
 
-async def _select_full_practice(db: Prisma, exam_prep_id: str, count: int) -> list[str]:
+async def _select_full_practice(
+    db: Prisma, exam_prep_id: str, user_id: str, count: int
+) -> list[str]:
     """Random mix of all questions, weighted by mastery (prefer less mastered)."""
     questions = await db.examquestion.find_many(
         where={"topic": {"examPrepId": exam_prep_id}},
-        include={"attempts": True},
+        include={"attempts": {"where": {"quizSession": {"userId": user_id}}}},
     )
     if not questions:
         return []
@@ -295,11 +308,16 @@ async def _select_full_practice(db: Prisma, exam_prep_id: str, count: int) -> li
     return selected[:count]
 
 
-async def _select_weak_areas(db: Prisma, exam_prep_id: str, count: int) -> list[str]:
+async def _select_weak_areas(db: Prisma, exam_prep_id: str, user_id: str, count: int) -> list[str]:
     """Select questions the user has gotten wrong, prioritizing most recent failures."""
     questions = await db.examquestion.find_many(
         where={"topic": {"examPrepId": exam_prep_id}},
-        include={"attempts": {"order_by": {"createdAt": "desc"}}},
+        include={
+            "attempts": {
+                "where": {"quizSession": {"userId": user_id}},
+                "order_by": {"createdAt": "desc"},
+            }
+        },
     )
     if not questions:
         return []
@@ -362,11 +380,18 @@ async def _select_topic_focus(db: Prisma, topic_id: str, count: int) -> list[str
     return ids[:count]
 
 
-async def _select_quick_review(db: Prisma, exam_prep_id: str, count: int) -> list[str]:
+async def _select_quick_review(
+    db: Prisma, exam_prep_id: str, user_id: str, count: int
+) -> list[str]:
     """Quick review: mix of weak + random, small count."""
     questions = await db.examquestion.find_many(
         where={"topic": {"examPrepId": exam_prep_id}},
-        include={"attempts": {"order_by": {"createdAt": "desc"}}},
+        include={
+            "attempts": {
+                "where": {"quizSession": {"userId": user_id}},
+                "order_by": {"createdAt": "desc"},
+            }
+        },
     )
     if not questions:
         return []
