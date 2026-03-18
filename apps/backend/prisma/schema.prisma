@@ -1043,11 +1043,17 @@ model ExamQuizSession {
   durationSeconds Int? // Time taken
   topicId         String? // If mode is TOPIC_FOCUS, which topic
 
+  // User tracking for individual progress in shared circles
+  userId          String?
+  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   attempts ExamQuestionAttempt[]
 
   createdAt DateTime @default(now())
 
   @@index([examPrepId])
+  @@index([userId])
+  @@index([examPrepId, userId])
   @@index([examPrepId, createdAt])
 }
 

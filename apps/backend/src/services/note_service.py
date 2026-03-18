@@ -124,6 +124,7 @@ async def list_notes(
     tag: str | None = None,
     course_id: str | None = None,
     archived: bool | None = False,
+    circle_id: str | None = None,
 ) -> tuple[list[dict], int]:
     """
     List notes with filtering and pagination.
@@ -131,7 +132,12 @@ async def list_notes(
     skip = (page - 1) * size
 
     # Build query
-    where_clause = {"userId": user_id}
+    if circle_id:
+        # Notes shared in the circle
+        where_clause = {"circleId": circle_id}
+    else:
+        # Personal notes (not shared in a circle)
+        where_clause = {"userId": user_id, "circleId": None}
 
     if archived is not None:
         where_clause["archived"] = archived
@@ -208,3 +214,56 @@ async def remove_attachment(db: Prisma, note_id: str, attachment_id: str, user_i
 
     await db.noteattachment.delete(where={"id": attachment_id})
     return True
+
+
+async def import_note_to_circle(db: Prisma, note_id: str, circle_id: str, user_id: str):
+    """
+    Import a personal note to a circle by creating a copy.
+    """
+    # Verify the note belongs to the user and is a personal note
+    original = await db.note.find_first(
+        where={"id": note_id, "userId": user_id, "circleId": None},
+        include={"tags": True, "attachments": True},
+    )
+    if not original:
+        raise ValueError("Personal note not found or access denied")
+
+    # Verify user is a member of the circle
+    member = await db.circlemember.find_first(where={"circleId": circle_id, "userId": user_id})
+    if not member:
+        raise ValueError("User is not a member of the circle")
+
+    # Create a copy of the note for the circle
+    note_data = {
+        "title": original.title,
+        "content": original.content,
+        "userId": user_id,
+        "circleId": circle_id,
+        "summary": original.summary,
+    }
+
+    new_note = await db.note.create(data=note_data)
+
+    # Copy tags
+    if original.tags:
+        for tag_obj in original.tags:
+            await db.notetag.create(
+                data={
+                    "noteId": new_note.id,
+                    "tag": tag_obj.tag,
+                }
+            )
+
+    # Copy attachments metadata (pointing to the same S3 URLs)
+    if original.attachments:
+        for att in original.attachments:
+            await db.noteattachment.create(
+                data={
+                    "noteId": new_note.id,
+                    "filename": att.filename,
+                    "url": att.url,
+                    "size": att.size,
+                }
+            )
+
+    return await get_note(db, new_note.id, user_id)
