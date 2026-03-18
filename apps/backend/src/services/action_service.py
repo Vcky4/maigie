@@ -608,6 +608,7 @@ class ActionService:
             query = data.get("query", "")
             topic_id = data.get("topicId")
             course_id = data.get("courseId")
+            circle_id = data.get("circleId")
             limit = data.get("limit", 10)
 
             if not query:
@@ -725,6 +726,8 @@ class ActionService:
                         resource_data["courseId"] = str(course_id)
                     if topic_id:
                         resource_data["topicId"] = str(topic_id)
+                    if circle_id:
+                        resource_data["circleId"] = str(circle_id)
 
                     # Skip empty URLs
                     if not resource_data["url"]:

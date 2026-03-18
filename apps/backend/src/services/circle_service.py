@@ -674,7 +674,7 @@ async def award_contribution_points(db: Prisma, circle_id: str, user_id: str, po
 
 async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: CircleImportRequest):
     """Import items (notes, courses, resources) into a circle."""
-    await _verify_admin(db, circle_id, user_id)
+    await _verify_membership(db, circle_id, user_id)
 
     imported_stats = {"notes": 0, "courses": 0, "resources": 0}
 

@@ -886,6 +886,17 @@ async def enrich_action_data(
                 f"📝 Set courseId from original context for resource recommendation: {context['courseId']}"
             )
 
+        if enriched_context and enriched_context.get("circleId"):
+            action_data["circleId"] = enriched_context["circleId"]
+            print(
+                f"📝 Set circleId from enriched_context for resource recommendation: {enriched_context['circleId']}"
+            )
+        elif context and context.get("circleId"):
+            action_data["circleId"] = context["circleId"]
+            print(
+                f"📝 Set circleId from original context for resource recommendation: {context['circleId']}"
+            )
+
     # Handle create_schedule action
     if action_type == "create_schedule":
         # Similar to create_goal, enrich courseId, topicId, goalId from context
