@@ -700,7 +700,7 @@ async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: Circl
             imported_stats["resources"] += 1
 
     # Import Goals
-    if hasattr(data, 'goalIds') and data.goalIds:
+    if hasattr(data, "goalIds") and data.goalIds:
         for goal_id in data.goalIds:
             goal = await db.goal.find_unique(where={"id": goal_id})
             if goal and goal.userId == user_id and not goal.circleId:
