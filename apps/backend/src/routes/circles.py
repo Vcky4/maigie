@@ -75,6 +75,8 @@ async def list_circles(
                 maxGroups=circle.maxGroups,
                 memberCount=len(circle.members) if circle.members else 0,
                 role=membership.role,
+                credits=getattr(circle, "credits", None),
+                creditsLimit=getattr(circle, "creditsLimit", None),
                 createdAt=circle.createdAt,
                 updatedAt=circle.updatedAt,
             )

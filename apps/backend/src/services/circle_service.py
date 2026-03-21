@@ -112,6 +112,7 @@ async def create_circle(db: Prisma, user_id: str, user_tier: str, data: CircleCr
             "name": data.name,
             "description": data.description,
             "createdById": user_id,
+            "creditsLimit": data.creditsLimit,
         }
     )
 

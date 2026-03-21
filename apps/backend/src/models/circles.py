@@ -16,6 +16,7 @@ class CircleCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
+    creditsLimit: int | None = Field(None, ge=0)
 
 
 class CircleUpdate(BaseModel):
@@ -24,6 +25,7 @@ class CircleUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
     avatarUrl: str | None = None
+    creditsLimit: int | None = Field(None, ge=0)
 
 
 class CircleChatGroupCreate(BaseModel):
@@ -91,6 +93,8 @@ class CircleResponse(BaseModel):
     maxGroups: int
     memberCount: int = 0
     role: str | None = None  # Current user's role in this circle
+    credits: int | None = None
+    creditsLimit: int | None = None
     createdAt: datetime
     updatedAt: datetime
 
