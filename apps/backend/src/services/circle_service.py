@@ -673,10 +673,10 @@ async def award_contribution_points(db: Prisma, circle_id: str, user_id: str, po
 
 
 async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: CircleImportRequest):
-    """Import items (notes, courses, resources) into a circle."""
+    """Import items (notes, courses, resources, goals) into a circle."""
     await _verify_membership(db, circle_id, user_id)
 
-    imported_stats = {"notes": 0, "courses": 0, "resources": 0}
+    imported_stats = {"notes": 0, "courses": 0, "resources": 0, "goals": 0}
 
     # Import Notes
     for note_id in data.noteIds:
@@ -698,6 +698,14 @@ async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: Circl
         if resource and resource.userId == user_id and not resource.circleId:
             await db.resource.update(where={"id": resource_id}, data={"circleId": circle_id})
             imported_stats["resources"] += 1
+
+    # Import Goals
+    if hasattr(data, 'goalIds') and data.goalIds:
+        for goal_id in data.goalIds:
+            goal = await db.goal.find_unique(where={"id": goal_id})
+            if goal and goal.userId == user_id and not goal.circleId:
+                await db.goal.update(where={"id": goal_id}, data={"circleId": circle_id})
+                imported_stats["goals"] += 1
 
     return imported_stats
 

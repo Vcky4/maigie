@@ -165,6 +165,7 @@ class CircleImportRequest(BaseModel):
     resourceIds: list[str] = []
     courseIds: list[str] = []
     noteIds: list[str] = []
+    goalIds: list[str] = []
 
 
 # --- Circle Session Models ---
