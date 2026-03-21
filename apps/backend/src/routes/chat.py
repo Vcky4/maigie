@@ -98,6 +98,39 @@ def _map_db_role_to_client(role: str) -> str:
     return "system"
 
 
+MAIGIE_MENTION_PATTERN = re.compile(r"@maigie\b", re.IGNORECASE)
+
+
+async def _get_circle_group_for_session(db_client: Prisma, session_id: str):
+    """Return the circle chat group backing a chat session, if any."""
+    return await db_client.circlechatgroup.find_first(
+        where={"chatSessionId": session_id},
+        include={
+            "circle": {
+                "include": {
+                    "members": {
+                        "include": {"user": True},
+                    }
+                }
+            }
+        },
+    )
+
+
+def _is_circle_member(circle_group, user_id: str) -> bool:
+    """Check whether a user belongs to the circle that owns a chat group."""
+    if not circle_group or not getattr(circle_group, "circle", None):
+        return False
+    return any(member.userId == user_id for member in (circle_group.circle.members or []))
+
+
+def _strip_maigie_mention(text: str) -> str:
+    """Remove direct @maigie mentions before sending text to the model."""
+    stripped = MAIGIE_MENTION_PATTERN.sub("", text or "")
+    stripped = re.sub(r"\s{2,}", " ", stripped).strip(" \t,:")
+    return stripped
+
+
 async def merge_generic_sessions(user_id: str, db: Prisma):
     """
     Finds all generic sessions for a user. If multiple exist (legacy),
@@ -517,11 +550,35 @@ async def get_my_chat_messages(
     If `reviewItemId` is provided, returns only that review thread.
     If `reviewItemId` is omitted, returns only general chat messages (reviewItemId is NULL).
     """
-    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    session = await db.chatsession.find_unique(
+        where={"id": session_id},
+        include={
+            "circleChatGroup": {
+                "include": {
+                    "circle": {
+                        "include": {
+                            "members": True,
+                        }
+                    }
+                }
+            }
+        },
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    where = {"sessionId": session_id, "userId": current_user.id}
+    circle_group = getattr(session, "circleChatGroup", None)
+    is_circle_session = bool(circle_group)
+
+    if is_circle_session:
+        if not _is_circle_member(circle_group, current_user.id):
+            raise HTTPException(status_code=403, detail="You are not a member of this circle.")
+    elif session.userId != current_user.id:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    where = {"sessionId": session_id}
+    if not is_circle_session:
+        where["userId"] = current_user.id
     if reviewItemId:
         where["reviewItemId"] = reviewItemId
     else:
@@ -539,7 +596,8 @@ async def get_my_chat_messages(
     # For non-onboarded users fetching general chat: if session is empty, seed welcome message.
     # This is the single source of truth - handles createSession reuse, stored session, etc.
     if (
-        not reviewItemId
+        not is_circle_session
+        and not reviewItemId
         and not is_resource_scoped
         and not getattr(current_user, "isOnboarded", False)
     ):
@@ -577,6 +635,7 @@ async def get_my_chat_messages(
         order={"createdAt": "desc"},
         take=take,
         skip=skip,
+        include={"user": True},
     )
     records = list(reversed(records))
 
@@ -590,6 +649,8 @@ async def get_my_chat_messages(
             "timestamp": (
                 m.createdAt.isoformat() if hasattr(m.createdAt, "isoformat") else str(m.createdAt)
             ),
+            "userId": getattr(m, "userId", None),
+            "userName": (m.user.name if getattr(m, "user", None) else None),
             "imageUrl": getattr(m, "imageUrl", None),
             "imageUrls": getattr(m, "imageUrls", None) or [],
         }
@@ -1298,13 +1359,63 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             user_text = raw_message
             context = None
             temp_id = None
+            message_type = None
 
             try:
                 # Try to parse as JSON
                 message_data = json.loads(raw_message)
                 if isinstance(message_data, dict):
-                    if message_data.get("type") == "ping":
+                    message_type = message_data.get("type")
+                    if message_type == "ping":
                         await manager.send_json({"type": "pong"}, user.id)
+                        continue
+                    if message_type == "subscribe":
+                        subscribe_context = message_data.get("context") or {}
+                        subscribe_session_id = subscribe_context.get("sessionId")
+                        if not subscribe_session_id:
+                            await manager.send_json(
+                                {
+                                    "type": "error",
+                                    "payload": {"message": "Missing sessionId for subscription."},
+                                },
+                                user.id,
+                            )
+                            continue
+
+                        subscribed_group = await _get_circle_group_for_session(
+                            db, subscribe_session_id
+                        )
+                        if not subscribed_group or not _is_circle_member(subscribed_group, user.id):
+                            await manager.send_json(
+                                {
+                                    "type": "error",
+                                    "payload": {"message": "Unable to join this circle room."},
+                                },
+                                user.id,
+                            )
+                            continue
+
+                        manager.join_room(user.id, subscribe_session_id)
+                        await manager.send_json(
+                            {
+                                "type": "subscribed",
+                                "payload": {"sessionId": subscribe_session_id},
+                            },
+                            user.id,
+                        )
+                        continue
+                    if message_type == "unsubscribe":
+                        unsubscribe_context = message_data.get("context") or {}
+                        unsubscribe_session_id = unsubscribe_context.get("sessionId")
+                        if unsubscribe_session_id:
+                            manager.leave_room(user.id, unsubscribe_session_id)
+                        await manager.send_json(
+                            {
+                                "type": "unsubscribed",
+                                "payload": {"sessionId": unsubscribe_session_id},
+                            },
+                            user.id,
+                        )
                         continue
                     user_text = message_data.get("message", raw_message)
                     context = message_data.get("context")
@@ -1319,14 +1430,34 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             if context and context.get("sessionId"):
                 requested_session_id = context.get("sessionId")
                 try:
-                    pinned = await db.chatsession.find_first(
-                        where={"id": requested_session_id, "userId": user.id}
+                    pinned = await db.chatsession.find_unique(
+                        where={"id": requested_session_id}
                     )
                     if pinned:
                         session = pinned
                 except Exception:
                     # If anything goes wrong, fall back to the current session
                     pass
+
+            circle_group = await _get_circle_group_for_session(db, session.id)
+            is_circle_session = bool(circle_group)
+            if is_circle_session:
+                if not _is_circle_member(circle_group, user.id):
+                    await manager.send_json(
+                        {
+                            "type": "error",
+                            "payload": {"message": "You are not a member of this circle room."},
+                        },
+                        user.id,
+                    )
+                    continue
+                manager.join_room(user.id, session.id)
+
+            should_reply_as_ai = True
+            llm_user_text = user_text
+            if is_circle_session:
+                should_reply_as_ai = bool(MAIGIE_MENTION_PATTERN.search(user_text or ""))
+                llm_user_text = _strip_maigie_mention(user_text)
 
             # 3.2.0 Check Retroactive Onboarding Need
             is_onboarded = getattr(user, "isOnboarded", False)
@@ -1339,7 +1470,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     pass
 
             needs_retro_onboarding = False
-            if is_onboarded and not (context and context.get("reviewItemId")):
+            if (
+                not is_circle_session
+                and is_onboarded
+                and not (context and context.get("reviewItemId"))
+            ):
                 try:
                     from src.services.onboarding_service import (
                         get_onboarding_state,
@@ -1357,7 +1492,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     logger.warning("Retroactive onboarding check failed: %s", e)
 
             # 3.2 Handle AI-initiated greeting for new chats
-            if user_text == "__greeting__":
+            if not is_circle_session and user_text == "__greeting__":
                 if needs_retro_onboarding:
                     # Hijack greeting to start retro-onboarding
                     user_text = ""
@@ -1494,6 +1629,28 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user.id,
             )
 
+            if is_circle_session:
+                await manager.send_room_json(
+                    {
+                        "type": "circle_message",
+                        "payload": {
+                            "id": user_message.id,
+                            "sessionId": session.id,
+                            "role": "user",
+                            "content": user_text,
+                            "timestamp": (
+                                user_message.createdAt.isoformat()
+                                if hasattr(user_message.createdAt, "isoformat")
+                                else str(user_message.createdAt)
+                            ),
+                            "userId": user.id,
+                            "userName": getattr(user, "name", None),
+                        },
+                    },
+                    session.id,
+                    exclude_user_id=user.id,
+                )
+
             # Bump session updatedAt to move it to the top of history (Interaction based)
             await db.chatsession.update(
                 where={"id": session.id}, data={"updatedAt": datetime.now(UTC)}
@@ -1552,7 +1709,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     pass
 
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
-            if (not is_onboarded or needs_retro_onboarding) and not (
+            if not is_circle_session and (not is_onboarded or needs_retro_onboarding) and not (
                 context and context.get("reviewItemId")
             ):
                 try:
@@ -1638,6 +1795,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     # If onboarding fails for any reason, fall back to normal LLM flow.
                     logger.error("Onboarding flow error: %s", e, exc_info=True)
 
+            if is_circle_session and not should_reply_as_ai:
+                continue
+
             # 5. Build History for Context (latest messages to reduce token usage)
             # IMPORTANT: Use the *most recent* messages; ordering asc with take would grab the oldest.
             history_take = 12
@@ -1647,6 +1807,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 history_where["reviewItemId"] = context["reviewItemId"]
             else:
                 history_where["reviewItemId"] = None
+            if not is_circle_session:
+                history_where["userId"] = user.id
             history_records = await db.chatmessage.find_many(
                 where=history_where,
                 order={"createdAt": "desc"},
@@ -1865,6 +2027,26 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if context.get("noteContent") and not enriched_context.get("noteContent"):
                     enriched_context["noteContent"] = context["noteContent"]
 
+            if is_circle_session:
+                if not enriched_context:
+                    enriched_context = {}
+                enriched_context["circleId"] = circle_group.circleId
+                enriched_context["circleName"] = (
+                    circle_group.circle.name if getattr(circle_group, "circle", None) else None
+                )
+                enriched_context["chatGroupId"] = circle_group.id
+                enriched_context["chatGroupName"] = circle_group.name
+                enriched_context["memberCount"] = (
+                    len(circle_group.circle.members)
+                    if getattr(circle_group, "circle", None) and circle_group.circle.members
+                    else 0
+                )
+                enriched_context["pageContext"] = (
+                    "You are participating in a shared circle chat room. "
+                    "Respond with the circle's discussion in mind, not the user's private study history. "
+                    "Keep responses collaborative and suitable for the whole room."
+                )
+
             # 5.6. Perform Semantic Search (RAG) to find relevant items
             # This helps the LLM know about items the user might be referring to
             # Skip RAG for short/simple messages to improve response time
@@ -1908,7 +2090,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 and not user_text_lower.startswith(("hi ", "hello ", "hey "))
             )
 
-            if should_run_rag:
+            if is_circle_session:
+                print("⏭️ Skipping personal RAG for circle chat.")
+            elif should_run_rag:
                 try:
                     # We use a broader limit to catch potential matches
                     rag_results = await rag_service.retrieve_relevant_context(
@@ -1952,16 +2136,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 )
 
             # 5b. Inject long-term memory context (conversation summaries + learning insights)
-            try:
-                from src.services.memory_service import get_memory_context
+            if is_circle_session:
+                print("⏭️ Skipping personal memory injection for circle chat.")
+            else:
+                try:
+                    from src.services.memory_service import get_memory_context
 
-                memory_ctx = await get_memory_context(user.id, query=user_text)
-                if memory_ctx:
-                    if not enriched_context:
-                        enriched_context = {}
-                    enriched_context["memory_context"] = memory_ctx
-            except Exception as e:
-                print(f"⚠️ Memory context retrieval failed: {e}")
+                    memory_ctx = await get_memory_context(user.id, query=llm_user_text)
+                    if memory_ctx:
+                        if not enriched_context:
+                            enriched_context = {}
+                        enriched_context["memory_context"] = memory_ctx
+                except Exception as e:
+                    print(f"⚠️ Memory context retrieval failed: {e}")
 
             # 6. Get AI response with tool calling support
             # Define progress callback for tool execution updates
@@ -1969,21 +2156,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 progress: int, stage: str, message: str, course_id: str = None, **kwargs
             ):
                 """Send progress updates to frontend via WebSocket"""
-                await manager.send_json(
-                    {
-                        "type": "event",
-                        "payload": {
-                            "status": "processing",
-                            "action": "ai_course_generation",
-                            "course_id": course_id,
-                            "courseId": course_id,
-                            "progress": progress,
-                            "stage": stage,
-                            "message": message,
-                        },
+                payload = {
+                    "type": "event",
+                    "payload": {
+                        "status": "processing",
+                        "action": "ai_course_generation",
+                        "course_id": course_id,
+                        "courseId": course_id,
+                        "progress": progress,
+                        "stage": stage,
+                        "message": message,
+                        "sessionId": session.id,
                     },
-                    user.id,
-                )
+                }
+                if is_circle_session:
+                    await manager.send_room_json(payload, session.id)
+                else:
+                    await manager.send_json(payload, user.id)
 
             # Define stream callback for streaming text responses
             streamed_chunks = []
@@ -1991,22 +2180,24 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             async def stream_text(chunk: str, is_final: bool):
                 """Stream text chunks to frontend via WebSocket"""
                 streamed_chunks.append(chunk)
-                await manager.send_json(
-                    {
-                        "type": "stream",
-                        "payload": {
-                            "chunk": chunk,
-                            "is_final": is_final,
-                        },
+                payload = {
+                    "type": "stream",
+                    "payload": {
+                        "chunk": chunk,
+                        "is_final": is_final,
+                        "sessionId": session.id,
                     },
-                    user.id,
-                )
+                }
+                if is_circle_session:
+                    await manager.send_room_json(payload, session.id)
+                else:
+                    await manager.send_json(payload, user.id)
 
             try:
                 response_text, usage_info, executed_actions, query_results = (
                     await llm_service.get_chat_response_with_tools(
                         history=formatted_history,
-                        user_message=user_text,
+                        user_message=llm_user_text,
                         context=enriched_context,
                         user_id=user.id,
                         user_name=getattr(user, "name", None),
@@ -2039,7 +2230,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             )
 
             # Check if user explicitly asked to VIEW their data (not just context lookup)
-            user_text_lower = user_text.lower()
+            user_text_lower = llm_user_text.lower()
             explicit_view_keywords = [
                 "show my",
                 "list my",
@@ -2219,7 +2410,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # (Keep existing credit consumption logic)
             # Estimate tokens needed: user message + context + history (approximate 4 chars per token)
             estimated_input_tokens = (
-                len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
+                len(llm_user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
             ) // 4
             # Reserve credits for response (reduced estimate for cost savings)
             estimated_output_tokens = 500  # Reduced from 1000 for cost optimization
@@ -2305,7 +2496,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Fallback to estimation if API didn't provide token counts
             if actual_input_tokens == 0 and actual_output_tokens == 0:
                 actual_input_tokens = (
-                    len(user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
+                    len(llm_user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
                 ) // 4
                 actual_output_tokens = len(clean_response) // 4
 
@@ -2372,34 +2563,51 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
             if suggestion_text:
                 # Split response: send structured payload so frontend updates last message
-                await manager.send_json(
-                    {
-                        "type": "assistant_final",
-                        "id": assistant_message.id,
-                        "content": main_content,
-                        "suggestionText": suggestion_text,
-                    },
-                    user.id,
-                )
+                payload = {
+                    "type": "assistant_final",
+                    "id": assistant_message.id,
+                    "content": main_content,
+                    "suggestionText": suggestion_text,
+                    "sessionId": session.id,
+                }
+                if is_circle_session:
+                    await manager.send_room_json(payload, session.id)
+                else:
+                    await manager.send_json(payload, user.id)
             else:
                 if main_content:
-                    await manager.send_personal_message(main_content, user.id)
+                    if is_circle_session:
+                        await manager.send_room_json(
+                            {
+                                "type": "assistant_final",
+                                "id": assistant_message.id,
+                                "content": main_content,
+                                "sessionId": session.id,
+                            },
+                            session.id,
+                        )
+                    else:
+                        await manager.send_personal_message(main_content, user.id)
                 # Send confirmation with ID
-                await manager.send_json(
-                    {
-                        "type": "message_saved",
-                        "payload": {
-                            "id": assistant_message.id,
-                            "role": "assistant",
-                            "sessionId": session.id,
-                        },
+                payload = {
+                    "type": "message_saved",
+                    "payload": {
+                        "id": assistant_message.id,
+                        "role": "assistant",
+                        "sessionId": session.id,
                     },
-                    user.id,
-                )
+                }
+                if is_circle_session:
+                    await manager.send_room_json(payload, session.id)
+                else:
+                    await manager.send_json(payload, user.id)
 
             # 14. Send component responses (queries and actions)
             for component_response in query_component_responses + component_responses:
-                await manager.send_json(component_response, user.id)
+                if is_circle_session:
+                    await manager.send_room_json(component_response, session.id)
+                else:
+                    await manager.send_json(component_response, user.id)
 
             # 15. When split, suggestion is in assistant_final; no separate send needed
 
@@ -2407,7 +2615,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Only run every 5+ user messages to avoid excessive LLM calls
             try:
                 user_msg_count = sum(1 for m in formatted_history if m.get("role") == "user")
-                if user_msg_count >= 5 and user_msg_count % 5 == 0:
+                if not is_circle_session and user_msg_count >= 5 and user_msg_count % 5 == 0:
                     conversation_for_extraction = [
                         {
                             "role": m.get("role", "user"),
@@ -2415,7 +2623,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         }
                         for m in formatted_history
                     ]
-                    conversation_for_extraction.append({"role": "user", "content": user_text})
+                    conversation_for_extraction.append({"role": "user", "content": llm_user_text})
                     asyncio.create_task(
                         llm_service.extract_user_facts_from_conversation(
                             conversation_for_extraction, user.id
