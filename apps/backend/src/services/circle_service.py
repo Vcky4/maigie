@@ -170,6 +170,7 @@ async def get_circle_detail(db: Prisma, circle_id: str, user_id: str):
             detail="Circle not found.",
         )
 
+    circle = await _ensure_circle_chat_sessions(db, circle, user_id)
     return circle
 
 
@@ -546,7 +547,56 @@ async def list_chat_groups(db: Prisma, circle_id: str, user_id: str):
         order={"createdAt": "asc"},
     )
 
-    return groups
+    repaired_groups = []
+    for group in groups:
+        if group.chatSessionId:
+            repaired_groups.append(group)
+            continue
+        repaired_groups.append(await _ensure_chat_group_session(db, group, user_id))
+
+    return repaired_groups
+
+
+async def _ensure_circle_chat_sessions(db: Prisma, circle, user_id: str):
+    """Backfill missing chat sessions for legacy circle groups."""
+    repaired_groups = []
+    repaired_any = False
+
+    for group in circle.chatGroups or []:
+        if group.chatSessionId:
+            repaired_groups.append(group)
+            continue
+
+        repaired_groups.append(await _ensure_chat_group_session(db, group, user_id, circle))
+        repaired_any = True
+
+    if repaired_any:
+        circle.chatGroups = repaired_groups
+
+    return circle
+
+
+async def _ensure_chat_group_session(db: Prisma, group, user_id: str, circle=None):
+    """Create a backing chat session for groups created before chatSessionId was enforced."""
+    if group.chatSessionId:
+        return group
+
+    owning_circle = circle or await db.circle.find_unique(where={"id": group.circleId})
+    session_owner_id = getattr(owning_circle, "createdById", None) or user_id
+    session_title = f"{owning_circle.name} - {group.name}" if owning_circle else group.name
+
+    chat_session = await db.chatsession.create(
+        data={
+            "userId": session_owner_id,
+            "title": session_title,
+            "isActive": True,
+        }
+    )
+
+    return await db.circlechatgroup.update(
+        where={"id": group.id},
+        data={"chatSessionId": chat_session.id},
+    )
 
 
 async def update_chat_group(
