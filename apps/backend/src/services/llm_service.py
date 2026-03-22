@@ -498,7 +498,7 @@ class GeminiService:
                 iteration += 1
 
                 # Send message (first iteration) or tool results (subsequent iterations)
-                streamed_text = ""
+                streamed_turn_text = ""
 
                 async def _send_streaming_request(payload):
                     response_stream = chat._send_message_stream(payload)
@@ -517,11 +517,9 @@ class GeminiService:
                         except Exception:
                             chunk_text = None
 
-                        # Extract function calls using the built-in property on GenerateContentResponse
+                        # Extract function calls
                         if hasattr(chunk, "function_calls") and chunk.function_calls:
                             streamed_function_calls.extend(chunk.function_calls)
-
-                        # Fallback for parts if exposed differently in some models
                         elif (
                             hasattr(chunk, "candidates")
                             and chunk.candidates
@@ -534,86 +532,67 @@ class GeminiService:
 
                         if chunk_text:
                             streamed_text_parts.append(chunk_text)
-                            if last_chunk_text is not None:
-                                await stream_callback(last_chunk_text, False)
-                            last_chunk_text = chunk_text
+                            if stream_callback:
+                                if last_chunk_text is not None:
+                                    await stream_callback(last_chunk_text, False)
+                                last_chunk_text = chunk_text
 
-                    if last_chunk_text is not None:
+                    if stream_callback and last_chunk_text is not None:
                         await stream_callback(last_chunk_text, True)
 
                     return last_response, "".join(streamed_text_parts), streamed_function_calls
 
                 if iteration == 1:
                     llm_start = time.perf_counter()
-                    if stream_callback:
-                        response, streamed_text, streamed_function_calls = (
-                            await _send_streaming_request(message_content)
-                        )
-                    else:
-                        response = await chat.send_message(message_content)
+                    response, streamed_turn_text, streamed_function_calls = (
+                        await _send_streaming_request(message_content)
+                    )
                     total_llm_time += time.perf_counter() - llm_start
-                    last_payload = message_content
                 else:
                     # Send tool results from previous iteration
                     llm_start = time.perf_counter()
-                    if stream_callback:
-                        response, streamed_text, streamed_function_calls = (
-                            await _send_streaming_request(tool_results)
-                        )
-                    else:
-                        response = await chat.send_message(tool_results)
+                    response, streamed_turn_text, streamed_function_calls = (
+                        await _send_streaming_request(tool_results)
+                    )
                     total_llm_time += time.perf_counter() - llm_start
-                    last_payload = tool_results
+
+                # Accumulate final_text, but avoid duplicating prefix if model repeats itself
+                if streamed_turn_text:
+                    stripped_turn = streamed_turn_text.strip()
+                    if final_text and stripped_turn.startswith(final_text.strip()):
+                        # Model repeated previous turn's text, only add the new part
+                        new_part = stripped_turn[len(final_text.strip()) :]
+                        final_text += new_part
+                    else:
+                        if final_text and not final_text.endswith(("\n", " ")):
+                            final_text += " "
+                        final_text += streamed_turn_text
 
                 # Track token usage
                 if hasattr(response, "usage_metadata"):
                     total_input_tokens += response.usage_metadata.prompt_token_count or 0
                     total_output_tokens += response.usage_metadata.candidates_token_count or 0
 
-                # Check for function calls - check both function_calls property and parts
+                # Check for function calls
                 function_calls = []
-                if stream_callback and streamed_function_calls:
+                if streamed_function_calls:
                     function_calls = streamed_function_calls
-                    print(f"📞 Found {len(function_calls)} function calls via stream parts")
                 elif hasattr(response, "function_calls") and response.function_calls:
                     function_calls = list(response.function_calls)
-                    print(
-                        f"📞 Found {len(function_calls)} function calls via response.function_calls"
-                    )
                 elif hasattr(response, "parts"):
-                    # Check parts for function calls (some models return them in parts)
                     for part in response.parts:
                         if hasattr(part, "function_call") and part.function_call:
                             function_calls.append(part.function_call)
-                    if function_calls:
-                        print(f"📞 Found {len(function_calls)} function calls via response.parts")
 
                 if not function_calls:
-                    # No tool calls - this is the final response
-                    if stream_callback:
-                        if streamed_text:
-                            final_text = streamed_text
-                        else:
-                            try:
-                                final_text = (
-                                    response.text
-                                    if hasattr(response, "text") and response.text
-                                    else ""
-                                )
-                            except ValueError as e:
-                                print(f"⚠️ Could not get text from response: {e}")
-                                final_text = ""
-                            if not final_text:
-                                final_text = "I'm sorry, I couldn't generate a response."
-                    else:
-                        # Non-streaming response
+                    # No tool calls - final turn
+                    if not final_text:
                         try:
                             final_text = (
                                 response.text if hasattr(response, "text") and response.text else ""
                             )
-                        except ValueError as e:
-                            print(f"⚠️ Could not get text from response: {e}")
-                            final_text = ""
+                        except (ValueError, Exception):
+                            final_text = "I'm sorry, I couldn't generate a response."
                     print(f"⏱️ [{request_id}] LLM iteration {iteration} completed with no tools")
                     break
 
