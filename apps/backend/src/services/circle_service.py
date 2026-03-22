@@ -312,20 +312,20 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
 
     created_invites = []
     for email in data.emails:
-        # Check if already invited
-        existing = await db.circleinvite.find_unique(
+        # Check if already invited (case-insensitive)
+        existing = await db.circleinvite.find_first(
             where={
-                "circleId_inviteeEmail": {
-                    "circleId": circle_id,
-                    "inviteeEmail": str(email),
-                }
+                "circleId": circle_id,
+                "inviteeEmail": {"equals": str(email), "mode": "insensitive"},
             }
         )
         if existing and existing.status == "PENDING":
             continue  # Skip already pending invites
 
-        # Check if already a member (by email lookup)
-        invitee_user = await db.user.find_unique(where={"email": str(email)})
+        # Check if already a member (by email lookup - case-insensitive)
+        invitee_user = await db.user.find_first(
+            where={"email": {"equals": str(email), "mode": "insensitive"}}
+        )
 
         if invitee_user:
             # Check if already a member
@@ -383,7 +383,7 @@ async def list_pending_invites(db: Prisma, user_id: str):
 
     invites = await db.circleinvite.find_many(
         where={
-            "inviteeEmail": user.email,
+            "inviteeEmail": {"equals": user.email, "mode": "insensitive"},
             "status": "PENDING",
         },
         include={
@@ -408,12 +408,16 @@ async def accept_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str
             detail="Invite not found.",
         )
 
-    # Verify the invite is for this user
+    # Verify the invite is for this user (case-insensitive email comparison)
     user = await db.user.find_unique(where={"id": user_id})
-    if not user or invite.inviteeEmail != user.email:
+    if not user or invite.inviteeEmail.lower() != user.email.lower():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This invite is not for you.",
+            detail=(
+                f"This invite is for {invite.inviteeEmail}, but you are logged in as {user.email if user else 'unknown'}."
+                if invite.inviteeEmail.lower() != (user.email.lower() if user else "")
+                else "Invite verification failed."
+            ),
         )
 
     if invite.status != "PENDING":
@@ -432,22 +436,28 @@ async def accept_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str
             detail="This invite has expired.",
         )
 
-    # Check max circles for the accepting user
-    user_circle_count = await db.circlemember.count(where={"userId": user_id})
-    if user_circle_count >= MAX_CIRCLES_PER_USER:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"You can belong to a maximum of {MAX_CIRCLES_PER_USER} circles.",
-        )
-
-    # Add user as member
-    await db.circlemember.create(
-        data={
-            "circleId": circle_id,
-            "userId": user_id,
-            "role": "MEMBER",
-        }
+    # Check if already a member
+    existing_membership = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
     )
+
+    if not existing_membership:
+        # Check max circles for the accepting user
+        user_circle_count = await db.circlemember.count(where={"userId": user_id})
+        if user_circle_count >= MAX_CIRCLES_PER_USER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You can belong to a maximum of {MAX_CIRCLES_PER_USER} circles. Please leave another circle first.",
+            )
+
+        # Add user as member
+        await db.circlemember.create(
+            data={
+                "circleId": circle_id,
+                "userId": user_id,
+                "role": "MEMBER",
+            }
+        )
 
     # Update invite status
     await db.circleinvite.update(
@@ -469,7 +479,7 @@ async def decline_invite(db: Prisma, circle_id: str, invite_id: str, user_id: st
         )
 
     user = await db.user.find_unique(where={"id": user_id})
-    if not user or invite.inviteeEmail != user.email:
+    if not user or invite.inviteeEmail.lower() != user.email.lower():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This invite is not for you.",
