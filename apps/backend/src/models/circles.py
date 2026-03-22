@@ -3,7 +3,7 @@ Pydantic models for Circle (study group) management.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -194,7 +194,7 @@ class CircleSessionUpdate(BaseModel):
     description: str | None = None
     scheduledAt: datetime | None = None
     duration: int | None = None
-    status: str | None = None
+    status: Literal["SCHEDULED", "ACTIVE", "COMPLETED", "CANCELLED"] | None = None
     chatGroupId: str | None = None
     topicId: str | None = None
     goalId: str | None = None

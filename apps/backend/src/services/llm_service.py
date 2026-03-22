@@ -797,6 +797,16 @@ class GeminiService:
             elif context.get("noteId"):
                 context_parts.append(f"Current Note ID: {context['noteId']}")
 
+            # Circle information (when operating in a circle chat)
+            if context.get("circleName"):
+                context_parts.append(f"Circle Group: {context['circleName']}")
+                if context.get("chatGroupName"):
+                    context_parts.append(f"Chat Group: {context['chatGroupName']}")
+                if context.get("circleId"):
+                    context_parts.append(f"Circle ID: {context['circleId']}")
+                if context.get("memberCount"):
+                    context_parts.append(f"Circle Members: {context['memberCount']}")
+
             # Retrieved Items (from RAG/Database Search)
             if context.get("retrieved_items"):
                 context_parts.append("\nPossibly Relevant Items found in Database:")
