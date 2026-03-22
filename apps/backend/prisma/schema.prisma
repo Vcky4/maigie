@@ -486,6 +486,7 @@ model ChatSession {
 
   title    String? // Auto-generated summary (e.g. "Biology Study Plan")
   isActive Boolean @default(true) // False if archived/deleted
+  isCircleRoom Boolean @default(false)
 
   // Resource linkage (New: for per-page history persistence)
   courseId String?
@@ -517,6 +518,7 @@ model ChatSession {
   @@index([examPrepId])
   @@index([noteId])
   @@index([updatedAt]) // Useful for sorting "Recent Chats"
+  @@index([isCircleRoom])
 }
 
 model ChatMessage {
@@ -531,6 +533,11 @@ model ChatMessage {
   // Spaced repetition / review threading (optional)
   reviewItemId String?
   reviewItem   ReviewItem? @relation("ReviewItemChatMessages", fields: [reviewItemId], references: [id], onDelete: SetNull)
+
+  // Optional in-room reply/thread linkage
+  replyToMessageId String?
+  replyToMessage   ChatMessage?  @relation("ChatMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          ChatMessage[] @relation("ChatMessageReplies")
 
   role    ChatRole // USER, ASSISTANT, SYSTEM
   content String // The Markdown text response
@@ -566,6 +573,7 @@ model ChatMessage {
   @@index([sessionId, reviewItemId])
   @@index([userId]) // Helps count "messages this month" quickly
   @@index([createdAt]) // For cost/revenue analytics
+  @@index([replyToMessageId])
 }
 
 model AIActionLog {

@@ -5,6 +5,7 @@ Handles active connections and message broadcasting.
 
 import logging
 from collections import defaultdict
+from uuid import uuid4
 
 from fastapi import WebSocket
 
@@ -13,64 +14,94 @@ logger = logging.getLogger(__name__)
 
 class ConnectionManager:
     def __init__(self):
-        # Maps user_id -> WebSocket connection
-        self.active_connections: dict[str, WebSocket] = {}
-        # Maps room_id -> set[user_id]
+        # Maps user_id -> {connection_id -> WebSocket}
+        self.active_connections: dict[str, dict[str, WebSocket]] = defaultdict(dict)
+        # Maps connection_id -> user_id
+        self.connection_users: dict[str, str] = {}
+        # Maps room_id -> set[connection_id]
         self.room_members: dict[str, set[str]] = defaultdict(set)
-        # Maps user_id -> set[room_id]
-        self.user_rooms: dict[str, set[str]] = defaultdict(set)
+        # Maps connection_id -> set[room_id]
+        self.connection_rooms: dict[str, set[str]] = defaultdict(set)
 
     async def connect(self, websocket: WebSocket, user_id: str):
         """Accept a new WebSocket connection and store it."""
         await websocket.accept()
-        self.active_connections[user_id] = websocket
-        logger.info(f"User {user_id} connected via WebSocket.")
+        connection_id = uuid4().hex
+        self.active_connections[user_id][connection_id] = websocket
+        self.connection_users[connection_id] = user_id
+        logger.info(f"User {user_id} connected via WebSocket ({connection_id}).")
+        return connection_id
 
-    def disconnect(self, user_id: str):
-        """Remove a user's connection."""
-        self.leave_all_rooms(user_id)
-        if user_id in self.active_connections:
-            del self.active_connections[user_id]
-            logger.info(f"User {user_id} disconnected.")
-
-    def join_room(self, user_id: str, room_id: str):
-        """Subscribe a connected user to a logical room."""
-        if user_id not in self.active_connections or not room_id:
+    def disconnect(self, connection_id: str):
+        """Remove a specific websocket connection."""
+        user_id = self.connection_users.pop(connection_id, None)
+        if not user_id:
             return
-        self.room_members[room_id].add(user_id)
-        self.user_rooms[user_id].add(room_id)
 
-    def leave_room(self, user_id: str, room_id: str):
-        """Unsubscribe a user from a logical room."""
+        self.leave_all_rooms(connection_id)
+
+        user_connections = self.active_connections.get(user_id)
+        if user_connections:
+            user_connections.pop(connection_id, None)
+            if not user_connections:
+                self.active_connections.pop(user_id, None)
+
+        logger.info(f"User {user_id} disconnected websocket ({connection_id}).")
+
+    def join_room(self, connection_id: str, room_id: str):
+        """Subscribe a websocket connection to a logical room."""
+        if connection_id not in self.connection_users or not room_id:
+            return
+        self.room_members[room_id].add(connection_id)
+        self.connection_rooms[connection_id].add(room_id)
+
+    def leave_room(self, connection_id: str, room_id: str):
+        """Unsubscribe a websocket connection from a logical room."""
         if not room_id:
             return
         members = self.room_members.get(room_id)
         if members:
-            members.discard(user_id)
+            members.discard(connection_id)
             if not members:
                 self.room_members.pop(room_id, None)
 
-        rooms = self.user_rooms.get(user_id)
+        rooms = self.connection_rooms.get(connection_id)
         if rooms:
             rooms.discard(room_id)
             if not rooms:
-                self.user_rooms.pop(user_id, None)
+                self.connection_rooms.pop(connection_id, None)
 
-    def leave_all_rooms(self, user_id: str):
-        """Remove a user from every subscribed room."""
-        for room_id in list(self.user_rooms.get(user_id, set())):
-            self.leave_room(user_id, room_id)
+    def leave_all_rooms(self, connection_id: str):
+        """Remove a websocket connection from every subscribed room."""
+        for room_id in list(self.connection_rooms.get(connection_id, set())):
+            self.leave_room(connection_id, room_id)
+
+    async def send_connection_message(self, message: str, connection_id: str):
+        """Send a text message to a specific websocket connection."""
+        user_id = self.connection_users.get(connection_id)
+        if not user_id:
+            return
+        websocket = self.active_connections.get(user_id, {}).get(connection_id)
+        if websocket:
+            await websocket.send_text(message)
+
+    async def send_connection_json(self, data: dict, connection_id: str):
+        """Send JSON to a specific websocket connection."""
+        user_id = self.connection_users.get(connection_id)
+        if not user_id:
+            return
+        websocket = self.active_connections.get(user_id, {}).get(connection_id)
+        if websocket:
+            await websocket.send_json(data)
 
     async def send_personal_message(self, message: str, user_id: str):
-        """Send a text message to a specific user."""
-        if user_id in self.active_connections:
-            websocket = self.active_connections[user_id]
+        """Send a text message to all active connections of a user."""
+        for websocket in list(self.active_connections.get(user_id, {}).values()):
             await websocket.send_text(message)
 
     async def send_json(self, data: dict, user_id: str):
-        """Send a JSON object to a specific user."""
-        if user_id in self.active_connections:
-            websocket = self.active_connections[user_id]
+        """Send a JSON object to all active connections of a user."""
+        for websocket in list(self.active_connections.get(user_id, {}).values()):
             await websocket.send_json(data)
 
     async def send_room_message(
@@ -78,26 +109,26 @@ class ConnectionManager:
         message: str,
         room_id: str,
         *,
-        exclude_user_id: str | None = None,
+        exclude_connection_id: str | None = None,
     ):
         """Send a text message to everyone subscribed to a room."""
-        for member_user_id in list(self.room_members.get(room_id, set())):
-            if exclude_user_id and member_user_id == exclude_user_id:
+        for member_connection_id in list(self.room_members.get(room_id, set())):
+            if exclude_connection_id and member_connection_id == exclude_connection_id:
                 continue
-            await self.send_personal_message(message, member_user_id)
+            await self.send_connection_message(message, member_connection_id)
 
     async def send_room_json(
         self,
         data: dict,
         room_id: str,
         *,
-        exclude_user_id: str | None = None,
+        exclude_connection_id: str | None = None,
     ):
         """Send a JSON payload to everyone subscribed to a room."""
-        for member_user_id in list(self.room_members.get(room_id, set())):
-            if exclude_user_id and member_user_id == exclude_user_id:
+        for member_connection_id in list(self.room_members.get(room_id, set())):
+            if exclude_connection_id and member_connection_id == exclude_connection_id:
                 continue
-            await self.send_json(data, member_user_id)
+            await self.send_connection_json(data, member_connection_id)
 
 
 # Global instance

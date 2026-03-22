@@ -131,6 +131,29 @@ def _strip_maigie_mention(text: str) -> str:
     return stripped
 
 
+def _serialize_timestamp(value) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _serialize_reply_preview(message, fallback_user_name: str | None = None) -> dict | None:
+    if not message:
+        return None
+
+    reply_user = getattr(message, "user", None)
+    return {
+        "id": message.id,
+        "role": _map_db_role_to_client(str(message.role)),
+        "content": getattr(message, "content", "") or "",
+        "timestamp": _serialize_timestamp(getattr(message, "createdAt", None)),
+        "userId": getattr(message, "userId", None),
+        "userName": (
+            getattr(reply_user, "name", None) if reply_user is not None else fallback_user_name
+        ),
+    }
+
+
 async def merge_generic_sessions(user_id: str, db: Prisma):
     """
     Finds all generic sessions for a user. If multiple exist (legacy),
@@ -139,6 +162,7 @@ async def merge_generic_sessions(user_id: str, db: Prisma):
     generic_sessions = await db.chatsession.find_many(
         where={
             "userId": user_id,
+            "isCircleRoom": False,
             "courseId": None,
             "topicId": None,
             "examPrepId": None,
@@ -182,17 +206,22 @@ async def get_my_general_session(
         # No generic session found - create one
         # Deactivate others first
         await db.chatsession.update_many(
-            where={"userId": current_user.id, "isActive": True},
+            where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
             data={"isActive": False},
         )
         session = await db.chatsession.create(
-            data={"userId": current_user.id, "title": "Chat", "isActive": True}
+            data={
+                "userId": current_user.id,
+                "title": "Chat",
+                "isActive": True,
+                "isCircleRoom": False,
+            }
         )
     else:
         # Mark it active if it wasn't
         if not session.isActive:
             await db.chatsession.update_many(
-                where={"userId": current_user.id, "isActive": True},
+                where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
                 data={"isActive": False},
             )
             session = await db.chatsession.update(where={"id": session.id}, data={"isActive": True})
@@ -229,6 +258,7 @@ async def list_my_chat_sessions(
     sessions = await db.chatsession.find_many(
         where={
             "userId": current_user.id,
+            "isCircleRoom": False,
         },
         include={"topic": {"include": {"module": True}}},
         order={"updatedAt": "desc"},
@@ -296,6 +326,7 @@ async def create_my_chat_session(
     # 1. Resource-scoped session logic
     if is_resource_scoped:
         where_res = {"userId": current_user.id}
+        where_res["isCircleRoom"] = False
         if courseId:
             where_res["courseId"] = courseId
         if topicId:
@@ -313,7 +344,7 @@ async def create_my_chat_session(
             # Bump updatedAt to make it appear recent in history
             # and mark as active (deactivating others)
             await db.chatsession.update_many(
-                where={"userId": current_user.id, "isActive": True},
+                where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
                 data={"isActive": False},
             )
             # Fetch full session with relations to get moduleId/courseId
@@ -380,13 +411,14 @@ async def create_my_chat_session(
 
         # Create a new resource-scoped session
         await db.chatsession.update_many(
-            where={"userId": current_user.id, "isActive": True},
+            where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
             data={"isActive": False},
         )
         data = {
             "userId": current_user.id,
             "title": title,
             "isActive": True,
+            "isCircleRoom": False,
         }
         if courseId:
             data["courseId"] = courseId
@@ -424,6 +456,7 @@ async def create_my_chat_session(
     existing_sessions = await db.chatsession.find_many(
         where={
             "userId": current_user.id,
+            "isCircleRoom": False,
             "courseId": None,
             "topicId": None,
             "examPrepId": None,
@@ -448,7 +481,7 @@ async def create_my_chat_session(
 
         # Mark it active and return it
         await db.chatsession.update_many(
-            where={"userId": current_user.id, "isActive": True},
+            where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
             data={"isActive": False},
         )
         session = await db.chatsession.update(
@@ -473,11 +506,16 @@ async def create_my_chat_session(
 
     # No generic session found - create one
     await db.chatsession.update_many(
-        where={"userId": current_user.id, "isActive": True},
+        where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
         data={"isActive": False},
     )
     session = await db.chatsession.create(
-        data={"userId": current_user.id, "title": "Chat", "isActive": True}
+        data={
+            "userId": current_user.id,
+            "title": "Chat",
+            "isActive": True,
+            "isCircleRoom": False,
+        }
     )
 
     return {
@@ -506,12 +544,14 @@ async def activate_my_chat_session(
     """
     Mark a session active (optional; WS can also be pinned per message via context.sessionId).
     """
-    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    session = await db.chatsession.find_first(
+        where={"id": session_id, "userId": current_user.id, "isCircleRoom": False}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     await db.chatsession.update_many(
-        where={"userId": current_user.id, "isActive": True},
+        where={"userId": current_user.id, "isActive": True, "isCircleRoom": False},
         data={"isActive": False},
     )
     session = await db.chatsession.update(where={"id": session_id}, data={"isActive": True})
@@ -527,7 +567,9 @@ async def delete_my_chat_session(
     """
     Delete a chat session and all its messages.
     """
-    session = await db.chatsession.find_first(where={"id": session_id, "userId": current_user.id})
+    session = await db.chatsession.find_first(
+        where={"id": session_id, "userId": current_user.id, "isCircleRoom": False}
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -635,7 +677,7 @@ async def get_my_chat_messages(
         order={"createdAt": "desc"},
         take=take,
         skip=skip,
-        include={"user": True},
+        include={"user": True, "replyToMessage": {"include": {"user": True}}},
     )
     records = list(reversed(records))
 
@@ -653,7 +695,11 @@ async def get_my_chat_messages(
             "userName": (m.user.name if getattr(m, "user", None) else None),
             "imageUrl": getattr(m, "imageUrl", None),
             "imageUrls": getattr(m, "imageUrls", None) or [],
+            "replyToMessageId": getattr(m, "replyToMessageId", None),
         }
+        reply_to_message = getattr(m, "replyToMessage", None)
+        if reply_to_message is not None:
+            msg["replyToMessage"] = _serialize_reply_preview(reply_to_message)
         component_data = getattr(m, "componentData", None)
         if component_data is not None:
             msg["componentData"] = component_data
@@ -1326,16 +1372,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
     Main WebSocket endpoint for AI Chat.
     """
     # 1. Connect
-    await manager.connect(websocket, user.id)
+    connection_id = await manager.connect(websocket, user.id)
 
     # 2. Find or Create an active Chat Session
     # NOTE: The frontend can optionally pass `context.sessionId` per message to pin a conversation.
     session = await db.chatsession.find_first(
-        where={"userId": user.id, "isActive": True}, order={"updatedAt": "desc"}
+        where={"userId": user.id, "isActive": True, "isCircleRoom": False},
+        order={"updatedAt": "desc"},
     )
 
     if not session:
-        session = await db.chatsession.create(data={"userId": user.id, "title": "New Chat"})
+        session = await db.chatsession.create(
+            data={"userId": user.id, "title": "New Chat", "isCircleRoom": False}
+        )
 
     # 2b. Deliver pending AI nudges on connect
     try:
@@ -1367,18 +1416,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if isinstance(message_data, dict):
                     message_type = message_data.get("type")
                     if message_type == "ping":
-                        await manager.send_json({"type": "pong"}, user.id)
+                        await manager.send_connection_json({"type": "pong"}, connection_id)
                         continue
                     if message_type == "subscribe":
                         subscribe_context = message_data.get("context") or {}
                         subscribe_session_id = subscribe_context.get("sessionId")
                         if not subscribe_session_id:
-                            await manager.send_json(
+                            await manager.send_connection_json(
                                 {
                                     "type": "error",
                                     "payload": {"message": "Missing sessionId for subscription."},
                                 },
-                                user.id,
+                                connection_id,
                             )
                             continue
 
@@ -1386,35 +1435,35 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             db, subscribe_session_id
                         )
                         if not subscribed_group or not _is_circle_member(subscribed_group, user.id):
-                            await manager.send_json(
+                            await manager.send_connection_json(
                                 {
                                     "type": "error",
                                     "payload": {"message": "Unable to join this circle room."},
                                 },
-                                user.id,
+                                connection_id,
                             )
                             continue
 
-                        manager.join_room(user.id, subscribe_session_id)
-                        await manager.send_json(
+                        manager.join_room(connection_id, subscribe_session_id)
+                        await manager.send_connection_json(
                             {
                                 "type": "subscribed",
                                 "payload": {"sessionId": subscribe_session_id},
                             },
-                            user.id,
+                            connection_id,
                         )
                         continue
                     if message_type == "unsubscribe":
                         unsubscribe_context = message_data.get("context") or {}
                         unsubscribe_session_id = unsubscribe_context.get("sessionId")
                         if unsubscribe_session_id:
-                            manager.leave_room(user.id, unsubscribe_session_id)
-                        await manager.send_json(
+                            manager.leave_room(connection_id, unsubscribe_session_id)
+                        await manager.send_connection_json(
                             {
                                 "type": "unsubscribed",
                                 "payload": {"sessionId": unsubscribe_session_id},
                             },
-                            user.id,
+                            connection_id,
                         )
                         continue
                     user_text = message_data.get("message", raw_message)
@@ -1430,11 +1479,36 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             if context and context.get("sessionId"):
                 requested_session_id = context.get("sessionId")
                 try:
-                    pinned = await db.chatsession.find_unique(
-                        where={"id": requested_session_id}
-                    )
+                    pinned = await db.chatsession.find_unique(where={"id": requested_session_id})
                     if pinned:
-                        session = pinned
+                        pinned_circle_group = await _get_circle_group_for_session(db, pinned.id)
+                        if pinned_circle_group:
+                            if _is_circle_member(pinned_circle_group, user.id):
+                                session = pinned
+                            else:
+                                await manager.send_connection_json(
+                                    {
+                                        "type": "error",
+                                        "payload": {
+                                            "message": "You are not allowed to access this circle room."
+                                        },
+                                    },
+                                    connection_id,
+                                )
+                                continue
+                        elif pinned.userId == user.id:
+                            session = pinned
+                        else:
+                            await manager.send_connection_json(
+                                {
+                                    "type": "error",
+                                    "payload": {
+                                        "message": "You are not allowed to access this chat session."
+                                    },
+                                },
+                                connection_id,
+                            )
+                            continue
                 except Exception:
                     # If anything goes wrong, fall back to the current session
                     pass
@@ -1443,15 +1517,15 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             is_circle_session = bool(circle_group)
             if is_circle_session:
                 if not _is_circle_member(circle_group, user.id):
-                    await manager.send_json(
+                    await manager.send_connection_json(
                         {
                             "type": "error",
                             "payload": {"message": "You are not a member of this circle room."},
                         },
-                        user.id,
+                        connection_id,
                     )
                     continue
-                manager.join_room(user.id, session.id)
+                manager.join_room(connection_id, session.id)
 
             should_reply_as_ai = True
             llm_user_text = user_text
@@ -1599,6 +1673,23 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         file_urls_list = [raw_file_urls]
 
             # 4.1 Save User Message to DB (with imageUrl + imageUrls)
+            reply_to_message_id = context.get("replyToMessageId") if context else None
+            reply_target_message = None
+            if reply_to_message_id:
+                reply_target_message = await db.chatmessage.find_first(
+                    where={"id": reply_to_message_id, "sessionId": session.id},
+                    include={"user": True},
+                )
+                if not reply_target_message:
+                    await manager.send_connection_json(
+                        {
+                            "type": "error",
+                            "payload": {"message": "Reply target was not found in this room."},
+                        },
+                        connection_id,
+                    )
+                    continue
+
             user_message_data = {
                 "sessionId": session.id,
                 "userId": user.id,
@@ -1612,11 +1703,13 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 user_message_data["imageUrl"] = file_urls_list[0]  # backward compat
                 user_message_data["imageUrls"] = file_urls_list
                 print(f"🖼️ Message includes {len(file_urls_list)} image(s): {file_urls_list}")
+            if reply_target_message:
+                user_message_data["replyToMessageId"] = reply_target_message.id
 
             user_message = await db.chatmessage.create(data=user_message_data)
 
             # 4.1a Send confirmation to client for ID correlation
-            await manager.send_json(
+            await manager.send_connection_json(
                 {
                     "type": "message_saved",
                     "payload": {
@@ -1624,9 +1717,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "tempId": temp_id,
                         "role": "user",
                         "sessionId": session.id,
+                        "replyToMessageId": getattr(user_message, "replyToMessageId", None),
+                        "replyToMessage": _serialize_reply_preview(reply_target_message),
                     },
                 },
-                user.id,
+                connection_id,
             )
 
             if is_circle_session:
@@ -1645,10 +1740,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             ),
                             "userId": user.id,
                             "userName": getattr(user, "name", None),
+                            "replyToMessageId": getattr(user_message, "replyToMessageId", None),
+                            "replyToMessage": _serialize_reply_preview(reply_target_message),
                         },
                     },
                     session.id,
-                    exclude_user_id=user.id,
+                    exclude_connection_id=connection_id,
                 )
 
             # Bump session updatedAt to move it to the top of history (Interaction based)
@@ -1709,8 +1806,10 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     pass
 
             # Skip onboarding in review threads (spaced repetition), and only run for general chat.
-            if not is_circle_session and (not is_onboarded or needs_retro_onboarding) and not (
-                context and context.get("reviewItemId")
+            if (
+                not is_circle_session
+                and (not is_onboarded or needs_retro_onboarding)
+                and not (context and context.get("reviewItemId"))
             ):
                 try:
                     from src.services.onboarding_service import (
@@ -2027,6 +2126,21 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 if context.get("noteContent") and not enriched_context.get("noteContent"):
                     enriched_context["noteContent"] = context["noteContent"]
 
+            if reply_target_message:
+                if not enriched_context:
+                    enriched_context = {}
+                enriched_context["replyContext"] = {
+                    "messageId": reply_target_message.id,
+                    "role": _map_db_role_to_client(str(reply_target_message.role)),
+                    "content": getattr(reply_target_message, "content", "") or "",
+                    "userId": getattr(reply_target_message, "userId", None),
+                    "userName": (
+                        reply_target_message.user.name
+                        if getattr(reply_target_message, "user", None)
+                        else None
+                    ),
+                }
+
             if is_circle_session:
                 if not enriched_context:
                     enriched_context = {}
@@ -2046,6 +2160,10 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     "Respond with the circle's discussion in mind, not the user's private study history. "
                     "Keep responses collaborative and suitable for the whole room."
                 )
+                if reply_target_message:
+                    enriched_context[
+                        "pageContext"
+                    ] += " When replyContext is present, respond to that specific room message."
 
             # 5.6. Perform Semantic Search (RAG) to find relevant items
             # This helps the LLM know about items the user might be referring to
@@ -2151,6 +2269,13 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     print(f"⚠️ Memory context retrieval failed: {e}")
 
             # 6. Get AI response with tool calling support
+            ai_request_id = user_message.id if should_reply_as_ai else None
+            ai_reply_target_id = (
+                reply_target_message.id
+                if should_reply_as_ai and reply_target_message
+                else user_message.id if should_reply_as_ai else None
+            )
+
             # Define progress callback for tool execution updates
             async def send_progress(
                 progress: int, stage: str, message: str, course_id: str = None, **kwargs
@@ -2186,6 +2311,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "chunk": chunk,
                         "is_final": is_final,
                         "sessionId": session.id,
+                        "requestId": ai_request_id,
+                        "replyToMessageId": ai_reply_target_id,
                     },
                 }
                 if is_circle_session:
@@ -2422,38 +2549,48 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 await websocket.close()
                 return
 
+            circle_credit_id = circle_group.circleId if is_circle_session and circle_group else None
+
             try:
                 # Check if credits are available (will raise if hard cap reached)
                 is_available, warning_message = await check_credit_availability(
-                    user_obj, estimated_total_tokens
+                    user_obj,
+                    estimated_total_tokens,
+                    db_client=db,
+                    circle_id=circle_credit_id,
                 )
                 if not is_available:
-                    credit_usage = await get_credit_usage(user_obj)
-
-                    # Determine if it's daily or monthly limit
                     tier = str(user_obj.tier) if user_obj.tier else "FREE"
-                    daily_limit = credit_usage.get("daily_limit", 0)
-                    used_today = credit_usage.get("credits_used_today", 0)
-                    is_daily = (
-                        tier == "FREE"
-                        and daily_limit > 0
-                        and (used_today + estimated_total_tokens > daily_limit)
-                    )
-
-                    if is_daily:
+                    is_daily = False
+                    if circle_credit_id:
                         error_message = (
-                            f"Daily credit limit exceeded. You've used {used_today:,} "
-                            f"of {daily_limit:,} daily credits. "
-                            f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
-                            f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+                            "This circle has reached its shared credit limit. "
+                            "Top up the circle credits or try again later."
                         )
                     else:
-                        error_message = (
-                            f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
-                            f"of {credit_usage['hard_cap']:,} credits. "
-                            f"Period resets: {credit_usage['period_end']}. "
-                            f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
+                        credit_usage = await get_credit_usage(user_obj)
+                        daily_limit = credit_usage.get("daily_limit", 0)
+                        used_today = credit_usage.get("credits_used_today", 0)
+                        is_daily = (
+                            tier == "FREE"
+                            and daily_limit > 0
+                            and (used_today + estimated_total_tokens > daily_limit)
                         )
+
+                        if is_daily:
+                            error_message = (
+                                f"Daily credit limit exceeded. You've used {used_today:,} "
+                                f"of {daily_limit:,} daily credits. "
+                                f"Resets in: {credit_usage.get('next_daily_reset', 'midnight')}. "
+                                f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+                            )
+                        else:
+                            error_message = (
+                                f"Monthly credit limit exceeded. You've used {credit_usage['credits_used']:,} "
+                                f"of {credit_usage['hard_cap']:,} credits. "
+                                f"Period resets: {credit_usage['period_end']}. "
+                                f"Start a free trial for unlimited usage, or refer friends to earn bonus credits!"
+                            )
 
                     # Send error message with tier information as JSON for frontend handling
                     error_data = {
@@ -2462,20 +2599,25 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "tier": tier,
                         "is_daily_limit": is_daily,
                         "show_referral_option": True,
+                        "sessionId": session.id,
+                        "requestId": ai_request_id,
+                        "replyToMessageId": ai_reply_target_id,
                     }
-                    await manager.send_personal_message(json.dumps(error_data), user.id)
-                    await websocket.close()
-                    return
+                    await manager.send_connection_json(error_data, connection_id)
+                    continue
             except SubscriptionLimitError as e:
                 # Get user tier for error message
                 user_obj = await db.user.find_unique(where={"id": user.id})
                 tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
 
                 # Enhance error message with referral option
-                enhanced_message = (
-                    f"{e.message} "
-                    f"Start a free trial for more credits, or refer friends to earn bonus credits!"
-                )
+                if circle_credit_id:
+                    enhanced_message = "This circle has reached its shared credit limit."
+                else:
+                    enhanced_message = (
+                        f"{e.message} "
+                        f"Start a free trial for more credits, or refer friends to earn bonus credits!"
+                    )
 
                 error_data = {
                     "type": "credit_limit_error",
@@ -2483,10 +2625,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     "tier": tier,
                     "is_daily_limit": False,
                     "show_referral_option": True,
+                    "sessionId": session.id,
+                    "requestId": ai_request_id,
+                    "replyToMessageId": ai_reply_target_id,
                 }
-                await manager.send_personal_message(json.dumps(error_data), user.id)
-                await websocket.close()
-                return
+                await manager.send_connection_json(error_data, connection_id)
+                continue
 
             # 11. Calculate actual token usage and consume credits
             # Use actual token counts from API
@@ -2496,7 +2640,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Fallback to estimation if API didn't provide token counts
             if actual_input_tokens == 0 and actual_output_tokens == 0:
                 actual_input_tokens = (
-                    len(llm_user_text) + len(str(enriched_context or "")) + len(str(formatted_history))
+                    len(llm_user_text)
+                    + len(str(enriched_context or ""))
+                    + len(str(formatted_history))
                 ) // 4
                 actual_output_tokens = len(clean_response) // 4
 
@@ -2505,7 +2651,11 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             # Consume credits based on actual token usage
             try:
                 await consume_credits(
-                    user_obj, actual_total_tokens, operation="chat_message", db_client=db
+                    user_obj,
+                    actual_total_tokens,
+                    operation="chat_message",
+                    db_client=db,
+                    circle_id=circle_credit_id,
                 )
             except SubscriptionLimitError as e:
                 # This shouldn't happen if check above worked, but handle gracefully
@@ -2553,12 +2703,18 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                 "costUsd": cost_usd,
                 "revenueUsd": revenue_usd,
             }
+            if ai_reply_target_id:
+                create_data["replyToMessageId"] = ai_reply_target_id
             if all_components:
                 create_data["componentData"] = Json(all_components)
             if suggestion_text:
                 create_data["suggestionText"] = suggestion_text
 
             assistant_message = await db.chatmessage.create(data=create_data)
+            assistant_reply_preview = _serialize_reply_preview(
+                reply_target_message or user_message,
+                fallback_user_name=getattr(user, "name", None),
+            )
 
             # 13. Send to client: main content, then components, then suggestion (so UI order is correct)
             if suggestion_text:
@@ -2569,6 +2725,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     "content": main_content,
                     "suggestionText": suggestion_text,
                     "sessionId": session.id,
+                    "requestId": ai_request_id,
+                    "replyToMessageId": ai_reply_target_id,
+                    "replyToMessage": assistant_reply_preview,
                 }
                 if is_circle_session:
                     await manager.send_room_json(payload, session.id)
@@ -2583,6 +2742,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "id": assistant_message.id,
                                 "content": main_content,
                                 "sessionId": session.id,
+                                "requestId": ai_request_id,
+                                "replyToMessageId": ai_reply_target_id,
+                                "replyToMessage": assistant_reply_preview,
                             },
                             session.id,
                         )
@@ -2595,6 +2757,9 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                         "id": assistant_message.id,
                         "role": "assistant",
                         "sessionId": session.id,
+                        "requestId": ai_request_id,
+                        "replyToMessageId": ai_reply_target_id,
+                        "replyToMessage": assistant_reply_preview,
                     },
                 }
                 if is_circle_session:
@@ -2635,14 +2800,14 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
             continue  # Skip to next message
 
     except WebSocketDisconnect:
-        manager.disconnect(user.id)
+        manager.disconnect(connection_id)
     except Exception as e:
         print(f"WS Error: {e}")
         try:
             await websocket.close()
         except Exception:
             pass
-        manager.disconnect(user.id)
+        manager.disconnect(connection_id)
         raise
 
 

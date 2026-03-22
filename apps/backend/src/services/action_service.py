@@ -56,12 +56,14 @@ class ActionService:
             # Enforce subscription limits (same as POST /courses/generate)
             from src.services.credit_service import CREDIT_COSTS, consume_credits, get_credit_usage
 
+            circle_id = data.get("circleId")
+
             user_obj = await db.user.find_unique(where={"id": user_id})
             if not user_obj:
                 return {"status": "error", "message": "User not found"}
 
             tier = str(user_obj.tier) if user_obj.tier else "FREE"
-            if tier == "FREE":
+            if tier == "FREE" and not circle_id:
                 course_count = await db.course.count(where={"userId": user_id, "archived": False})
                 if course_count >= 2:
                     return {
@@ -76,9 +78,23 @@ class ActionService:
             credits_needed = CREDIT_COSTS["ai_course_generation"]
             try:
                 await consume_credits(
-                    user_obj, credits_needed, operation="ai_course_generation", db_client=db
+                    user_obj,
+                    credits_needed,
+                    operation="ai_course_generation",
+                    db_client=db,
+                    circle_id=circle_id,
                 )
             except SubscriptionLimitError as e:
+                if circle_id:
+                    return {
+                        "status": "error",
+                        "message": "This circle has reached its shared credit limit.",
+                        "credit_limit_error": True,
+                        "tier": tier,
+                        "is_daily_limit": False,
+                        "show_referral_option": False,
+                    }
+
                 credit_usage = await get_credit_usage(user_obj, db_client=db)
                 daily_limit = credit_usage.get("daily_limit", 0)
                 used_today = credit_usage.get("credits_used_today", 0)

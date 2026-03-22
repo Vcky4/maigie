@@ -84,6 +84,17 @@ async def _verify_tutor(db: Prisma, circle_id: str, user_id: str):
     return member
 
 
+async def _sync_chat_group_session_metadata(db: Prisma, session_id: str):
+    """Ensure circle-backed chat sessions stay isolated from personal chat state."""
+    await db.chatsession.update(
+        where={"id": session_id},
+        data={
+            "isCircleRoom": True,
+            "isActive": False,
+        },
+    )
+
+
 # --- Circle CRUD ---
 
 
@@ -130,7 +141,8 @@ async def create_circle(db: Prisma, user_id: str, user_tier: str, data: CircleCr
         data={
             "userId": user_id,
             "title": f"{data.name} - General",
-            "isActive": True,
+            "isActive": False,
+            "isCircleRoom": True,
         }
     )
 
@@ -523,7 +535,8 @@ async def create_chat_group(db: Prisma, circle_id: str, user_id: str, data: Circ
         data={
             "userId": user_id,
             "title": f"{circle.name} - {data.name}" if circle else data.name,
-            "isActive": True,
+            "isActive": False,
+            "isCircleRoom": True,
         }
     )
 
@@ -550,6 +563,7 @@ async def list_chat_groups(db: Prisma, circle_id: str, user_id: str):
     repaired_groups = []
     for group in groups:
         if group.chatSessionId:
+            await _sync_chat_group_session_metadata(db, group.chatSessionId)
             repaired_groups.append(group)
             continue
         repaired_groups.append(await _ensure_chat_group_session(db, group, user_id))
@@ -564,6 +578,7 @@ async def _ensure_circle_chat_sessions(db: Prisma, circle, user_id: str):
 
     for group in circle.chatGroups or []:
         if group.chatSessionId:
+            await _sync_chat_group_session_metadata(db, group.chatSessionId)
             repaired_groups.append(group)
             continue
 
@@ -589,7 +604,8 @@ async def _ensure_chat_group_session(db: Prisma, group, user_id: str, circle=Non
         data={
             "userId": session_owner_id,
             "title": session_title,
-            "isActive": True,
+            "isActive": False,
+            "isCircleRoom": True,
         }
     )
 
