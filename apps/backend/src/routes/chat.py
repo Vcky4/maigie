@@ -1690,6 +1690,14 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     )
                     continue
 
+            if (
+                is_circle_session
+                and not should_reply_as_ai
+                and reply_target_message
+                and str(reply_target_message.role) == "ASSISTANT"
+            ):
+                should_reply_as_ai = True
+
             user_message_data = {
                 "sessionId": session.id,
                 "userId": user.id,
