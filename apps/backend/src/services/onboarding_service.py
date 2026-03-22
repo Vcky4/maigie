@@ -438,11 +438,13 @@ async def handle_onboarding_message(
         tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
         if tier == "FREE":
             current_count = await db.course.count(where={"userId": user_id, "archived": False})
-            to_create_count = sum(1 for t in courses if _normalize_text(t) not in existing_by_norm)
-            if current_count + to_create_count > 2:
+            if current_count >= 2:
+                state["stage"] = "done"
+                await save_onboarding_state(db, user_id, state)
+                await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
                 return OnboardingResult(
-                    reply_text="You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
-                    is_complete=False,
+                    reply_text="You already have the maximum number of courses for your plan. Let's head to your dashboard!",
+                    is_complete=True,
                     credit_limit_error={
                         "type": "credit_limit_error",
                         "message": "You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
@@ -451,6 +453,16 @@ async def handle_onboarding_message(
                         "show_referral_option": True,
                     },
                 )
+
+            allowed_to_create = 2 - current_count
+            new_courses = []
+            for t in courses:
+                if _normalize_text(t) in existing_by_norm:
+                    new_courses.append(t)
+                elif allowed_to_create > 0:
+                    new_courses.append(t)
+                    allowed_to_create -= 1
+            courses = new_courses
 
         created_course_ids: list[str] = []
         created_courses_light: list[dict[str, Any]] = []
@@ -535,9 +547,12 @@ async def handle_onboarding_message(
                         "is_daily_limit": result.get("is_daily_limit", False),
                         "show_referral_option": result.get("show_referral_option", True),
                     }
+                    state["stage"] = "done"
+                    await save_onboarding_state(db, user_id, state)
+                    await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
                     return OnboardingResult(
                         reply_text=error_payload["message"],
-                        is_complete=False,
+                        is_complete=True,
                         created_courses=created_courses_light,
                         credit_limit_error=error_payload,
                     )
