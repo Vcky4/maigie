@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
-from src.dependencies import DBDep, PremiumUser
+from src.dependencies import DBDep, ExamPrepUser
 from src.services.exam_prep_service import (
     add_material,
     create_exam_prep,
@@ -20,10 +20,10 @@ from src.services.exam_prep_service import (
     get_exam_prep_progress,
     get_quiz_history,
     get_weak_areas,
+    transition_status,
     update_exam_prep,
     update_material,
     update_topic,
-    transition_status,
 )
 from src.services.exam_quiz_service import (
     complete_quiz,
@@ -223,7 +223,7 @@ def _can_edit_exam_prep(exam_prep, user_id: str, member) -> bool:
 
 @router.get("", response_model=ExamPrepListResponse)
 async def list_exam_preps(
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -250,7 +250,7 @@ async def list_exam_preps(
 @router.post("", response_model=ExamPrepResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam_prep_route(
     body: ExamPrepCreate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -296,7 +296,7 @@ async def create_exam_prep_route(
 @router.get("/{exam_prep_id}", response_model=ExamPrepResponse)
 async def get_exam_prep(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -317,7 +317,7 @@ async def get_exam_prep(
 async def update_exam_prep_route(
     exam_prep_id: str,
     body: ExamPrepUpdate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -361,7 +361,7 @@ async def update_exam_prep_route(
 @router.delete("/{exam_prep_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_exam_prep(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -389,7 +389,7 @@ async def delete_exam_prep(
 )
 async def upload_material(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
     file: UploadFile = File(...),
@@ -467,7 +467,7 @@ async def update_material_route(
     exam_prep_id: str,
     material_id: str,
     body: MaterialUpdate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -508,7 +508,7 @@ async def update_material_route(
 async def delete_material_route(
     exam_prep_id: str,
     material_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -535,7 +535,7 @@ async def delete_material_route(
 @router.post("/{exam_prep_id}/process")
 async def process_materials(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -569,7 +569,7 @@ async def process_materials(
 @router.get("/{exam_prep_id}/processing-status")
 async def get_processing_status(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -597,7 +597,7 @@ async def get_processing_status(
 @router.get("/{exam_prep_id}/topics")
 async def list_topics(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -629,7 +629,7 @@ async def update_topic_route(
     exam_prep_id: str,
     topic_id: str,
     body: TopicUpdate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -660,7 +660,7 @@ async def update_topic_route(
 async def delete_topic_route(
     exam_prep_id: str,
     topic_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -687,7 +687,7 @@ async def delete_topic_route(
 @router.get("/{exam_prep_id}/questions")
 async def list_questions(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
     topic_id: str | None = Query(None),
@@ -751,7 +751,7 @@ async def list_questions(
 @router.get("/{exam_prep_id}/questions/stats")
 async def question_stats(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -792,7 +792,7 @@ async def question_stats(
 async def start_quiz_route(
     exam_prep_id: str,
     body: QuizStartRequest,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -817,7 +817,7 @@ async def submit_answer_route(
     exam_prep_id: str,
     quiz_session_id: str,
     body: AnswerSubmitRequest,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -843,7 +843,7 @@ async def complete_quiz_route(
     exam_prep_id: str,
     quiz_session_id: str,
     body: QuizCompleteRequest,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -866,7 +866,7 @@ async def complete_quiz_route(
 async def get_quiz_session(
     exam_prep_id: str,
     quiz_session_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -914,7 +914,7 @@ async def get_quiz_session(
 @router.get("/{exam_prep_id}/progress")
 async def get_progress(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -929,7 +929,7 @@ async def get_progress(
 @router.get("/{exam_prep_id}/progress/weak-areas")
 async def get_weak_areas_route(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -944,7 +944,7 @@ async def get_weak_areas_route(
 @router.get("/{exam_prep_id}/progress/history")
 async def get_history(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
@@ -964,7 +964,7 @@ async def get_history(
 @router.post("/{exam_prep_id}/generate-study-plan")
 async def regenerate_study_plan(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
