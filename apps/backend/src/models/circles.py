@@ -233,3 +233,13 @@ class CircleSessionSuggestionResponse(BaseModel):
     """Response schema for suggested sessions."""
 
     suggestions: list[CircleSessionSuggestion]
+
+
+class CircleNoteListResponse(BaseModel):
+    """Response schema for listing notes in a circle."""
+
+    items: list  # NoteResponse items
+    total: int
+    page: int
+    size: int
+    pages: int

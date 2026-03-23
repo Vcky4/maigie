@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.dependencies import CurrentUser, db
-from src.schemas.circle import (
+from src.models.circles import (
     CircleCreate,
     CircleUpdate,
     CircleDetailResponse,
