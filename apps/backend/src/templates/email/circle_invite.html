@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Circle Invite - Maigie</title>
+</head>
+<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+
+    <div style="max-width: 600px; margin: 0;">
+        {% if logo_url %}
+        <div style="margin-bottom: 30px; text-align: center;">
+            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
+        </div>
+        {% endif %}
+        
+        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">You've been invited!</h1>
+        
+        <p style="margin-bottom: 15px;">Hi there,</p>
+        
+        <p style="margin-bottom: 25px;">
+            <strong>{{ inviter_name }}</strong> has invited you to join their study circle <strong>"{{ circle_name }}"</strong> on Maigie.
+        </p>
+        
+        <p style="margin-bottom: 25px;">
+            Circles are a great way to collaborate, share notes, and study together with your peers.
+        </p>
+
+        <div style="margin-bottom: 30px;">
+            <a href="{{ circles_url }}" style="
+                background-color: #4F46E5; 
+                color: #ffffff; 
+                display: inline-block; 
+                padding: 12px 24px; 
+                border-radius: 5px; 
+                font-size: 16px; 
+                font-weight: bold; 
+                text-decoration: none;">
+                View Invite
+            </a>
+        </div>
+
+        <p style="font-size: 14px; color: #666666; margin-top: 30px;">
+            If you don't have an account yet, you can sign up for free using this email address to accept the invite.
+        </p>
+
+        <p style="font-size: 14px; color: #666666; margin-top: 10px;">
+            Happy studying!<br>
+            The {{ app_name }} Team
+        </p>
+
+    </div>
+
+</body>
+</html>

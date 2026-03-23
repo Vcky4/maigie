@@ -598,3 +598,49 @@ async def send_weekly_tips_email(
     except Exception as e:
         logger.error(f"Failed to send weekly tips to {email}: {e}")
         raise
+
+
+async def send_circle_invite_email(to_email: str, inviter_name: str, circle_name: str):
+    """
+    Sends an email to a user when they are invited to a study circle.
+    """
+    if not settings.SMTP_HOST:
+        logger.warning(f"SMTP not configured. Skipping circle invite email to {to_email}")
+        return
+
+    circles_url = f"{_get_frontend_base_url()}/circles"
+    template_data = {
+        "inviter_name": inviter_name,
+        "circle_name": circle_name,
+        "circles_url": circles_url,
+        "app_name": "Maigie",
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
+
+    html_template = jinja_env.get_template("circle_invite.html")
+    try:
+        text_template = jinja_env.get_template("circle_invite.txt")
+        text_body = text_template.render(**template_data)
+    except Exception:
+        text_body = f"{inviter_name} has invited you to join their study circle '{circle_name}' on Maigie. Join here: {circles_url}"
+
+    html_body = html_template.render(**template_data)
+
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"circle-invite-{to_email}",
+    }
+
+    try:
+        await _send_multipart_email(
+            to_email=str(to_email),
+            subject=f"You're invited to join {circle_name} on Maigie",
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        logger.info(f"Circle invite email sent to {to_email}")
+    except Exception as e:
+        logger.error(f"Failed to send circle invite email to {to_email}: {e}")
+        # Don't raise here, as invite was created successfully

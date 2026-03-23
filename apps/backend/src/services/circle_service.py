@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from prisma import Prisma
 
+from src.services.email import send_circle_invite_email
 from src.models.circles import (
     CircleChatGroupCreate,
     CircleChatGroupUpdate,
@@ -172,6 +173,10 @@ async def get_circle_detail(db: Prisma, circle_id: str, user_id: str):
             },
             "chatGroups": {
                 "order_by": {"createdAt": "asc"},
+            },
+            "invites": {
+                "where": {"status": "PENDING"},
+                "order_by": {"createdAt": "desc"},
             },
         },
     )
@@ -370,9 +375,42 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
                 }
             )
 
+        # Send invite email
+        inviter = await db.user.find_unique(where={"id": user_id})
+        inviter_name = (inviter.name or inviter.email) if inviter else "Maigie User"
+        await send_circle_invite_email(
+            str(email), inviter_name, circle.name if circle else "a study circle"
+        )
+
         created_invites.append(invite)
 
-    return created_invites
+    return {
+        "message": f"Successfully sent {len(created_invites)} invite(s).",
+        "invites": created_invites,
+    }
+
+
+async def cancel_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str):
+    """Cancel a pending invite."""
+    await _verify_owner(db, circle_id, user_id)
+
+    invite = await db.circleinvite.find_unique(where={"id": invite_id})
+
+    if not invite or invite.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invite not found for this circle.",
+        )
+
+    if invite.status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending invites can be cancelled.",
+        )
+
+    await db.circleinvite.delete(where={"id": invite_id})
+
+    return {"message": "Invite cancelled successfully."}
 
 
 async def list_pending_invites(db: Prisma, user_id: str):
