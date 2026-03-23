@@ -2,10 +2,8 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from prisma import Prisma
 
-from src.db.prisma import get_db
-from src.dependencies.auth import CurrentUser
+from src.dependencies import CurrentUser, db
 from src.schemas.circle import (
     CircleCreate,
     CircleUpdate,
@@ -23,7 +21,6 @@ from src.schemas.circle import (
 from src.services import circle_service
 
 router = APIRouter(prefix="/circles", tags=["Circles"])
-db = get_db()
 
 logger = logging.getLogger(__name__)
 
