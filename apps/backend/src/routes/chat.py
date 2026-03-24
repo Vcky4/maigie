@@ -2278,11 +2278,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             # 6. Get AI response with tool calling support
             ai_request_id = user_message.id if should_reply_as_ai else None
-            ai_reply_target_id = (
-                reply_target_message.id
-                if should_reply_as_ai and reply_target_message
-                else user_message.id if should_reply_as_ai else None
-            )
+            ai_reply_target_id = user_message.id if should_reply_as_ai else None
 
             # Define progress callback for tool execution updates
             async def send_progress(
@@ -2720,7 +2716,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
 
             assistant_message = await db.chatmessage.create(data=create_data)
             assistant_reply_preview = _serialize_reply_preview(
-                reply_target_message or user_message,
+                user_message,
                 fallback_user_name=getattr(user, "name", None),
             )
 
