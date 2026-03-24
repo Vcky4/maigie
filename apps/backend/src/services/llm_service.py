@@ -531,14 +531,18 @@ class GeminiService:
                                     streamed_function_calls.append(part.function_call)
 
                         if chunk_text:
-                            streamed_text_parts.append(chunk_text)
-                            if stream_callback:
-                                if last_chunk_text is not None:
-                                    await stream_callback(last_chunk_text, False)
-                                last_chunk_text = chunk_text
+                            text_delta = chunk_text
+                            if last_chunk_text and chunk_text.startswith(last_chunk_text):
+                                text_delta = chunk_text[len(last_chunk_text) :]
+                            last_chunk_text = chunk_text
+
+                            if text_delta:
+                                streamed_text_parts.append(text_delta)
+                                if stream_callback:
+                                    await stream_callback(text_delta, False)
 
                     if stream_callback and last_chunk_text is not None:
-                        await stream_callback(last_chunk_text, True)
+                        await stream_callback("", True)
 
                     return last_response, "".join(streamed_text_parts), streamed_function_calls
 
@@ -785,6 +789,24 @@ class GeminiService:
                     context_parts.append(f"Circle ID: {context['circleId']}")
                 if context.get("memberCount"):
                     context_parts.append(f"Circle Members: {context['memberCount']}")
+
+            if context.get("replyContext"):
+                reply_context = context["replyContext"]
+                reply_content = (reply_context.get("content") or "").strip()
+                if len(reply_content) > 280:
+                    reply_content = reply_content[:280] + "..."
+
+                reply_role = reply_context.get("role") or "user"
+                reply_author = reply_context.get("userName") or (
+                    "Maigie" if reply_role == "assistant" else "Member"
+                )
+                context_parts.append("Reply Context:")
+                context_parts.append(
+                    f"Replying to {reply_author} ({reply_role}): {reply_content or '[no content]'}"
+                )
+                context_parts.append(
+                    "Interpret the user's message as a direct reply to this message first."
+                )
 
             # Retrieved Items (from RAG/Database Search)
             if context.get("retrieved_items"):
