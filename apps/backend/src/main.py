@@ -429,7 +429,7 @@ def create_app() -> FastAPI:
     )
 
     # Circle (study group) routes
-    app.include_router(circles_router)
+    app.include_router(circles_router, prefix=f"{settings.API_V1_STR}")
 
     # Webhook endpoints (no auth required, verified by provider signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")

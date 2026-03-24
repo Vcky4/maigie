@@ -1,28 +1,28 @@
-import logging
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, status
 
 from src.dependencies import CurrentUser, db
 from src.models.circles import (
     CircleCreate,
     CircleUpdate,
+    CircleResponse,
     CircleDetailResponse,
     CircleListResponse,
+    CircleInviteCreate,
     CircleInviteResponse,
     CircleChatGroupCreate,
+    CircleChatGroupUpdate,
     CircleChatGroupResponse,
     CircleSessionResponse,
     CircleSessionCreate,
     CircleSessionUpdate,
-    CircleNoteListResponse,
+    CircleSessionSuggestionResponse,
+    CircleImportRequest,
     CircleMemberResponse,
+    TransferOwnershipRequest,
 )
 from src.services import circle_service
 
 router = APIRouter(prefix="/circles", tags=["Circles"])
-
-logger = logging.getLogger(__name__)
 
 
 def _circle_detail_to_response(circle, user_id: str) -> CircleDetailResponse:
@@ -85,13 +85,47 @@ def _circle_detail_to_response(circle, user_id: str) -> CircleDetailResponse:
     )
 
 
+def _circle_list_to_response(circle_or_membership, user_id: str) -> CircleResponse:
+    """Convert a circle or membership row into the list response shape."""
+    circle = getattr(circle_or_membership, "circle", circle_or_membership)
+    role = getattr(circle_or_membership, "role", None)
+    members = getattr(circle, "members", []) or []
+
+    if role is None:
+        for member in members:
+            if member.userId == user_id:
+                role = member.role
+                break
+
+    return CircleResponse(
+        id=circle.id,
+        name=circle.name,
+        description=circle.description,
+        avatarUrl=circle.avatarUrl,
+        createdById=circle.createdById,
+        maxMembers=circle.maxMembers,
+        maxGroups=circle.maxGroups,
+        memberCount=len(members),
+        role=role,
+        credits=getattr(circle, "credits", 0),
+        creditsLimit=getattr(circle, "creditsLimit", None),
+        createdAt=circle.createdAt,
+        updatedAt=circle.updatedAt,
+    )
+
+
 @router.post("/", response_model=CircleDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_circle(
     data: CircleCreate,
     current_user: CurrentUser,
 ):
     """Create a new study circle."""
-    circle = await circle_service.create_circle(db, current_user.id, data)
+    circle = await circle_service.create_circle(
+        db,
+        current_user.id,
+        str(current_user.tier),
+        data,
+    )
     return _circle_detail_to_response(circle, current_user.id)
 
 
@@ -103,7 +137,8 @@ async def list_circles(
 ):
     """List circles the user belongs to."""
     circles = await circle_service.list_user_circles(db, current_user.id)
-    return CircleListResponse(circles=circles, total=len(circles))
+    items = [_circle_list_to_response(circle, current_user.id) for circle in circles]
+    return CircleListResponse(circles=items[skip : skip + limit], total=len(items))
 
 
 @router.get("/{circle_id}", response_model=CircleDetailResponse)
@@ -116,6 +151,7 @@ async def get_circle(
     return _circle_detail_to_response(circle, current_user.id)
 
 
+@router.put("/{circle_id}", response_model=CircleDetailResponse)
 @router.patch("/{circle_id}", response_model=CircleDetailResponse)
 async def update_circle(
     circle_id: str,
@@ -137,6 +173,17 @@ async def delete_circle(
     return None
 
 
+@router.post("/{circle_id}/transfer", response_model=CircleDetailResponse)
+async def transfer_ownership(
+    circle_id: str,
+    data: TransferOwnershipRequest,
+    current_user: CurrentUser,
+):
+    """Transfer ownership of a circle to another member."""
+    circle = await circle_service.transfer_ownership(db, circle_id, current_user.id, data)
+    return _circle_detail_to_response(circle, current_user.id)
+
+
 # ==========================================
 # Invites
 # ==========================================
@@ -145,11 +192,11 @@ async def delete_circle(
 @router.post("/{circle_id}/invite", status_code=status.HTTP_200_OK)
 async def invite_members(
     circle_id: str,
-    emails: list[str],
+    data: CircleInviteCreate,
     current_user: CurrentUser,
 ):
     """Invite members to a circle by email (owner only)."""
-    return await circle_service.invite_members(db, circle_id, current_user.id, emails)
+    return await circle_service.invite_members(db, circle_id, current_user.id, data)
 
 
 @router.get("/invites/pending", response_model=list[CircleInviteResponse])
@@ -269,11 +316,12 @@ async def list_chat_groups(
     ]
 
 
+@router.put("/{circle_id}/groups/{group_id}", response_model=CircleChatGroupResponse)
 @router.patch("/{circle_id}/groups/{group_id}", response_model=CircleChatGroupResponse)
 async def update_chat_group(
     circle_id: str,
     group_id: str,
-    data: CircleChatGroupCreate,
+    data: CircleChatGroupUpdate,
     current_user: CurrentUser,
 ):
     """Update a chat group (owner only)."""
@@ -315,7 +363,7 @@ async def create_session(
     current_user: CurrentUser,
 ):
     """Create a new study session in a circle."""
-    session = await circle_service.create_session(db, circle_id, current_user.id, data)
+    session = await circle_service.create_group_session(db, circle_id, current_user.id, data)
     return session
 
 
@@ -325,10 +373,11 @@ async def list_sessions(
     current_user: CurrentUser,
 ):
     """List study sessions in a circle."""
-    sessions = await circle_service.list_sessions(db, circle_id, current_user.id)
+    sessions = await circle_service.list_group_sessions(db, circle_id, current_user.id)
     return sessions
 
 
+@router.put("/{circle_id}/sessions/{session_id}", response_model=CircleSessionResponse)
 @router.patch("/{circle_id}/sessions/{session_id}", response_model=CircleSessionResponse)
 async def update_session(
     circle_id: str,
@@ -337,16 +386,114 @@ async def update_session(
     current_user: CurrentUser,
 ):
     """Update a study session."""
-    session = await circle_service.update_session(db, circle_id, session_id, current_user.id, data)
+    session = await circle_service.update_group_session(
+        db,
+        circle_id,
+        session_id,
+        current_user.id,
+        data,
+    )
     return session
 
 
-@router.get("/{circle_id}/notes", response_model=CircleNoteListResponse)
+@router.delete("/{circle_id}/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    circle_id: str,
+    session_id: str,
+    current_user: CurrentUser,
+):
+    """Delete a study session."""
+    await circle_service.delete_group_session(db, circle_id, session_id, current_user.id)
+    return None
+
+
+@router.get("/{circle_id}/sessions/suggest", response_model=CircleSessionSuggestionResponse)
+async def suggest_sessions(
+    circle_id: str,
+    current_user: CurrentUser,
+):
+    """Suggest study sessions for a circle based on recent activity."""
+    suggestions = await circle_service.suggest_group_sessions(db, circle_id, current_user.id)
+    return CircleSessionSuggestionResponse(suggestions=suggestions)
+
+
+@router.get("/{circle_id}/notes")
 async def list_circle_notes(
     circle_id: str,
     current_user: CurrentUser,
     page: int = 1,
-    limit: int = 10,
+    size: int = 10,
 ):
     """List notes shared in the circle."""
-    return await circle_service.list_circle_notes(db, circle_id, current_user.id, page, limit)
+    notes, total = await circle_service.list_circle_notes(
+        db, circle_id, current_user.id, page, size
+    )
+    pages = (total + size - 1) // size if size else 0
+    return {
+        "items": notes,
+        "notes": notes,
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": pages,
+    }
+
+
+@router.get("/{circle_id}/goals")
+async def list_circle_goals(
+    circle_id: str,
+    current_user: CurrentUser,
+    page: int = 1,
+    size: int = 20,
+):
+    """List goals shared in the circle."""
+    goals, total = await circle_service.list_circle_goals(
+        db, circle_id, current_user.id, page, size
+    )
+    pages = (total + size - 1) // size if size else 0
+    return {
+        "goals": goals,
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": pages,
+    }
+
+
+@router.get("/{circle_id}/courses")
+async def list_circle_courses(
+    circle_id: str,
+    current_user: CurrentUser,
+    page: int = 1,
+    size: int = 20,
+):
+    """List courses shared in the circle."""
+    courses, total = await circle_service.list_circle_courses(
+        db,
+        circle_id,
+        current_user.id,
+        page,
+        size,
+    )
+    pages = (total + size - 1) // size if size else 0
+    return {
+        "courses": courses,
+        "total": total,
+        "page": page,
+        "size": size,
+        "pages": pages,
+    }
+
+
+@router.post("/{circle_id}/import")
+async def import_to_circle(
+    circle_id: str,
+    data: CircleImportRequest,
+    current_user: CurrentUser,
+):
+    """Import existing personal content into a circle."""
+    imported = await circle_service.import_to_circle(db, circle_id, current_user.id, data)
+    return {
+        "success": True,
+        "imported": imported,
+    }
