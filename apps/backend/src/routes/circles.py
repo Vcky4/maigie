@@ -114,7 +114,7 @@ def _circle_list_to_response(circle_or_membership, user_id: str) -> CircleRespon
     )
 
 
-@router.post("/", response_model=CircleDetailResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=CircleDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_circle(
     data: CircleCreate,
     current_user: CurrentUser,
@@ -129,7 +129,7 @@ async def create_circle(
     return _circle_detail_to_response(circle, current_user.id)
 
 
-@router.get("/", response_model=CircleListResponse)
+@router.get("", response_model=CircleListResponse)
 async def list_circles(
     current_user: CurrentUser,
     skip: int = 0,
