@@ -83,6 +83,7 @@ class ResourceResponse(BaseModel):
     recommendationSource: str | None
     clickCount: int
     bookmarkCount: int
+    circleId: str | None = None
     lastAccessedAt: str | None
     createdAt: str
     updatedAt: str

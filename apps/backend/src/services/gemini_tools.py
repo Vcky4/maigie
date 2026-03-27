@@ -267,6 +267,10 @@ def create_course_tool() -> dict[str, Any]:
                         "required": ["title", "topics"],
                     },
                 },
+                "circle_id": {
+                    "type": "string",
+                    "description": "Circle ID from context — include this when operating within a circle chat to scope the course to the circle (optional)",
+                },
             },
             "required": ["title", "modules"],
         },
@@ -334,6 +338,10 @@ def create_goal_tool() -> dict[str, Any]:
                 "topic_id": {
                     "type": "string",
                     "description": "Topic ID from context (optional)",
+                },
+                "circle_id": {
+                    "type": "string",
+                    "description": "Circle ID from context — include this when operating within a circle chat to scope the goal to the circle (optional)",
                 },
             },
             "required": ["title"],
@@ -476,6 +484,10 @@ def recommend_resources_tool() -> dict[str, Any]:
                 "course_id": {
                     "type": "string",
                     "description": "Course ID from context (optional)",
+                },
+                "circle_id": {
+                    "type": "string",
+                    "description": "Circle ID from context — include this when operating within a circle chat to scope the resources to the circle (optional)",
                 },
             },
             "required": ["query"],

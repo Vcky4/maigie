@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import HTTPException, status
 from prisma import Prisma
 
+from src.services.email import send_circle_invite_email
 from src.models.circles import (
     CircleChatGroupCreate,
     CircleChatGroupUpdate,
@@ -84,6 +85,17 @@ async def _verify_tutor(db: Prisma, circle_id: str, user_id: str):
     return member
 
 
+async def _sync_chat_group_session_metadata(db: Prisma, session_id: str):
+    """Ensure circle-backed chat sessions stay isolated from personal chat state."""
+    await db.chatsession.update(
+        where={"id": session_id},
+        data={
+            "isCircleRoom": True,
+            "isActive": False,
+        },
+    )
+
+
 # --- Circle CRUD ---
 
 
@@ -112,6 +124,7 @@ async def create_circle(db: Prisma, user_id: str, user_tier: str, data: CircleCr
             "name": data.name,
             "description": data.description,
             "createdById": user_id,
+            "creditsLimit": data.creditsLimit,
         }
     )
 
@@ -129,7 +142,8 @@ async def create_circle(db: Prisma, user_id: str, user_tier: str, data: CircleCr
         data={
             "userId": user_id,
             "title": f"{data.name} - General",
-            "isActive": True,
+            "isActive": False,
+            "isCircleRoom": True,
         }
     )
 
@@ -160,6 +174,10 @@ async def get_circle_detail(db: Prisma, circle_id: str, user_id: str):
             "chatGroups": {
                 "order_by": {"createdAt": "asc"},
             },
+            "invites": {
+                "where": {"status": "PENDING"},
+                "order_by": {"createdAt": "desc"},
+            },
         },
     )
 
@@ -169,6 +187,7 @@ async def get_circle_detail(db: Prisma, circle_id: str, user_id: str):
             detail="Circle not found.",
         )
 
+    circle = await _ensure_circle_chat_sessions(db, circle, user_id)
     return circle
 
 
@@ -298,20 +317,20 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
 
     created_invites = []
     for email in data.emails:
-        # Check if already invited
-        existing = await db.circleinvite.find_unique(
+        # Check if already invited (case-insensitive)
+        existing = await db.circleinvite.find_first(
             where={
-                "circleId_inviteeEmail": {
-                    "circleId": circle_id,
-                    "inviteeEmail": str(email),
-                }
+                "circleId": circle_id,
+                "inviteeEmail": {"equals": str(email), "mode": "insensitive"},
             }
         )
         if existing and existing.status == "PENDING":
             continue  # Skip already pending invites
 
-        # Check if already a member (by email lookup)
-        invitee_user = await db.user.find_unique(where={"email": str(email)})
+        # Check if already a member (by email lookup - case-insensitive)
+        invitee_user = await db.user.find_first(
+            where={"email": {"equals": str(email), "mode": "insensitive"}}
+        )
 
         if invitee_user:
             # Check if already a member
@@ -356,9 +375,42 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
                 }
             )
 
+        # Send invite email
+        inviter = await db.user.find_unique(where={"id": user_id})
+        inviter_name = (inviter.name or inviter.email) if inviter else "Maigie User"
+        await send_circle_invite_email(
+            str(email), inviter_name, circle.name if circle else "a study circle"
+        )
+
         created_invites.append(invite)
 
-    return created_invites
+    return {
+        "message": f"Successfully sent {len(created_invites)} invite(s).",
+        "invites": created_invites,
+    }
+
+
+async def cancel_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str):
+    """Cancel a pending invite."""
+    await _verify_owner(db, circle_id, user_id)
+
+    invite = await db.circleinvite.find_unique(where={"id": invite_id})
+
+    if not invite or invite.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invite not found for this circle.",
+        )
+
+    if invite.status != "PENDING":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only pending invites can be cancelled.",
+        )
+
+    await db.circleinvite.delete(where={"id": invite_id})
+
+    return {"message": "Invite cancelled successfully."}
 
 
 async def list_pending_invites(db: Prisma, user_id: str):
@@ -369,7 +421,7 @@ async def list_pending_invites(db: Prisma, user_id: str):
 
     invites = await db.circleinvite.find_many(
         where={
-            "inviteeEmail": user.email,
+            "inviteeEmail": {"equals": user.email, "mode": "insensitive"},
             "status": "PENDING",
         },
         include={
@@ -394,12 +446,16 @@ async def accept_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str
             detail="Invite not found.",
         )
 
-    # Verify the invite is for this user
+    # Verify the invite is for this user (case-insensitive email comparison)
     user = await db.user.find_unique(where={"id": user_id})
-    if not user or invite.inviteeEmail != user.email:
+    if not user or invite.inviteeEmail.lower() != user.email.lower():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="This invite is not for you.",
+            detail=(
+                f"This invite is for {invite.inviteeEmail}, but you are logged in as {user.email if user else 'unknown'}."
+                if invite.inviteeEmail.lower() != (user.email.lower() if user else "")
+                else "Invite verification failed."
+            ),
         )
 
     if invite.status != "PENDING":
@@ -418,22 +474,28 @@ async def accept_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str
             detail="This invite has expired.",
         )
 
-    # Check max circles for the accepting user
-    user_circle_count = await db.circlemember.count(where={"userId": user_id})
-    if user_circle_count >= MAX_CIRCLES_PER_USER:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"You can belong to a maximum of {MAX_CIRCLES_PER_USER} circles.",
-        )
-
-    # Add user as member
-    await db.circlemember.create(
-        data={
-            "circleId": circle_id,
-            "userId": user_id,
-            "role": "MEMBER",
-        }
+    # Check if already a member
+    existing_membership = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
     )
+
+    if not existing_membership:
+        # Check max circles for the accepting user
+        user_circle_count = await db.circlemember.count(where={"userId": user_id})
+        if user_circle_count >= MAX_CIRCLES_PER_USER:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You can belong to a maximum of {MAX_CIRCLES_PER_USER} circles. Please leave another circle first.",
+            )
+
+        # Add user as member
+        await db.circlemember.create(
+            data={
+                "circleId": circle_id,
+                "userId": user_id,
+                "role": "MEMBER",
+            }
+        )
 
     # Update invite status
     await db.circleinvite.update(
@@ -455,7 +517,7 @@ async def decline_invite(db: Prisma, circle_id: str, invite_id: str, user_id: st
         )
 
     user = await db.user.find_unique(where={"id": user_id})
-    if not user or invite.inviteeEmail != user.email:
+    if not user or invite.inviteeEmail.lower() != user.email.lower():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This invite is not for you.",
@@ -521,7 +583,8 @@ async def create_chat_group(db: Prisma, circle_id: str, user_id: str, data: Circ
         data={
             "userId": user_id,
             "title": f"{circle.name} - {data.name}" if circle else data.name,
-            "isActive": True,
+            "isActive": False,
+            "isCircleRoom": True,
         }
     )
 
@@ -545,7 +608,59 @@ async def list_chat_groups(db: Prisma, circle_id: str, user_id: str):
         order={"createdAt": "asc"},
     )
 
-    return groups
+    repaired_groups = []
+    for group in groups:
+        if group.chatSessionId:
+            await _sync_chat_group_session_metadata(db, group.chatSessionId)
+            repaired_groups.append(group)
+            continue
+        repaired_groups.append(await _ensure_chat_group_session(db, group, user_id))
+
+    return repaired_groups
+
+
+async def _ensure_circle_chat_sessions(db: Prisma, circle, user_id: str):
+    """Backfill missing chat sessions for legacy circle groups."""
+    repaired_groups = []
+    repaired_any = False
+
+    for group in circle.chatGroups or []:
+        if group.chatSessionId:
+            await _sync_chat_group_session_metadata(db, group.chatSessionId)
+            repaired_groups.append(group)
+            continue
+
+        repaired_groups.append(await _ensure_chat_group_session(db, group, user_id, circle))
+        repaired_any = True
+
+    if repaired_any:
+        circle.chatGroups = repaired_groups
+
+    return circle
+
+
+async def _ensure_chat_group_session(db: Prisma, group, user_id: str, circle=None):
+    """Create a backing chat session for groups created before chatSessionId was enforced."""
+    if group.chatSessionId:
+        return group
+
+    owning_circle = circle or await db.circle.find_unique(where={"id": group.circleId})
+    session_owner_id = getattr(owning_circle, "createdById", None) or user_id
+    session_title = f"{owning_circle.name} - {group.name}" if owning_circle else group.name
+
+    chat_session = await db.chatsession.create(
+        data={
+            "userId": session_owner_id,
+            "title": session_title,
+            "isActive": False,
+            "isCircleRoom": True,
+        }
+    )
+
+    return await db.circlechatgroup.update(
+        where={"id": group.id},
+        data={"chatSessionId": chat_session.id},
+    )
 
 
 async def update_chat_group(
@@ -673,10 +788,10 @@ async def award_contribution_points(db: Prisma, circle_id: str, user_id: str, po
 
 
 async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: CircleImportRequest):
-    """Import items (notes, courses, resources) into a circle."""
-    await _verify_admin(db, circle_id, user_id)
+    """Import items (notes, courses, resources, goals) into a circle."""
+    await _verify_membership(db, circle_id, user_id)
 
-    imported_stats = {"notes": 0, "courses": 0, "resources": 0}
+    imported_stats = {"notes": 0, "courses": 0, "resources": 0, "goals": 0}
 
     # Import Notes
     for note_id in data.noteIds:
@@ -698,6 +813,14 @@ async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: Circl
         if resource and resource.userId == user_id and not resource.circleId:
             await db.resource.update(where={"id": resource_id}, data={"circleId": circle_id})
             imported_stats["resources"] += 1
+
+    # Import Goals
+    if hasattr(data, "goalIds") and data.goalIds:
+        for goal_id in data.goalIds:
+            goal = await db.goal.find_unique(where={"id": goal_id})
+            if goal and goal.userId == user_id and not goal.circleId:
+                await db.goal.update(where={"id": goal_id}, data={"circleId": circle_id})
+                imported_stats["goals"] += 1
 
     return imported_stats
 
@@ -772,6 +895,20 @@ async def update_group_session(
         )
 
     return session
+
+
+async def delete_group_session(db: Prisma, circle_id: str, session_id: str, user_id: str) -> None:
+    """Delete a group session."""
+    await _verify_admin(db, circle_id, user_id)
+
+    session = await db.circlesession.find_unique(where={"id": session_id})
+    if not session or session.circleId != circle_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found.",
+        )
+
+    await db.circlesession.delete(where={"id": session_id})
 
 
 async def suggest_group_sessions(db: Prisma, circle_id: str, user_id: str) -> list[dict]:

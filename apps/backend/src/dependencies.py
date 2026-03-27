@@ -9,7 +9,7 @@ See LICENSE file in the repository root for details.
 
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # <--- CHANGED
 from jose import JWTError
 
@@ -137,3 +137,28 @@ async def require_premium(current_user: CurrentUser) -> User:
 
 
 PremiumUser = Annotated[User, Depends(require_premium)]
+
+
+async def require_exam_prep_access(
+    current_user: CurrentUser,
+    db_client: DBDep,
+    circle_id: str | None = Query(None),
+) -> User:
+    """
+    Allow exam prep in personal workspaces for paid users, or inside circles for members.
+    """
+    if circle_id:
+        member = await db_client.circlemember.find_first(
+            where={"circleId": circle_id, "userId": current_user.id}
+        )
+        if not member:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not a member of this circle",
+            )
+        return current_user
+
+    return await require_premium(current_user)
+
+
+ExamPrepUser = Annotated[User, Depends(require_exam_prep_access)]

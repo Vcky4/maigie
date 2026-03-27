@@ -34,6 +34,9 @@ router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 @router.get("", response_model=ResourceListResponse)
 async def list_resources(
     current_user: CurrentUser,
+    circle_id: str | None = Query(
+        None, alias="circle_id", description="Filter resources by circle context"
+    ),
     topicId: str | None = Query(None, alias="topicId", description="Filter by topic ID"),
     courseId: str | None = Query(None, alias="courseId", description="Filter by course ID"),
     type: str | None = Query(None, description="Filter by resource type"),
@@ -46,6 +49,19 @@ async def list_resources(
     """List user's resources with pagination, optionally filtered by topic or course."""
     try:
         where_clause = {"userId": current_user.id}
+
+        if circle_id:
+            membership = await db.circlemember.find_unique(
+                where={"circleId_userId": {"circleId": circle_id, "userId": current_user.id}}
+            )
+            if not membership:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You are not a member of this circle.",
+                )
+            where_clause["circleId"] = circle_id
+        else:
+            where_clause["circleId"] = None
 
         if topicId:
             where_clause["topicId"] = topicId
@@ -90,6 +106,7 @@ async def list_resources(
                 recommendationSource=getattr(r, "recommendationSource", None),
                 clickCount=r.clickCount,
                 bookmarkCount=getattr(r, "bookmarkCount", 0),
+                circleId=getattr(r, "circleId", None),
                 lastAccessedAt=r.lastAccessedAt.isoformat() if r.lastAccessedAt else None,
                 createdAt=r.createdAt.isoformat(),
                 updatedAt=r.updatedAt.isoformat(),

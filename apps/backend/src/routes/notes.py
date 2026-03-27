@@ -11,6 +11,7 @@ import re
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel
 
 from src.dependencies import CurrentUser, DBDep
 from src.models.notes import (
@@ -55,6 +56,7 @@ async def list_notes(
     tag: str | None = None,
     course_id: str | None = Query(None, alias="courseId"),
     archived: bool | None = False,
+    circle_id: str | None = Query(None, alias="circleId"),
 ):
     """
     List user notes with filtering and pagination.
@@ -68,6 +70,7 @@ async def list_notes(
         tag=tag,
         course_id=course_id,
         archived=archived,
+        circle_id=circle_id,
     )
 
     return {
@@ -376,4 +379,33 @@ async def add_summary_to_note(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to add summary to note",
+        )
+
+
+class NoteImportRequest(BaseModel):
+    circleId: str
+
+
+@router.post("/{note_id}/import", response_model=NoteResponse)
+async def import_note_to_circle(
+    note_id: str,
+    data: NoteImportRequest,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Import a personal note into a circle.
+    """
+    try:
+        note = await note_service.import_note_to_circle(db, note_id, data.circleId, current_user.id)
+        return note
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while importing the note",
         )

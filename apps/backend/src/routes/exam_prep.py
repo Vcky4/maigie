@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
-from src.dependencies import DBDep, PremiumUser
+from src.dependencies import DBDep, ExamPrepUser
 from src.services.exam_prep_service import (
     add_material,
     create_exam_prep,
@@ -20,10 +20,10 @@ from src.services.exam_prep_service import (
     get_exam_prep_progress,
     get_quiz_history,
     get_weak_areas,
+    transition_status,
     update_exam_prep,
     update_material,
     update_topic,
-    transition_status,
 )
 from src.services.exam_quiz_service import (
     complete_quiz,
@@ -179,6 +179,43 @@ def _serialize_exam_prep(e, materials=None, topics=None) -> ExamPrepResponse:
     )
 
 
+async def _ensure_circle_member(db_client: DBDep, circle_id: str, user_id: str):
+    member = await db_client.circlemember.find_first(
+        where={"circleId": circle_id, "userId": user_id}
+    )
+    if not member:
+        raise HTTPException(status_code=403, detail="You are not a member of this circle")
+    return member
+
+
+async def _get_accessible_exam_prep(
+    db_client: DBDep,
+    exam_prep_id: str,
+    user_id: str,
+    circle_id: str | None = None,
+):
+    member = None
+    if circle_id:
+        member = await _ensure_circle_member(db_client, circle_id, user_id)
+        exam_prep = await db_client.examprep.find_first(
+            where={"id": exam_prep_id, "circleId": circle_id}
+        )
+    else:
+        exam_prep = await db_client.examprep.find_first(
+            where={"id": exam_prep_id, "userId": user_id, "circleId": None}
+        )
+
+    if not exam_prep:
+        raise HTTPException(status_code=404, detail="Exam prep not found")
+    return exam_prep, member
+
+
+def _can_edit_exam_prep(exam_prep, user_id: str, member) -> bool:
+    if not getattr(exam_prep, "circleId", None):
+        return exam_prep.userId == user_id
+    return exam_prep.userId == user_id or (member and getattr(member, "role", "") == "OWNER")
+
+
 # ---------------------------------------------------------------------------
 # CRUD Routes
 # ---------------------------------------------------------------------------
@@ -186,12 +223,18 @@ def _serialize_exam_prep(e, materials=None, topics=None) -> ExamPrepResponse:
 
 @router.get("", response_model=ExamPrepListResponse)
 async def list_exam_preps(
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """List all exam preps for the current user."""
+    where = {"userId": current_user.id, "circleId": None}
+    if circle_id:
+        await _ensure_circle_member(db_client, circle_id, current_user.id)
+        where = {"circleId": circle_id}
+
     items = await db_client.examprep.find_many(
-        where={"userId": current_user.id},
+        where=where,
         include={
             "materials": True,
             "topics": {"include": {"questions": True}},
@@ -207,10 +250,14 @@ async def list_exam_preps(
 @router.post("", response_model=ExamPrepResponse, status_code=status.HTTP_201_CREATED)
 async def create_exam_prep_route(
     body: ExamPrepCreate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Create a new exam prep."""
+    if circle_id:
+        await _ensure_circle_member(db_client, circle_id, current_user.id)
+
     try:
         raw = body.exam_date.replace("Z", "+00:00").strip()
         if "T" not in raw and "+" not in raw and raw.count("-") == 2:
@@ -234,6 +281,7 @@ async def create_exam_prep_route(
         subject=body.subject,
         exam_date=exam_date,
         description=body.description,
+        circle_id=circle_id,
     )
 
     # Re-fetch with relations
@@ -248,19 +296,19 @@ async def create_exam_prep_route(
 @router.get("/{exam_prep_id}", response_model=ExamPrepResponse)
 async def get_exam_prep(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Get a single exam prep by ID."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id},
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
+    exam_prep = await db_client.examprep.find_unique(
+        where={"id": exam_prep_id},
         include={
             "materials": True,
             "topics": {"include": {"questions": True}, "order_by": {"order": "asc"}},
         },
     )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
 
     return _serialize_exam_prep(exam_prep)
 
@@ -269,10 +317,19 @@ async def get_exam_prep(
 async def update_exam_prep_route(
     exam_prep_id: str,
     body: ExamPrepUpdate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Update an exam prep."""
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
+    )
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
+
     data = {}
     if body.subject is not None:
         data["subject"] = body.subject
@@ -304,15 +361,18 @@ async def update_exam_prep_route(
 @router.delete("/{exam_prep_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_exam_prep(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Delete an exam prep (cascade deletes materials, topics, questions, quiz sessions)."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
     )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to delete this exam prep"
+        )
 
     await db_client.examprep.delete(where={"id": exam_prep_id})
 
@@ -329,18 +389,21 @@ async def delete_exam_prep(
 )
 async def upload_material(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
     file: UploadFile = File(...),
     category: str = Form("OTHER"),
     label: str | None = Form(None),
 ):
     """Upload a material file to an exam prep with category."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
     )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
 
     try:
         await increment_feature_usage(current_user, "file_uploads", db_client=db_client)
@@ -404,10 +467,19 @@ async def update_material_route(
     exam_prep_id: str,
     material_id: str,
     body: MaterialUpdate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Update material category or label."""
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
+    )
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
+
     try:
         material = await update_material(
             db_client,
@@ -436,10 +508,19 @@ async def update_material_route(
 async def delete_material_route(
     exam_prep_id: str,
     material_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Delete a material from an exam prep."""
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
+    )
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
+
     try:
         await delete_material(db_client, material_id, exam_prep_id, current_user.id)
     except ValueError as e:
@@ -454,16 +535,22 @@ async def delete_material_route(
 @router.post("/{exam_prep_id}/process")
 async def process_materials(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Trigger AI analysis of materials: extract topics, parse past questions, generate question bank."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id},
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
+    )
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
+    exam_prep = await db_client.examprep.find_unique(
+        where={"id": exam_prep_id},
         include={"materials": True},
     )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
 
     if not exam_prep.materials:
         raise HTTPException(status_code=400, detail="No materials uploaded yet")
@@ -474,7 +561,7 @@ async def process_materials(
     # Dispatch background task
     from src.tasks.exam_prep_tasks import process_exam_prep_task
 
-    process_exam_prep_task.delay(exam_prep_id, current_user.id)
+    process_exam_prep_task.delay(exam_prep_id, exam_prep.userId)
 
     return {"status": "processing", "message": "AI analysis started. This may take a few minutes."}
 
@@ -482,16 +569,16 @@ async def process_materials(
 @router.get("/{exam_prep_id}/processing-status")
 async def get_processing_status(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Check processing status."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id},
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
+    exam_prep = await db_client.examprep.find_unique(
+        where={"id": exam_prep_id},
         include={"topics": {"include": {"questions": True}}},
     )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
 
     total_questions = sum(len(t.questions) for t in (exam_prep.topics or []))
 
@@ -510,15 +597,12 @@ async def get_processing_status(
 @router.get("/{exam_prep_id}/topics")
 async def list_topics(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """List extracted topics for an exam prep."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
-    )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
 
     topics = await db_client.exampreptopic.find_many(
         where={"examPrepId": exam_prep_id},
@@ -545,10 +629,19 @@ async def update_topic_route(
     exam_prep_id: str,
     topic_id: str,
     body: TopicUpdate,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Edit a topic."""
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
+    )
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
+
     try:
         topic = await update_topic(
             db_client,
@@ -567,10 +660,19 @@ async def update_topic_route(
 async def delete_topic_route(
     exam_prep_id: str,
     topic_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Delete a topic (cascades to questions)."""
+    exam_prep, member = await _get_accessible_exam_prep(
+        db_client, exam_prep_id, current_user.id, circle_id
+    )
+    if not _can_edit_exam_prep(exam_prep, current_user.id, member):
+        raise HTTPException(
+            status_code=403, detail="You do not have permission to edit this exam prep"
+        )
+
     try:
         await delete_topic(db_client, topic_id, exam_prep_id, current_user.id)
     except ValueError as e:
@@ -585,8 +687,9 @@ async def delete_topic_route(
 @router.get("/{exam_prep_id}/questions")
 async def list_questions(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
     topic_id: str | None = Query(None),
     source: str | None = Query(None),
     difficulty: str | None = Query(None),
@@ -594,11 +697,7 @@ async def list_questions(
     offset: int = Query(0, ge=0),
 ):
     """List questions in the question bank (filterable)."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
-    )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
 
     where: dict = {"topic": {"examPrepId": exam_prep_id}}
     if topic_id:
@@ -610,7 +709,10 @@ async def list_questions(
 
     questions = await db_client.examquestion.find_many(
         where=where,
-        include={"topic": True, "attempts": True},
+        include={
+            "topic": True,
+            "attempts": {"where": {"quizSession": {"userId": current_user.id}}},
+        },
         take=limit,
         skip=offset,
         order={"createdAt": "desc"},
@@ -649,19 +751,16 @@ async def list_questions(
 @router.get("/{exam_prep_id}/questions/stats")
 async def question_stats(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Get question bank statistics."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
-    )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
 
     questions = await db_client.examquestion.find_many(
         where={"topic": {"examPrepId": exam_prep_id}},
-        include={"attempts": True},
+        include={"attempts": {"where": {"quizSession": {"userId": current_user.id}}}},
     )
 
     from src.services.exam_prep_service import _calculate_question_mastery
@@ -693,10 +792,12 @@ async def question_stats(
 async def start_quiz_route(
     exam_prep_id: str,
     body: QuizStartRequest,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Start a quiz session."""
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
     try:
         result = await start_quiz(
             db_client,
@@ -716,21 +817,18 @@ async def submit_answer_route(
     exam_prep_id: str,
     quiz_session_id: str,
     body: AnswerSubmitRequest,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Submit an answer for a quiz question."""
-    # Verify ownership
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
-    )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
 
     try:
         result = await submit_answer(
             db_client,
             quiz_session_id,
+            current_user.id,
             body.question_id,
             body.user_answer,
             body.time_taken_seconds,
@@ -745,20 +843,18 @@ async def complete_quiz_route(
     exam_prep_id: str,
     quiz_session_id: str,
     body: QuizCompleteRequest,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Complete a quiz session and get results."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
-    )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
 
     try:
         result = await complete_quiz(
             db_client,
             quiz_session_id,
+            current_user.id,
             body.duration_seconds,
         )
         return result
@@ -770,21 +866,20 @@ async def complete_quiz_route(
 async def get_quiz_session(
     exam_prep_id: str,
     quiz_session_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Get quiz session details."""
-    exam_prep = await db_client.examprep.find_first(
-        where={"id": exam_prep_id, "userId": current_user.id}
-    )
-    if not exam_prep:
-        raise HTTPException(status_code=404, detail="Exam prep not found")
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
 
     session = await db_client.examquizsession.find_unique(
         where={"id": quiz_session_id},
         include={"attempts": {"include": {"question": {"include": {"topic": True}}}}},
     )
     if not session:
+        raise HTTPException(status_code=404, detail="Quiz session not found")
+    if session.userId != current_user.id or session.examPrepId != exam_prep_id:
         raise HTTPException(status_code=404, detail="Quiz session not found")
 
     return {
@@ -819,10 +914,12 @@ async def get_quiz_session(
 @router.get("/{exam_prep_id}/progress")
 async def get_progress(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Get overall progress and readiness."""
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
     try:
         return await get_exam_prep_progress(db_client, exam_prep_id, current_user.id)
     except ValueError as e:
@@ -832,10 +929,12 @@ async def get_progress(
 @router.get("/{exam_prep_id}/progress/weak-areas")
 async def get_weak_areas_route(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Get weakest questions."""
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
     try:
         return {"weakAreas": await get_weak_areas(db_client, exam_prep_id, current_user.id)}
     except ValueError as e:
@@ -845,10 +944,12 @@ async def get_weak_areas_route(
 @router.get("/{exam_prep_id}/progress/history")
 async def get_history(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Get quiz score history."""
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
     try:
         return {"history": await get_quiz_history(db_client, exam_prep_id, current_user.id)}
     except ValueError as e:
@@ -863,10 +964,12 @@ async def get_history(
 @router.post("/{exam_prep_id}/generate-study-plan")
 async def regenerate_study_plan(
     exam_prep_id: str,
-    current_user: PremiumUser,
+    current_user: ExamPrepUser,
     db_client: DBDep,
+    circle_id: str | None = Query(None),
 ):
     """Regenerate study schedule blocks for the exam prep."""
+    await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
     try:
         count = await generate_study_plan(db_client, exam_prep_id, current_user.id)
         return {"blocksCreated": count}
