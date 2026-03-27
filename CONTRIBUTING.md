@@ -219,4 +219,4 @@ By contributing, you agree that your contributions will be licensed under the pr
 
 ---
 
-Thank you for helping build **Maigie** — the AI-powered companion helping students study smarter, not harder! 🚀
+Thank you for helping build **Maigie** — the AI-powered academic operating system for studying smarter, remembering more, and performing better! 🚀

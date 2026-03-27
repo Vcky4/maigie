@@ -1,6 +1,6 @@
 # Backend (FastAPI)
 
-FastAPI backend application for Maigie, powering an Agentic AI study companion.
+FastAPI backend application for Maigie, the AI-powered academic operating system.
 
 ## Architecture Overview
 

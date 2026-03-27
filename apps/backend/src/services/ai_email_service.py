@@ -102,7 +102,7 @@ async def draft_morning_schedule_email(
         pass
 
     ctx_str = "\n".join(ctx_parts)
-    prompt = f"""You are Maigie, a friendly study companion. Write a brief, personalized intro (2-3 sentences) for a daily morning email.
+    prompt = f"""You are Maigie, the user's AI-powered academic operating system. Write a brief, personalized intro (2-3 sentences) for a daily morning email.
 
 Context:
 {ctx_str}
@@ -163,7 +163,7 @@ async def draft_schedule_reminder_email(
         (subject, template_data) with reminder_message, reminder_message_plain
     """
     name = (user_name or "").split()[0] or "there"
-    prompt = f"""You are Maigie, a friendly study companion. Write a very brief reminder message (1-2 sentences) for an upcoming schedule item.
+    prompt = f"""You are Maigie, the user's AI-powered academic operating system. Write a very brief reminder message (1-2 sentences) for an upcoming schedule item.
 
 Schedule: {schedule_title}
 Time: {schedule_time}
@@ -255,7 +255,7 @@ async def draft_weekly_tips_email(db_client: Any, user: Any) -> tuple[str, dict[
         pass
 
     ctx_str = "\n".join(ctx_parts)
-    prompt = f"""You are Maigie, a supportive study companion. Write a weekly encouragement email with personalized study tips.
+    prompt = f"""You are Maigie, the user's AI-powered academic operating system. Write a weekly encouragement email with personalized study tips.
 
 Context:
 {ctx_str}
@@ -289,7 +289,9 @@ Output only valid JSON."""
         ]
         encouragement = result.get("encouragement") or "You've got this!"
 
-    subject = result.get("subject") if result else "Your weekly study tips from Maigie"
+    subject = (
+        result.get("subject") if result else "Weekly tips | Maigie — The Academic Operating System"
+    )
     return (
         subject,
         {
@@ -328,7 +330,7 @@ async def draft_agent_nudge_email(
     """
     name = user_name or "there"
 
-    prompt = f"""You are Maigie, a warm and encouraging AI study companion.
+    prompt = f"""You are Maigie, the warm face of the user's AI-powered academic operating system.
 Draft a short, personalized email for a proactive nudge notification.
 
 Nudge type: {nudge_type}
@@ -356,7 +358,7 @@ Keep it brief and actionable. Sound human, not robotic.
             f"<p>Hi {name},</p>"
             f"<p>{nudge_message}</p>"
             f"<p>Open <a href='https://app.maigie.com'>Maigie</a> to take action!</p>"
-            f"<p>— Maigie, your study companion 📚</p>"
+            f"<p>— Maigie, your academic operating system 📚</p>"
         )
 
     return subject, body_html

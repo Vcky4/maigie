@@ -100,7 +100,7 @@ async def create_study_plan(
             10, "planning", "Analyzing your goal and generating a study plan..."
         )
 
-    prompt = f"""You are Maigie, an AI study companion. Create a detailed study plan for the following goal.
+    prompt = f"""You are Maigie, the user's AI-powered academic operating system. Create a detailed study plan for the following goal.
 
 Goal: {goal}
 Duration: {duration_weeks} weeks (from {now.strftime('%B %d, %Y')} to {target_date.strftime('%B %d, %Y')})

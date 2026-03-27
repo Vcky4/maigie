@@ -1,12 +1,16 @@
-Welcome to Maigie
+Welcome to Maigie — The Academic Operating System
 
 Hi {{ name }},
 
 Congratulations, your account has been successfully verified. We are thrilled to have you on board.
+
+Maigie is your AI-powered academic operating system: courses, schedule, notes, goals, and reviews in one workflow. Study smarter, remember more, perform better.
 
 You can now log in to your dashboard and start exploring.
 
 Visit your dashboard: {{ login_url }}
 
 If you have any questions, feel free to reply to this email.
+
+— Maigie — The Academic Operating System
 

@@ -622,8 +622,8 @@ def save_user_fact_tool() -> dict[str, Any]:
         "name": "save_user_fact",
         "description": (
             "Save an important fact the user has shared about themselves for future reference. "
-            "Use this when the user tells you something personal that would help you be a better "
-            "study companion — like their learning style, exam dates, academic background, "
+            "Use this when the user tells you something personal that would help Maigie support them better "
+            "as their academic operating system — like their learning style, exam dates, academic background, "
             "struggles, strengths, or personal preferences. "
             "Do NOT save trivial facts or things already tracked elsewhere (like course names or goals). "
             "Examples: 'I'm a visual learner', 'My LSAT is in June', 'I struggle with calculus', "

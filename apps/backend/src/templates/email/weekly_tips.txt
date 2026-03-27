@@ -16,4 +16,4 @@ This week's tips:
 Open Maigie: {{ dashboard_url }}
 
 Best regards,
-Maigie
+Maigie — The Academic Operating System

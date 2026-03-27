@@ -1,6 +1,6 @@
 # Maigie
 
-AI-powered student companion that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with an intelligent assistant (text + voice).
+**Maigie** is the AI-powered **academic operating system**: one workflow for courses, goals, resources, schedules, forecasts, reminders, and AI-guided chat (text + voice).
 
 ## Architecture
 

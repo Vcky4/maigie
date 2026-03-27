@@ -2,9 +2,11 @@ Hi {{ name }},
 
 Thank you for upgrading to {{ tier_name }}! Your subscription is now active, and you have access to all premium features.
 
+You now have full access to Maigie as your AI-powered academic operating system—chat, voice, courses, schedule, and reviews in one workflow.
+
 You can now log in to your dashboard and start exploring: {{ dashboard_url }}
 
 You can manage your subscription at any time from your settings.
 
 Best regards,
-The {{ app_name }} Team
+{{ app_name }} — The Academic Operating System

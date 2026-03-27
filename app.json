@@ -1,4 +1,6 @@
 {
+  "name": "Maigie",
+  "description": "The academic operating system — study smarter, remember more, perform better.",
   "plugins": [
     "expo-web-browser"
   ],
