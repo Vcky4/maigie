@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 import nh3
+import trafilatura
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
@@ -52,7 +53,6 @@ ALLOWED_TAGS = frozenset(
         "footer",
         "main",
         "aside",
-        "nav",
         "h1",
         "h2",
         "h3",
@@ -178,6 +178,52 @@ def _absolutize_urls(fragment: BeautifulSoup, base_url: str) -> None:
         tag["src"] = urljoin(base_url, tag["src"])
 
 
+def _fragment_inner_html(fragment_soup: BeautifulSoup) -> str:
+    body = fragment_soup.body
+    if body:
+        return body.decode_contents()
+    return str(fragment_soup)
+
+
+def _main_content_html_trafilatura(html: str, page_url: str) -> tuple[str | None, str | None]:
+    """
+    Extract main article/body HTML (drops most global nav, promos, footers).
+    Returns (html_string_or_none, extracted_title_or_none).
+    """
+    try:
+        main_html = trafilatura.extract(
+            html,
+            url=page_url,
+            output_format="html",
+            include_links=True,
+            include_images=True,
+            include_tables=True,
+            include_formatting=True,
+            include_comments=False,
+            favor_precision=True,
+        )
+    except Exception as e:
+        logger.warning(
+            "trafilatura extract failed, falling back to heuristic DOM pick",
+            extra={"url": page_url[:120], "error": str(e)},
+        )
+        return None, None
+
+    if not main_html or not main_html.strip():
+        return None, None
+
+    meta_title: str | None = None
+    try:
+        meta = trafilatura.extract_metadata(html, default_url=page_url)
+        if meta is not None and getattr(meta, "title", None):
+            t = str(meta.title).strip()
+            meta_title = t or None
+    except Exception as e:
+        logger.debug("trafilatura metadata extraction skipped: %s", e)
+
+    return main_html.strip(), meta_title
+
+
 async def fetch_page_preview_html(url: str) -> tuple[str, str | None]:
     """
     Fetch URL, extract main-ish HTML, sanitize. Returns (html_fragment, title).
@@ -222,13 +268,21 @@ async def fetch_page_preview_html(url: str) -> tuple[str, str | None]:
     title_tag = soup.title
     page_title = title_tag.get_text(strip=True) if title_tag else None
 
-    _strip_unsafe_nodes(soup)
-    fragment_soup = _pick_main_node(soup)
-    _strip_unsafe_nodes(fragment_soup)
-    _absolutize_urls(fragment_soup, url)
+    main_html, extracted_title = _main_content_html_trafilatura(text, url)
+    if extracted_title:
+        page_title = extracted_title
 
-    body = fragment_soup.body
-    inner = body.decode_contents() if body else str(fragment_soup)
+    if main_html:
+        fragment_soup = BeautifulSoup(main_html, "html.parser")
+        _strip_unsafe_nodes(fragment_soup)
+        _absolutize_urls(fragment_soup, url)
+        inner = _fragment_inner_html(fragment_soup)
+    else:
+        _strip_unsafe_nodes(soup)
+        fragment_soup = _pick_main_node(soup)
+        _strip_unsafe_nodes(fragment_soup)
+        _absolutize_urls(fragment_soup, url)
+        inner = _fragment_inner_html(fragment_soup)
 
     cleaned = nh3.clean(
         inner,
