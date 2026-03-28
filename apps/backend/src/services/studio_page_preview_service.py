@@ -95,9 +95,10 @@ ALLOWED_TAGS = frozenset(
     }
 )
 
+# Do not whitelist "rel" on <a> when using link_rel=... — nh3 panics (see ammonia docs).
 _PREVIEW_ATTRIBUTES: dict[str, set[str]] = {
     "*": {"class", "id", "title", "lang", "dir"},
-    "a": {"href", "title", "rel", "target"},
+    "a": {"href", "title", "target"},
     "img": {"src", "alt", "title", "width", "height", "loading"},
     "th": {"colspan", "rowspan", "scope"},
     "td": {"colspan", "rowspan"},
@@ -173,7 +174,6 @@ def _absolutize_urls(fragment: BeautifulSoup, base_url: str) -> None:
     for tag in fragment.find_all("a", href=True):
         tag["href"] = urljoin(base_url, tag["href"])
         tag["target"] = "_blank"
-        tag["rel"] = "noopener noreferrer"
     for tag in fragment.find_all("img", src=True):
         tag["src"] = urljoin(base_url, tag["src"])
 
