@@ -17,6 +17,9 @@ from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Default httpx connect timeout (~5s) is tight for cloud → Google from some regions; OAuth is rare enough to wait longer.
+_OAUTH_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=20.0)
+
 
 class OAuthProvider(Protocol):
     """Protocol for OAuth providers."""
@@ -157,7 +160,7 @@ class GoogleOAuthProvider:
 
     async def get_user_info(self, access_token: str) -> dict[str, Any]:
         """Get user information from Google."""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_OAUTH_HTTP_TIMEOUT) as client:
             resp = await client.get(
                 self.user_info_url,
                 headers={"Authorization": f"Bearer {access_token}"},
