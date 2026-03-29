@@ -7,7 +7,7 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 
@@ -34,7 +34,7 @@ class PagePreviewResponse(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _one_payload(self) -> PagePreviewResponse:
+    def _one_payload(self) -> Self:
         if self.contentType == "text/html":
             if self.html is None or not str(self.html).strip():
                 raise ValueError("html is required when contentType is text/html")
