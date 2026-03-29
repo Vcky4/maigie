@@ -1,0 +1,15 @@
+You've been invited!
+
+Hi there,
+
+{{ inviter_name }} has invited you to join their study circle "{{ circle_name }}" on Maigie.
+
+Circles are a great way to collaborate on Maigie—your shared layer on the academic operating system for notes, resources, and group learning.
+
+View Invite and join here: {{ circles_url }}
+
+If you don't have an account yet, you can sign up for free using this email address to accept the invite.
+
+Happy studying!
+
+— {{ app_name }} — The Academic Operating System
