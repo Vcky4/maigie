@@ -13,7 +13,7 @@ import ipaddress
 import logging
 import re
 import socket
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 
 import httpx
 import nh3
@@ -23,6 +23,7 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 MAX_BYTES = 2_000_000
+MAX_PDF_BYTES = 12_000_000
 FETCH_TIMEOUT = 20.0
 MAX_REDIRECTS = 5
 
@@ -178,6 +179,49 @@ def _absolutize_urls(fragment: BeautifulSoup, base_url: str) -> None:
         tag["src"] = urljoin(base_url, tag["src"])
 
 
+def _path_suggests_pdf(url: str) -> bool:
+    p = urlparse(url).path.lower().rstrip("/")
+    return p.endswith(".pdf")
+
+
+def _max_preview_bytes(url: str, primary_mime: str) -> int:
+    if primary_mime in ("application/pdf", "application/x-pdf"):
+        return MAX_PDF_BYTES
+    if primary_mime == "application/octet-stream" and _path_suggests_pdf(url):
+        return MAX_PDF_BYTES
+    if _path_suggests_pdf(url):
+        return MAX_PDF_BYTES
+    return MAX_BYTES
+
+
+def _is_pdf_magic(data: bytes) -> bool:
+    return len(data) >= 5 and data[:5] == b"%PDF-"
+
+
+def _title_from_content_disposition(header: str | None) -> str | None:
+    if not header:
+        return None
+    # filename*=UTF-8''name.pdf
+    m = re.search(r"filename\*=(?:UTF-8''|)([^;\s]+)", header, re.IGNORECASE)
+    if m:
+        raw = m.group(1).strip().strip("'\"")
+        name = unquote(raw)
+        if name:
+            base = name.rsplit("/", 1)[-1]
+            stem = base.rsplit(".", 1)[0] if "." in base else base
+            return stem.replace("_", " ").strip() or None
+    m = re.search(r'filename="([^"]+)"', header, re.IGNORECASE)
+    if not m:
+        m = re.search(r"filename=([^;\s]+)", header, re.IGNORECASE)
+    if m:
+        name = unquote(m.group(1).strip().strip("'\""))
+        if name:
+            base = name.rsplit("/", 1)[-1]
+            stem = base.rsplit(".", 1)[0] if "." in base else base
+            return stem.replace("_", " ").strip() or None
+    return None
+
+
 def _fragment_inner_html(fragment_soup: BeautifulSoup) -> str:
     body = fragment_soup.body
     if body:
@@ -224,64 +268,28 @@ def _main_content_html_trafilatura(html: str, page_url: str) -> tuple[str | None
     return main_html.strip(), meta_title
 
 
-async def fetch_page_preview_html(url: str) -> tuple[str, str | None]:
-    """
-    Fetch URL, extract main-ish HTML, sanitize. Returns (html_fragment, title).
-    Raises ValueError for client-side issues, RuntimeError for fetch/parse failures.
-    """
-    assert_url_safe_for_ssrf(url)
-
-    headers = {
-        "User-Agent": _USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-    }
-
-    async with httpx.AsyncClient(
-        timeout=FETCH_TIMEOUT,
-        follow_redirects=True,
-        max_redirects=MAX_REDIRECTS,
-        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-    ) as client:
-        async with client.stream("GET", url, headers=headers) as response:
-            assert_url_safe_for_ssrf(str(response.url))
-            if response.status_code >= 400:
-                raise RuntimeError(f"Remote server returned {response.status_code}")
-            ctype = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
-            if ctype and ctype not in ("text/html", "application/xhtml+xml"):
-                raise RuntimeError("URL is not an HTML page (wrong content type)")
-
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in response.aiter_bytes():
-                total += len(chunk)
-                if total > MAX_BYTES:
-                    raise RuntimeError("Page is too large to preview")
-                chunks.append(chunk)
-
-    raw_bytes = b"".join(chunks)
-    if not raw_bytes.strip():
-        raise RuntimeError("Empty response")
-
+def _html_preview_from_bytes(raw_bytes: bytes, page_url: str) -> tuple[str, str | None]:
+    """Parse downloaded HTML bytes into sanitized reader fragment and title."""
     text = raw_bytes.decode("utf-8", errors="replace")
 
     soup = BeautifulSoup(text, "html.parser")
     title_tag = soup.title
     page_title = title_tag.get_text(strip=True) if title_tag else None
 
-    main_html, extracted_title = _main_content_html_trafilatura(text, url)
+    main_html, extracted_title = _main_content_html_trafilatura(text, page_url)
     if extracted_title:
         page_title = extracted_title
 
     if main_html:
         fragment_soup = BeautifulSoup(main_html, "html.parser")
         _strip_unsafe_nodes(fragment_soup)
-        _absolutize_urls(fragment_soup, url)
+        _absolutize_urls(fragment_soup, page_url)
         inner = _fragment_inner_html(fragment_soup)
     else:
         _strip_unsafe_nodes(soup)
         fragment_soup = _pick_main_node(soup)
         _strip_unsafe_nodes(fragment_soup)
-        _absolutize_urls(fragment_soup, url)
+        _absolutize_urls(fragment_soup, page_url)
         inner = _fragment_inner_html(fragment_soup)
 
     cleaned = nh3.clean(
@@ -296,3 +304,80 @@ async def fetch_page_preview_html(url: str) -> tuple[str, str | None]:
         raise RuntimeError("No readable content could be extracted")
 
     return cleaned, page_title
+
+
+async def fetch_page_preview_html(url: str) -> tuple[str, str | None]:
+    """
+    Fetch URL, extract main-ish HTML, sanitize. Returns (html_fragment, title).
+    Raises ValueError for client-side issues, RuntimeError for fetch/parse failures.
+    """
+    ctype, title, html, pdf_bytes = await fetch_studio_preview(url)
+    if ctype != "text/html" or html is None:
+        raise RuntimeError("URL is not an HTML page (wrong content type)")
+    if pdf_bytes:
+        raise RuntimeError("URL is not an HTML page (wrong content type)")
+    return html, title
+
+
+async def fetch_studio_preview(
+    url: str,
+) -> tuple[str, str | None, str | None, bytes | None]:
+    """
+    Fetch URL with SSRF checks. Returns
+    (content_type, title, html_or_none, pdf_bytes_or_none).
+    content_type is ``text/html`` or ``application/pdf``.
+    """
+    assert_url_safe_for_ssrf(url)
+
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/pdf,application/x-pdf,*/*;q=0.1",
+    }
+
+    async with httpx.AsyncClient(
+        timeout=FETCH_TIMEOUT,
+        follow_redirects=True,
+        max_redirects=MAX_REDIRECTS,
+        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+    ) as client:
+        async with client.stream("GET", url, headers=headers) as response:
+            assert_url_safe_for_ssrf(str(response.url))
+            if response.status_code >= 400:
+                raise RuntimeError(f"Remote server returned {response.status_code}")
+
+            final_url = str(response.url)
+            ctype_header = response.headers.get("content-type") or ""
+            primary = ctype_header.split(";")[0].strip().lower()
+            content_disposition = response.headers.get("content-disposition")
+            max_bytes = _max_preview_bytes(final_url, primary)
+
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in response.aiter_bytes():
+                total += len(chunk)
+                if total > max_bytes:
+                    raise RuntimeError("Resource is too large to preview")
+                chunks.append(chunk)
+
+    raw_bytes = b"".join(chunks)
+    if not raw_bytes.strip():
+        raise RuntimeError("Empty response")
+
+    cd_title = _title_from_content_disposition(content_disposition)
+
+    if _is_pdf_magic(raw_bytes):
+        title = cd_title
+        return "application/pdf", title, None, raw_bytes
+
+    if primary in ("application/pdf", "application/x-pdf"):
+        raise RuntimeError("Response claimed to be a PDF but body is not valid PDF data")
+
+    if primary == "application/octet-stream" and _path_suggests_pdf(final_url):
+        raise RuntimeError("Expected a PDF but the response was not valid PDF data")
+
+    if primary not in ("", "text/html", "application/xhtml+xml"):
+        raise RuntimeError("URL is not an HTML page or PDF (wrong content type)")
+
+    html, page_title = _html_preview_from_bytes(raw_bytes, final_url)
+    title = page_title or cd_title
+    return "text/html", title, html, None

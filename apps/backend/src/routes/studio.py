@@ -7,13 +7,14 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import base64
 import logging
 
 from fastapi import APIRouter, HTTPException, status
 
 from src.dependencies import CurrentUser
 from src.models.studio_preview import PagePreviewRequest, PagePreviewResponse
-from src.services.studio_page_preview_service import fetch_page_preview_html
+from src.services.studio_page_preview_service import fetch_studio_preview
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,12 @@ async def post_page_preview(
     """
     Fetch a public HTML page and return sanitized content for in-app “reader” preview.
 
-    This avoids iframe embedding blocks (X-Frame-Options) by rendering server-fetched HTML
-    that has been stripped and sanitized.     Not a full browser: scripts and forms are removed.
+    For HTML, returns sanitized fragment (no iframe). For PDF, returns base64 so the client
+    can open a blob URL (avoids X-Frame-Options on third-party file hosts). Not a full browser.
     """
     url_str = str(body.url)
     try:
-        html, title = await fetch_page_preview_html(url_str)
+        content_type, title, html, pdf_bytes = await fetch_studio_preview(url_str)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except RuntimeError as e:
@@ -59,4 +60,20 @@ async def post_page_preview(
             detail="Could not build preview",
         ) from e
 
-    return PagePreviewResponse(originalUrl=url_str, title=title, html=html)
+    if content_type == "application/pdf" and pdf_bytes is not None:
+        return PagePreviewResponse(
+            originalUrl=url_str,
+            title=title,
+            contentType="application/pdf",
+            html=None,
+            pdfBase64=base64.standard_b64encode(pdf_bytes).decode("ascii"),
+        )
+
+    assert html is not None
+    return PagePreviewResponse(
+        originalUrl=url_str,
+        title=title,
+        contentType="text/html",
+        html=html,
+        pdfBase64=None,
+    )
