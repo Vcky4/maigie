@@ -6,7 +6,7 @@
 
 # **1. Product Overview**
 
-Maigie is an AI‑powered study companion designed to help students organize learning, generate study plans, manage goals, track progress, and access personalized resources. It includes conversational AI, voice interaction, scheduling, recommendations, reminders, and dashboards that automatically adapt to user behavior.
+Maigie is an AI‑powered academic operating system designed to help students organize learning, generate study plans, manage goals, track progress, and access personalized resources in one coordinated workflow. It includes conversational AI, voice interaction, scheduling, recommendations, reminders, and dashboards that automatically adapt to user behavior.
 
 This PRD outlines:
 

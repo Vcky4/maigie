@@ -12,4 +12,4 @@ Today's schedule:
 View your full schedule: {{ schedule_url }}
 
 Best regards,
-The {{ app_name }} Team
+{{ app_name }} — The Academic Operating System

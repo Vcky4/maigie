@@ -13,4 +13,4 @@ Hi {{ name }},
 Open schedule: {{ schedule_url }}
 
 Best regards,
-The {{ app_name }} Team
+{{ app_name }} — The Academic Operating System

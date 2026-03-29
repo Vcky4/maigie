@@ -1,12 +1,12 @@
 # Overview
 
-Maigie is an AI-powered student companion that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with an intelligent assistant (text + voice). The codebase is a monorepo managed with **Nx**. The backend is **FastAPI** with clear service separation and AI integrations (vector DB, embeddings, LLMs).
+Maigie is an AI-powered academic operating system that helps learners manage courses, set goals, discover resources, schedule study sessions, get forecasts and reminders, and converse with AI (text + voice) in one coordinated workflow. The codebase is a monorepo managed with **Nx**. The backend is **FastAPI** with clear service separation and AI integrations (vector DB, embeddings, LLMs).
 
 # Maigie Architecture Overview
 
 ## 1. System Overview
 
-Maigie is an AI-powered learning companion built on a distributed, scalable architecture using:
+Maigie is an AI-powered academic operating system built on a distributed, scalable architecture using:
 
 * **FastAPI** for backend logic
 * **Nx** as the monorepo orchestrator

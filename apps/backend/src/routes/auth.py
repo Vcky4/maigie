@@ -1142,6 +1142,19 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
 
     except HTTPException:
         raise
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        logger.warning(
+            "OAuth provider unreachable or timed out",
+            extra={
+                "provider": provider,
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sign-in provider did not respond in time. Please try again.",
+        )
     except httpx.HTTPStatusError as e:
         # Handle HTTP errors from OAuth provider (e.g., Google)
         error_message = "Unknown OAuth error"

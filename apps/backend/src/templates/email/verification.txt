@@ -1,12 +1,16 @@
-Welcome to Maigie!
+Welcome to Maigie — The Academic Operating System
 
 Hi there,
 
-Thanks for signing up. Please use the code below to confirm your email address and activate your account.
+Thanks for signing up. Maigie is the AI-powered academic operating system for your whole workflow—courses, schedule, notes, and reviews.
+
+Please use the code below to confirm your email address and activate your account.
 
 Your verification code: {{ code }}
 
 This code will expire in 15 minutes.
 
 If you didn't request this, you can safely ignore this email.
+
+— Maigie — The Academic Operating System
 

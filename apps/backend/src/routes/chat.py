@@ -1283,7 +1283,7 @@ def _build_greeting_prompt(context: dict) -> str:
 
     return (
         "You are starting a new conversation with the user. Generate a warm, "
-        "hyper-contextual, encouraging, and highly dynamic greeting as their study companion Maigie.\n\n"
+        "hyper-contextual, encouraging, and highly dynamic greeting as Maigie, their academic operating system.\n\n"
         f"User Context:\n{data_section}\n\n"
         "Guidelines:\n"
         "- Keep it concise (2-4 sentences max)\n"

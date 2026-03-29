@@ -35,6 +35,7 @@ class ResourceCreate(BaseModel):
     metadata: dict[str, Any] | None = None
     isRecommended: bool = Field(default=False)
     recommendationScore: float | None = Field(None, ge=0.0, le=1.0)
+    recommendationSource: str | None = Field(None, max_length=32, description='e.g. "ai", "manual"')
     courseId: str | None = None
     topicId: str | None = None
 

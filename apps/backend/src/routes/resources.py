@@ -206,6 +206,9 @@ async def create_resource(
         if data.recommendationScore is not None:
             resource_data["recommendationScore"] = data.recommendationScore
 
+        if data.recommendationSource is not None:
+            resource_data["recommendationSource"] = data.recommendationSource
+
         if data.courseId is not None:
             resource_data["courseId"] = data.courseId
 
