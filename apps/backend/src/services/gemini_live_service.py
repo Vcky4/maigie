@@ -54,18 +54,22 @@ async def create_session(
             for sid in to_delete:
                 _sessions.pop(sid, None)
 
-    # Fetch existing note content if topic_id is provided
+    # Fetch existing note content if topic_id is provided (all user notes for this topic)
     note_content = ""
     if topic_id:
         try:
             from src.core.database import db
 
-            topic = await db.topic.find_unique(where={"id": topic_id}, include={"note": True})
-            if topic and topic.note and topic.note.content:
-                note_content = topic.note.content
-                logger.info("Fetched existing note content for topic %s", topic_id)
+            notes_list = await db.note.find_many(
+                where={"topicId": topic_id, "userId": user_id},
+                order={"updatedAt": "asc"},
+            )
+            parts = [(n.content or "").strip() for n in notes_list if n.content]
+            if parts:
+                note_content = "\n\n---\n\n".join(parts)
+                logger.info("Fetched %s note segment(s) for topic %s", len(parts), topic_id)
         except Exception as e:
-            logger.warning("Failed to fetch existing note for session context: %s", e)
+            logger.warning("Failed to fetch existing notes for session context: %s", e)
 
     session_id = str(uuid.uuid4())
 

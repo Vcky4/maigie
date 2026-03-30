@@ -1602,7 +1602,7 @@ async def get_course_details(
         include={
             "user": True,
             "modules": {
-                "include": {"topics": {"include": {"note": True}}},
+                "include": {"topics": {"include": {"notes": True}}},
                 "orderBy": {"order": "asc"},
             },
         },

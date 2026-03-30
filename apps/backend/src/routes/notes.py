@@ -55,6 +55,7 @@ async def list_notes(
     search: str | None = None,
     tag: str | None = None,
     course_id: str | None = Query(None, alias="courseId"),
+    topic_id: str | None = Query(None, alias="topicId"),
     archived: bool | None = False,
     circle_id: str | None = Query(None, alias="circleId"),
 ):
@@ -69,6 +70,7 @@ async def list_notes(
         search=search,
         tag=tag,
         course_id=course_id,
+        topic_id=topic_id,
         archived=archived,
         circle_id=circle_id,
     )
