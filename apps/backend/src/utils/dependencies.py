@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from ..config import get_settings
+from ..core.database import db as shared_prisma_db
 
 # Placeholder imports - assuming prisma.Client() and redis.Redis() are available
 # These will be properly configured once Prisma and Redis are fully set up
@@ -80,55 +81,28 @@ except ImportError:
 
 
 # Global client instances
-_prisma_client: PrismaClient | None = None
 _redis_client: RedisClient | None = None  # type: ignore
 
 
 @asynccontextmanager
 async def get_prisma_lifecycle() -> AsyncGenerator[PrismaClient, None]:
     """
-    Asynchronous context manager for Prisma client lifecycle.
+    Yields the shared Prisma client from ``core.database``.
 
-    Manages connection and disconnection of Prisma client.
-    This should be used in the application lifespan context.
-
-    Yields:
-        PrismaClient: Connected Prisma client instance
+    Connection and teardown are handled by ``connect_db`` / ``disconnect_db``
+    in the FastAPI lifespan; do not disconnect from this context manager.
     """
-    global _prisma_client
-
-    if _prisma_client is None:
-        _prisma_client = PrismaClient()
-
-    await _prisma_client.connect()
-    try:
-        yield _prisma_client
-    finally:
-        await _prisma_client.disconnect()
-        _prisma_client = None
+    yield shared_prisma_db
 
 
 async def get_db_client() -> AsyncGenerator[PrismaClient, None]:
     """
-    FastAPI dependency function for database (Prisma) client.
+    FastAPI dependency: same Prisma instance as ``DBDep`` / ``connect_db``.
 
-    Yields the connected Prisma client instance for use in route handlers.
-    The client must be initialized in the application lifespan context.
-
-    Yields:
-        PrismaClient: Connected Prisma client instance
-
-    Raises:
-        RuntimeError: If Prisma client is not initialized
+    A second client was previously created here, which spawned a separate query
+    engine and could fail with httpx connection errors while other routes stayed healthy.
     """
-    global _prisma_client
-
-    if _prisma_client is None:
-        # Initialize client if not already done
-        _prisma_client = PrismaClient()
-        await _prisma_client.connect()
-
-    yield _prisma_client
+    yield shared_prisma_db
 
 
 def get_redis_connection_url() -> str:
@@ -193,9 +167,5 @@ async def get_redis_client() -> AsyncGenerator[RedisClient, None]:  # type: igno
 
 
 async def cleanup_db_client() -> None:
-    """Clean up database client on shutdown."""
-    global _prisma_client
-
-    if _prisma_client is not None:
-        await _prisma_client.disconnect()
-        _prisma_client = None
+    """Reserved for shutdown ordering; shared Prisma is closed in ``disconnect_db``."""
+    return
