@@ -53,6 +53,68 @@ db = Prisma()
 logger = logging.getLogger(__name__)
 
 
+def _format_resource_context_line(resource) -> str:
+    title = (getattr(resource, "title", "") or "Untitled").strip()
+    rtype = str(getattr(resource, "type", "OTHER") or "OTHER").upper()
+    url = (getattr(resource, "url", "") or "").strip()
+    description = (getattr(resource, "description", "") or "").strip()
+    if len(description) > 140:
+        description = description[:140] + "..."
+    line = f"- [{rtype}] {title}"
+    if url:
+        line += f" ({url})"
+    if description:
+        line += f" — {description}"
+    return line
+
+
+def _is_ai_generated_resource(resource) -> bool:
+    recommendation_source = str(getattr(resource, "recommendationSource", "") or "").lower()
+    if recommendation_source == "ai":
+        return True
+    metadata = getattr(resource, "metadata", None)
+    if isinstance(metadata, dict) and metadata.get("studioAiRecommendation") is True:
+        return True
+    return False
+
+
+async def _attach_topic_resources_context(
+    db_client, user_id: str, topic_id: str, enriched_context: dict
+) -> None:
+    """
+    Attach topic resources into LLM context.
+    Includes all topic resources plus a focused list of non-AI uploaded/manual resources.
+    """
+    try:
+        resources = await db_client.resource.find_many(
+            where={"userId": user_id, "topicId": topic_id},
+            order={"updatedAt": "desc"},
+            take=40,
+        )
+        if not resources:
+            enriched_context["topicResourcesCount"] = 0
+            enriched_context["topicUploadedResourcesCount"] = 0
+            return
+
+        uploaded_resources = [r for r in resources if not _is_ai_generated_resource(r)]
+
+        enriched_context["topicResourcesCount"] = len(resources)
+        enriched_context["topicUploadedResourcesCount"] = len(uploaded_resources)
+
+        # Keep context compact for token efficiency.
+        top_all = resources[:10]
+        top_uploaded = uploaded_resources[:10]
+        enriched_context["topicResources"] = "\n".join(
+            _format_resource_context_line(r) for r in top_all
+        )
+        if top_uploaded:
+            enriched_context["topicUploadedResources"] = "\n".join(
+                _format_resource_context_line(r) for r in top_uploaded
+            )
+    except Exception as e:
+        logger.warning("Failed to enrich topic resources in context: %s", e)
+
+
 def _extract_suggestion(text: str) -> tuple[str, str | None]:
     """
     Extract suggestive follow-up (e.g. "Would you like me to...") from AI response.
@@ -2126,6 +2188,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             enriched_context["courseTitle"] = course.title
                             enriched_context["courseDescription"] = course.description or ""
 
+                    # Always attach topic resources if topic context is available.
+                    if enriched_context.get("topicId"):
+                        await _attach_topic_resources_context(
+                            db, user.id, enriched_context["topicId"], enriched_context
+                        )
+
                     if cache_key:
                         cacheable_context = {
                             key: value
@@ -2136,6 +2204,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "content",
                                 "noteContent",
                                 "retrieved_items",
+                                "topicResources",
+                                "topicUploadedResources",
                             }
                         }
                         await cache.set(cache_key, cacheable_context, expire=300)
