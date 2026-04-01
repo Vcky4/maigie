@@ -203,6 +203,14 @@ class GeminiService:
                         if len(topic_content) > 300:
                             topic_content = topic_content[:300] + "..."
                         context_parts.append(f"Topic Content: {topic_content}")
+                    if context.get("topicUploadedResources"):
+                        context_parts.append(
+                            "Topic Uploaded/Manual Resources (highest priority references):"
+                        )
+                        context_parts.append(str(context["topicUploadedResources"]))
+                    if context.get("topicResources"):
+                        context_parts.append("Topic Resources:")
+                        context_parts.append(str(context["topicResources"]))
                 elif context.get("topicId"):
                     context_parts.append(f"Current Topic ID: {context['topicId']}")
 
@@ -763,6 +771,14 @@ class GeminiService:
                     if len(topic_content) > 300:
                         topic_content = topic_content[:300] + "..."
                     context_parts.append(f"Topic Content: {topic_content}")
+                if context.get("topicUploadedResources"):
+                    context_parts.append(
+                        "Topic Uploaded/Manual Resources (highest priority references):"
+                    )
+                    context_parts.append(str(context["topicUploadedResources"]))
+                if context.get("topicResources"):
+                    context_parts.append("Topic Resources:")
+                    context_parts.append(str(context["topicResources"]))
             elif context.get("topicId"):
                 context_parts.append(f"Current Topic ID: {context['topicId']}")
 

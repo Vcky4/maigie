@@ -176,11 +176,17 @@ async def enrich_module_with_progress(
     Enrich a module with calculated progress and completion status.
     """
     topics = await db.topic.find_many(
-        where={"moduleId": module.id}, include={"note": True}, order={"order": "asc"}
+        where={"moduleId": module.id}, include={"notes": True}, order={"order": "asc"}
     )
 
     progress, total, completed = await calculate_topic_list_progress(topics)
     is_completed = completed == total if total > 0 else True
+
+    topic_payload = (
+        [TopicResponse.model_validate(t, from_attributes=True) for t in topics]
+        if include_topics
+        else []
+    )
 
     return {
         "id": module.id,
@@ -192,7 +198,7 @@ async def enrich_module_with_progress(
         "progress": progress,
         "topicCount": total,
         "completedTopicCount": completed,
-        "topics": topics if include_topics else [],
+        "topics": topic_payload,
         "createdAt": module.createdAt,
         "updatedAt": module.updatedAt,
     }
@@ -235,7 +241,7 @@ async def check_topic_ownership(
     Check if topic exists and belongs to user (via module > course).
     """
     topic = await db.topic.find_unique(
-        where={"id": topic_id}, include={"module": {"include": {"course": True}}, "note": True}
+        where={"id": topic_id}, include={"module": {"include": {"course": True}}, "notes": True}
     )
 
     if not topic:
@@ -374,7 +380,7 @@ async def list_courses(
         skip=skip,
         take=pageSize,
         order=order_dict,
-        include={"modules": {"include": {"topics": {"include": {"note": True}}}}},
+        include={"modules": {"include": {"topics": {"include": {"notes": True}}}}},
     )
 
     # Enrich courses with progress data
@@ -612,7 +618,7 @@ async def get_course(
     # Fetch modules with topics
     modules = await db.module.find_many(
         where={"courseId": course_id},
-        include={"topics": {"include": {"note": True}, "orderBy": {"order": "asc"}}},
+        include={"topics": {"include": {"notes": True}, "orderBy": {"order": "asc"}}},
         order={"order": "asc"},
     )
 
@@ -849,10 +855,10 @@ async def create_topic(
             "content": topic_data.content,
             "estimatedHours": topic_data.estimatedHours,
         },
-        include={"note": True},
+        include={"notes": True},
     )
 
-    return TopicResponse(**topic.model_dump())
+    return TopicResponse.model_validate(topic, from_attributes=True)
 
 
 @router.put(
@@ -893,7 +899,7 @@ async def update_topic(
 
     # Update topic
     updated_topic = await db.topic.update(
-        where={"id": topic_id}, data=update_data, include={"note": True}
+        where={"id": topic_id}, data=update_data, include={"notes": True}
     )
 
     # Update goal progress if completion status changed
@@ -959,7 +965,7 @@ async def toggle_topic_completion(
 
     # Update completion status
     updated_topic = await db.topic.update(
-        where={"id": topic_id}, data={"completed": completed}, include={"note": True}
+        where={"id": topic_id}, data={"completed": completed}, include={"notes": True}
     )
 
     # Update goal progress for goals linked to this topic
@@ -971,7 +977,7 @@ async def toggle_topic_completion(
     # Spaced repetition: create ReviewItem for this topic when marked complete
     await ensure_review_item_for_completed_topic(db, user_id, topic_id)
 
-    return TopicResponse(**updated_topic.model_dump())
+    return TopicResponse.model_validate(updated_topic, from_attributes=True)
 
 
 # ============================================================================

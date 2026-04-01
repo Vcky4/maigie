@@ -54,18 +54,69 @@ async def create_session(
             for sid in to_delete:
                 _sessions.pop(sid, None)
 
-    # Fetch existing note content if topic_id is provided
+    # Fetch existing note content/resources if topic_id is provided.
     note_content = ""
+    topic_resources_context = ""
+    topic_uploaded_resources_context = ""
     if topic_id:
         try:
             from src.core.database import db
 
-            topic = await db.topic.find_unique(where={"id": topic_id}, include={"note": True})
-            if topic and topic.note and topic.note.content:
-                note_content = topic.note.content
-                logger.info("Fetched existing note content for topic %s", topic_id)
+            notes_list = await db.note.find_many(
+                where={"topicId": topic_id, "userId": user_id},
+                order={"updatedAt": "asc"},
+            )
+            parts = [(n.content or "").strip() for n in notes_list if n.content]
+            if parts:
+                note_content = "\n\n---\n\n".join(parts)
+                logger.info("Fetched %s note segment(s) for topic %s", len(parts), topic_id)
+
+            resources = await db.resource.find_many(
+                where={"topicId": topic_id, "userId": user_id},
+                order={"updatedAt": "desc"},
+                take=30,
+            )
+            if resources:
+
+                def _fmt_resource_line(r: Any) -> str:
+                    rtype = str(getattr(r, "type", "OTHER") or "OTHER").upper()
+                    title = (getattr(r, "title", "") or "Untitled").strip()
+                    url = (getattr(r, "url", "") or "").strip()
+                    desc = (getattr(r, "description", "") or "").strip()
+                    if len(desc) > 140:
+                        desc = desc[:140] + "..."
+                    line = f"- [{rtype}] {title}"
+                    if url:
+                        line += f" ({url})"
+                    if desc:
+                        line += f" — {desc}"
+                    return line
+
+                def _is_ai(r: Any) -> bool:
+                    recommendation_source = str(
+                        getattr(r, "recommendationSource", "") or ""
+                    ).lower()
+                    if recommendation_source == "ai":
+                        return True
+                    meta = getattr(r, "metadata", None)
+                    if isinstance(meta, dict) and meta.get("studioAiRecommendation") is True:
+                        return True
+                    return False
+
+                uploaded_manual = [r for r in resources if not _is_ai(r)]
+                topic_resources_context = "\n".join(_fmt_resource_line(r) for r in resources[:10])
+                if uploaded_manual:
+                    topic_uploaded_resources_context = "\n".join(
+                        _fmt_resource_line(r) for r in uploaded_manual[:10]
+                    )
+                logger.info(
+                    "Fetched %s resource(s) for Gemini Live topic %s (%s non-AI)",
+                    len(resources),
+                    topic_id,
+                    len(uploaded_manual),
+                )
         except Exception as e:
-            logger.warning("Failed to fetch existing note for session context: %s", e)
+            logger.warning("Failed to fetch notes/resources for Gemini Live context: %s", e)
 
     session_id = str(uuid.uuid4())
 
@@ -73,6 +124,15 @@ async def create_session(
     final_instruction = system_instruction or "You are a helpful and friendly AI academic mentor."
     if note_content:
         final_instruction += f"\n\nHere are the current notes for this topic that you should reference:\n{note_content}"
+    if topic_uploaded_resources_context:
+        final_instruction += (
+            "\n\nHere are the uploaded/manual resources for this topic (prioritize these for grounding):\n"
+            f"{topic_uploaded_resources_context}"
+        )
+    if topic_resources_context:
+        final_instruction += (
+            "\n\nAdditional resources linked to this topic:\n" f"{topic_resources_context}"
+        )
 
     async with _sessions_lock:
         _sessions[session_id] = {

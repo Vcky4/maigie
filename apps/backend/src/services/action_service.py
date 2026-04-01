@@ -8,6 +8,7 @@ import re
 
 from prisma import Json  # <--- FIXED: Added this import
 from src.core.database import db
+from src.services import note_service
 from src.utils.exceptions import SubscriptionLimitError
 
 
@@ -308,23 +309,17 @@ class ActionService:
             # If note not found, check if noteId is actually a topicId
             if not note:
                 print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
-                topic = await db.topic.find_unique(
-                    where={"id": note_id},
-                    include={"note": True},
-                )
+                topic = await db.topic.find_unique(where={"id": note_id})
                 if topic:
-                    if topic.note:
-                        # It's a topicId, use the topic's note
-                        print(
-                            f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
-                        )
-                        note = topic.note
-                        note_id = note.id  # Update note_id to the actual note ID
+                    ln = await note_service.latest_note_for_topic(db, topic.id, user_id)
+                    if ln:
+                        print(f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}")
+                        note = ln
+                        note_id = note.id
                     else:
-                        # Topic exists but has no note
                         return {
                             "status": "error",
-                            "message": f"Topic '{topic.title}' exists but has no note. Please create a note first.",
+                            "message": f"Topic '{topic.title}' exists but has no notes yet. Please create a note first.",
                         }
                 else:
                     return {
@@ -414,15 +409,18 @@ class ActionService:
             # If note not found, check if noteId is actually a topicId
             if not note:
                 print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
-                topic = await db.topic.find_unique(
-                    where={"id": note_id},
-                    include={"note": True},
-                )
-                if topic and topic.note:
-                    # It's a topicId, use the topic's note
-                    print(f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}")
-                    note = topic.note
-                    note_id = note.id  # Update note_id to the actual note ID
+                topic = await db.topic.find_unique(where={"id": note_id})
+                if topic:
+                    ln = await note_service.latest_note_for_topic(db, topic.id, user_id)
+                    if ln:
+                        print(f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}")
+                        note = ln
+                        note_id = note.id
+                    else:
+                        return {
+                            "status": "error",
+                            "message": f"Topic '{topic.title}' has no notes yet.",
+                        }
                 else:
                     return {
                         "status": "error",
@@ -510,17 +508,13 @@ class ActionService:
             # If note not found, check if noteId is actually a topicId
             if not note:
                 print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
-                topic = await db.topic.find_unique(
-                    where={"id": note_id},
-                    include={"note": True},
-                )
+                topic = await db.topic.find_unique(where={"id": note_id})
                 if topic:
-                    if topic.note:
-                        print(
-                            f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
-                        )
+                    ln = await note_service.latest_note_for_topic(db, topic.id, user_id)
+                    if ln:
+                        print(f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}")
                         note = await db.note.find_unique(
-                            where={"id": topic.note.id},
+                            where={"id": ln.id},
                             include={
                                 "tags": True,
                                 "topic": {"include": {"module": {"include": {"course": True}}}},
@@ -530,7 +524,7 @@ class ActionService:
                     else:
                         return {
                             "status": "error",
-                            "message": f"Topic '{topic.title}' exists but has no note. Please create a note first.",
+                            "message": f"Topic '{topic.title}' exists but has no notes yet.",
                         }
                 else:
                     return {

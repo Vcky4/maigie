@@ -2,22 +2,26 @@
 Service for Note management.
 """
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from src.core.database import Prisma
 from src.models.notes import NoteAttachmentCreate, NoteCreate, NoteUpdate
+
+
+async def latest_note_for_topic(
+    db: Prisma, topic_id: str, user_id: str | None = None
+) -> Any | None:
+    """Most recently updated note linked to a topic (optionally scoped to a user)."""
+    where: dict = {"topicId": topic_id}
+    if user_id is not None:
+        where["userId"] = user_id
+    return await db.note.find_first(where=where, order={"updatedAt": "desc"})
 
 
 async def create_note(db: Prisma, user_id: str, data: NoteCreate):
     """
     Create a new note.
     """
-    # Check if a note already exists for this topic
-    if data.topicId:
-        existing_topic_note = await db.note.find_first(where={"topicId": data.topicId})
-        if existing_topic_note:
-            raise ValueError("A note already exists for this topic")
-
     # Prepare data for creation
     note_data = data.model_dump(exclude={"tags"})
     note_data["userId"] = user_id
@@ -66,18 +70,6 @@ async def update_note(db: Prisma, note_id: str, user_id: str, data: NoteUpdate):
     # Prepare update data
     update_data = data.model_dump(exclude={"tags"}, exclude_unset=True)
 
-    # Check if updating topicId and if it conflicts
-    if "topicId" in update_data and update_data["topicId"] is not None:
-        # Check if another note has this topicId (excluding self)
-        existing_topic_note = await db.note.find_first(
-            where={
-                "topicId": update_data["topicId"],
-                "NOT": {"id": note_id},
-            }
-        )
-        if existing_topic_note:
-            raise ValueError("A note already exists for this topic")
-
     # Update note fields
     if update_data:
         await db.note.update(
@@ -123,6 +115,7 @@ async def list_notes(
     search: str | None = None,
     tag: str | None = None,
     course_id: str | None = None,
+    topic_id: str | None = None,
     archived: bool | None = False,
     circle_id: str | None = None,
 ) -> tuple[list[dict], int]:
@@ -144,6 +137,9 @@ async def list_notes(
 
     if course_id:
         where_clause["courseId"] = course_id
+
+    if topic_id:
+        where_clause["topicId"] = topic_id
 
     if tag:
         where_clause["tags"] = {"some": {"tag": tag}}

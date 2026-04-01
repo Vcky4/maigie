@@ -27,6 +27,7 @@ from prisma import Json, Prisma
 from src.core.cache import cache
 from src.core.celery_app import celery_app
 from src.config import settings
+from src.services import note_service
 from src.services.action_service import action_service
 from src.services.component_response_service import (
     format_action_component_response,
@@ -50,6 +51,68 @@ from src.dependencies import CurrentUser, DBDep
 router = APIRouter()
 db = Prisma()
 logger = logging.getLogger(__name__)
+
+
+def _format_resource_context_line(resource) -> str:
+    title = (getattr(resource, "title", "") or "Untitled").strip()
+    rtype = str(getattr(resource, "type", "OTHER") or "OTHER").upper()
+    url = (getattr(resource, "url", "") or "").strip()
+    description = (getattr(resource, "description", "") or "").strip()
+    if len(description) > 140:
+        description = description[:140] + "..."
+    line = f"- [{rtype}] {title}"
+    if url:
+        line += f" ({url})"
+    if description:
+        line += f" — {description}"
+    return line
+
+
+def _is_ai_generated_resource(resource) -> bool:
+    recommendation_source = str(getattr(resource, "recommendationSource", "") or "").lower()
+    if recommendation_source == "ai":
+        return True
+    metadata = getattr(resource, "metadata", None)
+    if isinstance(metadata, dict) and metadata.get("studioAiRecommendation") is True:
+        return True
+    return False
+
+
+async def _attach_topic_resources_context(
+    db_client, user_id: str, topic_id: str, enriched_context: dict
+) -> None:
+    """
+    Attach topic resources into LLM context.
+    Includes all topic resources plus a focused list of non-AI uploaded/manual resources.
+    """
+    try:
+        resources = await db_client.resource.find_many(
+            where={"userId": user_id, "topicId": topic_id},
+            order={"updatedAt": "desc"},
+            take=40,
+        )
+        if not resources:
+            enriched_context["topicResourcesCount"] = 0
+            enriched_context["topicUploadedResourcesCount"] = 0
+            return
+
+        uploaded_resources = [r for r in resources if not _is_ai_generated_resource(r)]
+
+        enriched_context["topicResourcesCount"] = len(resources)
+        enriched_context["topicUploadedResourcesCount"] = len(uploaded_resources)
+
+        # Keep context compact for token efficiency.
+        top_all = resources[:10]
+        top_uploaded = uploaded_resources[:10]
+        enriched_context["topicResources"] = "\n".join(
+            _format_resource_context_line(r) for r in top_all
+        )
+        if top_uploaded:
+            enriched_context["topicUploadedResources"] = "\n".join(
+                _format_resource_context_line(r) for r in top_uploaded
+            )
+    except Exception as e:
+        logger.warning("Failed to enrich topic resources in context: %s", e)
 
 
 def _extract_suggestion(text: str) -> tuple[str, str | None]:
@@ -837,40 +900,36 @@ async def enrich_action_data(
             if enriched_context and enriched_context.get("topicId"):
                 topic_id = enriched_context["topicId"]
                 print(f"🔍 No noteId found, checking topicId: {topic_id}")
-                topic = await db.topic.find_unique(
-                    where={"id": topic_id},
-                    include={"note": True},
-                )
-                if topic and topic.note:
-                    note_id = topic.note.id
-                    print(f"✅ Found note from topic: {note_id}")
+                topic = await db.topic.find_unique(where={"id": topic_id})
+                if topic:
+                    ln = await note_service.latest_note_for_topic(db, topic_id, None)
+                    if ln:
+                        note_id = ln.id
+                        print(f"✅ Found latest note from topic: {note_id}")
             elif context and context.get("topicId"):
                 topic_id = context["topicId"]
                 print(f"🔍 No noteId found, checking topicId from context: {topic_id}")
-                topic = await db.topic.find_unique(
-                    where={"id": topic_id},
-                    include={"note": True},
-                )
-                if topic and topic.note:
-                    note_id = topic.note.id
-                    print(f"✅ Found note from topic: {note_id}")
+                topic = await db.topic.find_unique(where={"id": topic_id})
+                if topic:
+                    ln = await note_service.latest_note_for_topic(db, topic_id, None)
+                    if ln:
+                        note_id = ln.id
+                        print(f"✅ Found latest note from topic: {note_id}")
 
         if note_id:
             print(f"🔍 Verifying noteId: {note_id}")
             note = await db.note.find_unique(where={"id": note_id})
             if not note:
                 print(f"⚠️ Note with ID {note_id} not found, checking if it's a topicId...")
-                topic = await db.topic.find_unique(
-                    where={"id": note_id},
-                    include={"note": True},
-                )
+                topic = await db.topic.find_unique(where={"id": note_id})
                 if topic:
-                    if topic.note:
-                        note_id = topic.note.id
-                        print(f"✅ Resolved topicId to noteId: {note_id}")
+                    ln = await note_service.latest_note_for_topic(db, topic.id, None)
+                    if ln:
+                        note_id = ln.id
+                        print(f"✅ Resolved topicId to latest noteId: {note_id}")
                     else:
                         print(
-                            f"⚠️ Topic '{topic.title}' exists but has no note. Cannot retake/summarize."
+                            f"⚠️ Topic '{topic.title}' exists but has no notes. Cannot retake/summarize."
                         )
                         note_id = None
                 else:
@@ -2025,18 +2084,10 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             )
                             topic = await db.topic.find_unique(
                                 where={"id": note_id},
-                                include={
-                                    "note": True,
-                                    "module": {"include": {"course": True}},
-                                },
+                                include={"module": {"include": {"course": True}}},
                             )
-                            if topic and topic.note:
-                                # It's a topicId, use the topic's note
-                                print(
-                                    f"✅ Found topic with ID {note_id}, using its note ID: {topic.note.id}"
-                                )
-                                note = topic.note
-                                # Also include topic details
+                            if topic:
+                                ln = await note_service.latest_note_for_topic(db, topic.id, user.id)
                                 enriched_context["topicId"] = topic.id
                                 enriched_context["topicTitle"] = topic.title
                                 enriched_context["topicContent"] = topic.content or ""
@@ -2048,8 +2099,20 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                         enriched_context["courseDescription"] = (
                                             topic.module.course.description or ""
                                         )
-                                # Update noteId in enriched_context to the actual note ID
-                                enriched_context["noteId"] = note.id
+                                if ln:
+                                    print(
+                                        f"✅ Found topic with ID {note_id}, using latest note ID: {ln.id}"
+                                    )
+                                    note = await db.note.find_unique(
+                                        where={"id": ln.id},
+                                        include={
+                                            "topic": {
+                                                "include": {"module": {"include": {"course": True}}}
+                                            },
+                                            "course": True,
+                                        },
+                                    )
+                                    enriched_context["noteId"] = ln.id
 
                         if note:
                             enriched_context["noteTitle"] = note.title
@@ -2098,6 +2161,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                     enriched_context["courseDescription"] = (
                                         topic.module.course.description or ""
                                     )
+                            topic_notes = await db.note.find_many(
+                                where={"topicId": topic_id, "userId": user.id},
+                                order={"updatedAt": "asc"},
+                            )
+                            if topic_notes:
+                                blocks = []
+                                for n in topic_notes:
+                                    head = (n.title or "Note").strip()
+                                    body = (n.content or "").strip()
+                                    blocks.append(f"## {head}\n{body}" if body else f"## {head}")
+                                enriched_context["topicUserNotes"] = "\n\n---\n\n".join(
+                                    b for b in blocks if b.strip()
+                                )
                         else:
                             # Topic not found - log for debugging but keep topicId in context
                             print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
@@ -2112,6 +2188,12 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             enriched_context["courseTitle"] = course.title
                             enriched_context["courseDescription"] = course.description or ""
 
+                    # Always attach topic resources if topic context is available.
+                    if enriched_context.get("topicId"):
+                        await _attach_topic_resources_context(
+                            db, user.id, enriched_context["topicId"], enriched_context
+                        )
+
                     if cache_key:
                         cacheable_context = {
                             key: value
@@ -2122,6 +2204,8 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 "content",
                                 "noteContent",
                                 "retrieved_items",
+                                "topicResources",
+                                "topicUploadedResources",
                             }
                         }
                         await cache.set(cache_key, cacheable_context, expire=300)

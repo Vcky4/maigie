@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated
 
 import httpx
+from prisma.errors import DataError as PrismaDataError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
@@ -1202,9 +1203,18 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request,
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    except PrismaDataError as e:
+        # Neon/Postgres unreachable, pool exhausted, etc. — do not expose hostnames to clients.
+        logger.error(
+            "Database unavailable during OAuth callback",
+            extra={"error_type": type(e).__name__, "error": str(e)},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Sign-in is temporarily unavailable. Please try again in a few minutes.",
+        )
     except Exception as e:
-        import traceback
-
         logger.error(
             "OAuth callback unexpected error",
             extra={

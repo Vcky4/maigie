@@ -459,7 +459,7 @@ model Topic {
   completed      Boolean @default(false)
   estimatedHours Float?
 
-  note          Note?
+  notes         Note[]
   resources     Resource[] // Resources linked to this topic
   goals         Goal[] // Goals linked to this topic
   schedules     ScheduleBlock[] // Schedule blocks linked to this topic
@@ -608,7 +608,7 @@ model Note {
   courseId String?
   course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
 
-  topicId String? @unique
+  topicId String?
   topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
 
   // Circle: if set, this note is shared within a circle

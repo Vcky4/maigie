@@ -67,7 +67,7 @@ class TopicResponse(BaseModel):
     estimatedHours: float | None
     createdAt: datetime
     updatedAt: datetime
-    note: NoteResponse | None = None  # Use NoteResponse model instead of dict
+    notes: list[NoteResponse] = Field(default_factory=list)
 
     # CHANGED: Replaced class Config with model_config
     model_config = ConfigDict(from_attributes=True)
