@@ -31,9 +31,10 @@ def get_genai_client():
     return _client
 
 
-EMBEDDING_MODEL = "text-embedding-004"
+EMBEDDING_MODEL = "gemini-embedding-001"
 
-# Gemini text-embedding-004 produces 768-dimensional vectors
+# gemini-embedding-001 defaults to 3072d but we request 768d
+# to stay compatible with the existing Pinecone index.
 EMBEDDING_DIMENSION = 768
 
 
@@ -95,7 +96,10 @@ class EmbeddingService:
             result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=text,
-                config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_DOCUMENT",
+                    output_dimensionality=EMBEDDING_DIMENSION,
+                ),
             )
             return result.embeddings[0].values
         except Exception as e:
@@ -109,7 +113,10 @@ class EmbeddingService:
             result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=text,
-                config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
+                config=types.EmbedContentConfig(
+                    task_type="RETRIEVAL_QUERY",
+                    output_dimensionality=EMBEDDING_DIMENSION,
+                ),
             )
             return result.embeddings[0].values
         except Exception as e:
