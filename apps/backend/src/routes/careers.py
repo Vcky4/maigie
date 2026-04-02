@@ -1,0 +1,69 @@
+"""
+Public career application submission (no auth required).
+"""
+
+import logging
+
+from fastapi import APIRouter, HTTPException, Request, status
+
+from src.core.database import db
+from src.models.careers import CareerApplicationCreate, CareerApplicationResponse
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/v1/careers", tags=["careers"])
+
+
+@router.post(
+    "/applications",
+    response_model=CareerApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def submit_career_application(payload: CareerApplicationCreate, request: Request):
+    """
+    Submit a job application from the marketing careers site.
+    """
+    try:
+        user_agent = request.headers.get("user-agent")
+        source_ip = request.client.host if request.client else None
+
+        row = await db.careerapplication.create(
+            data={
+                "jobId": payload.jobId.strip(),
+                "jobTitle": payload.jobTitle.strip(),
+                "firstName": payload.firstName.strip(),
+                "lastName": payload.lastName.strip(),
+                "email": str(payload.email).strip().lower(),
+                "linkedinUrl": payload.linkedinUrl.strip(),
+                "portfolioUrl": payload.portfolioUrl.strip() if payload.portfolioUrl else None,
+                "coverLetter": payload.coverLetter.strip(),
+                "userAgent": user_agent,
+                "sourceIp": source_ip,
+            }
+        )
+
+        logger.info(
+            "Career application created id=%s jobId=%s email=%s", row.id, row.jobId, row.email
+        )
+
+        return CareerApplicationResponse(
+            id=row.id,
+            jobId=row.jobId,
+            jobTitle=row.jobTitle,
+            firstName=row.firstName,
+            lastName=row.lastName,
+            email=row.email,
+            linkedinUrl=row.linkedinUrl,
+            portfolioUrl=row.portfolioUrl,
+            coverLetter=row.coverLetter,
+            status=row.status,
+            adminNotes=row.adminNotes,
+            createdAt=row.createdAt.isoformat(),
+            updatedAt=row.updatedAt.isoformat(),
+        )
+    except Exception as e:
+        logger.error("Career application submit failed: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit application",
+        ) from e

@@ -44,11 +44,13 @@ from .models.error_response import ErrorResponse
 
 # --- Route Imports ---
 from .routes.admin import router as admin_router
+from .routes.admin_career_applications import router as admin_career_applications_router
 from .routes.ai import router as ai_router
 from .routes.mcp_routes import mcp as mcp_server
 from .routes.mcp_oauth import router as mcp_oauth_router
 from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
+from .routes.careers import router as careers_router
 from .routes.circles import router as circles_router
 from .routes.courses import router as courses_router
 from .routes.dashboard import router as dashboard_router
@@ -403,6 +405,7 @@ def create_app() -> FastAPI:
 
     # Admin routes (admin-only access)
     app.include_router(admin_router)
+    app.include_router(admin_career_applications_router)
 
     app.include_router(ai_router)
     # Mount MCP Server on /mcp
@@ -412,6 +415,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(courses_router, prefix=f"{settings.API_V1_STR}/courses")
     app.include_router(feedback_router)
+    app.include_router(careers_router)
     app.include_router(gemini_live_router, prefix=f"{settings.API_V1_STR}/gemini-live")
     app.include_router(elevenlabs_router, prefix=f"{settings.API_V1_STR}/elevenlabs")
     app.include_router(exam_prep_router)
