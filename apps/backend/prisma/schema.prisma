@@ -1239,6 +1239,12 @@ enum FeedbackStatus {
   ARCHIVED
 }
 
+enum CareerApplicationStatus {
+  NEW
+  REVIEWED
+  ARCHIVED
+}
+
 model Feedback {
   id String @id @default(cuid())
 
@@ -1267,6 +1273,35 @@ model Feedback {
   @@index([status])
   @@index([type])
   @@index([createdAt])
+}
+
+model CareerApplication {
+  id String @id @default(cuid())
+
+  jobId    String
+  jobTitle String
+
+  firstName    String
+  lastName     String
+  email        String
+  linkedinUrl  String
+  portfolioUrl String?
+
+  coverLetter String @db.Text
+
+  status     CareerApplicationStatus @default(NEW)
+  adminNotes String?
+
+  userAgent String?
+  sourceIp  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([jobId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([email])
 }
 
 // ==========================================

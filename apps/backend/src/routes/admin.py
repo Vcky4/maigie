@@ -96,6 +96,10 @@ async def get_dashboard_stats(
     pending_feedback = await db.feedback.count(where={"status": "PENDING"})
     total_feedback = await db.feedback.count()
 
+    # Career applications
+    new_career_applications = await db.careerapplication.count(where={"status": "NEW"})
+    total_career_applications = await db.careerapplication.count()
+
     # Revenue statistics (from subscriptions)
     premium_monthly_users = await db.user.count(
         where={"tier": "PREMIUM_MONTHLY", "stripeSubscriptionStatus": "active"}
@@ -140,6 +144,10 @@ async def get_dashboard_stats(
         "feedback": {
             "total": total_feedback,
             "pending": pending_feedback,
+        },
+        "careerApplications": {
+            "total": total_career_applications,
+            "new": new_career_applications,
         },
     }
 
