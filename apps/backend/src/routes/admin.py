@@ -566,10 +566,7 @@ async def update_user(
                     detail="adminStaffRole must be SUPER_ADMIN or CONTENT_MANAGER",
                 )
             update_dict["adminStaffRole"] = sr
-    if (
-        update_data.adminStaffRole is not None
-        and "adminStaffRole" not in update_dict
-    ):
+    if update_data.adminStaffRole is not None and "adminStaffRole" not in update_dict:
         if str(user.role) != "ADMIN":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
