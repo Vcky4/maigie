@@ -25,7 +25,7 @@ from prisma import Prisma
 from prisma.models import User
 
 from ..core.security import get_password_hash
-from ..dependencies import AdminUser, DBDep
+from ..dependencies import DBDep, StaffAdminUser, SuperAdminUser
 from ..models.analytics import (
     AdminAnalyticsResponse,
     CourseAnalyticsItem,
@@ -45,6 +45,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
+def _user_detail_admin_staff_role(user) -> str | None:
+    if str(user.role) != "ADMIN":
+        return None
+    raw = getattr(user, "adminStaffRole", None)
+    if raw is None:
+        return "SUPER_ADMIN"
+    if isinstance(raw, str):
+        return raw
+    return str(getattr(raw, "value", raw) or "SUPER_ADMIN")
+
+
 # ==========================================
 #  DASHBOARD ENDPOINT
 # ==========================================
@@ -52,13 +63,13 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 @router.get("/dashboard", response_model=dict)
 async def get_dashboard_stats(
-    admin_user: AdminUser,
+    _staff: StaffAdminUser,
     db: DBDep,
 ):
     """
     Get dashboard statistics overview.
 
-    Only accessible by admin users.
+    Accessible by super admins and content managers.
     """
     now = datetime.now(UTC)
     thirty_days_ago = now - timedelta(days=30)
@@ -99,6 +110,12 @@ async def get_dashboard_stats(
     # Career applications
     new_career_applications = await db.careerapplication.count(where={"status": "NEW"})
     total_career_applications = await db.careerapplication.count()
+
+    # Marketing CMS
+    blog_posts_published = await db.blogpost.count(where={"published": True})
+    blog_posts_draft = await db.blogpost.count(where={"published": False})
+    job_postings_published = await db.jobposting.count(where={"published": True})
+    job_postings_unpublished = await db.jobposting.count(where={"published": False})
 
     # Revenue statistics (from subscriptions)
     premium_monthly_users = await db.user.count(
@@ -149,6 +166,12 @@ async def get_dashboard_stats(
             "total": total_career_applications,
             "new": new_career_applications,
         },
+        "content": {
+            "blogPublished": blog_posts_published,
+            "blogDrafts": blog_posts_draft,
+            "jobsPublished": job_postings_published,
+            "jobsUnpublished": job_postings_unpublished,
+        },
     }
 
 
@@ -167,6 +190,10 @@ class UserCreateRequest(BaseModel):
     )
     tier: str = Field("FREE", description="User tier")
     role: str = Field("USER", description="User role")
+    adminStaffRole: str | None = Field(
+        None,
+        description="When role is ADMIN: SUPER_ADMIN or CONTENT_MANAGER (defaults to SUPER_ADMIN)",
+    )
     isActive: bool = Field(True, description="Whether user is active")
     isOnboarded: bool = Field(False, description="Whether user has completed onboarding")
 
@@ -178,6 +205,7 @@ class UserUpdateRequest(BaseModel):
     email: EmailStr | None = None
     tier: str | None = None
     role: str | None = None
+    adminStaffRole: str | None = None
     isActive: bool | None = None
     isOnboarded: bool | None = None
 
@@ -200,6 +228,7 @@ class UserDetailResponse(BaseModel):
     name: str | None
     tier: str
     role: str
+    adminStaffRole: str | None = None
     isActive: bool
     isOnboarded: bool
     provider: str | None
@@ -242,7 +271,7 @@ class BulkEmailResponse(BaseModel):
 @router.post("/users", response_model=UserDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: UserCreateRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -289,6 +318,16 @@ async def create_user(
     if user_data.password:
         password_hash = get_password_hash(user_data.password)
 
+    staff_role: str | None = None
+    if role_upper == "ADMIN":
+        sr = (user_data.adminStaffRole or "SUPER_ADMIN").upper()
+        if sr not in ("SUPER_ADMIN", "CONTENT_MANAGER"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="adminStaffRole must be SUPER_ADMIN or CONTENT_MANAGER",
+            )
+        staff_role = sr
+
     # Create user
     new_user = await db.user.create(
         data={
@@ -298,6 +337,7 @@ async def create_user(
             "provider": "email" if password_hash else None,
             "tier": tier_upper,
             "role": role_upper,
+            "adminStaffRole": staff_role,
             "isActive": user_data.isActive,
             "isOnboarded": user_data.isOnboarded,
             "preferences": {
@@ -332,6 +372,7 @@ async def create_user(
         "name": new_user.name,
         "tier": str(new_user.tier),
         "role": str(new_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(new_user),
         "isActive": new_user.isActive,
         "isOnboarded": new_user.isOnboarded,
         "provider": new_user.provider,
@@ -348,7 +389,7 @@ async def create_user(
 
 @router.get("/users", response_model=UserListResponse)
 async def list_users(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -430,7 +471,7 @@ async def list_users(
 @router.get("/users/{user_id}", response_model=UserDetailResponse)
 async def get_user_details(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -452,6 +493,7 @@ async def get_user_details(
         "name": user.name,
         "tier": str(user.tier),
         "role": str(user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(user),
         "isActive": user.isActive,
         "isOnboarded": user.isOnboarded,
         "provider": user.provider,
@@ -470,7 +512,7 @@ async def get_user_details(
 async def update_user(
     user_id: str,
     update_data: UserUpdateRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -506,7 +548,37 @@ async def update_user(
     if update_data.tier is not None:
         update_dict["tier"] = update_data.tier.upper()
     if update_data.role is not None:
-        update_dict["role"] = update_data.role.upper()
+        ru = update_data.role.upper()
+        valid_roles = ["USER", "ADMIN"]
+        if ru not in valid_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}",
+            )
+        update_dict["role"] = ru
+        if ru == "USER":
+            update_dict["adminStaffRole"] = None
+        elif str(user.role) != "ADMIN" and ru == "ADMIN":
+            sr = (update_data.adminStaffRole or "SUPER_ADMIN").upper()
+            if sr not in ("SUPER_ADMIN", "CONTENT_MANAGER"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="adminStaffRole must be SUPER_ADMIN or CONTENT_MANAGER",
+                )
+            update_dict["adminStaffRole"] = sr
+    if update_data.adminStaffRole is not None and "adminStaffRole" not in update_dict:
+        if str(user.role) != "ADMIN":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="adminStaffRole only applies to admin users",
+            )
+        sr = update_data.adminStaffRole.upper()
+        if sr not in ("SUPER_ADMIN", "CONTENT_MANAGER"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="adminStaffRole must be SUPER_ADMIN or CONTENT_MANAGER",
+            )
+        update_dict["adminStaffRole"] = sr
     if update_data.isActive is not None:
         update_dict["isActive"] = update_data.isActive
     if update_data.isOnboarded is not None:
@@ -537,6 +609,7 @@ async def update_user(
         "name": updated_user.name,
         "tier": str(updated_user.tier),
         "role": str(updated_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(updated_user),
         "isActive": updated_user.isActive,
         "isOnboarded": updated_user.isOnboarded,
         "provider": updated_user.provider,
@@ -554,7 +627,7 @@ async def update_user(
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -595,7 +668,7 @@ async def delete_user(
 @router.post("/users/{user_id}/activate", response_model=UserDetailResponse)
 async def activate_user(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -621,6 +694,7 @@ async def activate_user(
         "name": updated_user.name,
         "tier": str(updated_user.tier),
         "role": str(updated_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(updated_user),
         "isActive": updated_user.isActive,
         "isOnboarded": updated_user.isOnboarded,
         "provider": updated_user.provider,
@@ -638,7 +712,7 @@ async def activate_user(
 @router.post("/users/{user_id}/deactivate", response_model=UserDetailResponse)
 async def deactivate_user(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -671,6 +745,7 @@ async def deactivate_user(
         "name": updated_user.name,
         "tier": str(updated_user.tier),
         "role": str(updated_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(updated_user),
         "isActive": updated_user.isActive,
         "isOnboarded": updated_user.isOnboarded,
         "provider": updated_user.provider,
@@ -692,7 +767,7 @@ async def deactivate_user(
 
 @router.get("/analytics", response_model=AdminAnalyticsResponse)
 async def get_platform_analytics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -899,7 +974,7 @@ async def get_platform_analytics(
 @router.get("/analytics/users/{user_id}", response_model=UserDetailAnalyticsResponse)
 async def get_user_analytics(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1051,7 +1126,7 @@ async def get_user_analytics(
 @router.get("/users/{user_id}/summary", response_model=dict)
 async def get_user_summary(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1136,7 +1211,7 @@ async def get_user_summary(
 @router.post("/bulk-email", response_model=BulkEmailResponse)
 async def send_bulk_emails(
     email_data: BulkEmailRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1226,7 +1301,7 @@ class CreditLimitUpdateRequest(BaseModel):
 async def adjust_user_credits(
     user_id: str,
     credit_data: CreditAdjustRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1274,6 +1349,7 @@ async def adjust_user_credits(
         "name": updated_user.name,
         "tier": str(updated_user.tier),
         "role": str(updated_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(updated_user),
         "isActive": updated_user.isActive,
         "isOnboarded": updated_user.isOnboarded,
         "provider": updated_user.provider,
@@ -1291,7 +1367,7 @@ async def adjust_user_credits(
 @router.post("/users/{user_id}/credits/reset", response_model=UserDetailResponse)
 async def reset_user_credits(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1317,6 +1393,7 @@ async def reset_user_credits(
         "name": updated_user.name,
         "tier": str(updated_user.tier),
         "role": str(updated_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(updated_user),
         "isActive": updated_user.isActive,
         "isOnboarded": updated_user.isOnboarded,
         "provider": updated_user.provider,
@@ -1335,7 +1412,7 @@ async def reset_user_credits(
 async def update_credit_limits(
     user_id: str,
     limit_data: CreditLimitUpdateRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1369,6 +1446,7 @@ async def update_credit_limits(
         "name": updated_user.name,
         "tier": str(updated_user.tier),
         "role": str(updated_user.role),
+        "adminStaffRole": _user_detail_admin_staff_role(updated_user),
         "isActive": updated_user.isActive,
         "isOnboarded": updated_user.isOnboarded,
         "provider": updated_user.provider,
@@ -1396,7 +1474,7 @@ class SubscriptionSyncRequest(BaseModel):
 
 @router.get("/subscriptions", response_model=dict)
 async def list_subscriptions(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -1469,7 +1547,7 @@ async def list_subscriptions(
 @router.post("/subscriptions/sync", response_model=dict)
 async def sync_subscription(
     sync_data: SubscriptionSyncRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1512,7 +1590,7 @@ async def sync_subscription(
 
 @router.get("/courses", response_model=dict)
 async def list_all_courses(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -1597,7 +1675,7 @@ async def list_all_courses(
 @router.get("/courses/{course_id}", response_model=dict)
 async def get_course_details(
     course_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1682,7 +1760,7 @@ async def get_course_details(
 @router.delete("/courses/{course_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_course_admin(
     course_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1718,7 +1796,7 @@ async def delete_course_admin(
 
 @router.get("/chat/sessions", response_model=dict)
 async def list_chat_sessions(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -1831,7 +1909,7 @@ async def list_chat_sessions(
 
 @router.get("/chat/stats", response_model=dict)
 async def get_chat_statistics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -1893,7 +1971,7 @@ async def get_chat_statistics(
 
 @router.get("/referrals", response_model=dict)
 async def list_referrals(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -1954,7 +2032,7 @@ async def list_referrals(
 
 @router.get("/referrals/stats", response_model=dict)
 async def get_referral_statistics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -2012,7 +2090,7 @@ async def get_referral_statistics(
 
 @router.get("/analytics/revenue", response_model=dict)
 async def get_revenue_analytics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     startDate: str | None = Query(None, description="Start date (ISO format)"),
     endDate: str | None = Query(None, description="End date (ISO format)"),
@@ -2079,7 +2157,7 @@ async def get_revenue_analytics(
 
 @router.get("/analytics/retention", response_model=dict)
 async def get_retention_analytics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -2144,7 +2222,7 @@ async def get_retention_analytics(
 
 @router.get("/analytics/growth", response_model=dict)
 async def get_growth_analytics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     days: int = Query(30, ge=1, le=365, description="Number of days to analyze"),
 ):
@@ -2201,7 +2279,7 @@ async def get_growth_analytics(
 @router.post("/users/{user_id}/impersonate", response_model=dict)
 async def impersonate_user(
     user_id: str,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -2273,7 +2351,7 @@ class SystemConfigUpdateRequest(BaseModel):
 
 @router.get("/config", response_model=dict)
 async def get_system_config(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -2295,7 +2373,7 @@ async def get_system_config(
 @router.put("/config", response_model=dict)
 async def update_system_config(
     config_data: SystemConfigUpdateRequest,
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
 ):
     """
@@ -2341,7 +2419,7 @@ async def update_system_config(
 
 @router.get("/audit-logs", response_model=dict)
 async def list_audit_logs(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),

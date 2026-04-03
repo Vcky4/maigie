@@ -49,6 +49,12 @@ enum UserRole {
   ADMIN
 }
 
+/// Sub-role for users with UserRole.ADMIN (portal permissions).
+enum AdminStaffRole {
+  SUPER_ADMIN
+  CONTENT_MANAGER
+}
+
 enum GoalStatus {
   ACTIVE
   COMPLETED
@@ -150,7 +156,9 @@ model User {
   provider     String? // "google", "email"
   providerId   String?
   tier         Tier     @default(FREE)
-  role         UserRole @default(USER)
+  role           UserRole        @default(USER)
+  /// Set when role is ADMIN; null for normal users.
+  adminStaffRole AdminStaffRole?
   isActive     Boolean  @default(true)
   isOnboarded  Boolean  @default(false)
 
@@ -1302,6 +1310,55 @@ model CareerApplication {
   @@index([status])
   @@index([createdAt])
   @@index([email])
+}
+
+// ==========================================
+//  MARKETING CMS (blog + careers), managed in admin
+// ==========================================
+
+model BlogPost {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  title       String
+  description String   @db.Text
+  content     String   @db.Text
+  authorName  String
+  authorRole  String?
+  publishedAt DateTime
+  tags        String[]
+  category    String
+  coverImage  String?
+  readTime    Int?
+  featured    Boolean  @default(false)
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([published])
+  @@index([publishedAt])
+}
+
+model JobPosting {
+  id                     String   @id @default(uuid())
+  slug                   String   @unique
+  title                  String
+  location               String
+  type                   String
+  stage                  String
+  description            String   @db.Text
+  responsibilities       String[]
+  requirementsMustHave   String[]
+  requirementsNiceToHave String[]
+  successMetrics         String[]
+  whyRoleMatters         String[]
+  compensation           String[]
+  published              Boolean  @default(true)
+  sortOrder              Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([published])
+  @@index([sortOrder])
 }
 
 // ==========================================

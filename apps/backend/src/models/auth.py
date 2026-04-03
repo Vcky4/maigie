@@ -89,11 +89,24 @@ class UserResponse(BaseModel):
     role: str
     isActive: bool  # noqa: N815
     isOnboarded: bool = False  # noqa: N815
+    adminStaffRole: str | None = None  # noqa: N815
     preferences: UserPreferencesResponse | None = None
     paymentProvider: str | None = None  # "stripe" | "paystack"
     subscriptionCurrentPeriodEnd: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_serializer("adminStaffRole")
+    def serialize_admin_staff_role(self, v, _info):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return v
+        if hasattr(v, "value"):
+            return str(v.value)
+        if hasattr(v, "name"):
+            return str(v.name)
+        return str(v)
 
     @field_serializer("role")
     def serialize_role(self, v, _info):

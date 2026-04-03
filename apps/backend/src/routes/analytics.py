@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from prisma import Client as PrismaClient
 
-from ..dependencies import AdminUser, CurrentUser
+from ..dependencies import CurrentUser, SuperAdminUser
 from ..models.analytics import (
     AchievementBadge,
     AIFeatureUsage,
@@ -886,7 +886,7 @@ Format as JSON array:
 
 @router.get("/admin/enhanced", response_model=EnhancedAdminAnalyticsResponse)
 async def get_enhanced_admin_analytics(
-    admin_user: AdminUser,
+    admin_user: SuperAdminUser,
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """Get comprehensive enhanced admin analytics."""

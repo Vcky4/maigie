@@ -6,7 +6,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from src.dependencies import AdminUser, DBDep
+from src.dependencies import DBDep, StaffAdminUser
 from src.models.careers import (
     CareerApplicationAdminUpdate,
     CareerApplicationListResponse,
@@ -39,7 +39,7 @@ def _to_response(row) -> CareerApplicationResponse:
 
 @router.get("", response_model=CareerApplicationListResponse)
 async def list_career_applications(
-    admin_user: AdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
     status_filter: str | None = Query(None, alias="status"),
     job_id: str | None = Query(None, alias="jobId"),
@@ -82,7 +82,7 @@ async def list_career_applications(
 @router.get("/{application_id}", response_model=CareerApplicationResponse)
 async def get_career_application(
     application_id: str,
-    admin_user: AdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
 ):
     row = await db.careerapplication.find_unique(where={"id": application_id})
@@ -95,7 +95,7 @@ async def get_career_application(
 async def update_career_application(
     application_id: str,
     body: CareerApplicationAdminUpdate,
-    admin_user: AdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
 ):
     row = await db.careerapplication.find_unique(where={"id": application_id})
