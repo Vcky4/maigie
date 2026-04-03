@@ -112,6 +112,59 @@ async def get_admin_user(current_user: CurrentUser) -> User:
 # Create a reusable type shortcut for admin users
 AdminUser = Annotated[User, Depends(get_admin_user)]
 
+_STAFF_PORTAL_ROLES = frozenset({"SUPER_ADMIN", "CONTENT_MANAGER"})
+
+
+def admin_staff_role(user: User) -> str:
+    """Normalize AdminStaffRole from Prisma user to string."""
+    raw = getattr(user, "adminStaffRole", None)
+    if raw is not None:
+        if isinstance(raw, str):
+            return raw
+        return str(getattr(raw, "value", raw) or "SUPER_ADMIN")
+    # Admins created before sub-roles existed: full access.
+    if getattr(user, "role", None) == "ADMIN":
+        return "SUPER_ADMIN"
+    return "SUPER_ADMIN"
+
+
+async def get_staff_admin_user(current_user: CurrentUser) -> User:
+    """
+    Admin portal access: super admins and content managers.
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    if admin_staff_role(current_user) not in _STAFF_PORTAL_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
+async def get_super_admin_user(current_user: CurrentUser) -> User:
+    """
+    Operations that only full super admins may perform (users, billing, staff roles, etc.).
+    """
+    if current_user.role != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    if admin_staff_role(current_user) != "SUPER_ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Super admin access required",
+        )
+    return current_user
+
+
+StaffAdminUser = Annotated[User, Depends(get_staff_admin_user)]
+SuperAdminUser = Annotated[User, Depends(get_super_admin_user)]
+
 
 PAID_TIERS = (
     "PREMIUM_MONTHLY",
