@@ -2,6 +2,8 @@
 Storage service for handling file uploads (BunnyCDN).
 """
 
+from urllib.parse import urlparse
+
 import httpx
 from fastapi import HTTPException, UploadFile, status
 
@@ -18,6 +20,8 @@ class StorageService:
         self.api_key = self.settings.BUNNY_CDN_API_KEY
         self.storage_zone = self.settings.BUNNY_STORAGE_ZONE
         self.cdn_hostname = self.settings.BUNNY_CDN_HOSTNAME
+        raw_base = (self.settings.BUNNY_PUBLIC_URL_BASE or "").strip().rstrip("/")
+        self.public_url_base = raw_base if raw_base else None
 
         # Base URL for BunnyCDN Storage API (Germany region default, adjust if needed)
         self.base_url = f"https://uk.storage.bunnycdn.com/{self.storage_zone}"
@@ -62,9 +66,11 @@ class StorageService:
                 if response.status_code != 201:
                     raise Exception(f"BunnyCDN upload failed: {response.text}")
 
-            # Construct public URL
-            # Assuming cdn_hostname is like "cdn.maigie.com"
-            public_url = f"https://{self.cdn_hostname}/{upload_path}"
+            # Public URL: optional pull-zone base, else custom hostname
+            if self.public_url_base:
+                public_url = f"{self.public_url_base}/{upload_path}"
+            else:
+                public_url = f"https://{self.cdn_hostname}/{upload_path}"
 
             return {"filename": filename, "url": public_url, "size": file_size}
 
@@ -90,14 +96,10 @@ class StorageService:
             return False
 
         try:
-            # Extract the path from the URL
-            # URL format: https://cdn_hostname/path/to/file.jpg
-            # We need: /path/to/file.jpg
-            cdn_prefix = f"https://{self.cdn_hostname}/"
-            if not url.startswith(cdn_prefix):
+            parsed = urlparse(url)
+            file_path = (parsed.path or "").lstrip("/")
+            if not file_path:
                 return False
-
-            file_path = url[len(cdn_prefix) :]
             delete_url = f"{self.base_url}/{file_path}"
 
             headers = {"AccessKey": self.api_key}
@@ -109,6 +111,46 @@ class StorageService:
         except Exception as e:
             print(f"Failed to delete file from storage: {e}")
             return False
+
+    def chat_images_storage_path(self, public_url: str) -> str | None:
+        """If this URL points at a chat upload in storage, return the storage-relative path."""
+        try:
+            parsed = urlparse(public_url)
+            path = (parsed.path or "").lstrip("/")
+            if path.startswith("chat-images/"):
+                return path
+        except Exception:
+            pass
+        return None
+
+    async def fetch_object_bytes(self, relative_path: str) -> tuple[bytes, str] | None:
+        """
+        Download an object from Bunny storage API (works when public CDN TLS is misconfigured).
+        relative_path: e.g. chat-images/foo.png
+        """
+        if not self.api_key or not self.storage_zone:
+            return None
+        safe = relative_path.lstrip("/")
+        if ".." in safe:
+            return None
+        get_url = f"{self.base_url}/{safe}"
+        headers = {"AccessKey": self.api_key}
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(get_url, headers=headers)
+                if response.status_code != 200:
+                    return None
+                ct = response.headers.get("content-type", "application/octet-stream")
+                return response.content, ct
+        except Exception as e:
+            print(f"Storage fetch failed for {safe}: {e}")
+            return None
+
+    async def fetch_public_chat_image_bytes(self, public_url: str) -> tuple[bytes, str] | None:
+        path = self.chat_images_storage_path(public_url)
+        if not path:
+            return None
+        return await self.fetch_object_bytes(path)
 
 
 storage_service = StorageService()

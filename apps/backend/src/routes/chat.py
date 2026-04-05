@@ -16,6 +16,7 @@ from fastapi import (
     Form,  # <--- Added
     HTTPException,
     Query,
+    Response,
     UploadFile,
     WebSocket,
     WebSocketDisconnect,
@@ -2987,6 +2988,44 @@ async def upload_chat_image(
     except Exception as e:
         print(f"❌ Error in /chat/image/upload: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+def _guess_image_media_type(storage_path: str, fallback: str) -> str:
+    lower = storage_path.lower()
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith(".webp"):
+        return "image/webp"
+    if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+        return "image/jpeg"
+    base = (fallback or "").split(";", 1)[0].strip()
+    return base if base.startswith("image/") else "application/octet-stream"
+
+
+@router.get("/image/file", summary="Download a chat upload from Bunny storage (Bearer auth)")
+async def get_chat_image_file(
+    _user: CurrentUser,
+    path: str = Query(..., min_length=12, max_length=512),
+):
+    """
+    Serves files under chat-images/ via the storage API so the browser can show uploads
+    when the public CDN hostname has certificate or TLS issues.
+    """
+    normalized = path.strip().lstrip("/")
+    if ".." in normalized or not normalized.startswith("chat-images/"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid path")
+
+    fetched = await storage_service.fetch_object_bytes(normalized)
+    if not fetched:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    data, raw_ct = fetched
+    media_type = _guess_image_media_type(normalized, raw_ct)
+    return Response(
+        content=data,
+        media_type=media_type,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
 
 
 # 👇 ENDPOINT: Delete uploaded image (if user cancels)
