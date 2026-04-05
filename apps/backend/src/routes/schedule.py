@@ -99,7 +99,12 @@ async def list_schedules(
         description="Filter by goal ID",
     ),
     page: int = Query(1, ge=1, description="Page number"),
-    pageSize: int = Query(50, ge=1, le=2000, description="Items per page (ignored for full range fetch when startDate+endDate set)"),
+    pageSize: int = Query(
+        50,
+        ge=1,
+        le=2000,
+        description="Items per page (ignored for full range fetch when startDate+endDate set)",
+    ),
 ):
     """List user's schedule blocks with pagination.
 
