@@ -33,9 +33,8 @@ def get_genai_client():
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 
-# gemini-embedding-001 defaults to 3072d but we request 768d
-# to stay compatible with the existing Pinecone index.
-EMBEDDING_DIMENSION = 768
+# gemini-embedding-001 defaults to 3072d and the Pinecone index is 3072d.
+EMBEDDING_DIMENSION = 3072
 
 
 def _get_pinecone_index():
