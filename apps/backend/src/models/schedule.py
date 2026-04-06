@@ -73,6 +73,10 @@ class ScheduleListResponse(BaseModel):
     """Schema for paginated schedule list response."""
 
     schedules: list[ScheduleResponse]
+    """Blocks overlapping the requested range, keyed by UTC calendar date (YYYY-MM-DD).
+    Each multi-day block appears under every day it spans. Only populated when both
+    startDate and endDate are sent; same rows as `schedules` for that request."""
+    byDate: dict[str, list[ScheduleResponse]] = Field(default_factory=dict)
     total: int
     page: int
     pageSize: int

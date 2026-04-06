@@ -175,6 +175,9 @@ class Settings(BaseSettings):
     BUNNY_CDN_API_KEY: str | None = None
     BUNNY_STORAGE_ZONE: str | None = None
     BUNNY_CDN_HOSTNAME: str = "cdn.maigie.com"
+    # Optional full public base for uploaded files, e.g. https://yourzone.b-cdn.net (no trailing slash).
+    # Use when the custom CDN hostname has TLS issues but Bunny's default pull zone is valid.
+    BUNNY_PUBLIC_URL_BASE: str | None = None
 
     # --- Pinecone (Vector Database for RAG) ---
     PINECONE_API_KEY: str | None = None

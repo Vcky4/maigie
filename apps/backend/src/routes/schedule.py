@@ -8,7 +8,8 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
@@ -26,6 +27,52 @@ from src.services.user_memory_service import user_memory_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/schedule", tags=["schedule"])
+
+# When listing by date range, return every overlapping block (calendar UIs), not only the first page.
+_RANGE_LIST_CAP = 5000
+
+
+def _utc_calendar_date_keys(start: datetime, end: datetime) -> list[str]:
+    """Inclusive UTC calendar dates a block spans, as YYYY-MM-DD (for byDate)."""
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    else:
+        start = start.astimezone(UTC)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    else:
+        end = end.astimezone(UTC)
+    keys: list[str] = []
+    cur = start.date()
+    end_d = end.date()
+    while cur <= end_d:
+        keys.append(cur.isoformat())
+        cur += timedelta(days=1)
+    return keys
+
+
+def _list_schedules_where(
+    user_id: str,
+    *,
+    course_id: str | None,
+    goal_id: str | None,
+    start_date: datetime | None,
+    end_date: datetime | None,
+) -> dict[str, Any]:
+    """Single AND list so userId is never dropped when combining with range filters."""
+    parts: list[dict[str, Any]] = [{"userId": user_id}]
+    if course_id:
+        parts.append({"courseId": course_id})
+    if goal_id:
+        parts.append({"goalId": goal_id})
+    if start_date and end_date:
+        parts.append({"endAt": {"gte": start_date}})
+        parts.append({"startAt": {"lte": end_date}})
+    elif start_date:
+        parts.append({"endAt": {"gte": start_date}})
+    elif end_date:
+        parts.append({"startAt": {"lte": end_date}})
+    return {"AND": parts}
 
 
 @router.get("", response_model=ScheduleListResponse)
@@ -52,48 +99,58 @@ async def list_schedules(
         description="Filter by goal ID",
     ),
     page: int = Query(1, ge=1, description="Page number"),
-    pageSize: int = Query(50, ge=1, le=200, description="Items per page"),
+    pageSize: int = Query(
+        50,
+        ge=1,
+        le=2000,
+        description="Items per page (ignored for full range fetch when startDate+endDate set)",
+    ),
 ):
-    """List user's schedule blocks with pagination."""
+    """List user's schedule blocks with pagination.
+
+    When **startDate** and **endDate** are both set, returns every overlapping block (up to
+    cap), populates **byDate** (UTC YYYY-MM-DD → blocks touching that day), and sets
+    page=1 / pageSize=len(schedules). Otherwise uses normal skip/limit pagination.
+    """
     try:
-        where_clause = {"userId": current_user.id}
-
-        # Add course filter
-        if course_id:
-            where_clause["courseId"] = course_id
-
-        # Add goal filter
-        if goal_id:
-            where_clause["goalId"] = goal_id
-
-        # Add date range filters to where clause for better performance
-        # A schedule overlaps with the range if: startAt <= end_date AND endAt >= start_date
-        if start_date and end_date:
-            where_clause["AND"] = [
-                {"endAt": {"gte": start_date}},
-                {"startAt": {"lte": end_date}},
-            ]
-        elif start_date:
-            where_clause["endAt"] = {"gte": start_date}
-        elif end_date:
-            where_clause["startAt"] = {"lte": end_date}
-
-        # Calculate skip
-        skip = (page - 1) * pageSize
-
-        # Count total matching schedules
-        total = await db.scheduleblock.count(where=where_clause)
-
-        # Fetch paginated schedules
-        schedules = await db.scheduleblock.find_many(
-            where=where_clause,
-            order={"startAt": "asc"},
-            skip=skip,
-            take=pageSize,
+        where_clause = _list_schedules_where(
+            current_user.id,
+            course_id=course_id,
+            goal_id=goal_id,
+            start_date=start_date,
+            end_date=end_date,
         )
 
-        schedule_responses = [
-            ScheduleResponse(
+        total = await db.scheduleblock.count(where=where_clause)
+
+        if start_date and end_date:
+            take_n = min(total, _RANGE_LIST_CAP)
+            schedules = await db.scheduleblock.find_many(
+                where=where_clause,
+                order={"startAt": "asc"},
+                skip=0,
+                take=take_n,
+            )
+            skip = 0
+            out_page = 1
+            out_page_size = len(schedules)
+            has_more = total > _RANGE_LIST_CAP
+        else:
+            skip = (page - 1) * pageSize
+            schedules = await db.scheduleblock.find_many(
+                where=where_clause,
+                order={"startAt": "asc"},
+                skip=skip,
+                take=pageSize,
+            )
+            out_page = page
+            out_page_size = pageSize
+            has_more = (skip + pageSize) < total
+
+        by_date: dict[str, list[ScheduleResponse]] = {}
+        schedule_responses: list[ScheduleResponse] = []
+        for schedule in schedules:
+            resp = ScheduleResponse(
                 id=schedule.id,
                 userId=schedule.userId,
                 title=schedule.title,
@@ -114,16 +171,21 @@ async def list_schedules(
                 createdAt=schedule.createdAt.isoformat(),
                 updatedAt=schedule.updatedAt.isoformat(),
             )
-            for schedule in schedules
-        ]
+            schedule_responses.append(resp)
+            if start_date and end_date:
+                for dk in _utc_calendar_date_keys(schedule.startAt, schedule.endAt):
+                    by_date.setdefault(dk, []).append(resp)
 
-        has_more = (skip + pageSize) < total
+        if start_date and end_date:
+            for _k, lst in by_date.items():
+                lst.sort(key=lambda r: r.startAt)
 
         return ScheduleListResponse(
             schedules=schedule_responses,
+            byDate=by_date,
             total=total,
-            page=page,
-            pageSize=pageSize,
+            page=out_page,
+            pageSize=out_page_size,
             hasMore=has_more,
         )
     except Exception as e:

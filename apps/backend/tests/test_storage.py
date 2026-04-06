@@ -15,6 +15,7 @@ async def test_upload_file_success():
         mock_settings.BUNNY_CDN_API_KEY = "test-key"
         mock_settings.BUNNY_STORAGE_ZONE = "test-zone"
         mock_settings.BUNNY_CDN_HOSTNAME = "cdn.test.com"
+        mock_settings.BUNNY_PUBLIC_URL_BASE = None
         mock_get_settings.return_value = mock_settings
 
         service = StorageService()
@@ -66,6 +67,32 @@ async def test_upload_file_missing_config():
 
 
 @pytest.mark.asyncio
+async def test_upload_file_uses_public_url_base_when_set():
+    with patch("src.services.storage_service.get_settings") as mock_get_settings:
+        mock_settings = MagicMock()
+        mock_settings.BUNNY_CDN_API_KEY = "test-key"
+        mock_settings.BUNNY_STORAGE_ZONE = "test-zone"
+        mock_settings.BUNNY_CDN_HOSTNAME = "cdn.test.com"
+        mock_settings.BUNNY_PUBLIC_URL_BASE = "https://pull.test-cdn.net"
+        mock_get_settings.return_value = mock_settings
+
+        service = StorageService()
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.put.return_value = MagicMock(status_code=201)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+            file = MagicMock(spec=UploadFile)
+            file.filename = "a.png"
+            file.read = AsyncMock(return_value=b"x")
+            file.seek = AsyncMock()
+
+            result = await service.upload_file(file, path="chat-images")
+            assert result["url"] == "https://pull.test-cdn.net/chat-images/a.png"
+
+
+@pytest.mark.asyncio
 async def test_upload_file_api_error():
     """Test upload fails when BunnyCDN API returns error."""
     with patch("src.services.storage_service.get_settings") as mock_get_settings:
@@ -73,6 +100,7 @@ async def test_upload_file_api_error():
         mock_settings.BUNNY_CDN_API_KEY = "test-key"
         mock_settings.BUNNY_STORAGE_ZONE = "test-zone"
         mock_settings.BUNNY_CDN_HOSTNAME = "cdn.test.com"
+        mock_settings.BUNNY_PUBLIC_URL_BASE = None
         mock_get_settings.return_value = mock_settings
 
         service = StorageService()

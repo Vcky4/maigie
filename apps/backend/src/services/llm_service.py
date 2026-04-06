@@ -419,6 +419,16 @@ class GeminiService:
                                 }
                         except Exception as e:
                             print(f"⚠️ Failed to download image {url[:50]}...: {e}")
+                        try:
+                            from src.services.storage_service import storage_service as _storage
+
+                            fb = await _storage.fetch_public_chat_image_bytes(url)
+                            if fb:
+                                data, raw_ct = fb
+                                mt = (raw_ct or "").split(";", 1)[0].strip() or "image/jpeg"
+                                return url, {"mime_type": mt, "data": data}
+                        except Exception as e2:
+                            print(f"⚠️ Storage fallback failed for {url[:50]}...: {e2}")
                         return url, None
 
                     # Download all images in parallel
@@ -1376,15 +1386,30 @@ Tags (JSON array):"""
         print(f"👁️ Gemini analyzing image: {image_url}")
 
         try:
-            # 1. Download the image bytes from the URL
-            async with httpx.AsyncClient() as client:
-                response = await client.get(image_url)
-                if response.status_code != 200:
-                    print(f"❌ Failed to download image: {response.status_code}")
-                    return "I'm sorry, I couldn't access the image URL."
+            # 1. Download the image bytes from the URL (CDN), then Bunny storage API if TLS/CDN fails
+            image_data: bytes | None = None
+            mime_type = "image/jpeg"
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(image_url)
+                    if response.status_code == 200:
+                        image_data = response.content
+                        mime_type = response.headers.get("content-type", "image/jpeg")
+                    else:
+                        print(f"❌ Image URL returned status {response.status_code}")
+            except Exception as e:
+                print(f"❌ Image download error: {e}")
 
-                image_data = response.content
-                mime_type = response.headers.get("content-type", "image/jpeg")
+            if not image_data:
+                from src.services.storage_service import storage_service as _storage
+
+                fb = await _storage.fetch_public_chat_image_bytes(image_url)
+                if fb:
+                    image_data, raw_ct = fb
+                    mime_type = (raw_ct or "").split(";", 1)[0].strip() or "image/jpeg"
+
+            if not image_data:
+                return "I'm sorry, I couldn't access the image URL."
 
             # 2. Prepare the content for Gemini
             # Gemini treats images as a distinct part of the prompt content
