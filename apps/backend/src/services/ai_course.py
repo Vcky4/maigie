@@ -81,7 +81,8 @@ async def generate_course_content_task(
 
         title = (outline.get("title") or "").strip() or f"Learning {topic_prompt[:80]}"
         description = (outline.get("description") or "").strip() or (
-            f"A structured course on {topic_prompt[:200]}." + ("…" if len(topic_prompt) > 200 else "")
+            f"A structured course on {topic_prompt[:200]}."
+            + ("…" if len(topic_prompt) > 200 else "")
         )
         diff_out = (outline.get("difficulty") or difficulty or "BEGINNER").upper()
 
