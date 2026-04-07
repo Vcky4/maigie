@@ -322,6 +322,7 @@ async def generate_ai_course(
         course_id=placeholder_course.id,
         user_id=user_id,
         topic_prompt=request.topic,
+        difficulty=request.difficulty.value,
     )
 
     return {

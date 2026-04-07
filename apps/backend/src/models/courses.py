@@ -27,7 +27,7 @@ class DifficultyLevel(str, Enum):
 class AICourseRequest(BaseModel):
     """Schema for AI Course Generation request."""
 
-    topic: str = Field(..., min_length=1, max_length=100)
+    topic: str = Field(..., min_length=1, max_length=8000)
     difficulty: DifficultyLevel = DifficultyLevel.BEGINNER
 
 
