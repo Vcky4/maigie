@@ -548,7 +548,8 @@ class ActivityDataItem(BaseModel):
 class DashboardLeaderboardItem(BaseModel):
     id: str
     name: str
-    points: int
+    rank: int
+    streakDays: int
     isYou: bool
 
 
