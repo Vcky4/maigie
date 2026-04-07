@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from pydantic import BaseModel
 
 from prisma import Client as PrismaClient
+from datetime import datetime, timedelta, timezone
 
 # Import the AI worker service
 from src.services.ai_course import generate_course_content_task
@@ -272,12 +273,15 @@ async def generate_ai_course(
     """
     user_id = current_user.id
 
-    # 1. Check Subscription Limits (Free Tier = Max 2 Courses)
+    # 1. Check Subscription Limits (Free Tier = Max 2 Courses/month)
     if current_user.tier == "FREE":
-        course_count = await db.course.count(where={"userId": user_id, "archived": False})
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        course_count = await db.course.count(
+            where={"userId": user_id, "createdAt": {"gte": thirty_days_ago}}
+        )
         if course_count >= 2:
             raise SubscriptionLimitError(
-                message="You can only create 2 courses in your current plan.",
+                message="You can only create 2 courses per month in your current plan.",
                 detail="Start a free trial to create unlimited courses.",
             )
 
@@ -561,12 +565,15 @@ async def create_course(
     """
     user_id = current_user.id
 
-    # Check subscription tier limits (Free Tier = Max 2 Courses)
+    # Check subscription tier limits (Free Tier = Max 2 Courses/month)
     if current_user.tier == "FREE":
-        course_count = await db.course.count(where={"userId": user_id, "archived": False})
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        course_count = await db.course.count(
+            where={"userId": user_id, "createdAt": {"gte": thirty_days_ago}}
+        )
         if course_count >= 2:
             raise SubscriptionLimitError(
-                message="You can only create 2 courses in your current plan.",
+                message="You can only create 2 courses per month in your current plan.",
                 detail="Start a free trial to create unlimited courses.",
             )
 

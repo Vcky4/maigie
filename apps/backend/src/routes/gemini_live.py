@@ -192,7 +192,12 @@ async def gemini_live_websocket(
         except Exception as e:
             logger.warning("Send to client failed: %s", e)
 
-    def on_bridge_done() -> None:
+    def on_bridge_done(
+        credits_already_consumed: int,
+        billable_seconds: float,
+        billing_started: bool,
+        billing_mode: str,
+    ) -> None:
         nonlocal bridge_task
         sid = session_id_for_post
         turns = list(conversation_turns)
@@ -200,7 +205,19 @@ async def gemini_live_websocket(
         course_id = current_course_id
         bridge_task = None
         if sid and user:
-            asyncio.create_task(post_gemini_live_session(user.id, sid, turns, topic_id, course_id))
+            asyncio.create_task(
+                post_gemini_live_session(
+                    user.id,
+                    sid,
+                    turns,
+                    topic_id,
+                    course_id,
+                    credits_already_consumed=credits_already_consumed,
+                    billable_seconds=billable_seconds,
+                    billing_started=billing_started,
+                    billing_mode=billing_mode,
+                )
+            )
 
     try:
         while True:

@@ -29,8 +29,8 @@ UNLIMITED = {"file_uploads": None, "summary_generations": None}
 
 FEATURE_LIMITS = {
     "FREE": {
-        "file_uploads": 5,  # 5 files per month
-        "summary_generations": 10,  # 10 summaries per month
+        "file_uploads": 2,  # 2 files per month
+        "summary_generations": 3,  # 3 summaries per month
     },
     "PREMIUM_MONTHLY": UNLIMITED,
     "PREMIUM_YEARLY": UNLIMITED,
