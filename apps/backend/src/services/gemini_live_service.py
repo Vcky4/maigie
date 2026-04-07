@@ -20,6 +20,52 @@ import websockets
 
 logger = logging.getLogger(__name__)
 
+
+def _tier_has_standby_voice_billing(tier: str | None) -> bool:
+    """Paid tiers: bill only during recent user/AI audio (active_audio). FREE: wall-clock while connected."""
+    return str(tier or "FREE") != "FREE"
+
+
+def _gemini_live_credits_per_minute() -> float:
+    return float(os.getenv("GEMINI_LIVE_CREDITS_PER_MINUTE", "100"))
+
+
+def _gemini_live_min_session_credits_wall_clock() -> int:
+    return int(os.getenv("GEMINI_LIVE_MIN_SESSION_CREDITS", "500"))
+
+
+def _gemini_live_standby_idle_seconds() -> float:
+    """No user PCM and no AI audio for this long → standby (no billable time for paid tiers)."""
+    return float(os.getenv("GEMINI_LIVE_STANDBY_IDLE_SECONDS", "2.5"))
+
+
+def _gemini_live_billing_tick_seconds() -> float:
+    return float(os.getenv("GEMINI_LIVE_BILLING_TICK_SECONDS", "2.0"))
+
+
+def _gemini_live_billing_min_consume_chunk() -> int:
+    """Pre-multiplier credits; batch DB writes until delta reaches this (or flush interval)."""
+    return int(os.getenv("GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK", "50"))
+
+
+def _gemini_live_billing_flush_interval_seconds() -> float:
+    return float(os.getenv("GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS", "60"))
+
+
+def voice_credits_from_billable_seconds_raw(billable_seconds: float) -> int:
+    """Pre-multiplier credits from billable time only (no FREE-tier session floor)."""
+    per_min = _gemini_live_credits_per_minute()
+    return int(max(0.0, billable_seconds) / 60.0 * per_min)
+
+
+def voice_credits_total_final_settlement(billable_seconds: float, billing_mode: str) -> int:
+    """Final pre-multiplier total after session ends (FREE wall-clock gets a session minimum)."""
+    raw = voice_credits_from_billable_seconds_raw(billable_seconds)
+    if billing_mode == "active_audio":
+        return raw
+    return max(_gemini_live_min_session_credits_wall_clock(), raw)
+
+
 # Default Live API model. Override with GEMINI_LIVE_MODEL env.
 # See https://ai.google.dev/gemini-api/docs/live for current model names.
 DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
@@ -203,7 +249,7 @@ async def run_gemini_live_bridge(
     send_to_client: Callable[[str | bytes], Coroutine[Any, Any, None]],
     receive_from_client: Callable[[], Coroutine[Any, Any, str | bytes | None]],
     system_instruction: str | None = None,
-    on_done: Callable[[], Any] | None = None,
+    on_done: Callable[[int, float, bool, str], Any] | None = None,
     conversation_turns: list[dict[str, str]] | None = None,
     tools: list[dict[str, Any]] | None = None,
 ) -> None:
@@ -211,7 +257,8 @@ async def run_gemini_live_bridge(
     Connect to Google Live API and bridge messages between client and Gemini.
     - send_to_client(msg): send JSON string or bytes to client.
     - receive_from_client(): await next message from client (bytes or str).
-    - on_done(): called when bridge ends (e.g. stop or error).
+    - on_done(consumed_credits, billable_seconds, billing_started, billing_mode): snapshot for
+      post-session settlement. billing_mode is wall_clock (FREE) or active_audio (paid standby).
     - conversation_turns: optional list to append {"role": "user"|"assistant", "text": "..."} for post-session note.
     """
     api_key = _get_api_key()
@@ -226,8 +273,24 @@ async def run_gemini_live_bridge(
             )
         )
         if on_done:
-            on_done()
+            on_done(0, 0.0, False, "wall_clock")
         return
+
+    from src.core.database import db
+
+    user_row = await db.user.find_unique(where={"id": user_id})
+    tier = str(user_row.tier) if user_row and user_row.tier else "FREE"
+    billing_mode = "active_audio" if _tier_has_standby_voice_billing(tier) else "wall_clock"
+    async with _sessions_lock:
+        if session_id in _sessions:
+            _sessions[session_id]["billing_mode"] = billing_mode
+            _sessions[session_id]["voice_billing_started"] = False
+            _sessions[session_id]["billable_seconds"] = 0.0
+            _sessions[session_id]["last_user_audio_mono"] = None
+            _sessions[session_id]["last_ai_audio_mono"] = None
+            _sessions[session_id]["billing_tick_last_mono"] = None
+            _sessions[session_id]["billing_last_flush_mono"] = None
+            _sessions[session_id]["consumed_credits"] = 0
 
     url = f"{GEMINI_LIVE_WS_URL}?key={api_key}"
     model = os.getenv("GEMINI_LIVE_MODEL", DEFAULT_LIVE_MODEL)
@@ -251,6 +314,119 @@ async def run_gemini_live_bridge(
 
         # Real-time note update logic
         asyncio.create_task(check_and_trigger_note_update())
+
+    async def mark_user_audio_activity() -> None:
+        async with _sessions_lock:
+            if session_id in _sessions:
+                _sessions[session_id]["last_user_audio_mono"] = asyncio.get_running_loop().time()
+
+    async def mark_ai_audio_activity() -> None:
+        async with _sessions_lock:
+            if session_id in _sessions:
+                _sessions[session_id]["last_ai_audio_mono"] = asyncio.get_running_loop().time()
+
+    async def apply_voice_credit_delta(to_consume: int) -> None:
+        if to_consume <= 0:
+            return
+        try:
+            from src.services.credit_service import consume_credits
+            from src.utils.exceptions import SubscriptionLimitError
+
+            user = await db.user.find_unique(where={"id": user_id})
+            if user:
+                await consume_credits(user, to_consume, operation="gemini_live_voice", db_client=db)
+                async with _sessions_lock:
+                    if session_id in _sessions:
+                        prev = int(_sessions[session_id].get("consumed_credits", 0) or 0)
+                        _sessions[session_id]["consumed_credits"] = prev + to_consume
+        except Exception as e:
+            if getattr(
+                e, "code", None
+            ) == "SUBSCRIPTION_LIMIT_EXCEEDED" or "SubscriptionLimitError" in str(type(e)):
+                logger.warning("Real-time credit limit reached for user %s: disconnecting", user_id)
+                tier = str(getattr(e, "tier", "FREE")) if hasattr(e, "tier") else "FREE"
+
+                await send_to_client(
+                    json.dumps(
+                        {
+                            "type": "credit_limit_error",
+                            "session_id": session_id,
+                            "message": "You've reached your token limit for the day.",
+                            "tier": tier,
+                            "is_daily_limit": True,
+                            "show_referral_option": True,
+                        }
+                    )
+                )
+
+                async with _sessions_lock:
+                    if session_id in _sessions:
+                        _sessions[session_id]["force_disconnect"] = True
+            else:
+                logger.warning("Failed to apply voice credit delta: %s", e)
+
+    async def voice_billing_loop() -> None:
+        tick = _gemini_live_billing_tick_seconds()
+        idle_gap = _gemini_live_standby_idle_seconds()
+        min_chunk = _gemini_live_billing_min_consume_chunk()
+        flush_iv = _gemini_live_billing_flush_interval_seconds()
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                await asyncio.sleep(tick)
+                charge_amount = 0
+                async with _sessions_lock:
+                    sess = _sessions.get(session_id)
+                    if not sess or sess.get("force_disconnect"):
+                        break
+                    now = loop.time()
+                    last_tick = sess.get("billing_tick_last_mono")
+                    if last_tick is None:
+                        sess["billing_tick_last_mono"] = now
+                        continue
+                    delta = max(0.0, now - last_tick)
+                    sess["billing_tick_last_mono"] = now
+
+                    mode = sess.get("billing_mode", "wall_clock")
+                    if mode == "wall_clock":
+                        bill_delta = delta
+                    else:
+                        lu = sess.get("last_user_audio_mono")
+                        la = sess.get("last_ai_audio_mono")
+                        audio_recent = (lu is not None and (now - lu) <= idle_gap) or (
+                            la is not None and (now - la) <= idle_gap
+                        )
+                        bill_delta = delta if audio_recent else 0.0
+
+                    sess["billable_seconds"] = float(sess.get("billable_seconds", 0.0)) + bill_delta
+
+                    billable = float(sess["billable_seconds"])
+                    current_raw_total = voice_credits_from_billable_seconds_raw(billable)
+                    previously_consumed = int(sess.get("consumed_credits", 0) or 0)
+                    to_consume = current_raw_total - previously_consumed
+
+                    last_flush = sess.get("billing_last_flush_mono")
+                    if last_flush is None:
+                        sess["billing_last_flush_mono"] = now
+                        last_flush = now
+
+                    should_charge = to_consume > 0 and (
+                        to_consume >= min_chunk or (now - float(last_flush)) >= flush_iv
+                    )
+                    if should_charge and not sess.get("is_checking_credits"):
+                        sess["is_checking_credits"] = True
+                        charge_amount = to_consume
+
+                if charge_amount > 0:
+                    try:
+                        await apply_voice_credit_delta(charge_amount)
+                    finally:
+                        async with _sessions_lock:
+                            if session_id in _sessions:
+                                _sessions[session_id]["is_checking_credits"] = False
+                                _sessions[session_id]["billing_last_flush_mono"] = loop.time()
+        except asyncio.CancelledError:
+            pass
 
     async def check_and_trigger_note_update():
         async with _sessions_lock:
@@ -396,6 +572,7 @@ async def run_gemini_live_bridge(
                     try:
                         audio_bytes = base64.b64decode(b64)
                         await send_to_client(audio_bytes)
+                        await mark_ai_audio_activity()
                     except Exception as e:
                         logger.warning("Failed to decode audio from modelTurn: %s", e)
                 if "functionCall" in part and ws_conn:
@@ -494,8 +671,26 @@ async def run_gemini_live_bridge(
                 if "serverContent" in msg:
                     await handle_server_content(msg["serverContent"], ws_conn=ws)
 
-            # Notify client that session is ready for audio
-            await send_to_client(json.dumps({"type": "session_started", "session_id": session_id}))
+            # Notify client that session is ready for audio; start time-based billing
+            voice_billing_task: asyncio.Task[None] | None = None
+            bm = "wall_clock"
+            async with _sessions_lock:
+                if session_id in _sessions:
+                    _sessions[session_id]["voice_billing_started"] = True
+                    _sessions[session_id][
+                        "billing_tick_last_mono"
+                    ] = asyncio.get_running_loop().time()
+                    bm = str(_sessions[session_id].get("billing_mode", "wall_clock"))
+            await send_to_client(
+                json.dumps(
+                    {
+                        "type": "session_started",
+                        "session_id": session_id,
+                        "voice_billing_mode": bm,
+                    }
+                )
+            )
+            voice_billing_task = asyncio.create_task(voice_billing_loop())
             if greeting_prompt:
                 await ws.send(
                     json.dumps(
@@ -511,6 +706,11 @@ async def run_gemini_live_bridge(
             async def from_client_to_gemini() -> None:
                 try:
                     while True:
+                        async with _sessions_lock:
+                            sess = _sessions.get(session_id)
+                            if sess and sess.get("force_disconnect"):
+                                break
+
                         client_msg = await receive_from_client()
                         if client_msg is None:
                             break
@@ -522,6 +722,7 @@ async def run_gemini_live_bridge(
                                 }
                             }
                             await ws.send(json.dumps(payload))
+                            await mark_user_audio_activity()
                         elif isinstance(client_msg, str):
                             try:
                                 msg_data = json.loads(client_msg)
@@ -548,6 +749,11 @@ async def run_gemini_live_bridge(
             async def from_gemini_to_client() -> None:
                 try:
                     while True:
+                        async with _sessions_lock:
+                            sess = _sessions.get(session_id)
+                            if sess and sess.get("force_disconnect"):
+                                break
+
                         raw = await ws.recv()
                         if isinstance(raw, bytes):
                             raw = raw.decode("utf-8")
@@ -565,6 +771,12 @@ async def run_gemini_live_bridge(
             try:
                 await from_client_to_gemini()
             finally:
+                if voice_billing_task is not None:
+                    voice_billing_task.cancel()
+                    try:
+                        await voice_billing_task
+                    except asyncio.CancelledError:
+                        pass
                 recv_task.cancel()
                 try:
                     await recv_task
@@ -584,7 +796,18 @@ async def run_gemini_live_bridge(
         )
     finally:
         if on_done:
-            on_done()
+            consumed_pre_multiplier = 0
+            billable = 0.0
+            billing_started_flag = False
+            bm = "wall_clock"
+            async with _sessions_lock:
+                sess = _sessions.get(session_id)
+                if sess is not None:
+                    consumed_pre_multiplier = int(sess.get("consumed_credits", 0) or 0)
+                    billable = float(sess.get("billable_seconds", 0.0) or 0.0)
+                    billing_started_flag = bool(sess.get("voice_billing_started"))
+                    bm = str(sess.get("billing_mode", "wall_clock"))
+            on_done(consumed_pre_multiplier, billable, billing_started_flag, bm)
 
 
 async def post_gemini_live_session(
@@ -593,22 +816,30 @@ async def post_gemini_live_session(
     conversation_turns: list[dict[str, str]],
     topic_id: str | None,
     course_id: str | None,
+    *,
+    credits_already_consumed: int = 0,
+    billable_seconds: float = 0.0,
+    billing_started: bool = False,
+    billing_mode: str = "wall_clock",
 ) -> None:
     """
-    Run after a Gemini Live session ends: record credits (non-blocking) and optionally
+    Run after a Gemini Live session ends: settle remaining credits (non-blocking) and optionally
     create a structured note from the conversation. Does not affect session latency.
+    Voice billing uses billable time (wall-clock for FREE, audio-active windows for paid tiers).
     """
-    # Record credits after the call (does not affect latency). If user ran out mid-call, we log and continue.
     try:
         from src.core.database import db
-        from src.services.credit_service import CREDIT_COSTS, consume_credits
+        from src.services.credit_service import consume_credits
         from src.utils.exceptions import SubscriptionLimitError
 
         user = await db.user.find_unique(where={"id": user_id})
-        if user and CREDIT_COSTS.get("gemini_live_voice"):
-            await consume_credits(
-                user, CREDIT_COSTS["gemini_live_voice"], operation="gemini_live_voice"
-            )
+        if user and billing_started:
+            credits_total = voice_credits_total_final_settlement(billable_seconds, billing_mode)
+            already = max(0, int(credits_already_consumed))
+            to_consume = max(0, credits_total - already)
+
+            if to_consume > 0:
+                await consume_credits(user, to_consume, operation="gemini_live_voice")
     except SubscriptionLimitError as e:
         logger.warning(
             "Post-session credit recording skipped (limit reached): user_id=%s, session_id=%s, detail=%s",

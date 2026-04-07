@@ -251,51 +251,64 @@ async def get_dashboard(
             logger.warning("Failed to fetch nudges for dashboard: %s", nudge_err)
 
         # ========================================================================
-        # Get Global Leaderboard (Proxy using UserStreak for MVP)
+        # Global rank: longest streak (days), tie-broken by current streak
+        # Top 3 rows + current user as 4th row when not in top 3
         # ========================================================================
-        leaderboard_items = []
+        leaderboard_items: list[DashboardLeaderboardItem] = []
         try:
-            # Fetch top 50 users by longest streak
-            top_streaks = await db.userstreak.find_many(
-                include={"user": True}, order={"longestStreak": "desc"}, take=50
+
+            async def streak_rank(longest: int, current: int) -> int:
+                ahead = await db.userstreak.count(
+                    where={
+                        "OR": [
+                            {"longestStreak": {"gt": longest}},
+                            {
+                                "AND": [
+                                    {"longestStreak": longest},
+                                    {"currentStreak": {"gt": current}},
+                                ],
+                            },
+                        ],
+                    }
+                )
+                return ahead + 1
+
+            streak_rows = await db.userstreak.find_many(
+                include={"user": True},
+                take=5000,
             )
+            sorted_rows = sorted(
+                streak_rows,
+                key=lambda s: (-(s.longestStreak or 0), -(s.currentStreak or 0)),
+            )
+            top_three = sorted_rows[:3]
+            top_ids = {s.userId for s in top_three}
 
-            for rank_item in top_streaks:
-                if not rank_item.user:
+            for row in top_three:
+                if not row.user:
                     continue
-
-                # Simple points calculation logic for gamification XP
-                points = (rank_item.longestStreak * 100) + (rank_item.currentStreak * 50) + 150
-
+                lg = row.longestStreak or 0
+                cr = row.currentStreak or 0
                 leaderboard_items.append(
                     DashboardLeaderboardItem(
-                        id=rank_item.userId,
-                        name=rank_item.user.name or "Anonymous Scholar",
-                        points=points,
-                        isYou=rank_item.userId == user_id,
+                        id=row.userId,
+                        name=row.user.name or "Anonymous Scholar",
+                        rank=await streak_rank(lg, cr),
+                        streakDays=lg,
+                        isYou=row.userId == user_id,
                     )
                 )
 
-            # Ensure current user is included if they don't have a record or missed the top 50
-            if not any(item.isYou for item in leaderboard_items):
-                my_points = (longest_streak * 100) + (current_streak * 50) + 150
+            if user_id not in top_ids:
                 leaderboard_items.append(
                     DashboardLeaderboardItem(
-                        id=user_id, name=current_user.name or "You", points=my_points, isYou=True
+                        id=user_id,
+                        name=current_user.name or "You",
+                        rank=await streak_rank(longest_streak, current_streak),
+                        streakDays=longest_streak,
+                        isYou=True,
                     )
                 )
-
-            # Re-sort descending by points
-            leaderboard_items.sort(key=lambda x: x.points, reverse=True)
-
-            # Limit to top 5, but keep "You" in the list if they aren't in top 4
-            if len(leaderboard_items) > 5:
-                you_index = next((i for i, item in enumerate(leaderboard_items) if item.isYou), -1)
-                if you_index < 5:
-                    leaderboard_items = leaderboard_items[:5]
-                else:
-                    you_item = leaderboard_items[you_index]
-                    leaderboard_items = leaderboard_items[:4] + [you_item]
 
         except Exception as leaderboard_err:
             logger.warning("Failed to fetch leaderboard for dashboard: %s", leaderboard_err)

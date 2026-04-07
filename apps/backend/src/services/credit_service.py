@@ -36,9 +36,9 @@ settings = get_settings()
 # For yearly subscriptions, multiply by 12
 CREDIT_LIMITS = {
     "FREE": {
-        "hard_cap": 75000,  # 75k tokens/month
-        "soft_cap": 60000,  # 80% warning threshold
-        "daily_limit": 25000,  # 25k tokens/day
+        "hard_cap": 15000,  # 15k tokens/month
+        "soft_cap": 12000,  # 80% warning threshold
+        "daily_limit": 5000,  # 5k tokens/day
     },
     "PREMIUM_MONTHLY": {
         "hard_cap": 300000,  # 300k tokens/month
@@ -76,7 +76,7 @@ CREDIT_COSTS = {
     "ai_course_generation": 250,  # 250 tokens per AI course generation (reduced from 500)
     "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
     "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
-    "gemini_live_voice": 500,  # per session; recorded after session ends (no latency impact)
+    "gemini_live_voice": 500,  # minimum pre-start check; live voice bills by time (+ paid standby = audio-active only)
 }
 
 
