@@ -15,7 +15,7 @@ from prisma import Prisma
 from pydantic import BaseModel
 
 from src.config import get_settings
-from src.dependencies import CurrentUser, PremiumUser
+from src.dependencies import CurrentUser
 from src.services.elevenlabs_service import elevenlabs_service
 from src.services.llm_service import llm_service
 from src.utils.dependencies import get_db_client
@@ -37,11 +37,11 @@ class TextToSpeechRequest(BaseModel):
 @router.post("/text-to-speech/stream")
 async def text_to_speech_stream(
     request: TextToSpeechRequest,
-    current_user: PremiumUser,
+    current_user: CurrentUser,
 ):
     """
     Convert text to speech using ElevenLabs. Streams audio back.
-    Requires Maigie Plus subscription.
+    Usage is limited by your plan credits where applicable.
     """
     if not request.text or len(request.text.strip()) == 0:
         raise HTTPException(status_code=400, detail="Text is required")
@@ -95,7 +95,7 @@ class TutorAskResponse(BaseModel):
 @router.post("/tutor/ask", response_model=TutorAskResponse)
 async def tutor_ask(
     request: TutorAskRequest,
-    current_user: PremiumUser,
+    current_user: CurrentUser,
 ):
     """
     Ask the AI tutor a question about a topic. Returns text response.
@@ -122,12 +122,12 @@ async def tutor_ask(
 
 
 @router.get("/convai/signed-url")
-async def get_convai_signed_url(current_user: PremiumUser):
+async def get_convai_signed_url(current_user: CurrentUser):
     """
     Get a signed WebSocket URL for ElevenLabs Conversational AI.
 
     The signed URL allows the client to open a WebSocket directly to ElevenLabs
-    without exposing the API key. Requires Maigie Plus subscription.
+    without exposing the API key.
     """
     settings = get_settings()
     if not settings.ELEVENLABS_API_KEY:
@@ -385,7 +385,7 @@ class VoiceContextResponse(BaseModel):
 
 @router.get("/convai/context", response_model=VoiceContextResponse)
 async def get_voice_agent_context(
-    current_user: PremiumUser,
+    current_user: CurrentUser,
     db: Annotated[Prisma, Depends(get_db_client)],
     section: str | None = Query(
         None,

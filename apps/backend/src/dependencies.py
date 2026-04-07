@@ -198,7 +198,8 @@ async def require_exam_prep_access(
     circle_id: str | None = Query(None),
 ) -> User:
     """
-    Allow exam prep in personal workspaces for paid users, or inside circles for members.
+    Personal exam prep: any authenticated user (usage is limited by credits).
+    Circle exam prep: circle members only.
     """
     if circle_id:
         member = await db_client.circlemember.find_first(
@@ -211,7 +212,7 @@ async def require_exam_prep_access(
             )
         return current_user
 
-    return await require_premium(current_user)
+    return current_user
 
 
 ExamPrepUser = Annotated[User, Depends(require_exam_prep_access)]
