@@ -27,6 +27,7 @@ from ..models.analytics import (
     DashboardStats,
 )
 from ..utils.dependencies import get_db_client
+from ..utils.progress import round_progress_percent
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ async def get_dashboard(
             course_topics = [topic for module in course.modules for topic in module.topics]
             course_completed_topics = sum(1 for t in course_topics if t.completed)
             course_total_topics = len(course_topics)
-            course_progress = (
+            course_progress = round_progress_percent(
                 (course_completed_topics / course_total_topics * 100)
                 if course_total_topics > 0
                 else 0.0
@@ -216,7 +217,7 @@ async def get_dashboard(
 
         # Assume daily goal is 60 minutes (can be made configurable later)
         daily_goal_minutes = 60.0
-        daily_goal_progress = (
+        daily_goal_progress = round_progress_percent(
             min((today_study_minutes / daily_goal_minutes) * 100, 100.0)
             if daily_goal_minutes > 0
             else 0.0
