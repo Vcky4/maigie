@@ -188,7 +188,7 @@ async def get_usage(
                 },
             )
 
-        # Build daily history
+        # Build daily history (chat tokenCount baseline)
         daily_usage = defaultdict(lambda: {"tokens": 0, "messages": 0, "operations": 0})
 
         for message in messages:
@@ -199,6 +199,13 @@ async def get_usage(
         for action in actions:
             date_str = action.createdAt.date().isoformat()
             daily_usage[date_str]["operations"] += 1
+
+        # Include consumed credits for "today" so Gemini Live voice usage is represented.
+        # `credits_used_today` is the source of truth for quota/billing usage.
+        today_key = now.date().isoformat()
+        credits_used_today = int(credit_usage.get("credits_used_today") or 0)
+        if credits_used_today > daily_usage[today_key]["tokens"]:
+            daily_usage[today_key]["tokens"] = credits_used_today
 
         # Convert to list and fill missing dates
         history = []
@@ -218,8 +225,9 @@ async def get_usage(
         # Reverse to show oldest first
         history.reverse()
 
-        # Calculate overview stats
-        total_tokens = sum(m.tokenCount or 0 for m in messages)
+        # Calculate overview stats.
+        # Use credits_used as source of truth so usage includes voice and non-chat operations.
+        total_tokens = int(credit_usage.get("credits_used", 0) or 0)
         total_messages = len(messages)
         total_operations = len(actions)
         avg_tokens_per_message = total_tokens / total_messages if total_messages > 0 else 0.0
