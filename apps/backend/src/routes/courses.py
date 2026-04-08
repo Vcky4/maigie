@@ -46,6 +46,7 @@ from ..services.credit_service import (
 )
 from ..services.spaced_repetition_service import ensure_review_item_for_completed_topic
 from ..utils.dependencies import get_db_client
+from ..utils.progress import round_progress_percent
 from ..utils.exceptions import (
     ForbiddenError,
     ResourceNotFoundError,
@@ -70,7 +71,7 @@ async def calculate_topic_list_progress(topics: list[Any]) -> tuple[float, int, 
         return 0.0, 0, 0
 
     completed = sum(1 for topic in topics if topic.completed)
-    progress = (completed / total) * 100
+    progress = round_progress_percent((completed / total) * 100)
 
     return progress, total, completed
 
@@ -103,7 +104,7 @@ async def calculate_course_progress(db: PrismaClient, course_id: str) -> tuple[f
         where={"module": {"courseId": course_id}, "completed": True}
     )
 
-    progress = (completed_topics / total_topics) * 100
+    progress = round_progress_percent((completed_topics / total_topics) * 100)
 
     return progress, total_topics, completed_topics
 
@@ -484,7 +485,9 @@ async def get_user_analytics(
                         completed_estimated_hours += topic.estimatedHours
 
     # Calculate overall progress (weighted by topics)
-    overall_progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+    overall_progress = round_progress_percent(
+        (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+    )
 
     # Calculate average course progress
     course_progresses = []
@@ -495,7 +498,7 @@ async def get_user_analytics(
             progress = (completed / len(course_topics)) * 100
             course_progresses.append(progress)
 
-    average_course_progress = (
+    average_course_progress = round_progress_percent(
         sum(course_progresses) / len(course_progresses) if course_progresses else 0.0
     )
 
@@ -522,7 +525,7 @@ async def get_user_analytics(
         course_topics = [topic for module in course.modules for topic in module.topics]
         course_completed_topics = sum(1 for t in course_topics if t.completed)
         course_total_topics = len(course_topics)
-        course_progress = (
+        course_progress = round_progress_percent(
             (course_completed_topics / course_total_topics * 100)
             if course_total_topics > 0
             else 0.0

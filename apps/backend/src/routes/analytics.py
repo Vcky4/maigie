@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from prisma import Client as PrismaClient
 
 from ..dependencies import CurrentUser, SuperAdminUser
+from ..utils.progress import round_progress_percent
 from ..models.analytics import (
     AchievementBadge,
     AIFeatureUsage,
@@ -262,7 +263,9 @@ async def get_enhanced_user_analytics(
                             completed_estimated_hours += topic.estimatedHours
 
         # Calculate overall progress
-        overall_progress = (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+        overall_progress = round_progress_percent(
+            (completed_topics / total_topics * 100) if total_topics > 0 else 0.0
+        )
 
         # Calculate average course progress
         course_progresses = []
@@ -273,7 +276,7 @@ async def get_enhanced_user_analytics(
                 progress = (completed / len(course_topics)) * 100
                 course_progresses.append(progress)
 
-        average_course_progress = (
+        average_course_progress = round_progress_percent(
             sum(course_progresses) / len(course_progresses) if course_progresses else 0.0
         )
 
@@ -300,7 +303,7 @@ async def get_enhanced_user_analytics(
             course_topics = [topic for module in course.modules for topic in module.topics]
             course_completed_topics = sum(1 for t in course_topics if t.completed)
             course_total_topics = len(course_topics)
-            course_progress = (
+            course_progress = round_progress_percent(
                 (course_completed_topics / course_total_topics * 100)
                 if course_total_topics > 0
                 else 0.0
@@ -589,8 +592,8 @@ async def _get_progress_analytics(db: PrismaClient, user_id: str) -> ProgressAna
         active_goals = [g for g in goals if g.status == "ACTIVE"]
 
         goal_achievement_rate = (
-            len(completed_goals) / len(goals) * 100 if goals else 0,
-            sum(g.progress for g in goals) / len(goals) if goals else 0,
+            round_progress_percent(len(completed_goals) / len(goals) * 100 if goals else 0),
+            round_progress_percent(sum(g.progress for g in goals) / len(goals) if goals else 0),
         )
 
         # Task completion (using goals as tasks for now)
@@ -929,7 +932,7 @@ async def get_enhanced_admin_analytics(
             progress = (completed / len(course_topics)) * 100
             course_progresses.append(progress)
 
-    average_course_progress = (
+    average_course_progress = round_progress_percent(
         sum(course_progresses) / len(course_progresses) if course_progresses else 0.0
     )
 
@@ -945,12 +948,14 @@ async def get_enhanced_admin_analytics(
         ]
         user_total_topics = len(user_topics)
         user_completed_topics = sum(1 for t in user_topics if t.completed)
-        user_progress = (
+        user_progress = round_progress_percent(
             (user_completed_topics / user_total_topics * 100) if user_total_topics > 0 else 0.0
         )
         user_progresses.append(user_progress)
 
-    average_user_progress = sum(user_progresses) / len(user_progresses) if user_progresses else 0.0
+    average_user_progress = round_progress_percent(
+        sum(user_progresses) / len(user_progresses) if user_progresses else 0.0
+    )
 
     # Users by tier
     users_by_tier = defaultdict(int)
@@ -997,7 +1002,7 @@ async def get_enhanced_admin_analytics(
         ]
         user_total_topics = len(user_topics)
         user_completed_topics = sum(1 for t in user_topics if t.completed)
-        user_progress = (
+        user_progress = round_progress_percent(
             (user_completed_topics / user_total_topics * 100) if user_total_topics > 0 else 0.0
         )
 
@@ -1033,7 +1038,7 @@ async def get_enhanced_admin_analytics(
         course_topics = [topic for module in course.modules for topic in module.topics]
         course_total_topics = len(course_topics)
         course_completed_topics = sum(1 for t in course_topics if t.completed)
-        course_progress = (
+        course_progress = round_progress_percent(
             (course_completed_topics / course_total_topics * 100)
             if course_total_topics > 0
             else 0.0
