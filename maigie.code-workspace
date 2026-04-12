@@ -11,6 +11,10 @@
     {
       "name": "maigie-mobile",
       "path": "../maigie-mobile"
+    },
+    {
+      "name": "maigie-public",
+      "path": "../maigie-public"
     }
   ],
   "settings": {
