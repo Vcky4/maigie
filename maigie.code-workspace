@@ -1,0 +1,33 @@
+{
+  "folders": [
+    {
+      "name": "maigie (backend)",
+      "path": "."
+    },
+    {
+      "name": "maigie-client",
+      "path": "../maigie-client"
+    },
+    {
+      "name": "maigie-mobile",
+      "path": "../maigie-mobile"
+    },
+    {
+      "name": "maigie-public",
+      "path": "../maigie-public"
+    }
+  ],
+  "settings": {
+    "search.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/.expo": true,
+      "**/android": true,
+      "**/ios": true
+    },
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/.expo": true
+    }
+  }
+}
