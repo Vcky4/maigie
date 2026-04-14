@@ -63,6 +63,7 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "https://maigie.com",
         "https://www.maigie.com",
+        "https://app.maigie.com",
         "https://admin.maigie.com",
         "https://dev-admin.maigie.com",
         "http://localhost:4201",
@@ -219,6 +220,7 @@ def get_settings() -> Settings:
     required_production_origins = [
         "https://maigie.com",
         "https://www.maigie.com",
+        "https://app.maigie.com",
     ]
 
     # Merge environment-provided origins with required production origins
