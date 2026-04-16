@@ -886,9 +886,10 @@ async def generate_study_diagram_for_topic(
 
     topic = await db.topic.find_unique(
         where={"id": topic_id},
-        include={"course": True},
+        include={"module": {"include": {"course": True}}},
     )
-    if not topic or not topic.course or topic.course.userId != user_id:
+    course = topic.module.course if topic and topic.module else None
+    if not topic or not course or course.userId != user_id:
         raise ValueError("Topic not found")
 
     notes_list = await db.note.find_many(
@@ -901,7 +902,7 @@ async def generate_study_diagram_for_topic(
         note_blob = note_blob[-8000:]
 
     tt = topic_title or getattr(topic, "title", None) or "Topic"
-    ct = course_title or getattr(topic.course, "title", None) or "Course"
+    ct = course_title or getattr(course, "title", None) or "Course"
     hint_text = (
         hint or ""
     ).strip() or "The main idea the student is trying to understand right now."
