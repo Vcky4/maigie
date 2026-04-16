@@ -185,7 +185,14 @@ async def get_convai_conversation_token(current_user: CurrentUser):
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 "https://api.elevenlabs.io/v1/convai/conversation/token",
-                params={"agent_id": settings.ELEVENLABS_AGENT_ID},
+                params={
+                    "agent_id": settings.ELEVENLABS_AGENT_ID,
+                    **(
+                        {"environment": settings.ENVIRONMENT}
+                        if settings.ENVIRONMENT in {"staging", "production"}
+                        else {}
+                    ),
+                },
                 headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
             )
         if resp.status_code != 200:
