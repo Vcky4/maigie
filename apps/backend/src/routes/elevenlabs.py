@@ -162,6 +162,59 @@ async def get_convai_signed_url(current_user: CurrentUser):
         )
 
 
+@router.get("/convai/token")
+async def get_convai_conversation_token(current_user: CurrentUser):
+    """Get a conversation token for ElevenLabs Conversational AI (WebRTC).
+
+    This token allows the client to start a WebRTC voice session without exposing the API key.
+    """
+
+    settings = get_settings()
+    if not settings.ELEVENLABS_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice agent is not configured (missing API key)",
+        )
+    if not settings.ELEVENLABS_AGENT_ID:
+        raise HTTPException(
+            status_code=503,
+            detail="Voice agent is not configured (missing agent ID)",
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                "https://api.elevenlabs.io/v1/convai/conversation/token",
+                params={
+                    "agent_id": settings.ELEVENLABS_AGENT_ID,
+                    **(
+                        {"environment": settings.ENVIRONMENT}
+                        if settings.ENVIRONMENT in {"staging", "production"}
+                        else {}
+                    ),
+                },
+                headers={"xi-api-key": settings.ELEVENLABS_API_KEY},
+            )
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to get conversation token from ElevenLabs",
+            )
+        data = resp.json()
+        token = data.get("token")
+        if not token:
+            raise HTTPException(
+                status_code=502,
+                detail="ElevenLabs did not return a conversation token",
+            )
+        return {"token": token}
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ElevenLabs API error: {str(e)}",
+        )
+
+
 # --- Conversational AI: voice agent context for prompt injection ---
 
 
