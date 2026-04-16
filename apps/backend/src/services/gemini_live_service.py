@@ -21,6 +21,14 @@ import websockets
 
 logger = logging.getLogger(__name__)
 
+# Dedicated topic note for live voice study recap — never merge into the user's personal note.
+STUDY_VOICE_INSIGHTS_NOTE_TITLE = "Study insights (voice)"
+_STUDY_VOICE_INSIGHTS_NOTE_INTRO = (
+    "> **Auto-generated from live study** on this topic. "
+    "Your personal notes stay in a **separate** note on this topic; this note only captures "
+    "session insights and diagrams from voice.\n\n---\n\n"
+)
+
 
 def _normalize_live_tool_args(raw: Any) -> dict[str, Any]:
     """Gemini Live may send function args as a dict or as a JSON string."""
@@ -476,15 +484,38 @@ async def run_gemini_live_bridge(
 
             client = genai.Client(api_key=_get_api_key())
 
+            # Update database
+            from src.core.database import db
+            from src.models.notes import NoteCreate
+            from src.services import note_service
+
+            # Only touch the dedicated voice-insights note; never append to the user's personal note.
+            note = await db.note.find_first(
+                where={
+                    "topicId": topic_id,
+                    "userId": user_id,
+                    "title": STUDY_VOICE_INSIGHTS_NOTE_TITLE,
+                    "archived": False,
+                }
+            )
+
+            existing_for_prompt = ""
+            if note and (note.content or "").strip():
+                ec = (note.content or "").strip()
+                existing_for_prompt = ec[-14000:] if len(ec) > 14000 else ec
+
             prompt = (
-                "You are an expert note-taker. Below is a snippet of a voice study conversation transcript between a student and a mentor.\n"
-                "Extract the most important new academic points or insights that should be added to the student's study note.\n"
-                "Format the output as concise bullet points. ONLY output the bullet points, no other text.\n"
-                "If the mentor described or implied a diagram, flowchart, timeline, or structure, include a valid Mermaid diagram "
-                "as a single fenced block using exactly ```mermaid on the opening line and ``` on its own line to close. "
-                "Keep Mermaid short (under 25 lines). If no diagram helps, do not add a fence.\n"
-                "If no new important points are found, respond with 'NO_NEW_POINTS'.\n\n"
-                f"Transcript snippet:\n{transcript}"
+                "You maintain ONE running study document for a live voice tutoring session on a single topic.\n"
+                "The student may also keep a **personal** note on this topic — you must NOT assume you are editing that note.\n\n"
+                "Below is (A) what is already captured in the dedicated AI insights note, then (B) a fresh transcript snippet.\n"
+                "Your job: output **only** new material to **append** — well-structured Markdown (bullets with **bold** labels where "
+                "helpful, short sub-bullets, avoid repeating the same opening sentence the summary already states).\n"
+                "If a diagram, flowchart, timeline, or structure would help and is not already represented in (A), add **one** valid "
+                "Mermaid block: opening line exactly ```mermaid then body then closing ``` on its own line. Keep Mermaid ≤ 25 lines.\n"
+                "Do **not** output a heading like 'Insights from discussion' or '### Insights' — jump straight into bullets/paragraphs.\n"
+                "If nothing materially new appears compared to (A), reply with exactly: NO_NEW_POINTS\n\n"
+                f"--- Existing AI insights note (may be empty) ---\n{existing_for_prompt or '(empty)'}\n\n"
+                f"--- New transcript ---\n{transcript}\n"
             )
 
             response = await client.aio.models.generate_content(
@@ -496,17 +527,9 @@ async def run_gemini_live_bridge(
             if not new_points or "NO_NEW_POINTS" in new_points:
                 return
 
-            # Update database
-            from src.core.database import db
-
-            # Fetch existing note or create one
-            note = await db.note.find_first(where={"topicId": topic_id})
-
             if note:
-                # Append to existing note
-                current_content = note.content or ""
-                updated_content = f"{current_content}\n\n### Insights from discussion\n{new_points}"
-                # Trim if too long
+                current_content = (note.content or "").rstrip()
+                updated_content = f"{current_content}\n\n{new_points.strip()}"
                 if len(updated_content) > 50000:
                     updated_content = updated_content[-50000:]
 
@@ -514,15 +537,13 @@ async def run_gemini_live_bridge(
                     where={"id": note.id}, data={"content": updated_content}
                 )
             else:
-                # Create new note
-                from src.models.notes import NoteCreate
-                from src.services import note_service
-
                 topic = await db.topic.find_unique(where={"id": topic_id})
-                title = f"Notes: {topic.title}" if topic else "Study Session Notes"
-
+                body = _STUDY_VOICE_INSIGHTS_NOTE_INTRO + new_points.strip()
                 note_data = NoteCreate(
-                    title=title, content=new_points, topicId=topic_id, courseId=course_id
+                    title=STUDY_VOICE_INSIGHTS_NOTE_TITLE,
+                    content=body,
+                    topicId=topic_id,
+                    courseId=course_id,
                 )
                 updated_note = await note_service.create_note(db, user_id, note_data)
 
