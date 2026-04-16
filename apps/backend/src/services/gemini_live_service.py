@@ -480,6 +480,9 @@ async def run_gemini_live_bridge(
                 "You are an expert note-taker. Below is a snippet of a voice study conversation transcript between a student and a mentor.\n"
                 "Extract the most important new academic points or insights that should be added to the student's study note.\n"
                 "Format the output as concise bullet points. ONLY output the bullet points, no other text.\n"
+                "If the mentor described or implied a diagram, flowchart, timeline, or structure, include a valid Mermaid diagram "
+                "as a single fenced block using exactly ```mermaid on the opening line and ``` on its own line to close. "
+                "Keep Mermaid short (under 25 lines). If no diagram helps, do not add a fence.\n"
                 "If no new important points are found, respond with 'NO_NEW_POINTS'.\n\n"
                 f"Transcript snippet:\n{transcript}"
             )
