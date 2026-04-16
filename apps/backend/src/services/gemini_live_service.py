@@ -768,16 +768,20 @@ async def run_gemini_live_bridge(
                     )
                 )
 
+            bridge_exit_reason: dict[str, str] = {"reason": "unknown"}
+
             async def from_client_to_gemini() -> None:
                 try:
                     while True:
                         async with _sessions_lock:
                             sess = _sessions.get(session_id)
                             if sess and sess.get("force_disconnect"):
+                                bridge_exit_reason["reason"] = "forced"
                                 break
 
                         client_msg = await receive_from_client()
                         if client_msg is None:
+                            bridge_exit_reason["reason"] = "client_stop"
                             break
                         if isinstance(client_msg, bytes):
                             b64 = base64.b64encode(client_msg).decode("ascii")
@@ -836,6 +840,21 @@ async def run_gemini_live_bridge(
             try:
                 await from_client_to_gemini()
             finally:
+                # If the Gemini link or forwarder stops while the browser socket stays open, the client
+                # would otherwise keep sending PCM with sessionReady=true into a dead consumer.
+                if bridge_exit_reason.get("reason") != "client_stop":
+                    try:
+                        await send_to_client(
+                            json.dumps(
+                                {
+                                    "type": "stopped",
+                                    "session_id": session_id,
+                                    "message": "Live voice session ended (model connection closed). Start Study again to reconnect.",
+                                }
+                            )
+                        )
+                    except Exception:
+                        pass
                 if voice_billing_task is not None:
                     voice_billing_task.cancel()
                     try:
