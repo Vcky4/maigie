@@ -31,6 +31,7 @@ from src.services.gemini_live_service import (
     run_gemini_live_bridge,
     update_session_context,
 )
+from src.services.gemini_tools import get_study_tools
 
 logger = logging.getLogger(__name__)
 
@@ -295,10 +296,12 @@ async def gemini_live_websocket(
                     async def receive_from_client() -> str | bytes | None:
                         return await client_queue.get()
 
-                    # No tools for voice study sessions — the native audio model
-                    # doesn't reliably emit functionCalls. Topic completion is
-                    # detected client-side from the AI's spoken output instead.
-                    session_tools: list[dict] | None = [] if session.get("topic_id") else None
+                    # Minimal study tools: topic navigation + on-screen visuals (native audio cannot
+                    # stream markdown diagrams in speech transcription; `study_show_visual` pushes
+                    # Mermaid/math to the client). Topic completion is still detected client-side from speech.
+                    session_tools: list[dict] | None = (
+                        get_study_tools() if session.get("topic_id") else None
+                    )
 
                     bridge_task = asyncio.create_task(
                         run_gemini_live_bridge(

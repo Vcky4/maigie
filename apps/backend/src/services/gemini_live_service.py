@@ -626,6 +626,28 @@ async def run_gemini_live_bridge(
                             )
                         )
 
+                    if (
+                        name == "study_show_visual"
+                        and isinstance(result, dict)
+                        and result.get("status") == "success"
+                        and isinstance(args, dict)
+                    ):
+                        mermaid = str(args.get("mermaid") or "").strip()
+                        display_math = str(args.get("display_math") or "").strip()
+                        caption = str(args.get("caption") or "").strip()
+                        if mermaid or display_math:
+                            await send_to_client(
+                                json.dumps(
+                                    {
+                                        "type": "study_visual",
+                                        "session_id": session_id,
+                                        "mermaid": mermaid,
+                                        "display_math": display_math,
+                                        "caption": caption,
+                                    }
+                                )
+                            )
+
                     func_resp = {"name": name, "response": result}
                     if call_id:
                         func_resp["id"] = call_id

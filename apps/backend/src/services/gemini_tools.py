@@ -673,6 +673,41 @@ def complete_topic_and_continue_tool() -> dict[str, Any]:
     }
 
 
+def study_show_visual_tool() -> dict[str, Any]:
+    """Emit an on-screen diagram or equation during Gemini Live Study Mode (native audio).
+
+    Spoken output is plain transcription; this tool is how structured visuals reach the client.
+    """
+    return {
+        "name": "study_show_visual",
+        "description": (
+            "Show a diagram or written equation in the Study Mode overlay while you keep talking naturally. "
+            "Call this when explaining processes, hierarchies, comparisons, timelines, or math that is clearer visually. "
+            "Prefer valid Mermaid (flowchart, sequenceDiagram, mindmap, etc.). Do not read raw Mermaid line-by-line aloud; "
+            "summarize the idea in speech instead. Call again when the user asks for a different angle or a new diagram."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mermaid": {
+                    "type": "string",
+                    "description": (
+                        "Mermaid source only — no markdown fences. Example: flowchart LR\\n  A-->B\\n  B-->C"
+                    ),
+                },
+                "display_math": {
+                    "type": "string",
+                    "description": "Optional LaTeX for one display equation (no $$ delimiters).",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Optional one-line label shown above the visual.",
+                },
+            },
+        },
+    }
+
+
 def get_study_tools() -> list[dict[str, Any]]:
     """Return only study-relevant tools for Gemini Live voice sessions.
 
@@ -683,6 +718,7 @@ def get_study_tools() -> list[dict[str, Any]]:
         {
             "functionDeclarations": [
                 complete_topic_and_continue_tool(),
+                study_show_visual_tool(),
             ]
         }
     ]
