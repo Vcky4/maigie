@@ -13,12 +13,31 @@ import base64
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, Callable, Coroutine
 
 import websockets
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_live_tool_args(raw: Any) -> dict[str, Any]:
+    """Gemini Live may send function args as a dict or as a JSON string."""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return {}
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _tier_has_standby_voice_billing(tier: str | None) -> bool:
@@ -575,10 +594,11 @@ async def run_gemini_live_bridge(
                         await mark_ai_audio_activity()
                     except Exception as e:
                         logger.warning("Failed to decode audio from modelTurn: %s", e)
-                if "functionCall" in part and ws_conn:
-                    fc = part["functionCall"]
+                fc_raw = part.get("functionCall") or part.get("function_call")
+                if fc_raw and ws_conn:
+                    fc = fc_raw if isinstance(fc_raw, dict) else {}
                     name = fc.get("name")
-                    args = fc.get("args", {})
+                    args = _normalize_live_tool_args(fc.get("args"))
                     call_id = fc.get("id")
 
                     logger.info(
@@ -630,7 +650,6 @@ async def run_gemini_live_bridge(
                         name == "study_show_visual"
                         and isinstance(result, dict)
                         and result.get("status") == "success"
-                        and isinstance(args, dict)
                     ):
                         mermaid = str(args.get("mermaid") or "").strip()
                         display_math = str(args.get("display_math") or "").strip()
@@ -830,6 +849,103 @@ async def run_gemini_live_bridge(
                     billing_started_flag = bool(sess.get("voice_billing_started"))
                     bm = str(sess.get("billing_mode", "wall_clock"))
             on_done(consumed_pre_multiplier, billable, billing_started_flag, bm)
+
+
+def _extract_json_object_from_model_text(text: str) -> dict[str, Any] | None:
+    t = (text or "").strip()
+    if not t:
+        return None
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*```\s*$", "", t).strip()
+    try:
+        obj = json.loads(t)
+    except json.JSONDecodeError:
+        m = re.search(r"\{[\s\S]*\}\s*$", t)
+        if not m:
+            return None
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    return obj if isinstance(obj, dict) else None
+
+
+async def generate_study_diagram_for_topic(
+    user_id: str,
+    *,
+    topic_id: str,
+    topic_title: str | None,
+    course_title: str | None,
+    hint: str | None,
+    transcript_tail: str | None,
+) -> dict[str, str]:
+    """Use the text Gemini model to produce Mermaid / display math for Study Mode (REST fallback)."""
+    from src.core.database import db
+    from google import genai
+
+    topic = await db.topic.find_unique(
+        where={"id": topic_id},
+        include={"course": True},
+    )
+    if not topic or not topic.course or topic.course.userId != user_id:
+        raise ValueError("Topic not found")
+
+    notes_list = await db.note.find_many(
+        where={"topicId": topic_id, "userId": user_id},
+        order={"updatedAt": "asc"},
+    )
+    parts = [(n.content or "").strip() for n in notes_list if n.content]
+    note_blob = "\n\n---\n\n".join(parts) if parts else "(no notes yet)"
+    if len(note_blob) > 8000:
+        note_blob = note_blob[-8000:]
+
+    tt = topic_title or getattr(topic, "title", None) or "Topic"
+    ct = course_title or getattr(topic.course, "title", None) or "Course"
+    hint_text = (
+        hint or ""
+    ).strip() or "The main idea the student is trying to understand right now."
+    tail = (transcript_tail or "").strip()
+    if len(tail) > 6000:
+        tail = tail[-6000:]
+
+    prompt = (
+        "You help visualize ideas for a live voice study session.\n"
+        "Return ONLY a single JSON object (no markdown fences around the JSON, no other text) with keys:\n"
+        '- "mermaid": string, valid Mermaid diagram body WITHOUT triple-backtick fences. '
+        "Examples: start with flowchart TD, graph LR, sequenceDiagram, or mindmap. Keep it ≤ 30 lines. "
+        'Use "" if a diagram is not appropriate.\n'
+        '- "display_math": string, LaTeX for ONE display equation without $ or $$ delimiters, or "".\n'
+        '- "caption": string, one short line, or "".\n'
+        "At least one of mermaid or display_math must be non-empty.\n\n"
+        f"Course: {ct}\nTopic: {tt}\n\nRelevant notes:\n{note_blob}\n\n"
+        f"Recent voice transcript (may be fragmented):\n{tail or '(none)'}\n\n"
+        f"What to illustrate: {hint_text}\n"
+    )
+
+    api_key = _get_api_key()
+    if not api_key:
+        raise ValueError("Gemini API key not configured")
+
+    client = genai.Client(api_key=api_key)
+    response = await client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    raw_text = (response.text or "").strip()
+    obj = _extract_json_object_from_model_text(raw_text)
+    if not obj:
+        raise ValueError("Model did not return valid JSON")
+    mermaid = str(obj.get("mermaid") or "").strip()
+    display_math = str(obj.get("display_math") or "").strip()
+    caption = str(obj.get("caption") or "").strip()
+    if not mermaid and not display_math:
+        raise ValueError("Model returned empty diagram")
+    return {
+        "mermaid": mermaid,
+        "display_math": display_math,
+        "caption": caption,
+    }
 
 
 async def post_gemini_live_session(

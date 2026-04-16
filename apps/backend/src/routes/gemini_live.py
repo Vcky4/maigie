@@ -21,16 +21,18 @@ from src.config import settings
 from src.core.database import db
 from src.core.security import decode_access_token
 from src.dependencies import CurrentUser
-from src.services.credit_service import CREDIT_COSTS, check_credit_availability
+from src.services.credit_service import CREDIT_COSTS, check_credit_availability, consume_credits
 from src.services.gemini_live_service import (
     create_session as create_live_session,
     delete_session as delete_live_session,
+    generate_study_diagram_for_topic,
     get_session as get_live_session,
     list_sessions_for_user,
     post_gemini_live_session,
     run_gemini_live_bridge,
     update_session_context,
 )
+from src.utils.exceptions import SubscriptionLimitError
 from src.services.gemini_tools import get_study_tools
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,59 @@ class StartConversationResponse(BaseModel):
     topic_id: str | None = None
 
 
+class StudyDiagramRequest(BaseModel):
+    """Request a static diagram for Study Mode (text model; works when Live tools are not invoked)."""
+
+    topic_id: str
+    topic_title: str | None = None
+    course_title: str | None = None
+    hint: str | None = None
+    transcript_tail: str | None = None
+
+
+class StudyDiagramResponse(BaseModel):
+    mermaid: str
+    display_math: str
+    caption: str
+
+
 # --- REST endpoints ---
+
+
+@router.post("/study/diagram", response_model=StudyDiagramResponse)
+async def study_diagram(
+    current_user: CurrentUser,
+    body: StudyDiagramRequest,
+) -> StudyDiagramResponse:
+    """Generate Mermaid / display math for the current topic (uses gemini-2.5-flash, not Live audio)."""
+    credits_needed = CREDIT_COSTS.get("study_diagram", 80)
+    is_available, msg = await check_credit_availability(current_user, credits_needed)
+    if not is_available:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=msg or "Insufficient credits for this diagram.",
+        )
+    try:
+        result = await generate_study_diagram_for_topic(
+            current_user.id,
+            topic_id=body.topic_id,
+            topic_title=body.topic_title,
+            course_title=body.course_title,
+            hint=body.hint,
+            transcript_tail=body.transcript_tail,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+    try:
+        await consume_credits(current_user, credits_needed, operation="study_diagram", db_client=db)
+    except SubscriptionLimitError as e:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=getattr(e, "detail", None) or str(e),
+        ) from e
+
+    return StudyDiagramResponse(**result)
 
 
 @router.post("/conversation/start", response_model=StartConversationResponse)
