@@ -692,7 +692,9 @@ def study_show_visual_tool() -> dict[str, Any]:
                 "mermaid": {
                     "type": "string",
                     "description": (
-                        "Mermaid source only — no markdown fences. Example: flowchart LR\\n  A-->B\\n  B-->C"
+                        "Mermaid source only — no markdown fences. For flowchart/graph nodes, use quoted labels "
+                        'when text has parentheses, e.g. A["Vector space (definition)"] not A[Vector space (definition)]. '
+                        "Example: flowchart LR\\n  A-->B\\n  B-->C"
                     ),
                 },
                 "display_math": {

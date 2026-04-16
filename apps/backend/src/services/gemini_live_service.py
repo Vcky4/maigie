@@ -512,6 +512,8 @@ async def run_gemini_live_bridge(
                 "helpful, short sub-bullets, avoid repeating the same opening sentence the summary already states).\n"
                 "If a diagram, flowchart, timeline, or structure would help and is not already represented in (A), add **one** valid "
                 "Mermaid block: opening line exactly ```mermaid then body then closing ``` on its own line. Keep Mermaid ≤ 25 lines.\n"
+                "For flowchart/graph nodes, any label containing parentheses, brackets, colons, or slashes MUST use double-quoted text, "
+                'e.g. A["Vector space V (set of vectors)"] — never A[Vector space V (set of vectors)].\n'
                 "Do **not** output a heading like 'Insights from discussion' or '### Insights' — jump straight into bullets/paragraphs.\n"
                 "If nothing materially new appears compared to (A), reply with exactly: NO_NEW_POINTS\n\n"
                 f"--- Existing AI insights note (may be empty) ---\n{existing_for_prompt or '(empty)'}\n\n"
@@ -958,6 +960,8 @@ async def generate_study_diagram_for_topic(
         "Return ONLY a single JSON object (no markdown fences around the JSON, no other text) with keys:\n"
         '- "mermaid": string, valid Mermaid diagram body WITHOUT triple-backtick fences. '
         "Examples: start with flowchart TD, graph LR, sequenceDiagram, or mindmap. Keep it ≤ 30 lines. "
+        "For flowchart/graph, any node label containing parentheses MUST be double-quoted inside the brackets, "
+        'e.g. A["V (vectors)"] never A[V (vectors)]. '
         'Use "" if a diagram is not appropriate.\n'
         '- "display_math": string, LaTeX for ONE display equation without $ or $$ delimiters, or "".\n'
         '- "caption": string, one short line, or "".\n'
