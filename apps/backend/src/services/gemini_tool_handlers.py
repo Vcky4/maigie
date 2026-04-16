@@ -61,6 +61,7 @@ async def handle_tool_call(
         "get_pending_nudges": handle_get_pending_nudges,
         "email_user": handle_email_user,
         "complete_topic_and_continue": handle_complete_topic_and_continue,
+        "study_show_visual": handle_study_show_visual,
     }
 
     handler = handlers.get(tool_name)
@@ -776,6 +777,26 @@ async def handle_update_course_outline(
     except Exception as e:
         logger.error(f"update_course_outline error: {e}", exc_info=True)
         return {"status": "error", "message": f"Failed to update outline: {e}"}
+
+
+async def handle_study_show_visual(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate study overlay visual payload (client renders from WebSocket `study_visual`)."""
+    mermaid = (args.get("mermaid") or "").strip()
+    display_math = (args.get("display_math") or "").strip()
+    if not mermaid and not display_math:
+        return {
+            "status": "error",
+            "message": "Provide mermaid and/or display_math with non-empty content.",
+        }
+    return {
+        "status": "success",
+        "shown": True,
+        "message": "Visual will appear in Study Mode.",
+    }
 
 
 async def handle_complete_topic_and_continue(

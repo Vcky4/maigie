@@ -13,12 +13,39 @@ import base64
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, Callable, Coroutine
 
 import websockets
 
 logger = logging.getLogger(__name__)
+
+# Dedicated topic note for live voice study recap — never merge into the user's personal note.
+STUDY_VOICE_INSIGHTS_NOTE_TITLE = "Study insights (voice)"
+_STUDY_VOICE_INSIGHTS_NOTE_INTRO = (
+    "> **Auto-generated from live study** on this topic. "
+    "Your personal notes stay in a **separate** note on this topic; this note only captures "
+    "session insights and diagrams from voice.\n\n---\n\n"
+)
+
+
+def _normalize_live_tool_args(raw: Any) -> dict[str, Any]:
+    """Gemini Live may send function args as a dict or as a JSON string."""
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return {}
+        try:
+            parsed = json.loads(s)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def _tier_has_standby_voice_billing(tier: str | None) -> bool:
@@ -457,12 +484,40 @@ async def run_gemini_live_bridge(
 
             client = genai.Client(api_key=_get_api_key())
 
+            # Update database
+            from src.core.database import db
+            from src.models.notes import NoteCreate
+            from src.services import note_service
+
+            # Only touch the dedicated voice-insights note; never append to the user's personal note.
+            note = await db.note.find_first(
+                where={
+                    "topicId": topic_id,
+                    "userId": user_id,
+                    "title": STUDY_VOICE_INSIGHTS_NOTE_TITLE,
+                    "archived": False,
+                }
+            )
+
+            existing_for_prompt = ""
+            if note and (note.content or "").strip():
+                ec = (note.content or "").strip()
+                existing_for_prompt = ec[-14000:] if len(ec) > 14000 else ec
+
             prompt = (
-                "You are an expert note-taker. Below is a snippet of a voice study conversation transcript between a student and a mentor.\n"
-                "Extract the most important new academic points or insights that should be added to the student's study note.\n"
-                "Format the output as concise bullet points. ONLY output the bullet points, no other text.\n"
-                "If no new important points are found, respond with 'NO_NEW_POINTS'.\n\n"
-                f"Transcript snippet:\n{transcript}"
+                "You maintain ONE running study document for a live voice tutoring session on a single topic.\n"
+                "The student may also keep a **personal** note on this topic — you must NOT assume you are editing that note.\n\n"
+                "Below is (A) what is already captured in the dedicated AI insights note, then (B) a fresh transcript snippet.\n"
+                "Your job: output **only** new material to **append** — well-structured Markdown (bullets with **bold** labels where "
+                "helpful, short sub-bullets, avoid repeating the same opening sentence the summary already states).\n"
+                "If a diagram, flowchart, timeline, or structure would help and is not already represented in (A), add **one** valid "
+                "Mermaid block: opening line exactly ```mermaid then body then closing ``` on its own line. Keep Mermaid ≤ 25 lines.\n"
+                "For flowchart/graph nodes, any label containing parentheses, brackets, colons, or slashes MUST use double-quoted text, "
+                'e.g. A["Vector space V (set of vectors)"] — never A[Vector space V (set of vectors)].\n'
+                "Do **not** output a heading like 'Insights from discussion' or '### Insights' — jump straight into bullets/paragraphs.\n"
+                "If nothing materially new appears compared to (A), reply with exactly: NO_NEW_POINTS\n\n"
+                f"--- Existing AI insights note (may be empty) ---\n{existing_for_prompt or '(empty)'}\n\n"
+                f"--- New transcript ---\n{transcript}\n"
             )
 
             response = await client.aio.models.generate_content(
@@ -474,17 +529,9 @@ async def run_gemini_live_bridge(
             if not new_points or "NO_NEW_POINTS" in new_points:
                 return
 
-            # Update database
-            from src.core.database import db
-
-            # Fetch existing note or create one
-            note = await db.note.find_first(where={"topicId": topic_id})
-
             if note:
-                # Append to existing note
-                current_content = note.content or ""
-                updated_content = f"{current_content}\n\n### Insights from discussion\n{new_points}"
-                # Trim if too long
+                current_content = (note.content or "").rstrip()
+                updated_content = f"{current_content}\n\n{new_points.strip()}"
                 if len(updated_content) > 50000:
                     updated_content = updated_content[-50000:]
 
@@ -492,15 +539,13 @@ async def run_gemini_live_bridge(
                     where={"id": note.id}, data={"content": updated_content}
                 )
             else:
-                # Create new note
-                from src.models.notes import NoteCreate
-                from src.services import note_service
-
                 topic = await db.topic.find_unique(where={"id": topic_id})
-                title = f"Notes: {topic.title}" if topic else "Study Session Notes"
-
+                body = _STUDY_VOICE_INSIGHTS_NOTE_INTRO + new_points.strip()
                 note_data = NoteCreate(
-                    title=title, content=new_points, topicId=topic_id, courseId=course_id
+                    title=STUDY_VOICE_INSIGHTS_NOTE_TITLE,
+                    content=body,
+                    topicId=topic_id,
+                    courseId=course_id,
                 )
                 updated_note = await note_service.create_note(db, user_id, note_data)
 
@@ -575,10 +620,11 @@ async def run_gemini_live_bridge(
                         await mark_ai_audio_activity()
                     except Exception as e:
                         logger.warning("Failed to decode audio from modelTurn: %s", e)
-                if "functionCall" in part and ws_conn:
-                    fc = part["functionCall"]
+                fc_raw = part.get("functionCall") or part.get("function_call")
+                if fc_raw and ws_conn:
+                    fc = fc_raw if isinstance(fc_raw, dict) else {}
                     name = fc.get("name")
-                    args = fc.get("args", {})
+                    args = _normalize_live_tool_args(fc.get("args"))
                     call_id = fc.get("id")
 
                     logger.info(
@@ -625,6 +671,27 @@ async def run_gemini_live_bridge(
                                 }
                             )
                         )
+
+                    if (
+                        name == "study_show_visual"
+                        and isinstance(result, dict)
+                        and result.get("status") == "success"
+                    ):
+                        mermaid = str(args.get("mermaid") or "").strip()
+                        display_math = str(args.get("display_math") or "").strip()
+                        caption = str(args.get("caption") or "").strip()
+                        if mermaid or display_math:
+                            await send_to_client(
+                                json.dumps(
+                                    {
+                                        "type": "study_visual",
+                                        "session_id": session_id,
+                                        "mermaid": mermaid,
+                                        "display_math": display_math,
+                                        "caption": caption,
+                                    }
+                                )
+                            )
 
                     func_resp = {"name": name, "response": result}
                     if call_id:
@@ -703,16 +770,20 @@ async def run_gemini_live_bridge(
                     )
                 )
 
+            bridge_exit_reason: dict[str, str] = {"reason": "unknown"}
+
             async def from_client_to_gemini() -> None:
                 try:
                     while True:
                         async with _sessions_lock:
                             sess = _sessions.get(session_id)
                             if sess and sess.get("force_disconnect"):
+                                bridge_exit_reason["reason"] = "forced"
                                 break
 
                         client_msg = await receive_from_client()
                         if client_msg is None:
+                            bridge_exit_reason["reason"] = "client_stop"
                             break
                         if isinstance(client_msg, bytes):
                             b64 = base64.b64encode(client_msg).decode("ascii")
@@ -771,6 +842,21 @@ async def run_gemini_live_bridge(
             try:
                 await from_client_to_gemini()
             finally:
+                # If the Gemini link or forwarder stops while the browser socket stays open, the client
+                # would otherwise keep sending PCM with sessionReady=true into a dead consumer.
+                if bridge_exit_reason.get("reason") != "client_stop":
+                    try:
+                        await send_to_client(
+                            json.dumps(
+                                {
+                                    "type": "stopped",
+                                    "session_id": session_id,
+                                    "message": "Live voice session ended (model connection closed). Start Study again to reconnect.",
+                                }
+                            )
+                        )
+                    except Exception:
+                        pass
                 if voice_billing_task is not None:
                     voice_billing_task.cancel()
                     try:
@@ -808,6 +894,106 @@ async def run_gemini_live_bridge(
                     billing_started_flag = bool(sess.get("voice_billing_started"))
                     bm = str(sess.get("billing_mode", "wall_clock"))
             on_done(consumed_pre_multiplier, billable, billing_started_flag, bm)
+
+
+def _extract_json_object_from_model_text(text: str) -> dict[str, Any] | None:
+    t = (text or "").strip()
+    if not t:
+        return None
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*", "", t, flags=re.IGNORECASE)
+        t = re.sub(r"\s*```\s*$", "", t).strip()
+    try:
+        obj = json.loads(t)
+    except json.JSONDecodeError:
+        m = re.search(r"\{[\s\S]*\}\s*$", t)
+        if not m:
+            return None
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    return obj if isinstance(obj, dict) else None
+
+
+async def generate_study_diagram_for_topic(
+    user_id: str,
+    *,
+    topic_id: str,
+    topic_title: str | None,
+    course_title: str | None,
+    hint: str | None,
+    transcript_tail: str | None,
+) -> dict[str, str]:
+    """Use the text Gemini model to produce Mermaid / display math for Study Mode (REST fallback)."""
+    from src.core.database import db
+    from google import genai
+
+    topic = await db.topic.find_unique(
+        where={"id": topic_id},
+        include={"module": {"include": {"course": True}}},
+    )
+    course = topic.module.course if topic and topic.module else None
+    if not topic or not course or course.userId != user_id:
+        raise ValueError("Topic not found")
+
+    notes_list = await db.note.find_many(
+        where={"topicId": topic_id, "userId": user_id},
+        order={"updatedAt": "asc"},
+    )
+    parts = [(n.content or "").strip() for n in notes_list if n.content]
+    note_blob = "\n\n---\n\n".join(parts) if parts else "(no notes yet)"
+    if len(note_blob) > 8000:
+        note_blob = note_blob[-8000:]
+
+    tt = topic_title or getattr(topic, "title", None) or "Topic"
+    ct = course_title or getattr(course, "title", None) or "Course"
+    hint_text = (
+        hint or ""
+    ).strip() or "The main idea the student is trying to understand right now."
+    tail = (transcript_tail or "").strip()
+    if len(tail) > 6000:
+        tail = tail[-6000:]
+
+    prompt = (
+        "You help visualize ideas for a live voice study session.\n"
+        "Return ONLY a single JSON object (no markdown fences around the JSON, no other text) with keys:\n"
+        '- "mermaid": string, valid Mermaid diagram body WITHOUT triple-backtick fences. '
+        "Examples: start with flowchart TD, graph LR, sequenceDiagram, or mindmap. Keep it ≤ 30 lines. "
+        "For flowchart/graph, any node label containing parentheses MUST be double-quoted inside the brackets, "
+        'e.g. A["V (vectors)"] never A[V (vectors)]. '
+        'Use "" if a diagram is not appropriate.\n'
+        '- "display_math": string, LaTeX for ONE display equation without $ or $$ delimiters, or "".\n'
+        '- "caption": string, one short line, or "".\n'
+        "At least one of mermaid or display_math must be non-empty.\n\n"
+        f"Course: {ct}\nTopic: {tt}\n\nRelevant notes:\n{note_blob}\n\n"
+        f"Recent voice transcript (may be fragmented):\n{tail or '(none)'}\n\n"
+        f"What to illustrate: {hint_text}\n"
+    )
+
+    api_key = _get_api_key()
+    if not api_key:
+        raise ValueError("Gemini API key not configured")
+
+    client = genai.Client(api_key=api_key)
+    response = await client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+    raw_text = (response.text or "").strip()
+    obj = _extract_json_object_from_model_text(raw_text)
+    if not obj:
+        raise ValueError("Model did not return valid JSON")
+    mermaid = str(obj.get("mermaid") or "").strip()
+    display_math = str(obj.get("display_math") or "").strip()
+    caption = str(obj.get("caption") or "").strip()
+    if not mermaid and not display_math:
+        raise ValueError("Model returned empty diagram")
+    return {
+        "mermaid": mermaid,
+        "display_math": display_math,
+        "caption": caption,
+    }
 
 
 async def post_gemini_live_session(

@@ -77,6 +77,7 @@ CREDIT_COSTS = {
     "chat_message": 0,  # Tracked separately via tokenCount in ChatMessage
     "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
     "gemini_live_voice": 500,  # minimum pre-start check; live voice bills by time (+ paid standby = audio-active only)
+    "study_diagram": 80,  # one-off Mermaid / math diagram for Study Mode (text model; complements live voice)
 }
 
 

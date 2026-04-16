@@ -223,10 +223,24 @@ def get_settings() -> Settings:
         "https://app.maigie.com",
     ]
 
+    # Local dev frontends often call staging/prod API (e.g. VITE_API_BASE_URL=staging-api).
+    # If CORS_ORIGINS is set only to deployed web origins in env, merge these back in.
+    required_local_origins = [
+        "http://localhost:4200",
+        "http://127.0.0.1:4200",
+        "http://localhost:4201",
+        "http://127.0.0.1:4201",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+
     # Merge environment-provided origins with required production origins
     # Use a set to avoid duplicates, then convert back to list
     all_origins = set(settings.CORS_ORIGINS)
     all_origins.update(required_production_origins)
+    all_origins.update(required_local_origins)
     settings.CORS_ORIGINS = list(all_origins)
 
     return settings
