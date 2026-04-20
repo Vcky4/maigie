@@ -187,9 +187,11 @@ async def get_convai_conversation_token(current_user: CurrentUser):
                 "https://api.elevenlabs.io/v1/convai/conversation/token",
                 params={
                     "agent_id": settings.ELEVENLABS_AGENT_ID,
+                    "source": "react_native_sdk",
+                    "version": "1.1.1",
                     **(
                         {"environment": settings.ENVIRONMENT}
-                        if settings.ENVIRONMENT in {"staging", "production"}
+                        if settings.ENVIRONMENT == "production"
                         else {}
                     ),
                 },
