@@ -495,6 +495,9 @@ class GeminiService:
                     system_instruction=system_instruction,
                     tools=tools,
                     safety_settings=self.safety_settings,
+                    # Manual tool loop below; disable SDK automatic function calling to avoid
+                    # UNEXPECTED_TOOL_CALL / AFC state issues (see googleapis/python-genai#1818).
+                    automatic_function_calling=_types.AutomaticFunctionCallingConfig(disable=True),
                 ),
             )
 
@@ -608,7 +611,20 @@ class GeminiService:
 
                 if not function_calls:
                     # No tool calls - final turn
-                    if not final_text:
+                    finish_reason = None
+                    try:
+                        cands = getattr(response, "candidates", None)
+                        if cands:
+                            finish_reason = cands[0].finish_reason
+                    except Exception:
+                        finish_reason = None
+
+                    if finish_reason == _types.FinishReason.UNEXPECTED_TOOL_CALL and not final_text:
+                        final_text = (
+                            "I hit a temporary issue coordinating tools for that request. "
+                            "Please try again or rephrase your message slightly."
+                        )
+                    elif not final_text:
                         try:
                             final_text = (
                                 response.text if hasattr(response, "text") and response.text else ""
