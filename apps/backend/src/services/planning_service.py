@@ -303,6 +303,160 @@ Output only valid JSON. Make it realistic and achievable."""
     }
 
 
+async def regenerate_goal_plan(
+    user_id: str,
+    goal_id: str,
+    duration_weeks: int = 4,
+    request: str | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    duration_weeks = max(1, min(16, int(duration_weeks or 4)))
+    target_date = now + timedelta(weeks=duration_weeks)
+
+    goal = await db.goal.find_first(where={"id": goal_id, "userId": user_id})
+    if not goal:
+        return {"status": "error", "message": "Goal not found", "goal_id": goal_id}
+
+    user = await db.user.find_unique(
+        where={"id": user_id},
+        include={"preferences": True},
+    )
+    timezone = "UTC"
+    if user and user.preferences:
+        timezone = user.preferences.timezone or "UTC"
+
+    course_title = None
+    if getattr(goal, "courseId", None):
+        course = await db.course.find_first(where={"id": goal.courseId, "userId": user_id})
+        if course:
+            course_title = course.title
+
+    extra = f"\nUser request: {request.strip()}\n" if request and request.strip() else ""
+    prompt = f"""You are Maigie, the user's AI-powered academic operating system. Regenerate a realistic study schedule for an existing goal without creating a new course or a new main goal.
+
+Existing goal:
+- title: {goal.title}
+- description: {goal.description or ""}
+- target_date: {target_date.strftime('%B %d, %Y')}
+- linked_course_title: {course_title or "None"}
+Duration: {duration_weeks} weeks (from {now.strftime('%B %d, %Y')} to {target_date.strftime('%B %d, %Y')})
+Timezone: {timezone}
+{extra}
+Return a JSON object with:
+- "goal": {{
+    "description": "Updated short description of what achieving this goal means"
+  }}
+- "schedule": {{
+    "sessions_per_week": 3-5,
+    "hours_per_session": 0.5-2,
+    "preferred_days": ["Monday", "Wednesday", "Friday"]
+  }}
+- "study_tips": ["Tip 1", "Tip 2", "Tip 3"]
+
+Output only valid JSON."""
+
+    plan = await _call_gemini_for_plan(prompt)
+    if not plan:
+        return {
+            "status": "error",
+            "message": "Failed to generate plan. Please try again.",
+            "goal_id": goal_id,
+        }
+
+    deleted = await db.scheduleblock.delete_many(
+        where={
+            "userId": user_id,
+            "goalId": goal_id,
+            "startAt": {"gte": now},
+        }
+    )
+
+    update_data: dict[str, Any] = {"targetDate": target_date}
+    goal_desc = (plan.get("goal") or {}).get("description")
+    if isinstance(goal_desc, str) and goal_desc.strip():
+        update_data["description"] = goal_desc.strip()
+
+    await db.goal.update(where={"id": goal_id}, data=update_data)
+
+    schedule_config = plan.get("schedule", {}) or {}
+    sessions_per_week = schedule_config.get("sessions_per_week", 3)
+    hours_per_session = schedule_config.get("hours_per_session", 1)
+    preferred_days = schedule_config.get("preferred_days", ["Monday", "Wednesday", "Friday"])
+
+    try:
+        sessions_per_week = max(1, min(7, int(sessions_per_week)))
+    except Exception:
+        sessions_per_week = 3
+
+    try:
+        hours_per_session = float(hours_per_session)
+        hours_per_session = max(0.5, min(2.0, hours_per_session))
+    except Exception:
+        hours_per_session = 1.0
+
+    if not isinstance(preferred_days, list) or not preferred_days:
+        preferred_days = ["Monday", "Wednesday", "Friday"]
+
+    day_map = {
+        "Monday": 0,
+        "Tuesday": 1,
+        "Wednesday": 2,
+        "Thursday": 3,
+        "Friday": 4,
+        "Saturday": 5,
+        "Sunday": 6,
+    }
+    target_weekdays = [day_map.get(str(d), 0) for d in preferred_days[:sessions_per_week]]
+
+    schedules_created = 0
+    for week_num in range(duration_weeks):
+        week_start = now + timedelta(weeks=week_num)
+        for target_day in target_weekdays:
+            days_ahead = target_day - week_start.weekday()
+            if days_ahead < 0:
+                days_ahead += 7
+            session_date = week_start + timedelta(days=days_ahead)
+
+            if session_date < now:
+                continue
+            if session_date > target_date:
+                break
+
+            start_at = session_date.replace(hour=9, minute=0, second=0, microsecond=0)
+            end_at = start_at + timedelta(hours=hours_per_session)
+
+            sched_result = await action_service.create_schedule(
+                data={
+                    "title": f"Study: {goal.title[:40]}",
+                    "description": f"Study session for goal: {goal.title}",
+                    "startAt": start_at.isoformat(),
+                    "endAt": end_at.isoformat(),
+                    "courseId": getattr(goal, "courseId", None),
+                    "topicId": getattr(goal, "topicId", None),
+                    "goalId": goal_id,
+                },
+                user_id=user_id,
+            )
+            if sched_result.get("status") == "success":
+                schedules_created += 1
+
+    deleted_count = 0
+    if isinstance(deleted, dict):
+        deleted_count = int(deleted.get("count") or 0)
+    else:
+        deleted_count = int(getattr(deleted, "count", 0) or 0)
+
+    return {
+        "status": "success",
+        "goal_id": goal_id,
+        "deleted_schedule_blocks": deleted_count,
+        "created_schedule_blocks": schedules_created,
+        "target_date": target_date.isoformat(),
+        "study_tips": plan.get("study_tips", []) or [],
+        "message": "Plan regenerated successfully",
+    }
+
+
 async def check_plan_progress(user_id: str, course_id: str | None = None) -> dict:
     """
     Evaluate progress on a study plan and suggest adjustments.
