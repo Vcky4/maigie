@@ -10,8 +10,10 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,37 +24,57 @@ from src.services.action_service import action_service
 logger = logging.getLogger(__name__)
 
 
+class PlanRateLimited(Exception):
+    pass
+
+
 async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | None:
     """Call Gemini for plan generation. Returns parsed JSON or None."""
-    try:
-        from google import genai
-        from google.genai import types
-        import os
+    from google import genai
+    from google.genai import types
+    import os
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return None
-
-        client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.5,
-            ),
-        )
-        text = (response.text or "").strip()
-        if not text:
-            return None
-
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            return None
-        return json.loads(match.group(0))
-    except Exception as e:
-        logger.error("Plan generation LLM call failed: %s", e)
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
         return None
+
+    client = genai.Client(api_key=api_key)
+    max_attempts = 4
+
+    for attempt in range(max_attempts):
+        try:
+            response = await client.aio.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.5,
+                ),
+            )
+            text = (response.text or "").strip()
+            if not text:
+                return None
+
+            match = re.search(r"\{[\s\S]*\}", text)
+            if not match:
+                return None
+            return json.loads(match.group(0))
+        except Exception as e:
+            msg = str(e)
+            is_429 = "429" in msg and ("RESOURCE_EXHAUSTED" in msg or "Resource exhausted" in msg or "Too many requests" in msg)
+            if is_429 and attempt < (max_attempts - 1):
+                base = 0.75 * (2**attempt)
+                delay = min(6.0, base) * (0.75 + random.random() * 0.5)
+                logger.warning("Plan generation rate-limited (429). Retrying in %.2fs", delay)
+                await asyncio.sleep(delay)
+                continue
+
+            if is_429:
+                logger.warning("Plan generation LLM call failed: %s", e)
+                raise PlanRateLimited("AI is temporarily busy. Please try again in a moment.")
+
+            logger.error("Plan generation LLM call failed: %s", e)
+            return None
 
 
 async def create_study_plan(
@@ -140,7 +162,15 @@ Return a JSON object with:
 
 Output only valid JSON. Make it realistic and achievable."""
 
-    plan = await _call_gemini_for_plan(prompt)
+    try:
+        plan = await _call_gemini_for_plan(prompt)
+    except PlanRateLimited as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "rate_limited": True,
+        }
+
     if not plan:
         return {
             "status": "error",
@@ -355,7 +385,16 @@ Return a JSON object with:
 
 Output only valid JSON."""
 
-    plan = await _call_gemini_for_plan(prompt)
+    try:
+        plan = await _call_gemini_for_plan(prompt)
+    except PlanRateLimited as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "goal_id": goal_id,
+            "rate_limited": True,
+        }
+
     if not plan:
         return {
             "status": "error",

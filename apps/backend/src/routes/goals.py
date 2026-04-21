@@ -336,11 +336,10 @@ async def regenerate_goal_plan_route(
         request=data.request,
     )
     if result.get("status") != "success":
-        return GoalRegeneratePlanResponse(
-            status="error",
-            goal_id=goal_id,
-            message=result.get("message") or "Failed to regenerate plan",
-        )
+        msg = result.get("message") or "Failed to regenerate plan"
+        if result.get("rate_limited"):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=msg)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=msg)
 
     return GoalRegeneratePlanResponse(
         status="success",
