@@ -7,17 +7,26 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.goals import (
     GoalCreate,
+    GoalContributionDay,
+    GoalContributionSummary,
+    GoalDetailResponse,
     GoalListResponse,
     GoalProgressUpdate,
+    GoalRegeneratePlanRequest,
+    GoalRegeneratePlanResponse,
     GoalResponse,
+    GoalStreakSummary,
     GoalUpdate,
 )
+from src.models.schedule import ScheduleResponse
 from src.services.user_memory_service import user_memory_service
 
 router = APIRouter(prefix="/api/v1/goals", tags=["goals"])
@@ -178,6 +187,169 @@ async def get_goal(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get goal",
         )
+
+
+@router.get("/{goal_id}/detail", response_model=GoalDetailResponse)
+async def get_goal_detail(
+    goal_id: str,
+    current_user: CurrentUser,
+    contributionDays: int = Query(14, ge=1, le=90),
+    scheduleDays: int = Query(21, ge=1, le=90),
+):
+    try:
+        now = datetime.now(UTC)
+        goal = await db.goal.find_first(where={"id": goal_id, "userId": current_user.id})
+        if not goal:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Goal not found",
+            )
+
+        streak = await db.userstreak.find_unique(where={"userId": current_user.id})
+        streak_summary = GoalStreakSummary(
+            currentStreak=int(getattr(streak, "currentStreak", 0) or 0) if streak else 0,
+            longestStreak=int(getattr(streak, "longestStreak", 0) or 0) if streak else 0,
+        )
+
+        contribution_start = now - timedelta(days=contributionDays - 1)
+        daily_map: dict[str, float] = {}
+        sessions: list = []
+        if getattr(goal, "topicId", None) or getattr(goal, "courseId", None):
+            session_where = {
+                "userId": current_user.id,
+                "startTime": {"gte": contribution_start, "lte": now},
+            }
+            if getattr(goal, "topicId", None):
+                session_where["topicId"] = goal.topicId
+            elif getattr(goal, "courseId", None):
+                session_where["courseId"] = goal.courseId
+            sessions = await db.studysession.find_many(
+                where=session_where,
+                order={"startTime": "asc"},
+            )
+
+        for s in sessions:
+            d = s.startTime.astimezone(UTC).date().isoformat()
+            daily_map[d] = float(daily_map.get(d, 0.0) + float(s.duration or 0.0))
+
+        daily: list[GoalContributionDay] = []
+        for i in range(contributionDays):
+            day = (contribution_start + timedelta(days=i)).date().isoformat()
+            daily.append(GoalContributionDay(date=day, minutes=float(daily_map.get(day, 0.0))))
+
+        last7_start = now - timedelta(days=6)
+        last30_start = now - timedelta(days=29)
+
+        last7_minutes = 0.0
+        last30_minutes = 0.0
+        for s in sessions:
+            st = s.startTime.astimezone(UTC)
+            dur = float(s.duration or 0.0)
+            if st >= last7_start:
+                last7_minutes += dur
+            if st >= last30_start:
+                last30_minutes += dur
+
+        contributions = GoalContributionSummary(
+            last7DaysMinutes=float(last7_minutes),
+            last30DaysMinutes=float(last30_minutes),
+            daily=daily,
+        )
+
+        schedule_end = now + timedelta(days=scheduleDays)
+        schedules = await db.scheduleblock.find_many(
+            where={
+                "userId": current_user.id,
+                "goalId": goal_id,
+                "startAt": {"gte": now, "lte": schedule_end},
+            },
+            order={"startAt": "asc"},
+            take=200,
+        )
+        schedule_responses = [
+            ScheduleResponse(
+                id=schedule.id,
+                userId=schedule.userId,
+                title=schedule.title,
+                description=schedule.description,
+                startAt=schedule.startAt.isoformat(),
+                endAt=schedule.endAt.isoformat(),
+                recurringRule=schedule.recurringRule,
+                courseId=getattr(schedule, "courseId", None),
+                topicId=getattr(schedule, "topicId", None),
+                goalId=getattr(schedule, "goalId", None),
+                reviewItemId=getattr(schedule, "reviewItemId", None),
+                googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
+                googleCalendarSyncedAt=(
+                    schedule.googleCalendarSyncedAt.isoformat()
+                    if getattr(schedule, "googleCalendarSyncedAt", None)
+                    else None
+                ),
+                createdAt=schedule.createdAt.isoformat(),
+                updatedAt=schedule.updatedAt.isoformat(),
+            )
+            for schedule in schedules
+        ]
+
+        goal_resp = GoalResponse(
+            id=goal.id,
+            userId=goal.userId,
+            title=goal.title,
+            description=goal.description,
+            targetDate=goal.targetDate.isoformat() if goal.targetDate else None,
+            status=goal.status,
+            progress=goal.progress,
+            courseId=getattr(goal, "courseId", None),
+            topicId=getattr(goal, "topicId", None),
+            createdAt=goal.createdAt.isoformat(),
+            updatedAt=goal.updatedAt.isoformat(),
+        )
+
+        return GoalDetailResponse(
+            goal=goal_resp,
+            streak=streak_summary,
+            contributions=contributions,
+            schedules=schedule_responses,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error getting goal detail: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get goal detail",
+        )
+
+
+@router.post("/{goal_id}/regenerate-plan", response_model=GoalRegeneratePlanResponse)
+async def regenerate_goal_plan_route(
+    goal_id: str,
+    data: GoalRegeneratePlanRequest,
+    current_user: CurrentUser,
+):
+    from src.services.planning_service import regenerate_goal_plan
+
+    result = await regenerate_goal_plan(
+        user_id=current_user.id,
+        goal_id=goal_id,
+        duration_weeks=data.duration_weeks,
+        request=data.request,
+    )
+    if result.get("status") != "success":
+        msg = result.get("message") or "Failed to regenerate plan"
+        if result.get("rate_limited"):
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=msg)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=msg)
+
+    return GoalRegeneratePlanResponse(
+        status="success",
+        goal_id=goal_id,
+        deleted_schedule_blocks=int(result.get("deleted_schedule_blocks") or 0),
+        created_schedule_blocks=int(result.get("created_schedule_blocks") or 0),
+        target_date=result.get("target_date"),
+        study_tips=list(result.get("study_tips") or []),
+        message=result.get("message"),
+    )
 
 
 @router.patch("/{goal_id}", response_model=GoalResponse)

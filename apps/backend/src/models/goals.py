@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.models.schedule import ScheduleResponse
+
 
 class GoalStatus(str):
     """Goal status enum values."""
@@ -77,3 +79,41 @@ class GoalListResponse(BaseModel):
     page: int
     pageSize: int
     hasMore: bool
+
+
+class GoalContributionDay(BaseModel):
+    date: str
+    minutes: float
+
+
+class GoalContributionSummary(BaseModel):
+    last7DaysMinutes: float
+    last30DaysMinutes: float
+    daily: list[GoalContributionDay]
+
+
+class GoalStreakSummary(BaseModel):
+    currentStreak: int
+    longestStreak: int
+
+
+class GoalDetailResponse(BaseModel):
+    goal: GoalResponse
+    streak: GoalStreakSummary
+    contributions: GoalContributionSummary
+    schedules: list[ScheduleResponse]
+
+
+class GoalRegeneratePlanRequest(BaseModel):
+    duration_weeks: int = Field(default=4, ge=1, le=16)
+    request: str | None = Field(default=None, max_length=500)
+
+
+class GoalRegeneratePlanResponse(BaseModel):
+    status: Literal["success", "error"]
+    goal_id: str
+    deleted_schedule_blocks: int = 0
+    created_schedule_blocks: int = 0
+    target_date: str | None = None
+    study_tips: list[str] = Field(default_factory=list)
+    message: str | None = None
