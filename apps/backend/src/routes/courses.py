@@ -26,10 +26,14 @@ from ..models.analytics import (
 )
 from ..models.courses import (
     AICourseRequest,
+    CourseContributionDay,
     CourseCreate,
+    CourseDetailResponse,
     CourseListItem,
     CourseListResponse,
+    CourseFootprint,
     CourseResponse,
+    CourseStreakSummary,
     CourseUpdate,
     ModuleCreate,
     ModuleResponse,
@@ -39,6 +43,7 @@ from ..models.courses import (
     TopicResponse,
     TopicUpdate,
 )
+from ..models.schedule import ScheduleResponse
 from ..services.credit_service import (
     CREDIT_COSTS,
     consume_credits,
@@ -657,6 +662,149 @@ async def get_course(
         modules=enriched_modules,
         createdAt=course.createdAt,
         updatedAt=course.updatedAt,
+    )
+
+
+@router.get("/{course_id}/detail", response_model=CourseDetailResponse)
+async def get_course_detail(
+    course_id: str,
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)],
+    contributionDays: int = Query(14, ge=1, le=90),
+    scheduleDays: int = Query(21, ge=1, le=90),
+):
+    user_id = current_user.id
+
+    course = await get_course(course_id, current_user, db)
+
+    now = datetime.now(timezone.utc)
+
+    streak = await db.userstreak.find_unique(where={"userId": user_id})
+    user_streak = CourseStreakSummary(
+        currentStreak=int(getattr(streak, "currentStreak", 0) or 0) if streak else 0,
+        longestStreak=int(getattr(streak, "longestStreak", 0) or 0) if streak else 0,
+    )
+
+    window_days = max(int(contributionDays), 30)
+    contribution_start = now - timedelta(days=window_days - 1)
+    sessions = await db.studysession.find_many(
+        where={
+            "userId": user_id,
+            "courseId": course_id,
+            "startTime": {"gte": contribution_start, "lte": now},
+        },
+        order={"startTime": "asc"},
+    )
+
+    daily_map: dict[str, float] = {}
+    for s in sessions:
+        d = s.startTime.astimezone(timezone.utc).date().isoformat()
+        daily_map[d] = float(daily_map.get(d, 0.0) + float(s.duration or 0.0))
+
+    daily: list[CourseContributionDay] = []
+    daily_start = now - timedelta(days=int(contributionDays) - 1)
+    for i in range(int(contributionDays)):
+        day = (daily_start + timedelta(days=i)).date().isoformat()
+        daily.append(CourseContributionDay(date=day, minutes=float(daily_map.get(day, 0.0))))
+
+    last7_start = now - timedelta(days=6)
+    last30_start = now - timedelta(days=29)
+    last7_minutes = 0.0
+    last30_minutes = 0.0
+    for s in sessions:
+        st = s.startTime.astimezone(timezone.utc)
+        dur = float(s.duration or 0.0)
+        if st >= last7_start:
+            last7_minutes += dur
+        if st >= last30_start:
+            last30_minutes += dur
+
+    footprint = CourseFootprint(
+        last7DaysMinutes=float(last7_minutes),
+        last30DaysMinutes=float(last30_minutes),
+        daily=daily,
+    )
+
+    streak_start = now - timedelta(days=365)
+    streak_sessions = await db.studysession.find_many(
+        where={
+            "userId": user_id,
+            "courseId": course_id,
+            "startTime": {"gte": streak_start, "lte": now},
+        },
+        order={"startTime": "asc"},
+    )
+    all_dates = sorted({s.startTime.astimezone(timezone.utc).date() for s in streak_sessions})
+
+    def _compute_streaks(dates: list) -> tuple[int, int]:
+        if not dates:
+            return 0, 0
+        date_set = set(dates)
+        longest = 1
+        curr = 1
+        prev = dates[0]
+        for d in dates[1:]:
+            if (d - timedelta(days=1)) == prev:
+                curr += 1
+            else:
+                longest = max(longest, curr)
+                curr = 1
+            prev = d
+        longest = max(longest, curr)
+
+        last = dates[-1]
+        current = 1
+        while (last - timedelta(days=current)) in date_set:
+            current += 1
+        return current, longest
+
+    course_current, course_longest = _compute_streaks(all_dates)
+    course_streak = CourseStreakSummary(
+        currentStreak=int(course_current),
+        longestStreak=int(course_longest),
+    )
+
+    schedule_end = now + timedelta(days=scheduleDays)
+    schedules = await db.scheduleblock.find_many(
+        where={
+            "userId": user_id,
+            "courseId": course_id,
+            "startAt": {"gte": now, "lte": schedule_end},
+        },
+        order={"startAt": "asc"},
+        take=200,
+    )
+    schedule_responses = [
+        ScheduleResponse(
+            id=schedule.id,
+            userId=schedule.userId,
+            title=schedule.title,
+            description=schedule.description,
+            startAt=schedule.startAt.isoformat(),
+            endAt=schedule.endAt.isoformat(),
+            recurringRule=schedule.recurringRule,
+            courseId=getattr(schedule, "courseId", None),
+            topicId=getattr(schedule, "topicId", None),
+            goalId=getattr(schedule, "goalId", None),
+            reviewItemId=getattr(schedule, "reviewItemId", None),
+            googleCalendarEventId=getattr(schedule, "googleCalendarEventId", None),
+            googleCalendarSyncedAt=(
+                schedule.googleCalendarSyncedAt.isoformat()
+                if getattr(schedule, "googleCalendarSyncedAt", None)
+                else None
+            ),
+            createdAt=schedule.createdAt.isoformat(),
+            updatedAt=schedule.updatedAt.isoformat(),
+        )
+        for schedule in schedules
+    ]
+
+    return CourseDetailResponse(
+        course=course,
+        userStreak=user_streak,
+        courseStreak=course_streak,
+        footprint=footprint,
+        schedules=schedule_responses,
     )
 
 
