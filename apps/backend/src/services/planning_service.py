@@ -61,7 +61,11 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
             return json.loads(match.group(0))
         except Exception as e:
             msg = str(e)
-            is_429 = "429" in msg and ("RESOURCE_EXHAUSTED" in msg or "Resource exhausted" in msg or "Too many requests" in msg)
+            is_429 = "429" in msg and (
+                "RESOURCE_EXHAUSTED" in msg
+                or "Resource exhausted" in msg
+                or "Too many requests" in msg
+            )
             if is_429 and attempt < (max_attempts - 1):
                 base = 0.75 * (2**attempt)
                 delay = min(6.0, base) * (0.75 + random.random() * 0.5)
