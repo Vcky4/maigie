@@ -39,7 +39,8 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
         return None
 
     client = genai.Client(api_key=api_key)
-    max_attempts = 4
+    # RESOURCE_EXHAUSTED: backoff helps for API-key (Gemini Developer API) and other routes alike.
+    max_attempts = 6
 
     for attempt in range(max_attempts):
         try:
@@ -49,6 +50,8 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
                 config=types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
                     temperature=0.5,
+                    # No tools here; AFC can add noise and extra remote behavior.
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                 ),
             )
             text = (response.text or "").strip()
@@ -67,9 +70,14 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
                 or "Too many requests" in msg
             )
             if is_429 and attempt < (max_attempts - 1):
-                base = 0.75 * (2**attempt)
-                delay = min(6.0, base) * (0.75 + random.random() * 0.5)
-                logger.warning("Plan generation rate-limited (429). Retrying in %.2fs", delay)
+                base = min(30.0, 2.0 * (2**attempt))
+                delay = base * (0.85 + random.random() * 0.3)
+                logger.warning(
+                    "Plan generation rate-limited (429). Retrying in %.2fs (attempt %s/%s)",
+                    delay,
+                    attempt + 1,
+                    max_attempts,
+                )
                 await asyncio.sleep(delay)
                 continue
 
