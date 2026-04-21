@@ -13,6 +13,7 @@ from enum import Enum
 from pydantic import BaseModel, ConfigDict, Field  # <--- Added ConfigDict here
 
 from ..models.notes import NoteResponse  # Import NoteResponse
+from ..models.schedule import ScheduleResponse
 
 
 class DifficultyLevel(str, Enum):
@@ -228,6 +229,30 @@ class ProgressResponse(BaseModel):
     courseId: str
     overallProgress: float
     totalTopics: int
+
+
+class CourseContributionDay(BaseModel):
+    date: str
+    minutes: float
+
+
+class CourseFootprint(BaseModel):
+    last7DaysMinutes: float
+    last30DaysMinutes: float
+    daily: list[CourseContributionDay]
+
+
+class CourseStreakSummary(BaseModel):
+    currentStreak: int
+    longestStreak: int
+
+
+class CourseDetailResponse(BaseModel):
+    course: CourseResponse
+    userStreak: CourseStreakSummary
+    courseStreak: CourseStreakSummary
+    footprint: CourseFootprint
+    schedules: list[ScheduleResponse]
     completedTopics: int
     totalModules: int
     completedModules: int
