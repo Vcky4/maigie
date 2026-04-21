@@ -522,7 +522,8 @@ class GeminiService:
                 streamed_turn_text = ""
 
                 async def _send_streaming_request(payload):
-                    response_stream = chat._send_message_stream(payload)
+                    # google-genai AsyncChat: await coroutine, then async-iterate chunks
+                    response_stream = await chat.send_message_stream(payload)
                     last_response = None
                     streamed_text_parts = []
                     last_chunk_text = None
