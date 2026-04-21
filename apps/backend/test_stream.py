@@ -10,7 +10,7 @@ async def main():
     try:
         client = genai.Client()
         chat = client.aio.chats.create(model="gemini-2.5-flash")
-        stream = chat._send_message_stream("Hello, tell me a short joke.")
+        stream = await chat.send_message_stream("Hello, tell me a short joke.")
 
         chunk_count = 0
         async for chunk in stream:
