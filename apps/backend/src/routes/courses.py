@@ -36,6 +36,7 @@ from ..models.courses import (
     CourseStreakSummary,
     CourseUpdate,
     ModuleCreate,
+    ModuleProgress,
     ModuleResponse,
     ModuleUpdate,
     ProgressResponse,
@@ -799,12 +800,39 @@ async def get_course_detail(
         for schedule in schedules
     ]
 
+    modules_progress = [
+        ModuleProgress(
+            moduleId=m.id,
+            title=m.title,
+            order=m.order,
+            progress=m.progress,
+            totalTopics=m.topicCount,
+            completedTopics=m.completedTopicCount,
+            completed=m.completed,
+        )
+        for m in course.modules
+    ]
+    total_estimated_hours = 0.0
+    completed_estimated_hours = 0.0
+    for m in course.modules:
+        for t in m.topics:
+            h = float(t.estimatedHours or 0.0)
+            total_estimated_hours += h
+            if t.completed:
+                completed_estimated_hours += h
+
     return CourseDetailResponse(
         course=course,
         userStreak=user_streak,
         courseStreak=course_streak,
         footprint=footprint,
         schedules=schedule_responses,
+        completedTopics=course.completedTopics,
+        totalModules=len(course.modules),
+        completedModules=sum(1 for m in course.modules if m.completed),
+        totalEstimatedHours=total_estimated_hours,
+        completedEstimatedHours=completed_estimated_hours,
+        modules=modules_progress,
     )
 
 
