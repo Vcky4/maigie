@@ -39,8 +39,8 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
         return None
 
     client = genai.Client(api_key=api_key)
-    # RESOURCE_EXHAUSTED: backoff helps for API-key (Gemini Developer API) and other routes alike.
-    max_attempts = 6
+    # RESOURCE_EXHAUSTED: short exponential backoff; many long retries still fail and tie up HTTP (~60s+).
+    max_attempts = 4
 
     for attempt in range(max_attempts):
         try:
@@ -70,7 +70,7 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
                 or "Too many requests" in msg
             )
             if is_429 and attempt < (max_attempts - 1):
-                base = min(30.0, 2.0 * (2**attempt))
+                base = min(10.0, 2.5 * (2**attempt))
                 delay = base * (0.85 + random.random() * 0.3)
                 logger.warning(
                     "Plan generation rate-limited (429). Retrying in %.2fs (attempt %s/%s)",
