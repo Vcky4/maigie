@@ -6,14 +6,18 @@ Handles chat logic and tool execution.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import logging
 import os
+import random
 import time
 import warnings
+from typing import Any
 from datetime import UTC
 
 import httpx
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 genai = None
 # Suppress the Google Gemini deprecation warning temporarily
@@ -1463,6 +1467,84 @@ Tags (JSON array):"""
             return "I'm sorry, I encountered an error analyzing that image."
 
 
+def _transient_gemini_error(exc: BaseException) -> bool:
+    """True when a short wait or model switch might help (rate limits, overload)."""
+    msg = str(exc).lower()
+    return (
+        "429" in msg
+        or "resource exhausted" in msg
+        or "too many requests" in msg
+        or "quota" in msg
+        or "rate limit" in msg
+        or "503" in msg
+        or "502" in msg
+        or "unavailable" in msg
+        or "500" in msg
+        or "internal error" in msg
+        or "deadline" in msg
+        or "timeout" in msg
+    )
+
+
+def _exam_prep_model_chain() -> list[str]:
+    raw = os.getenv("GEMINI_EXAM_PREP_MODELS", "gemini-2.0-flash,gemini-1.5-flash")
+    return [m.strip() for m in raw.split(",") if m.strip()]
+
+
+async def _exam_prep_generate_with_retry(
+    *,
+    contents: Any,
+    config: Any,
+    attempts_per_model: int = 6,
+    base_delay_sec: float = 2.0,
+) -> Any:
+    """
+    Gemini generate_content for exam-prep flows with backoff on 429/overload.
+
+    Models: GEMINI_EXAM_PREP_MODELS (comma-separated), default tries flash then 1.5-flash.
+    """
+    if genai is None:
+        raise RuntimeError("Google Genai client is not available")
+
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    last_exc: BaseException | None = None
+
+    for model_name in _exam_prep_model_chain():
+        for attempt in range(attempts_per_model):
+            try:
+                return await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+            except BaseException as e:
+                last_exc = e
+                if not _transient_gemini_error(e):
+                    logger.warning(
+                        "exam_prep Gemini non-retryable error model=%s: %s", model_name, e
+                    )
+                    raise
+                if attempt >= attempts_per_model - 1:
+                    logger.warning(
+                        "exam_prep Gemini exhausted retries for model=%s: %s",
+                        model_name,
+                        e,
+                    )
+                    break
+                delay = min(base_delay_sec * (2**attempt) + random.random(), 45.0)
+                logger.info(
+                    "exam_prep Gemini retry in %.1fs (model=%s attempt=%s/%s): %s",
+                    delay,
+                    model_name,
+                    attempt + 1,
+                    attempts_per_model,
+                    e,
+                )
+                await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 async def extract_exam_topics(subject: str, material_texts: list[str]) -> list[dict]:
     """
     Extract key topics/chapters from exam prep materials using AI.
@@ -1506,11 +1588,9 @@ Guidelines:
 JSON array:"""
 
     try:
-        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         from google.genai import types as genai_types
 
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        response = await _exam_prep_generate_with_retry(
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=2000,
@@ -1539,7 +1619,7 @@ JSON array:"""
         return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
 
     except Exception as e:
-        print(f"extract_exam_topics error: {e}")
+        logger.warning("extract_exam_topics failed (using fallback topic): %s", e, exc_info=True)
         return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
 
 
@@ -1574,11 +1654,9 @@ If you can't identify the correct answer with certainty, still provide your best
 JSON array:"""
 
     try:
-        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         from google.genai import types as genai_types
 
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        response = await _exam_prep_generate_with_retry(
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=4000,
@@ -1613,7 +1691,7 @@ JSON array:"""
         return []
 
     except Exception as e:
-        print(f"extract_past_paper_questions error: {e}")
+        logger.warning("extract_past_paper_questions failed: %s", e, exc_info=True)
         return []
 
 
@@ -1670,11 +1748,9 @@ No markdown, no code fences.
 JSON array:"""
 
     try:
-        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         from google.genai import types as genai_types
 
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        response = await _exam_prep_generate_with_retry(
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=4000,
@@ -1708,7 +1784,7 @@ JSON array:"""
         return []
 
     except Exception as e:
-        print(f"generate_exam_questions error: {e}")
+        logger.warning("generate_exam_questions failed: %s", e, exc_info=True)
         return []
 
 
