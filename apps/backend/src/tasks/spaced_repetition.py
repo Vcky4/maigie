@@ -8,6 +8,7 @@ Spaced repetition and schedule review tasks (Celery).
 from __future__ import annotations
 
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -172,18 +173,55 @@ async def _ai_review_schedules_daily() -> dict[str, Any]:
         where={"archived": False},
         distinct=["userId"],
     )
-    user_ids = list(
+    course_user_id_set = {c.userId for c in course_user_ids}
+    union_ids = (
         {r.userId for r in behaviour_user_ids}
         | {r.userId for r in review_user_ids}
-        | {c.userId for c in course_user_ids}
+        | course_user_id_set
     )
+
+    # Anyone with a block overlapping the next 7 days is "covered" for the AI prompt window
+    now = datetime.now(UTC)
+    week_ahead = now + timedelta(days=7)
+    busy_rows = await db.scheduleblock.find_many(
+        where={
+            "AND": [
+                {"startAt": {"lt": week_ahead}},
+                {"endAt": {"gt": now}},
+            ],
+        },
+        distinct=["userId"],
+    )
+    busy_user_id_set = {r.userId for r in busy_rows}
+
+    # Process course holders with an empty week first so they are not starved when many users exist
+    empty_week_course_users = sorted(course_user_id_set - busy_user_id_set)
+    ordered_user_ids: list[str] = []
+    seen: set[str] = set()
+    for uid in empty_week_course_users:
+        if uid in union_ids:
+            ordered_user_ids.append(uid)
+            seen.add(uid)
+    for uid in sorted(union_ids - seen):
+        ordered_user_ids.append(uid)
+
+    max_users = max(1, int(os.getenv("AI_SCHEDULE_REVIEW_MAX_USERS", "500")))
     results = {}
-    for uid in user_ids[:50]:  # Cap at 50 users per run
+    for uid in ordered_user_ids[:max_users]:
         try:
             results[uid] = await _ai_review_schedules_for_user(uid, db)
         except Exception as e:
             logger.warning("AI review failed for user %s: %s", uid, e)
             results[uid] = {"created": 0, "suggestions_count": 0, "error": str(e)}
+    total_created = sum(int(r.get("created", 0) or 0) for r in results.values())
+    total_suggestions = sum(int(r.get("suggestions_count", 0) or 0) for r in results.values())
+    logger.info(
+        "ai_review_schedules_daily: users=%s blocks_created=%s suggestions=%s cap=%s",
+        len(results),
+        total_created,
+        total_suggestions,
+        max_users,
+    )
     return {"users_processed": len(results), "results": results}
 
 

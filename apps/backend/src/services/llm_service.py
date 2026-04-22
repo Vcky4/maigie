@@ -1803,6 +1803,12 @@ async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[st
 
     if genai is None:
         return []
+    if not os.getenv("GEMINI_API_KEY"):
+        logger.warning(
+            "get_schedule_review_suggestions skipped for user %s: GEMINI_API_KEY not set",
+            user_id,
+        )
+        return []
     now = datetime.now(UTC)
     week_end = now + timedelta(days=7)
 
