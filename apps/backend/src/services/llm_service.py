@@ -1832,9 +1832,12 @@ async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[st
         order={"createdAt": "desc"},
         take=30,
     )
-    # Upcoming schedule (next 7 days)
+    # Upcoming schedule: any block overlapping [now, week_end] (not only fully inside the window)
     schedules = await db.scheduleblock.find_many(
-        where={"userId": user_id, "startAt": {"gte": now}, "endAt": {"lte": week_end}},
+        where={
+            "userId": user_id,
+            "AND": [{"startAt": {"lt": week_end}}, {"endAt": {"gt": now}}],
+        },
         order={"startAt": "asc"},
         take=50,
     )
@@ -1934,7 +1937,7 @@ JSON:"""
             )
         return out
     except Exception as e:
-        print(f"get_schedule_review_suggestions error: {e}")
+        logger.warning("get_schedule_review_suggestions failed: %s", e, exc_info=True)
         return []
 
 
