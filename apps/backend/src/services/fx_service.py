@@ -14,7 +14,8 @@ from typing import Any
 
 import httpx
 
-FRANKFURTER_BASE = "https://api.frankfurter.app"
+# Canonical host (api.frankfurter.app 301s to api.frankfurter.dev/v1 — see frankfurter docs).
+FRANKFURTER_BASE = "https://api.frankfurter.dev/v1"
 _Q4 = Decimal("0.0001")
 _Q10 = Decimal("0.0000000001")
 
@@ -51,7 +52,7 @@ async def convert_amount_to_gbp(
         gbp = _quantize_money(amount)
         return gbp, Decimal("1"), "", "identity"
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         resp = await client.get(
             f"{FRANKFURTER_BASE}/latest",
             params={"from": cur, "to": "GBP"},
@@ -79,7 +80,7 @@ async def convert_amount_to_gbp(
 
 async def list_fx_currencies() -> dict[str, str]:
     """ISO code -> currency label (for admin UI)."""
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         resp = await client.get(f"{FRANKFURTER_BASE}/currencies")
         resp.raise_for_status()
         data: dict[str, str] = resp.json()

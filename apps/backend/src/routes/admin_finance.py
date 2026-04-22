@@ -174,14 +174,9 @@ async def list_ledger(
         take=pageSize,
     )
 
-    income_only = await db.ledgerline.find_many(
-        where={**where, "kind": "INCOME"},
-        select={"amountGbp": True},
-    )
-    expense_only = await db.ledgerline.find_many(
-        where={**where, "kind": "EXPENSE"},
-        select={"amountGbp": True},
-    )
+    # prisma-client-py find_many does not support `select=`; fetch rows and sum in process.
+    income_only = await db.ledgerline.find_many(where={**where, "kind": "INCOME"})
+    expense_only = await db.ledgerline.find_many(where={**where, "kind": "EXPENSE"})
     inc_d = sum((Decimal(str(r.amountGbp)) for r in income_only), Decimal("0"))
     exp_d = sum((Decimal(str(r.amountGbp)) for r in expense_only), Decimal("0"))
 
