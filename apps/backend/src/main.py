@@ -46,6 +46,7 @@ from .models.error_response import ErrorResponse
 from .routes.admin import router as admin_router
 from .routes.admin_career_applications import router as admin_career_applications_router
 from .routes.admin_content import router as admin_content_router
+from .routes.admin_finance import router as admin_finance_router
 from .routes.admin_staff import router as admin_staff_router
 from .routes.blog_public import router as blog_public_router
 from .routes.ai import router as ai_router
@@ -410,6 +411,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router)
     app.include_router(admin_career_applications_router)
     app.include_router(admin_content_router)
+    app.include_router(admin_finance_router)
     app.include_router(admin_staff_router)
 
     app.include_router(ai_router)

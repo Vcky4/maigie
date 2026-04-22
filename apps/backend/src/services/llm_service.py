@@ -594,6 +594,15 @@ class GeminiService:
                             final_text += " "
                         final_text += streamed_turn_text
 
+                # Some streamed turns may not end with a final response object.
+                # Avoid hard failures and return a graceful fallback instead.
+                if response is None and not streamed_turn_text and not streamed_function_calls:
+                    final_text = (
+                        "I'm sorry, I couldn't generate a response right now. " "Please try again."
+                    )
+                    print(f"⏱️ [{request_id}] LLM iteration {iteration} ended without response")
+                    break
+
                 # Track token usage
                 if hasattr(response, "usage_metadata"):
                     total_input_tokens += response.usage_metadata.prompt_token_count or 0
@@ -605,7 +614,7 @@ class GeminiService:
                     function_calls = streamed_function_calls
                 elif hasattr(response, "function_calls") and response.function_calls:
                     function_calls = list(response.function_calls)
-                elif hasattr(response, "parts"):
+                elif hasattr(response, "parts") and getattr(response, "parts", None):
                     for part in response.parts:
                         if hasattr(part, "function_call") and part.function_call:
                             function_calls.append(part.function_call)

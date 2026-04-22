@@ -144,6 +144,12 @@ enum CircleSessionStatus {
   CANCELLED
 }
 
+/// Admin-recorded income vs operating expense (internal ledger).
+enum LedgerLineKind {
+  INCOME
+  EXPENSE
+}
+
 // ==========================================
 //  USER & AUTH
 // ==========================================
@@ -245,6 +251,9 @@ model User {
 
   // Audit Relations
   auditLogs AuditLog[] @relation("AdminAuditLogs") // Audit logs created by this admin
+
+  // Admin finance ledger (who created the line)
+  ledgerLines LedgerLine[]
 
   // Exam Prep (Maigie Plus)
   examPreps       ExamPrep[]
@@ -1549,6 +1558,39 @@ model AuditLog {
   @@index([resourceType])
   @@index([timestamp])
   @@index([resourceType, resourceId])
+}
+
+/// Super-admin ledger: income and expenses with original currency and GBP equivalent.
+model LedgerLine {
+  id          String         @id @default(cuid())
+  kind        LedgerLineKind
+  title       String
+  description String?
+
+  /// Amount in `currency` (original).
+  amount    Decimal @db.Decimal(18, 4)
+  currency  String  @db.VarChar(3)
+
+  /// Sterling equivalent for reporting (auto or manual).
+  amountGbp Decimal @db.Decimal(18, 4)
+
+  /// Multiply `amount` by this to get `amountGbp` (1.0 when currency is GBP).
+  gbpPerUnit Decimal? @db.Decimal(18, 10)
+
+  /// FX quote date (YYYY-MM-DD) when `fxSource` is frankfurter.
+  fxAsOfDate String? @db.VarChar(10)
+  fxSource   String  @db.VarChar(32) // frankfurter | identity | manual
+
+  occurredAt DateTime
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind, occurredAt])
+  @@index([occurredAt])
 }
 
 // ==========================================
