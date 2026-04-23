@@ -253,7 +253,9 @@ async def send_welcome_email(email: EmailStr, name: str):
     Sends the official welcome email after successful verification.
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping welcome email to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping welcome email to {email}"
+        )
         return
 
     login_url = f"{settings.FRONTEND_BASE_URL}/login"
@@ -298,7 +300,9 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
     Sends the password reset OTP code.
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Mocking reset email to {email} with OTP: {otp}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Mocking reset email to {email} with OTP: {otp}"
+        )
         return
 
     template_data = {
@@ -342,7 +346,9 @@ async def send_subscription_success_email(email: EmailStr, name: str, tier: str)
     Sends email confirmation after successful subscription.
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping subscription email to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping subscription email to {email}"
+        )
         return
 
     TIER_NAMES = {
@@ -409,7 +415,9 @@ async def send_bulk_email(
         content: HTML content for the email body
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping bulk email to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping bulk email to {email}"
+        )
         return
 
     if settings.ENVIRONMENT != "production":
@@ -487,7 +495,9 @@ async def send_morning_schedule_email(
     Sends the morning schedule digest email using the dedicated template.
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping morning schedule email to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping morning schedule email to {email}"
+        )
         return
 
     if settings.ENVIRONMENT != "production":
@@ -541,7 +551,9 @@ async def send_schedule_reminder_email(
 ):
     """Sends a schedule reminder email (15 minutes before start)."""
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping schedule reminder to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping schedule reminder to {email}"
+        )
         return
 
     if settings.ENVIRONMENT != "production":
@@ -592,7 +604,9 @@ async def send_limit_reached_email(email: EmailStr, name: str | None):
     Sends an email when user hits their monthly limit, encouraging them to start a free trial.
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping limit reached email to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping limit reached email to {email}"
+        )
         return
 
     subscription_url = f"{_get_frontend_base_url()}/settings?tab=subscription"
@@ -640,7 +654,9 @@ async def send_weekly_tips_email(
 ):
     """Sends the weekly encouragement/tips email."""
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping weekly tips email to {email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping weekly tips email to {email}"
+        )
         return
 
     if settings.ENVIRONMENT != "production":
@@ -691,7 +707,9 @@ async def send_circle_invite_email(to_email: str, inviter_name: str, circle_name
     Sends an email to a user when they are invited to a study circle.
     """
     if not _email_transport_configured():
-        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping circle invite email to {to_email}")
+        logger.warning(
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping circle invite email to {to_email}"
+        )
         return
 
     circles_url = f"{_get_frontend_base_url()}/circles"
