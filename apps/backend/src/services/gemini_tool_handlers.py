@@ -528,7 +528,7 @@ async def handle_check_schedule_conflicts(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle check_schedule_conflicts tool call by querying db.studysession."""
+    """Handle check_schedule_conflicts: overlap against ScheduleBlock (calendar), not StudySession."""
     start_at_str = args.get("start_at")
     end_at_str = args.get("end_at")
 
@@ -542,14 +542,17 @@ async def handle_check_schedule_conflicts(
         start_at = datetime.fromisoformat(start_at_str.replace("Z", "+00:00"))
         end_at = datetime.fromisoformat(end_at_str.replace("Z", "+00:00"))
 
-        conflicting_sessions = await db.studysession.find_many(
+        # Same overlap semantics as schedule list: [block.start, block.end] intersects [start_at, end_at]
+        conflicting_blocks = await db.scheduleblock.find_many(
             where={
                 "userId": user_id,
-                "AND": [{"startTime": {"lt": end_at}}, {"endTime": {"gt": start_at}}],
-            }
+                "AND": [{"startAt": {"lt": end_at}}, {"endAt": {"gt": start_at}}],
+            },
+            order={"startAt": "asc"},
+            take=20,
         )
 
-        if not conflicting_sessions:
+        if not conflicting_blocks:
             return {
                 "status": "success",
                 "has_conflicts": False,
@@ -557,15 +560,17 @@ async def handle_check_schedule_conflicts(
             }
 
         conflicts = [
-            f"'{s.title}' from {s.startTime.isoformat()} to {s.endTime.isoformat()}"
-            for s in conflicting_sessions
+            f"'{b.title}' from {b.startAt.isoformat()} to {b.endAt.isoformat()}"
+            for b in conflicting_blocks
         ]
 
         return {
             "status": "success",
             "has_conflicts": True,
+            "conflicting_schedule_blocks": conflicts,
+            # Kept for older prompt/tool consumers
             "conflicting_sessions": conflicts,
-            "message": "Double-booking detected. Suggest alternative times.",
+            "message": "Double-booking detected with existing calendar blocks. Suggest alternative times.",
         }
     except Exception as e:
         logger.error("Error checking schedule conflicts: %s", e)

@@ -24,7 +24,7 @@
         {% if schedules %}
         <div style="margin-bottom: 25px; padding: 16px; background-color: #f8fafc; border-radius: 8px; border-left: 4px solid #4F46E5;">
             <h2 style="color: #222222; font-size: 18px; font-weight: bold; margin-bottom: 12px;">
-                Today's schedule
+                {{ schedule_heading }}
             </h2>
             <ul style="list-style: none; padding: 0; margin: 0;">
                 {% for s in schedules %}
@@ -34,6 +34,12 @@
                 </li>
                 {% endfor %}
             </ul>
+        </div>
+        {% endif %}
+
+        {% if upgrade_pitch_html %}
+        <div style="margin-bottom: 25px;">
+            {{ upgrade_pitch_html | safe }}
         </div>
         {% endif %}
 

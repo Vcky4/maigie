@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     EMAILS_FROM_EMAIL: str | None = None
     EMAILS_FROM_NAME: str | None = None
     EMAIL_LOGO_URL: str = ""  # URL to logo image for email templates
+    # Resend (https://resend.com) — used as fallback when primary SMTP (e.g. Brevo) fails or quota is hit
+    RESEND_API_KEY: str = ""
+    # Optional verified sender for Resend; defaults to EMAILS_FROM_EMAIL when unset
+    RESEND_FROM_EMAIL: str | None = None
+    # When Brevo SMTP accepts mail but you are over quota it often still fails as SMTP error/refused;
+    # if SMTP "succeeds" without error you cannot auto-detect — use resend_then_smtp or resend_only until quota resets.
+    # smtp_then_resend | resend_then_smtp | resend_only | smtp_only
+    EMAIL_OUTBOUND_STRATEGY: str = "smtp_then_resend"
 
     # --- Application Info ---
     APP_NAME: str = "Maigie API"

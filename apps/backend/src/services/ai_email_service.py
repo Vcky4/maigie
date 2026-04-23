@@ -78,22 +78,30 @@ async def draft_morning_schedule_email(
     user: Any,
     schedules_today: list[dict[str, Any]],
     date_label: str,
+    *,
+    digest_mode: str = "daily",
 ) -> tuple[str, dict[str, Any]]:
     """
     Draft morning schedule email content using AI.
 
+    digest_mode: "daily" (paid default) or "weekly" (free tier weekly digest).
+
     Returns:
         (subject, template_data) where template_data includes:
-        intro, intro_plain, date_label, schedules (list of {title, time})
+        intro, intro_plain, date_label, schedules, schedule_heading
     """
     name = (getattr(user, "name", "") or "").split()[0] or "there"
     schedules_str = (
         "\n".join([f"- {s['title']} at {s['time']}" for s in schedules_today])
         if schedules_today
-        else "No scheduled items today."
+        else (
+            "No scheduled items this week."
+            if digest_mode == "weekly"
+            else "No scheduled items today."
+        )
     )
 
-    ctx_parts = [f"User's first name: {name}", f"Date: {date_label}"]
+    ctx_parts = [f"User's first name: {name}", f"Date / period: {date_label}"]
     try:
         streak = await db_client.userstreak.find_unique(where={"userId": user.id})
         if streak and getattr(streak, "currentStreak", 0) > 0:
@@ -102,7 +110,28 @@ async def draft_morning_schedule_email(
         pass
 
     ctx_str = "\n".join(ctx_parts)
-    prompt = f"""You are Maigie, the user's AI-powered academic operating system. Write a brief, personalized intro (2-3 sentences) for a daily morning email.
+    if digest_mode == "weekly":
+        prompt = f"""You are Maigie, the user's AI-powered academic operating system. Write a brief, personalized intro (2-3 sentences) for a **weekly** Monday morning email that summarizes their calendar for the coming week.
+
+Context:
+{ctx_str}
+
+Scheduled items this week:
+{schedules_str}
+
+Return a JSON object with:
+- "intro": HTML paragraph(s) for the intro (use <p> tags, keep it warm and motivating)
+- "intro_plain": Plain text version of the intro (no HTML)
+- "date_label": Short label for the period (can match the provided period label or vary slightly)
+
+If they have few or no items, encourage planning the week ahead. If the week looks busy, acknowledge it positively.
+Output only valid JSON, no markdown."""
+        schedule_heading = "This week's schedule"
+        default_subject = "Your week ahead with Maigie"
+        empty_intro = "<p>Good morning! Here's your weekly look at what's on your calendar—add blocks anytime so we can nudge you through the week.</p>"
+        empty_plain = "Good morning! Here's your weekly look at what's on your calendar—add blocks anytime so we can nudge you through the week."
+    else:
+        prompt = f"""You are Maigie, the user's AI-powered academic operating system. Write a brief, personalized intro (2-3 sentences) for a daily morning email.
 
 Context:
 {ctx_str}
@@ -117,35 +146,44 @@ Return a JSON object with:
 
 If the user has no schedule, gently encourage them to add study time. If they have a busy day, acknowledge it positively.
 Output only valid JSON, no markdown."""
+        schedule_heading = "Today's schedule"
+        default_subject = "Your schedule for today"
+        empty_intro = "<p>Good morning! It's a fresh day—great time to add some study blocks to your schedule.</p>"
+        empty_plain = (
+            "Good morning! It's a fresh day—great time to add some study blocks to your schedule."
+        )
 
     result = await _call_gemini_for_email(prompt, "morning", max_tokens=400)
-    date_label_fallback = date_label or "Here's your day"
+    date_label_fallback = date_label or (
+        "Here's your week" if digest_mode == "weekly" else "Here's your day"
+    )
 
     if not result:
         if schedules_today:
-            intro = f"<p>Good morning! You have {len(schedules_today)} item(s) on your schedule today. Let's make it a productive day!</p>"
-            intro_plain = f"Good morning! You have {len(schedules_today)} item(s) on your schedule today. Let's make it a productive day!"
+            intro = f"<p>Good morning! You have {len(schedules_today)} item(s) on your {'calendar this week' if digest_mode == 'weekly' else 'schedule today'}. Let's make it count!</p>"
+            intro_plain = f"Good morning! You have {len(schedules_today)} item(s) on your {'calendar this week' if digest_mode == 'weekly' else 'schedule today'}. Let's make it count!"
         else:
-            intro = "<p>Good morning! It's a fresh day—great time to add some study blocks to your schedule.</p>"
-            intro_plain = "Good morning! It's a fresh day—great time to add some study blocks to your schedule."
+            intro = empty_intro
+            intro_plain = empty_plain
         return (
-            "Your schedule for today",
+            default_subject,
             {
                 "intro": intro,
                 "intro_plain": intro_plain,
                 "date_label": date_label_fallback,
                 "schedules": schedules_today,
+                "schedule_heading": schedule_heading,
             },
         )
 
     return (
-        result.get("subject") or "Your schedule for today",
+        result.get("subject") or default_subject,
         {
-            "intro": result.get("intro") or "<p>Good morning! Here's your schedule for today.</p>",
-            "intro_plain": result.get("intro_plain")
-            or "Good morning! Here's your schedule for today.",
+            "intro": result.get("intro") or "<p>Good morning! Here's your schedule.</p>",
+            "intro_plain": result.get("intro_plain") or "Good morning! Here's your schedule.",
             "date_label": result.get("date_label") or date_label,
             "schedules": schedules_today,
+            "schedule_heading": schedule_heading,
         },
     )
 

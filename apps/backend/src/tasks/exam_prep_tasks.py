@@ -142,6 +142,13 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
     topics_data = await extract_exam_topics(exam_prep.subject, all_texts)
 
     saved_topics = await save_topics(db, exam_prep_id, topics_data)
+    topic_titles = [t.title for t in saved_topics]
+    if len(topic_titles) != len(set(topic_titles)):
+        logger.warning(
+            "Duplicate topic titles for exam_prep %s; past-question routing may merge buckets: %s",
+            exam_prep_id,
+            topic_titles,
+        )
     topic_map = {t.title: t.id for t in saved_topics}
 
     await _emit_progress(
@@ -202,37 +209,68 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
     total_ai_questions = 0
     combined_study_text = "\n\n".join(study_texts)
 
-    for i, topic in enumerate(saved_topics):
-        try:
-            # Get existing questions for this topic to avoid duplicates
-            existing_qs = past_questions_by_topic.get(topic.title, [])
-            existing_texts = [q["questionText"] for q in existing_qs]
-
-            # Generate 3-5 questions per topic
-            count = max(3, min(5, 10 - len(existing_qs)))
-            ai_questions = await generate_exam_questions(
-                subject=exam_prep.subject,
-                topic_title=topic.title,
-                context_text=combined_study_text,
-                count=count,
-                existing_questions=existing_texts,
-            )
-
-            if ai_questions:
-                await save_questions(db, topic.id, ai_questions)
-                total_ai_questions += len(ai_questions)
-
-        except Exception as e:
-            logger.warning("Failed to generate questions for topic %s: %s", topic.title, e)
-
-        progress = 70 + int(((i + 1) / len(saved_topics)) * 20)
+    if not saved_topics:
+        logger.warning("No topics to generate questions for exam_prep %s", exam_prep_id)
         await _emit_progress(
             user_id,
             exam_prep_id,
             "generating_questions",
-            progress,
-            f"Generated questions for {topic.title}",
+            85,
+            "No topics extracted from materials; skipped AI question generation.",
         )
+    else:
+        n_topics = len(saved_topics)
+        for i, topic in enumerate(saved_topics):
+            ai_questions: list[Any] = []
+            try:
+                # Get existing questions for this topic to avoid duplicates
+                existing_qs = past_questions_by_topic.get(topic.title, [])
+                existing_texts = [q["questionText"] for q in existing_qs]
+
+                # Generate 3-5 questions per topic
+                count = max(3, min(5, 10 - len(existing_qs)))
+                desc = (getattr(topic, "description", None) or "").strip()
+                topic_header = f'Topic (only this scope — "{topic.title}"):\n{topic.title}'
+                if desc:
+                    topic_header += f"\n{desc}"
+                focused_context = (
+                    f"{topic_header}\n\n---\n\nStudy materials:\n{combined_study_text}"
+                )
+
+                ai_questions = await generate_exam_questions(
+                    subject=exam_prep.subject,
+                    topic_title=topic.title,
+                    context_text=focused_context,
+                    count=count,
+                    existing_questions=existing_texts,
+                )
+
+                if ai_questions:
+                    await save_questions(db, topic.id, ai_questions)
+                    total_ai_questions += len(ai_questions)
+                else:
+                    logger.warning(
+                        "No AI questions parsed/generated for topic %r (exam_prep=%s)",
+                        topic.title,
+                        exam_prep_id,
+                    )
+
+            except Exception as e:
+                logger.warning("Failed to generate questions for topic %s: %s", topic.title, e)
+
+            progress = 70 + int(((i + 1) / n_topics) * 20)
+            msg = (
+                f"Saved {len(ai_questions)} questions for {topic.title}"
+                if ai_questions
+                else f"No questions saved for {topic.title} (parse or model empty)"
+            )
+            await _emit_progress(
+                user_id,
+                exam_prep_id,
+                "generating_questions",
+                progress,
+                msg,
+            )
 
     # --- Step 5: Generate study plan ---
     await _emit_progress(user_id, exam_prep_id, "generating_plan", 92, "Creating study plan...")
