@@ -1,8 +1,8 @@
 """
 Email notification tasks (Celery).
 
-- Morning schedule: Daily, timezone-aware (7 AM local)
-- Schedule reminder: Every 15 minutes (15 min before start)
+- Morning schedule: Paid users daily (6 AM local); FREE users weekly (Monday 6 AM local) with upgrade pitch
+- Schedule reminder: Every 15 minutes (15 min before start) — paid users only
 - Weekly tips: Weekly (Sunday 8 PM UTC)
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.tasks.base import run_async_in_celery, task
@@ -36,7 +37,45 @@ PAID_TIERS = {
 
 # Morning email runs at 6 AM in user's local time; we check every hour
 MORNING_LOCAL_HOUR = 6
+# FREE tier: one digest per week (Monday morning local)
+FREE_WEEKLY_MORNING_WEEKDAY = 0  # Monday (datetime.weekday: Mon=0 .. Sun=6)
 REMINDER_WINDOW_MINUTES = 15
+
+
+def _user_is_paid_tier(user: Any) -> bool:
+    tier = getattr(user, "tier", None)
+    return str(tier if tier is not None else "FREE") in PAID_TIERS
+
+
+def _subscription_settings_url() -> str:
+    from src.config import settings
+
+    base = (settings.FRONTEND_BASE_URL or settings.FRONTEND_URL or "http://localhost:4200").rstrip(
+        "/"
+    )
+    return f"{base}/settings?tab=subscription"
+
+
+def _free_weekly_schedule_upgrade_blocks() -> dict[str, str]:
+    """Short marketing block for FREE weekly digest (HTML + plain)."""
+    url = _subscription_settings_url()
+    html = (
+        '<div style="margin: 24px 0; padding: 16px; background: linear-gradient(135deg, #eef2ff 0%, #faf5ff 100%); '
+        'border-radius: 8px; border: 1px solid #e0e7ff;">'
+        '<p style="margin: 0 0 8px 0; font-size: 15px; font-weight: 600; color: #3730a3;">'
+        "Unlock daily schedule emails &amp; reminders</p>"
+        '<p style="margin: 0; font-size: 14px; color: #4b5563; line-height: 1.5;">'
+        "Maigie <strong>Plus</strong> includes a personalized morning schedule <strong>every day</strong> "
+        "and a <strong>15-minute reminder</strong> before each session starts—so you never miss a block. "
+        "Upgrade when you are ready.</p>"
+        f'<p style="margin: 12px 0 0 0;"><a href="{url}" style="color: #4F46E5; font-weight: 600;">'
+        "View plans &amp; upgrade →</a></p></div>"
+    )
+    plain = (
+        "Unlock daily morning schedule emails and 15-minute session reminders with Maigie Plus. "
+        f"View plans: {url}"
+    )
+    return {"upgrade_pitch_html": html, "upgrade_pitch_plain": plain}
 
 
 async def _ensure_db_connected() -> None:
@@ -48,9 +87,10 @@ async def _ensure_db_connected() -> None:
 
 async def _send_morning_schedule_emails_impl() -> dict:
     """
-    Send morning schedule emails to users where it's currently 6 AM
-    in their timezone. Runs hourly; each run targets users in timezones
-    where local hour is 6.
+    Send morning schedule digest emails at 6 AM local.
+
+    Paid tiers: daily email for today's blocks.
+    FREE: one weekly digest (Monday 6 AM local) for Mon–Sun blocks, with upgrade pitch.
     """
     from src.core.database import db
     from src.services import ai_email_service, email
@@ -87,36 +127,80 @@ async def _send_morning_schedule_emails_impl() -> dict:
             if local_now.hour != MORNING_LOCAL_HOUR:
                 continue
 
-            # Fetch today's schedules (in user's local date)
-            local_date_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-            local_date_end = local_date_start + timedelta(days=1)
-            # Convert to UTC for DB query
-            utc_start = local_date_start.astimezone(UTC)
-            utc_end = local_date_end.astimezone(UTC)
+            is_paid = _user_is_paid_tier(user)
 
-            blocks = await db.scheduleblock.find_many(
-                where={
-                    "userId": user.id,
-                    "startAt": {"gte": utc_start, "lt": utc_end},
-                },
-                order={"startAt": "asc"},
-            )
+            if is_paid:
+                local_date_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+                local_date_end = local_date_start + timedelta(days=1)
+                utc_start = local_date_start.astimezone(UTC)
+                utc_end = local_date_end.astimezone(UTC)
 
-            schedules_today = [
-                {
-                    "title": b.title,
-                    "time": b.startAt.astimezone(tz).strftime("%I:%M %p"),
-                }
-                for b in blocks
-            ]
-            date_label = local_now.strftime("Here's your day for %A, %b %d")
+                blocks = await db.scheduleblock.find_many(
+                    where={
+                        "userId": user.id,
+                        "startAt": {"gte": utc_start, "lt": utc_end},
+                    },
+                    order={"startAt": "asc"},
+                )
 
-            subject, template_data = await ai_email_service.draft_morning_schedule_email(
-                db_client=db,
-                user=user,
-                schedules_today=schedules_today,
-                date_label=date_label,
-            )
+                schedules_today = [
+                    {
+                        "title": b.title,
+                        "time": b.startAt.astimezone(tz).strftime("%I:%M %p"),
+                    }
+                    for b in blocks
+                ]
+                date_label = local_now.strftime("Here's your day for %A, %b %d")
+
+                subject, template_data = await ai_email_service.draft_morning_schedule_email(
+                    db_client=db,
+                    user=user,
+                    schedules_today=schedules_today,
+                    date_label=date_label,
+                    digest_mode="daily",
+                )
+            else:
+                if local_now.weekday() != FREE_WEEKLY_MORNING_WEEKDAY:
+                    continue
+
+                week_start = (local_now - timedelta(days=local_now.weekday())).replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                week_end = week_start + timedelta(days=7)
+                utc_start = week_start.astimezone(UTC)
+                utc_end = week_end.astimezone(UTC)
+
+                blocks = await db.scheduleblock.find_many(
+                    where={
+                        "userId": user.id,
+                        "startAt": {"gte": utc_start, "lt": utc_end},
+                    },
+                    order={"startAt": "asc"},
+                )
+
+                schedules_today = [
+                    {
+                        "title": b.title,
+                        "time": b.startAt.astimezone(tz).strftime("%a, %b %d · %I:%M %p"),
+                    }
+                    for b in blocks
+                ]
+                week_last = week_end - timedelta(days=1)
+                if week_start.month == week_last.month:
+                    date_label = f"Week of {week_start.strftime('%B')} {week_start.day}–{week_last.day}, {week_start.year}"
+                else:
+                    date_label = (
+                        f"Week of {week_start.strftime('%b %d')}–{week_last.strftime('%b %d, %Y')}"
+                    )
+
+                subject, template_data = await ai_email_service.draft_morning_schedule_email(
+                    db_client=db,
+                    user=user,
+                    schedules_today=schedules_today,
+                    date_label=date_label,
+                    digest_mode="weekly",
+                )
+                template_data.update(_free_weekly_schedule_upgrade_blocks())
 
             await email.send_morning_schedule_email(
                 email=user.email,

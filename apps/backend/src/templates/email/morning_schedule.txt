@@ -3,12 +3,16 @@ Good morning, {{ name }}! {{ date_label }}
 {{ intro_plain }}
 
 {% if schedules %}
-Today's schedule:
+{{ schedule_heading }}:
 {% for s in schedules %}
 - {{ s.title }} at {{ s.time }}
 {% endfor %}
 {% endif %}
 
+{% if upgrade_pitch_plain %}
+{{ upgrade_pitch_plain }}
+
+{% endif %}
 View your full schedule: {{ schedule_url }}
 
 Best regards,

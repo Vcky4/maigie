@@ -597,12 +597,17 @@ async def send_morning_schedule_email(
         )
         return
 
+    td = dict(template_data)
+    td.setdefault("schedule_heading", "Today's schedule")
+    td.setdefault("upgrade_pitch_html", "")
+    td.setdefault("upgrade_pitch_plain", "")
+
     base_data = {
         "name": name or "there",
         "app_name": "Maigie",
         "logo_url": settings.EMAIL_LOGO_URL or "",
         "schedule_url": f"{_get_frontend_base_url()}/schedule",
-        **template_data,
+        **td,
     }
 
     html_template = jinja_env.get_template("morning_schedule.html")
