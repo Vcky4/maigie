@@ -1486,9 +1486,33 @@ def _transient_gemini_error(exc: BaseException) -> bool:
     )
 
 
-def _exam_prep_model_chain() -> list[str]:
-    raw = os.getenv("GEMINI_EXAM_PREP_MODELS", "gemini-2.0-flash,gemini-1.5-flash")
+def _gemini_model_not_found(exc: BaseException) -> bool:
+    """True when the model id is invalid or no longer exposed on this API version."""
+    msg = str(exc).lower()
+    return "404" in msg and ("not found" in msg or "not_found" in msg)
+
+
+# gemini-1.5-* ids often 404 on generativelanguage v1beta for generateContent.
+_DEFAULT_GEMINI_ROTATING_MODELS = "gemini-2.0-flash,gemini-2.5-flash,gemini-2.0-flash-lite"
+
+
+def _gemini_rotating_model_list(primary_env: str) -> list[str]:
+    """Models for a feature: primary env, else GEMINI_ROTATING_MODELS, else built-in default."""
+    raw = (
+        os.getenv(primary_env)
+        or os.getenv("GEMINI_ROTATING_MODELS")
+        or _DEFAULT_GEMINI_ROTATING_MODELS
+    )
     return [m.strip() for m in raw.split(",") if m.strip()]
+
+
+def _exam_prep_model_chain() -> list[str]:
+    return _gemini_rotating_model_list("GEMINI_EXAM_PREP_MODELS")
+
+
+def _schedule_ai_model_chain() -> list[str]:
+    """Models for schedule review / AI regeneration (same rotation semantics as exam prep)."""
+    return _gemini_rotating_model_list("GEMINI_SCHEDULE_AI_MODELS")
 
 
 def _parse_llm_json_array(text: str) -> list[Any] | None:
@@ -1534,6 +1558,76 @@ def _parse_llm_json_array(text: str) -> list[Any] | None:
         return None
 
 
+async def _gemini_generate_content_with_model_rotation(
+    *,
+    contents: Any,
+    config: Any,
+    models: list[str],
+    max_rounds: int = 6,
+    base_delay_sec: float = 2.0,
+    log_prefix: str = "gemini",
+) -> Any:
+    """
+    Call generate_content, round-robin a different model on each attempt.
+
+    On transient errors (429, overload, …), backoff then retry with the next model in the list.
+    On 404 for a model id, drop that model for the rest of this call and continue immediately.
+    """
+    if genai is None:
+        raise RuntimeError("Google Genai client is not available")
+    if not models:
+        raise RuntimeError("No Gemini models configured")
+
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    last_exc: BaseException | None = None
+    unavailable: set[str] = set()
+    initial_n = len(models)
+    max_attempts = max_rounds * max(initial_n, 1)
+    backoff_slot = 0
+
+    for attempt in range(max_attempts):
+        eligible = [m for m in models if m not in unavailable]
+        if not eligible:
+            break
+        model_name = eligible[attempt % len(eligible)]
+        try:
+            return await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+        except BaseException as e:
+            last_exc = e
+            if _gemini_model_not_found(e):
+                logger.warning(
+                    "%s model not found, skipping model=%s: %s", log_prefix, model_name, e
+                )
+                unavailable.add(model_name)
+                continue
+            if not _transient_gemini_error(e):
+                logger.warning("%s non-retryable error model=%s: %s", log_prefix, model_name, e)
+                raise
+            if attempt >= max_attempts - 1:
+                logger.warning(
+                    "%s exhausted attempts (last model=%s): %s", log_prefix, model_name, e
+                )
+                break
+            delay = min(base_delay_sec * (2 ** min(backoff_slot, 5)) + random.random(), 45.0)
+            backoff_slot += 1
+            logger.info(
+                "%s retry in %.1fs (model=%s attempt=%s/%s): %s",
+                log_prefix,
+                delay,
+                model_name,
+                attempt + 1,
+                max_attempts,
+                e,
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 async def _exam_prep_generate_with_retry(
     *,
     contents: Any,
@@ -1544,48 +1638,17 @@ async def _exam_prep_generate_with_retry(
     """
     Gemini generate_content for exam-prep flows with backoff on 429/overload.
 
-    Models: GEMINI_EXAM_PREP_MODELS (comma-separated), default tries flash then 1.5-flash.
+    Models from GEMINI_EXAM_PREP_MODELS, then GEMINI_ROTATING_MODELS, then defaults.
+    Each retry uses the next model in the chain (round-robin).
     """
-    if genai is None:
-        raise RuntimeError("Google Genai client is not available")
-
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    last_exc: BaseException | None = None
-
-    for model_name in _exam_prep_model_chain():
-        for attempt in range(attempts_per_model):
-            try:
-                return await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                )
-            except BaseException as e:
-                last_exc = e
-                if not _transient_gemini_error(e):
-                    logger.warning(
-                        "exam_prep Gemini non-retryable error model=%s: %s", model_name, e
-                    )
-                    raise
-                if attempt >= attempts_per_model - 1:
-                    logger.warning(
-                        "exam_prep Gemini exhausted retries for model=%s: %s",
-                        model_name,
-                        e,
-                    )
-                    break
-                delay = min(base_delay_sec * (2**attempt) + random.random(), 45.0)
-                logger.info(
-                    "exam_prep Gemini retry in %.1fs (model=%s attempt=%s/%s): %s",
-                    delay,
-                    model_name,
-                    attempt + 1,
-                    attempts_per_model,
-                    e,
-                )
-                await asyncio.sleep(delay)
-    assert last_exc is not None
-    raise last_exc
+    return await _gemini_generate_content_with_model_rotation(
+        contents=contents,
+        config=config,
+        models=_exam_prep_model_chain(),
+        max_rounds=attempts_per_model,
+        base_delay_sec=base_delay_sec,
+        log_prefix="exam_prep Gemini",
+    )
 
 
 async def extract_exam_topics(subject: str, material_texts: list[str]) -> list[dict]:
@@ -1924,16 +1987,18 @@ Return ONLY a JSON array of 0-5 blocks. Each block: {{ "title": "string", "start
 Use times in the next 7 days. Prefer morning/afternoon slots for study. No markdown, no code fence, no commentary.
 JSON:"""
     try:
-        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         from google.genai import types as genai_types
 
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        response = await _gemini_generate_content_with_model_rotation(
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=600,
                 temperature=0.3,
             ),
+            models=_schedule_ai_model_chain(),
+            max_rounds=6,
+            base_delay_sec=2.0,
+            log_prefix="schedule_review Gemini",
         )
         text = (response.text or "").strip()
         try:
