@@ -233,7 +233,9 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
                 topic_header = f'Topic (only this scope — "{topic.title}"):\n{topic.title}'
                 if desc:
                     topic_header += f"\n{desc}"
-                focused_context = f"{topic_header}\n\n---\n\nStudy materials:\n{combined_study_text}"
+                focused_context = (
+                    f"{topic_header}\n\n---\n\nStudy materials:\n{combined_study_text}"
+                )
 
                 ai_questions = await generate_exam_questions(
                     subject=exam_prep.subject,
