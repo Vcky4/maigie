@@ -1491,6 +1491,49 @@ def _exam_prep_model_chain() -> list[str]:
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
+def _parse_llm_json_array(text: str) -> list[Any] | None:
+    """
+    Parse a JSON array from LLM output. Tolerates markdown fences and leading prose.
+
+    Uses json.JSONDecoder.raw_decode from the first '[' so a single well-formed array is
+    parsed end-to-end. A greedy full-text bracket regex often breaks on nested brackets
+    or trailing prose, yielding empty parses and no saved questions for most topics.
+    """
+    import json
+
+    raw = (text or "").strip()
+    if not raw:
+        return None
+
+    if "```" in raw:
+        parts = raw.split("```")
+        for part in parts:
+            chunk = part.strip()
+            if not chunk:
+                continue
+            if chunk.lower().startswith("json"):
+                chunk = chunk[4:].lstrip()
+            if chunk.startswith("["):
+                raw = chunk
+                break
+
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else None
+    except json.JSONDecodeError:
+        pass
+
+    start = raw.find("[")
+    if start == -1:
+        return None
+    decoder = json.JSONDecoder()
+    try:
+        data, _end = decoder.raw_decode(raw[start:])
+        return data if isinstance(data, list) else None
+    except json.JSONDecodeError:
+        return None
+
+
 async def _exam_prep_generate_with_retry(
     *,
     contents: Any,
@@ -1550,9 +1593,6 @@ async def extract_exam_topics(subject: str, material_texts: list[str]) -> list[d
     Extract key topics/chapters from exam prep materials using AI.
     Returns a list of {title, description} dictionaries.
     """
-    import json
-    import re
-
     if genai is None:
         return []
 
@@ -1598,25 +1638,18 @@ JSON array:"""
             ),
         )
         text = (response.text or "").strip()
+        topics = _parse_llm_json_array(text)
+        if not topics:
+            return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
 
-        try:
-            topics = json.loads(text)
-        except Exception:
-            match = re.search(r"\[[\s\S]*\]", text)
-            if not match:
-                return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
-            topics = json.loads(match.group(0))
-
-        if isinstance(topics, list):
-            return [
-                {
-                    "title": t.get("title", "Unknown Topic"),
-                    "description": t.get("description", ""),
-                }
-                for t in topics
-                if isinstance(t, dict) and t.get("title")
-            ]
-        return [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
+        return [
+            {
+                "title": t.get("title", "Unknown Topic"),
+                "description": t.get("description", ""),
+            }
+            for t in topics
+            if isinstance(t, dict) and t.get("title")
+        ] or [{"title": f"General {subject}", "description": f"Overview of {subject}"}]
 
     except Exception as e:
         logger.warning("extract_exam_topics failed (using fallback topic): %s", e, exc_info=True)
@@ -1628,9 +1661,6 @@ async def extract_past_paper_questions(text: str, subject: str) -> list[dict]:
     Parse a past exam paper text into individual questions with answers/options.
     Returns structured question data ready for storage.
     """
-    import json
-    import re
-
     if genai is None:
         return []
 
@@ -1664,31 +1694,24 @@ JSON array:"""
             ),
         )
         text_response = (response.text or "").strip()
+        questions = _parse_llm_json_array(text_response)
+        if not questions:
+            return []
 
-        try:
-            questions = json.loads(text_response)
-        except Exception:
-            match = re.search(r"\[[\s\S]*\]", text_response)
-            if not match:
-                return []
-            questions = json.loads(match.group(0))
-
-        if isinstance(questions, list):
-            return [
-                {
-                    "questionText": q.get("questionText", ""),
-                    "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
-                    "options": q.get("options"),
-                    "correctAnswer": q.get("correctAnswer"),
-                    "explanation": q.get("explanation", "No explanation available."),
-                    "difficulty": q.get("difficulty", "MEDIUM"),
-                    "year": q.get("year"),
-                    "source": "PAST_QUESTION",
-                }
-                for q in questions
-                if isinstance(q, dict) and q.get("questionText")
-            ]
-        return []
+        return [
+            {
+                "questionText": q.get("questionText", ""),
+                "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
+                "options": q.get("options"),
+                "correctAnswer": q.get("correctAnswer"),
+                "explanation": q.get("explanation", "No explanation available."),
+                "difficulty": q.get("difficulty", "MEDIUM"),
+                "year": q.get("year"),
+                "source": "PAST_QUESTION",
+            }
+            for q in questions
+            if isinstance(q, dict) and q.get("questionText")
+        ]
 
     except Exception as e:
         logger.warning("extract_past_paper_questions failed: %s", e, exc_info=True)
@@ -1706,9 +1729,6 @@ async def generate_exam_questions(
     Generate new exam-style questions from study materials for a specific topic.
     Returns structured question data.
     """
-    import json
-    import re
-
     if genai is None:
         return []
 
@@ -1719,6 +1739,8 @@ async def generate_exam_questions(
         )
 
     prompt = f"""Generate {count} exam-style questions for the topic "{topic_title}" in the subject "{subject}".
+
+Every question MUST test content specific to "{topic_title}" — not generic {subject} trivia unrelated to this topic.
 
 Study Material Context:
 {context_text[:20000]}
@@ -1758,30 +1780,29 @@ JSON array:"""
             ),
         )
         text_response = (response.text or "").strip()
+        questions = _parse_llm_json_array(text_response)
+        if not questions:
+            logger.warning(
+                "generate_exam_questions: no JSON array parsed for topic=%r subject=%r (preview=%r)",
+                topic_title,
+                subject,
+                text_response[:400].replace("\n", " "),
+            )
+            return []
 
-        try:
-            questions = json.loads(text_response)
-        except Exception:
-            match = re.search(r"\[[\s\S]*\]", text_response)
-            if not match:
-                return []
-            questions = json.loads(match.group(0))
-
-        if isinstance(questions, list):
-            return [
-                {
-                    "questionText": q.get("questionText", ""),
-                    "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
-                    "options": q.get("options"),
-                    "correctAnswer": q.get("correctAnswer"),
-                    "explanation": q.get("explanation", "No explanation available."),
-                    "difficulty": q.get("difficulty", "MEDIUM"),
-                    "source": "AI_GENERATED",
-                }
-                for q in questions
-                if isinstance(q, dict) and q.get("questionText")
-            ]
-        return []
+        return [
+            {
+                "questionText": q.get("questionText", ""),
+                "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
+                "options": q.get("options"),
+                "correctAnswer": q.get("correctAnswer"),
+                "explanation": q.get("explanation", "No explanation available."),
+                "difficulty": q.get("difficulty", "MEDIUM"),
+                "source": "AI_GENERATED",
+            }
+            for q in questions
+            if isinstance(q, dict) and q.get("questionText")
+        ]
 
     except Exception as e:
         logger.warning("generate_exam_questions failed: %s", e, exc_info=True)
