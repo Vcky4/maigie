@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     EMAILS_FROM_EMAIL: str | None = None
     EMAILS_FROM_NAME: str | None = None
     EMAIL_LOGO_URL: str = ""  # URL to logo image for email templates
+    # Resend (https://resend.com) — used as fallback when primary SMTP (e.g. Brevo) fails or quota is hit
+    RESEND_API_KEY: str = ""
+    # Optional verified sender for Resend; defaults to EMAILS_FROM_EMAIL when unset
+    RESEND_FROM_EMAIL: str | None = None
 
     # --- Application Info ---
     APP_NAME: str = "Maigie API"

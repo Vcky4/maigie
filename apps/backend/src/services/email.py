@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+import httpx
 from fastapi_mail import ConnectionConfig
 from jinja2 import Environment, FileSystemLoader
 from pydantic import EmailStr
@@ -37,6 +38,13 @@ conf = ConnectionConfig(
 
 # Get the from email address for Reply-To header
 _from_email = settings.EMAILS_FROM_EMAIL or "noreply@maigie.com"
+
+RESEND_API_URL = "https://api.resend.com/emails"
+
+
+def _email_transport_configured() -> bool:
+    """True if we can send via SMTP and/or Resend fallback."""
+    return bool(settings.SMTP_HOST) or bool(settings.RESEND_API_KEY)
 
 
 def _send_multipart_email_sync(
@@ -96,6 +104,58 @@ def _send_multipart_email_sync(
         raise
 
 
+async def _send_via_resend(
+    *,
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str,
+    headers: dict[str, str] | None = None,
+) -> None:
+    """Send HTML + text email through Resend HTTP API (fallback when SMTP fails)."""
+    from_addr = settings.RESEND_FROM_EMAIL or settings.EMAILS_FROM_EMAIL or _from_email
+    from_name = settings.EMAILS_FROM_NAME or "Maigie"
+    payload: dict[str, object] = {
+        "from": f"{from_name} <{from_addr}>",
+        "to": [to_email],
+        "subject": subject,
+        "html": html_body,
+        "text": text_body,
+    }
+    extra_headers: dict[str, str] = {}
+    if headers:
+        for key, value in headers.items():
+            lk = key.lower()
+            if lk == "reply-to":
+                payload["reply_to"] = value
+            else:
+                extra_headers[key] = value
+    if extra_headers:
+        payload["headers"] = extra_headers
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            RESEND_API_URL,
+            headers={
+                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    if response.status_code >= 400:
+        try:
+            detail = response.json()
+        except Exception:
+            detail = response.text
+        logger.error(
+            "Resend API error sending to %s: HTTP %s %s",
+            to_email,
+            response.status_code,
+            detail,
+        )
+        raise RuntimeError(f"Resend send failed with HTTP {response.status_code}") from None
+
+
 async def _send_multipart_email(
     to_email: str,
     subject: str,
@@ -104,25 +164,51 @@ async def _send_multipart_email(
     headers: dict[str, str] | None = None,
 ):
     """
-    Async wrapper for sending multipart emails.
+    Send multipart email: try SMTP first (e.g. Brevo relay), then Resend if configured.
     """
-    await asyncio.to_thread(
-        _send_multipart_email_sync,
-        to_email,
-        subject,
-        html_body,
-        text_body,
-        headers,
-    )
+    smtp_error: Exception | None = None
+    if settings.SMTP_HOST:
+        try:
+            await asyncio.to_thread(
+                _send_multipart_email_sync,
+                to_email,
+                subject,
+                html_body,
+                text_body,
+                headers,
+            )
+            return
+        except Exception as e:
+            smtp_error = e
+            logger.warning(
+                "SMTP send failed for %s (subject=%r): %s",
+                to_email,
+                subject,
+                e,
+            )
+    if settings.RESEND_API_KEY:
+        await _send_via_resend(
+            to_email=to_email,
+            subject=subject,
+            html_body=html_body,
+            text_body=text_body,
+            headers=headers,
+        )
+        if smtp_error is not None:
+            logger.info("Email delivered via Resend fallback to %s", to_email)
+        return
+    if smtp_error is not None:
+        raise smtp_error
+    raise RuntimeError("No SMTP host or Resend API key configured for outbound email")
 
 
 async def send_verification_email(email: EmailStr, otp: str):
     """
     Sends a 6-digit OTP code to the user.
     """
-    if not settings.SMTP_HOST:
+    if not _email_transport_configured():
         logger.warning(
-            f"SMTP not configured. Mocking verification email to {email} with OTP: {otp}"
+            f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Mocking verification email to {email} with OTP: {otp}"
         )
         return
 
@@ -166,8 +252,8 @@ async def send_welcome_email(email: EmailStr, name: str):
     """
     Sends the official welcome email after successful verification.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping welcome email to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping welcome email to {email}")
         return
 
     login_url = f"{settings.FRONTEND_BASE_URL}/login"
@@ -211,8 +297,8 @@ async def send_password_reset_email(email: EmailStr, otp: str, name: str):
     """
     Sends the password reset OTP code.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Mocking reset email to {email} with OTP: {otp}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Mocking reset email to {email} with OTP: {otp}")
         return
 
     template_data = {
@@ -255,8 +341,8 @@ async def send_subscription_success_email(email: EmailStr, name: str, tier: str)
     """
     Sends email confirmation after successful subscription.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping subscription email to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping subscription email to {email}")
         return
 
     TIER_NAMES = {
@@ -322,8 +408,8 @@ async def send_bulk_email(
         subject: Email subject line
         content: HTML content for the email body
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping bulk email to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping bulk email to {email}")
         return
 
     if settings.ENVIRONMENT != "production":
@@ -400,8 +486,8 @@ async def send_morning_schedule_email(
     """
     Sends the morning schedule digest email using the dedicated template.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping morning schedule email to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping morning schedule email to {email}")
         return
 
     if settings.ENVIRONMENT != "production":
@@ -454,8 +540,8 @@ async def send_schedule_reminder_email(
     template_data: dict,
 ):
     """Sends a schedule reminder email (15 minutes before start)."""
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping schedule reminder to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping schedule reminder to {email}")
         return
 
     if settings.ENVIRONMENT != "production":
@@ -505,8 +591,8 @@ async def send_limit_reached_email(email: EmailStr, name: str | None):
     """
     Sends an email when user hits their monthly limit, encouraging them to start a free trial.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping limit reached email to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping limit reached email to {email}")
         return
 
     subscription_url = f"{_get_frontend_base_url()}/settings?tab=subscription"
@@ -553,8 +639,8 @@ async def send_weekly_tips_email(
     template_data: dict,
 ):
     """Sends the weekly encouragement/tips email."""
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping weekly tips email to {email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping weekly tips email to {email}")
         return
 
     if settings.ENVIRONMENT != "production":
@@ -604,8 +690,8 @@ async def send_circle_invite_email(to_email: str, inviter_name: str, circle_name
     """
     Sends an email to a user when they are invited to a study circle.
     """
-    if not settings.SMTP_HOST:
-        logger.warning(f"SMTP not configured. Skipping circle invite email to {to_email}")
+    if not _email_transport_configured():
+        logger.warning(f"Outbound email not configured (SMTP_HOST or RESEND_API_KEY). Skipping circle invite email to {to_email}")
         return
 
     circles_url = f"{_get_frontend_base_url()}/circles"

@@ -147,6 +147,8 @@ jobs:
           SMTP_PASSWORD: ${{secrets.SMTP_PASSWORD}}
           BREVO_API_KEY: ${{secrets.BREVO_API_KEY}}
           BREVO_ENABLED: ${{secrets.BREVO_ENABLED}}
+          RESEND_API_KEY: ${{secrets.RESEND_API_KEY}}
+          RESEND_FROM_EMAIL: ${{secrets.RESEND_FROM_EMAIL}}
           STRIPE_SECRET_KEY: ${{secrets.STRIPE_SECRET_KEY}}
           STRIPE_PUBLISHABLE_KEY: ${{secrets.STRIPE_PUBLISHABLE_KEY}}
           STRIPE_WEBHOOK_SECRET: ${{secrets.STRIPE_WEBHOOK_SECRET}}
@@ -318,6 +320,8 @@ jobs:
             export SMTP_PASSWORD="${{secrets.SMTP_PASSWORD}}"
             export BREVO_API_KEY="${{secrets.BREVO_API_KEY}}"
             export BREVO_ENABLED="${{secrets.BREVO_ENABLED}}"
+            export RESEND_API_KEY="${{secrets.RESEND_API_KEY}}"
+            export RESEND_FROM_EMAIL="${{secrets.RESEND_FROM_EMAIL}}"
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
@@ -857,6 +861,8 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           BREVO_ENABLED: ${{ secrets.BREVO_ENABLED }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -1125,6 +1131,8 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
           BREVO_ENABLED: ${{ secrets.BREVO_ENABLED }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -1274,6 +1282,8 @@ jobs:
             export SMTP_PASSWORD="${{secrets.SMTP_PASSWORD}}"
             export BREVO_API_KEY="${{secrets.BREVO_API_KEY}}"
             export BREVO_ENABLED="${{secrets.BREVO_ENABLED}}"
+            export RESEND_API_KEY="${{secrets.RESEND_API_KEY}}"
+            export RESEND_FROM_EMAIL="${{secrets.RESEND_FROM_EMAIL}}"
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
