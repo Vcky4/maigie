@@ -188,7 +188,9 @@ async def list_ledger(
         mn, mx = min(dates), max(dates)
         month_span = (mx.year - mn.year) * 12 + (mx.month - mn.month) + 1
         month_span = max(1, month_span)
-        avg_monthly_exp = (exp_d / Decimal(month_span)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        avg_monthly_exp = (exp_d / Decimal(month_span)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
     else:
         avg_monthly_exp = Decimal("0")
 
