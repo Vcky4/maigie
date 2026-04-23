@@ -9,7 +9,7 @@ See LICENSE file in the repository root for details.
 
 import logging
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -73,6 +73,9 @@ class LedgerListResponse(BaseModel):
     sumIncomeGbp: str
     sumExpenseGbp: str
     netGbp: str
+    avgMonthlyExpenseGbp: str = Field(
+        description="Total expenses divided by inclusive calendar months from first to last expense (minimum one month).",
+    )
 
 
 class FxPreviewResponse(BaseModel):
@@ -180,6 +183,15 @@ async def list_ledger(
     inc_d = sum((Decimal(str(r.amountGbp)) for r in income_only), Decimal("0"))
     exp_d = sum((Decimal(str(r.amountGbp)) for r in expense_only), Decimal("0"))
 
+    if expense_only:
+        dates = [r.occurredAt for r in expense_only]
+        mn, mx = min(dates), max(dates)
+        month_span = (mx.year - mn.year) * 12 + (mx.month - mn.month) + 1
+        month_span = max(1, month_span)
+        avg_monthly_exp = (exp_d / Decimal(month_span)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    else:
+        avg_monthly_exp = Decimal("0")
+
     total_pages = (total + pageSize - 1) // pageSize if total else 0
 
     return LedgerListResponse(
@@ -191,6 +203,7 @@ async def list_ledger(
         sumIncomeGbp=str(inc_d),
         sumExpenseGbp=str(exp_d),
         netGbp=str(inc_d - exp_d),
+        avgMonthlyExpenseGbp=str(avg_monthly_exp),
     )
 
 
