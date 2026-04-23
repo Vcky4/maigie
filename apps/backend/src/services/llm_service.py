@@ -19,6 +19,80 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+
+class StreamConsumerDisconnected(Exception):
+    """WebSocket client left while streaming; not an LLM failure."""
+
+    __slots__ = ("partial_turn_text",)
+
+    def __init__(self, partial_turn_text: str = "") -> None:
+        self.partial_turn_text = partial_turn_text
+        super().__init__("client disconnected during stream")
+
+
+def _stream_disconnect_exception_types() -> tuple[type[BaseException], ...]:
+    types_list: list[type[BaseException]] = []
+    try:
+        import starlette.websockets as starlette_ws
+
+        types_list.append(starlette_ws.WebSocketDisconnect)
+    except Exception:
+        pass
+    try:
+        from uvicorn.protocols.utils import ClientDisconnected as UvicornClientDisconnected
+
+        types_list.append(UvicornClientDisconnected)
+    except Exception:
+        pass
+    try:
+        import uvicorn.protocols.websockets.websockets_impl as uvicorn_ws_impl
+
+        _cd = getattr(uvicorn_ws_impl, "ClientDisconnected", None)
+        if isinstance(_cd, type) and issubclass(_cd, BaseException) and _cd not in types_list:
+            types_list.append(_cd)
+    except Exception:
+        pass
+    try:
+        import websockets.exceptions as websockets_exc
+
+        for _name in ("ConnectionClosed", "ConnectionClosedError", "ConnectionClosedOK"):
+            _t = getattr(websockets_exc, _name, None)
+            if isinstance(_t, type) and issubclass(_t, BaseException):
+                types_list.append(_t)
+    except Exception:
+        pass
+    return tuple(types_list)
+
+
+_STREAM_DISCONNECT_TYPES = _stream_disconnect_exception_types()
+
+
+def _is_websocket_consumer_disconnect(exc: BaseException) -> bool:
+    """True when the failure is only because the HTTP/WebSocket client went away."""
+    visited: set[int] = set()
+
+    def walk(err: BaseException | None) -> bool:
+        if err is None or id(err) in visited:
+            return False
+        visited.add(id(err))
+        if isinstance(err, _STREAM_DISCONNECT_TYPES):
+            return True
+        if isinstance(err, RuntimeError):
+            _m = str(err).lower()
+            if "close message has been sent" in _m or "cannot call" in _m and "send" in _m:
+                return True
+        if isinstance(err, BaseExceptionGroup):
+            return any(walk(x) for x in err.exceptions)
+        if walk(err.__cause__):
+            return True
+        ctx = err.__context__
+        if ctx is not err.__cause__ and walk(ctx):
+            return True
+        return False
+
+    return walk(exc)
+
+
 genai = None
 # Suppress the Google Gemini deprecation warning temporarily
 with warnings.catch_warnings():
@@ -347,6 +421,13 @@ class GeminiService:
         try:
             request_start = time.perf_counter()
             request_id = f"agentic_{int(request_start * 1000)}"
+            executed_actions: list[dict[str, Any]] = []
+            query_results: list[dict[str, Any]] = []
+            total_input_tokens = 0
+            total_output_tokens = 0
+            final_text = ""
+            total_llm_time = 0.0
+            total_tool_time = 0.0
 
             # Get tool definitions and convert to new SDK format
             raw_tools = get_all_tools()
@@ -505,15 +586,6 @@ class GeminiService:
                 ),
             )
 
-            # Track executed actions and query results
-            executed_actions = []
-            query_results = []
-            total_input_tokens = 0
-            total_output_tokens = 0
-            final_text = ""  # Initialize final_text
-            total_llm_time = 0.0
-            total_tool_time = 0.0
-
             # Tool call loop
             max_iterations = 6  # Prevent infinite loops while reducing latency
             iteration = 0
@@ -565,26 +637,54 @@ class GeminiService:
                             if text_delta:
                                 streamed_text_parts.append(text_delta)
                                 if stream_callback:
-                                    await stream_callback(text_delta, False)
+                                    try:
+                                        await stream_callback(text_delta, False)
+                                    except BaseException as stream_err:
+                                        if _is_websocket_consumer_disconnect(stream_err):
+                                            raise StreamConsumerDisconnected(
+                                                "".join(streamed_text_parts)
+                                            ) from stream_err
+                                        raise
 
                     if stream_callback and last_chunk_text is not None:
-                        await stream_callback("", True)
+                        try:
+                            await stream_callback("", True)
+                        except BaseException as stream_err:
+                            if _is_websocket_consumer_disconnect(stream_err):
+                                raise StreamConsumerDisconnected(
+                                    "".join(streamed_text_parts)
+                                ) from stream_err
+                            raise
 
                     return last_response, "".join(streamed_text_parts), streamed_function_calls
 
-                if iteration == 1:
-                    llm_start = time.perf_counter()
+                stream_payload = message_content if iteration == 1 else tool_results
+                llm_start = time.perf_counter()
+                try:
                     response, streamed_turn_text, streamed_function_calls = (
-                        await _send_streaming_request(message_content)
+                        await _send_streaming_request(stream_payload)
                     )
+                except StreamConsumerDisconnected as disc:
+                    streamed_turn_text = disc.partial_turn_text
+                    streamed_function_calls = []
+                    response = None
                     total_llm_time += time.perf_counter() - llm_start
-                else:
-                    # Send tool results from previous iteration
-                    llm_start = time.perf_counter()
-                    response, streamed_turn_text, streamed_function_calls = (
-                        await _send_streaming_request(tool_results)
+                    if streamed_turn_text:
+                        stripped_turn = streamed_turn_text.strip()
+                        if final_text and stripped_turn.startswith(final_text.strip()):
+                            new_part = stripped_turn[len(final_text.strip()) :]
+                            final_text += new_part
+                        else:
+                            if final_text and not final_text.endswith(("\n", " ")):
+                                final_text += " "
+                            final_text += streamed_turn_text
+                    logger.info(
+                        "[%s] client disconnected during stream (iteration %s)",
+                        request_id,
+                        iteration,
                     )
-                    total_llm_time += time.perf_counter() - llm_start
+                    break
+                total_llm_time += time.perf_counter() - llm_start
 
                 # Accumulate final_text, but avoid duplicating prefix if model repeats itself
                 if streamed_turn_text:
@@ -755,6 +855,39 @@ class GeminiService:
             return final_text, usage_info, executed_actions, query_results
 
         except Exception as e:
+            if isinstance(e, StreamConsumerDisconnected):
+                pt = e.partial_turn_text or ""
+                if pt:
+                    stripped_turn = pt.strip()
+                    if final_text and stripped_turn.startswith(final_text.strip()):
+                        final_text += stripped_turn[len(final_text.strip()) :]
+                    else:
+                        if final_text and not final_text.endswith(("\n", " ")):
+                            final_text += " "
+                        final_text += pt
+                logger.info("get_chat_response_with_tools: client disconnected (stream): %s", e)
+                return (
+                    final_text,
+                    {
+                        "input_tokens": total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "model_name": "gemini-3-flash-preview",
+                    },
+                    executed_actions,
+                    query_results,
+                )
+            if _is_websocket_consumer_disconnect(e):
+                logger.info("get_chat_response_with_tools: client disconnected: %s", e)
+                return (
+                    final_text,
+                    {
+                        "input_tokens": total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "model_name": "gemini-3-flash-preview",
+                    },
+                    executed_actions,
+                    query_results,
+                )
             print(f"Gemini Error with tools: {e}")
             raise HTTPException(status_code=500, detail="AI Service unavailable")
 
