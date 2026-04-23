@@ -82,8 +82,14 @@ class ConnectionManager:
         if not user_id:
             return
         websocket = self.active_connections.get(user_id, {}).get(connection_id)
-        if websocket:
+        if not websocket:
+            return
+        try:
             await websocket.send_text(message)
+        except Exception as e:
+            logger.debug("send_connection_message failed (%s): %s", connection_id, e)
+            self.disconnect(connection_id)
+            raise
 
     async def send_connection_json(self, data: dict, connection_id: str):
         """Send JSON to a specific websocket connection."""
@@ -91,18 +97,46 @@ class ConnectionManager:
         if not user_id:
             return
         websocket = self.active_connections.get(user_id, {}).get(connection_id)
-        if websocket:
+        if not websocket:
+            return
+        try:
             await websocket.send_json(data)
+        except Exception as e:
+            logger.debug("send_connection_json failed (%s): %s", connection_id, e)
+            self.disconnect(connection_id)
+            raise
 
     async def send_personal_message(self, message: str, user_id: str):
         """Send a text message to all active connections of a user."""
-        for websocket in list(self.active_connections.get(user_id, {}).values()):
-            await websocket.send_text(message)
+        conns = list(self.active_connections.get(user_id, {}).items())
+        last_error: Exception | None = None
+        for connection_id, websocket in conns:
+            try:
+                await websocket.send_text(message)
+                last_error = None
+                break
+            except Exception as e:
+                logger.debug("send_personal_message failed (%s): %s", connection_id, e)
+                self.disconnect(connection_id)
+                last_error = e
+        if last_error is not None:
+            raise last_error
 
     async def send_json(self, data: dict, user_id: str):
         """Send a JSON object to all active connections of a user."""
-        for websocket in list(self.active_connections.get(user_id, {}).values()):
-            await websocket.send_json(data)
+        conns = list(self.active_connections.get(user_id, {}).items())
+        last_error: Exception | None = None
+        for connection_id, websocket in conns:
+            try:
+                await websocket.send_json(data)
+                last_error = None
+                break
+            except Exception as e:
+                logger.debug("send_json failed (%s): %s", connection_id, e)
+                self.disconnect(connection_id)
+                last_error = e
+        if last_error is not None:
+            raise last_error
 
     async def send_room_message(
         self,

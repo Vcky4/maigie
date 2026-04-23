@@ -19,6 +19,80 @@ from fastapi import HTTPException
 
 logger = logging.getLogger(__name__)
 
+
+class StreamConsumerDisconnected(Exception):
+    """WebSocket client left while streaming; not an LLM failure."""
+
+    __slots__ = ("partial_turn_text",)
+
+    def __init__(self, partial_turn_text: str = "") -> None:
+        self.partial_turn_text = partial_turn_text
+        super().__init__("client disconnected during stream")
+
+
+def _stream_disconnect_exception_types() -> tuple[type[BaseException], ...]:
+    types_list: list[type[BaseException]] = []
+    try:
+        import starlette.websockets as starlette_ws
+
+        types_list.append(starlette_ws.WebSocketDisconnect)
+    except Exception:
+        pass
+    try:
+        from uvicorn.protocols.utils import ClientDisconnected as UvicornClientDisconnected
+
+        types_list.append(UvicornClientDisconnected)
+    except Exception:
+        pass
+    try:
+        import uvicorn.protocols.websockets.websockets_impl as uvicorn_ws_impl
+
+        _cd = getattr(uvicorn_ws_impl, "ClientDisconnected", None)
+        if isinstance(_cd, type) and issubclass(_cd, BaseException) and _cd not in types_list:
+            types_list.append(_cd)
+    except Exception:
+        pass
+    try:
+        import websockets.exceptions as websockets_exc
+
+        for _name in ("ConnectionClosed", "ConnectionClosedError", "ConnectionClosedOK"):
+            _t = getattr(websockets_exc, _name, None)
+            if isinstance(_t, type) and issubclass(_t, BaseException):
+                types_list.append(_t)
+    except Exception:
+        pass
+    return tuple(types_list)
+
+
+_STREAM_DISCONNECT_TYPES = _stream_disconnect_exception_types()
+
+
+def _is_websocket_consumer_disconnect(exc: BaseException) -> bool:
+    """True when the failure is only because the HTTP/WebSocket client went away."""
+    visited: set[int] = set()
+
+    def walk(err: BaseException | None) -> bool:
+        if err is None or id(err) in visited:
+            return False
+        visited.add(id(err))
+        if isinstance(err, _STREAM_DISCONNECT_TYPES):
+            return True
+        if isinstance(err, RuntimeError):
+            _m = str(err).lower()
+            if "close message has been sent" in _m or "cannot call" in _m and "send" in _m:
+                return True
+        if isinstance(err, BaseExceptionGroup):
+            return any(walk(x) for x in err.exceptions)
+        if walk(err.__cause__):
+            return True
+        ctx = err.__context__
+        if ctx is not err.__cause__ and walk(ctx):
+            return True
+        return False
+
+    return walk(exc)
+
+
 genai = None
 # Suppress the Google Gemini deprecation warning temporarily
 with warnings.catch_warnings():
@@ -347,6 +421,13 @@ class GeminiService:
         try:
             request_start = time.perf_counter()
             request_id = f"agentic_{int(request_start * 1000)}"
+            executed_actions: list[dict[str, Any]] = []
+            query_results: list[dict[str, Any]] = []
+            total_input_tokens = 0
+            total_output_tokens = 0
+            final_text = ""
+            total_llm_time = 0.0
+            total_tool_time = 0.0
 
             # Get tool definitions and convert to new SDK format
             raw_tools = get_all_tools()
@@ -505,15 +586,6 @@ class GeminiService:
                 ),
             )
 
-            # Track executed actions and query results
-            executed_actions = []
-            query_results = []
-            total_input_tokens = 0
-            total_output_tokens = 0
-            final_text = ""  # Initialize final_text
-            total_llm_time = 0.0
-            total_tool_time = 0.0
-
             # Tool call loop
             max_iterations = 6  # Prevent infinite loops while reducing latency
             iteration = 0
@@ -565,26 +637,54 @@ class GeminiService:
                             if text_delta:
                                 streamed_text_parts.append(text_delta)
                                 if stream_callback:
-                                    await stream_callback(text_delta, False)
+                                    try:
+                                        await stream_callback(text_delta, False)
+                                    except BaseException as stream_err:
+                                        if _is_websocket_consumer_disconnect(stream_err):
+                                            raise StreamConsumerDisconnected(
+                                                "".join(streamed_text_parts)
+                                            ) from stream_err
+                                        raise
 
                     if stream_callback and last_chunk_text is not None:
-                        await stream_callback("", True)
+                        try:
+                            await stream_callback("", True)
+                        except BaseException as stream_err:
+                            if _is_websocket_consumer_disconnect(stream_err):
+                                raise StreamConsumerDisconnected(
+                                    "".join(streamed_text_parts)
+                                ) from stream_err
+                            raise
 
                     return last_response, "".join(streamed_text_parts), streamed_function_calls
 
-                if iteration == 1:
-                    llm_start = time.perf_counter()
+                stream_payload = message_content if iteration == 1 else tool_results
+                llm_start = time.perf_counter()
+                try:
                     response, streamed_turn_text, streamed_function_calls = (
-                        await _send_streaming_request(message_content)
+                        await _send_streaming_request(stream_payload)
                     )
+                except StreamConsumerDisconnected as disc:
+                    streamed_turn_text = disc.partial_turn_text
+                    streamed_function_calls = []
+                    response = None
                     total_llm_time += time.perf_counter() - llm_start
-                else:
-                    # Send tool results from previous iteration
-                    llm_start = time.perf_counter()
-                    response, streamed_turn_text, streamed_function_calls = (
-                        await _send_streaming_request(tool_results)
+                    if streamed_turn_text:
+                        stripped_turn = streamed_turn_text.strip()
+                        if final_text and stripped_turn.startswith(final_text.strip()):
+                            new_part = stripped_turn[len(final_text.strip()) :]
+                            final_text += new_part
+                        else:
+                            if final_text and not final_text.endswith(("\n", " ")):
+                                final_text += " "
+                            final_text += streamed_turn_text
+                    logger.info(
+                        "[%s] client disconnected during stream (iteration %s)",
+                        request_id,
+                        iteration,
                     )
-                    total_llm_time += time.perf_counter() - llm_start
+                    break
+                total_llm_time += time.perf_counter() - llm_start
 
                 # Accumulate final_text, but avoid duplicating prefix if model repeats itself
                 if streamed_turn_text:
@@ -755,6 +855,39 @@ class GeminiService:
             return final_text, usage_info, executed_actions, query_results
 
         except Exception as e:
+            if isinstance(e, StreamConsumerDisconnected):
+                pt = e.partial_turn_text or ""
+                if pt:
+                    stripped_turn = pt.strip()
+                    if final_text and stripped_turn.startswith(final_text.strip()):
+                        final_text += stripped_turn[len(final_text.strip()) :]
+                    else:
+                        if final_text and not final_text.endswith(("\n", " ")):
+                            final_text += " "
+                        final_text += pt
+                logger.info("get_chat_response_with_tools: client disconnected (stream): %s", e)
+                return (
+                    final_text,
+                    {
+                        "input_tokens": total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "model_name": "gemini-3-flash-preview",
+                    },
+                    executed_actions,
+                    query_results,
+                )
+            if _is_websocket_consumer_disconnect(e):
+                logger.info("get_chat_response_with_tools: client disconnected: %s", e)
+                return (
+                    final_text,
+                    {
+                        "input_tokens": total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "model_name": "gemini-3-flash-preview",
+                    },
+                    executed_actions,
+                    query_results,
+                )
             print(f"Gemini Error with tools: {e}")
             raise HTTPException(status_code=500, detail="AI Service unavailable")
 
@@ -1486,9 +1619,33 @@ def _transient_gemini_error(exc: BaseException) -> bool:
     )
 
 
-def _exam_prep_model_chain() -> list[str]:
-    raw = os.getenv("GEMINI_EXAM_PREP_MODELS", "gemini-2.0-flash,gemini-1.5-flash")
+def _gemini_model_not_found(exc: BaseException) -> bool:
+    """True when the model id is invalid or no longer exposed on this API version."""
+    msg = str(exc).lower()
+    return "404" in msg and ("not found" in msg or "not_found" in msg)
+
+
+# gemini-1.5-* ids often 404 on generativelanguage v1beta for generateContent.
+_DEFAULT_GEMINI_ROTATING_MODELS = "gemini-2.0-flash,gemini-2.5-flash,gemini-2.0-flash-lite"
+
+
+def _gemini_rotating_model_list(primary_env: str) -> list[str]:
+    """Models for a feature: primary env, else GEMINI_ROTATING_MODELS, else built-in default."""
+    raw = (
+        os.getenv(primary_env)
+        or os.getenv("GEMINI_ROTATING_MODELS")
+        or _DEFAULT_GEMINI_ROTATING_MODELS
+    )
     return [m.strip() for m in raw.split(",") if m.strip()]
+
+
+def _exam_prep_model_chain() -> list[str]:
+    return _gemini_rotating_model_list("GEMINI_EXAM_PREP_MODELS")
+
+
+def _schedule_ai_model_chain() -> list[str]:
+    """Models for schedule review / AI regeneration (same rotation semantics as exam prep)."""
+    return _gemini_rotating_model_list("GEMINI_SCHEDULE_AI_MODELS")
 
 
 def _parse_llm_json_array(text: str) -> list[Any] | None:
@@ -1534,6 +1691,76 @@ def _parse_llm_json_array(text: str) -> list[Any] | None:
         return None
 
 
+async def _gemini_generate_content_with_model_rotation(
+    *,
+    contents: Any,
+    config: Any,
+    models: list[str],
+    max_rounds: int = 6,
+    base_delay_sec: float = 2.0,
+    log_prefix: str = "gemini",
+) -> Any:
+    """
+    Call generate_content, round-robin a different model on each attempt.
+
+    On transient errors (429, overload, …), backoff then retry with the next model in the list.
+    On 404 for a model id, drop that model for the rest of this call and continue immediately.
+    """
+    if genai is None:
+        raise RuntimeError("Google Genai client is not available")
+    if not models:
+        raise RuntimeError("No Gemini models configured")
+
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    last_exc: BaseException | None = None
+    unavailable: set[str] = set()
+    initial_n = len(models)
+    max_attempts = max_rounds * max(initial_n, 1)
+    backoff_slot = 0
+
+    for attempt in range(max_attempts):
+        eligible = [m for m in models if m not in unavailable]
+        if not eligible:
+            break
+        model_name = eligible[attempt % len(eligible)]
+        try:
+            return await client.aio.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+        except BaseException as e:
+            last_exc = e
+            if _gemini_model_not_found(e):
+                logger.warning(
+                    "%s model not found, skipping model=%s: %s", log_prefix, model_name, e
+                )
+                unavailable.add(model_name)
+                continue
+            if not _transient_gemini_error(e):
+                logger.warning("%s non-retryable error model=%s: %s", log_prefix, model_name, e)
+                raise
+            if attempt >= max_attempts - 1:
+                logger.warning(
+                    "%s exhausted attempts (last model=%s): %s", log_prefix, model_name, e
+                )
+                break
+            delay = min(base_delay_sec * (2 ** min(backoff_slot, 5)) + random.random(), 45.0)
+            backoff_slot += 1
+            logger.info(
+                "%s retry in %.1fs (model=%s attempt=%s/%s): %s",
+                log_prefix,
+                delay,
+                model_name,
+                attempt + 1,
+                max_attempts,
+                e,
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 async def _exam_prep_generate_with_retry(
     *,
     contents: Any,
@@ -1544,48 +1771,17 @@ async def _exam_prep_generate_with_retry(
     """
     Gemini generate_content for exam-prep flows with backoff on 429/overload.
 
-    Models: GEMINI_EXAM_PREP_MODELS (comma-separated), default tries flash then 1.5-flash.
+    Models from GEMINI_EXAM_PREP_MODELS, then GEMINI_ROTATING_MODELS, then defaults.
+    Each retry uses the next model in the chain (round-robin).
     """
-    if genai is None:
-        raise RuntimeError("Google Genai client is not available")
-
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    last_exc: BaseException | None = None
-
-    for model_name in _exam_prep_model_chain():
-        for attempt in range(attempts_per_model):
-            try:
-                return await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=config,
-                )
-            except BaseException as e:
-                last_exc = e
-                if not _transient_gemini_error(e):
-                    logger.warning(
-                        "exam_prep Gemini non-retryable error model=%s: %s", model_name, e
-                    )
-                    raise
-                if attempt >= attempts_per_model - 1:
-                    logger.warning(
-                        "exam_prep Gemini exhausted retries for model=%s: %s",
-                        model_name,
-                        e,
-                    )
-                    break
-                delay = min(base_delay_sec * (2**attempt) + random.random(), 45.0)
-                logger.info(
-                    "exam_prep Gemini retry in %.1fs (model=%s attempt=%s/%s): %s",
-                    delay,
-                    model_name,
-                    attempt + 1,
-                    attempts_per_model,
-                    e,
-                )
-                await asyncio.sleep(delay)
-    assert last_exc is not None
-    raise last_exc
+    return await _gemini_generate_content_with_model_rotation(
+        contents=contents,
+        config=config,
+        models=_exam_prep_model_chain(),
+        max_rounds=attempts_per_model,
+        base_delay_sec=base_delay_sec,
+        log_prefix="exam_prep Gemini",
+    )
 
 
 async def extract_exam_topics(subject: str, material_texts: list[str]) -> list[dict]:
@@ -1924,16 +2120,18 @@ Return ONLY a JSON array of 0-5 blocks. Each block: {{ "title": "string", "start
 Use times in the next 7 days. Prefer morning/afternoon slots for study. No markdown, no code fence, no commentary.
 JSON:"""
     try:
-        client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         from google.genai import types as genai_types
 
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+        response = await _gemini_generate_content_with_model_rotation(
             contents=prompt,
             config=genai_types.GenerateContentConfig(
                 max_output_tokens=600,
                 temperature=0.3,
             ),
+            models=_schedule_ai_model_chain(),
+            max_rounds=6,
+            base_delay_sec=2.0,
+            log_prefix="schedule_review Gemini",
         )
         text = (response.text or "").strip()
         try:
