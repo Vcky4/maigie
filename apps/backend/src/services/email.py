@@ -41,10 +41,44 @@ _from_email = settings.EMAILS_FROM_EMAIL or "noreply@maigie.com"
 
 RESEND_API_URL = "https://api.resend.com/emails"
 
+_VALID_OUTBOUND_STRATEGIES: dict[str, tuple[str, ...]] = {
+    "smtp_then_resend": ("smtp", "resend"),
+    "resend_then_smtp": ("resend", "smtp"),
+    "resend_only": ("resend",),
+    "smtp_only": ("smtp",),
+}
+
 
 def _email_transport_configured() -> bool:
     """True if we can send via SMTP and/or Resend fallback."""
     return bool(settings.SMTP_HOST) or bool(settings.RESEND_API_KEY)
+
+
+def _outbound_provider_order() -> tuple[str, ...]:
+    """Ordered providers for this send (smtp / resend), from EMAIL_OUTBOUND_STRATEGY."""
+    raw = (settings.EMAIL_OUTBOUND_STRATEGY or "smtp_then_resend").strip().lower()
+    return _VALID_OUTBOUND_STRATEGIES.get(raw, ("smtp", "resend"))
+
+
+def _smtp_error_suggests_quota(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__} {exc!s}".lower()
+    return any(
+        needle in text
+        for needle in (
+            "quota",
+            "credit",
+            "limit",
+            "exceeded",
+            "552",
+            "451",
+            "450",
+            "daily",
+            "monthly",
+            "plan",
+            "not enough",
+            "suspended",
+        )
+    )
 
 
 def _send_multipart_email_sync(
@@ -85,6 +119,7 @@ def _send_multipart_email_sync(
     use_tls = conf.MAIL_STARTTLS
     use_ssl = conf.MAIL_SSL_TLS
 
+    server: smtplib.SMTP | smtplib.SMTP_SSL | None = None
     try:
         if use_ssl:
             server = smtplib.SMTP_SSL(smtp_host, smtp_port)
@@ -97,11 +132,28 @@ def _send_multipart_email_sync(
         if conf.USE_CREDENTIALS:
             server.login(smtp_user, smtp_password)
 
-        server.send_message(multipart_msg)
-        server.quit()
+        # send_message returns dict of refused recipients without raising if only some fail
+        refused = server.send_message(multipart_msg)
+        if refused:
+            raise smtplib.SMTPException(f"SMTP server refused recipient(s): {refused}")
     except Exception as e:
+        if _smtp_error_suggests_quota(e):
+            logger.warning(
+                "SMTP error for %s may be provider quota/limit (will try next outbound provider if configured): %s",
+                to_email,
+                e,
+            )
         logger.error(f"SMTP error sending email to {to_email}: {e}")
         raise
+    finally:
+        if server is not None:
+            try:
+                server.quit()
+            except Exception:
+                try:
+                    server.close()
+                except Exception:
+                    pass
 
 
 async def _send_via_resend(
@@ -164,42 +216,81 @@ async def _send_multipart_email(
     headers: dict[str, str] | None = None,
 ):
     """
-    Send multipart email: try SMTP first (e.g. Brevo relay), then Resend if configured.
+    Send multipart email using EMAIL_OUTBOUND_STRATEGY (SMTP and/or Resend).
+
+    Brevo (and similar) quota errors usually surface as SMTP exceptions or refused
+    recipients; those trigger the next provider in the chain. If SMTP returns OK
+    but the provider drops mail silently, switch strategy to resend_then_smtp or
+    resend_only until the quota resets.
     """
-    smtp_error: Exception | None = None
-    if settings.SMTP_HOST:
-        try:
-            await asyncio.to_thread(
-                _send_multipart_email_sync,
-                to_email,
-                subject,
-                html_body,
-                text_body,
-                headers,
-            )
-            return
-        except Exception as e:
-            smtp_error = e
-            logger.warning(
-                "SMTP send failed for %s (subject=%r): %s",
-                to_email,
-                subject,
-                e,
-            )
-    if settings.RESEND_API_KEY:
-        await _send_via_resend(
-            to_email=to_email,
-            subject=subject,
-            html_body=html_body,
-            text_body=text_body,
-            headers=headers,
-        )
-        if smtp_error is not None:
-            logger.info("Email delivered via Resend fallback to %s", to_email)
-        return
-    if smtp_error is not None:
-        raise smtp_error
-    raise RuntimeError("No SMTP host or Resend API key configured for outbound email")
+    chain = _outbound_provider_order()
+    last_error: BaseException | None = None
+    tried: list[str] = []
+
+    for provider in chain:
+        if provider == "smtp":
+            if not settings.SMTP_HOST:
+                continue
+            try:
+                await asyncio.to_thread(
+                    _send_multipart_email_sync,
+                    to_email,
+                    subject,
+                    html_body,
+                    text_body,
+                    headers,
+                )
+                logger.info(
+                    "Outbound email delivered via=smtp to=%s subject=%r tried=%s",
+                    to_email,
+                    subject,
+                    tried,
+                )
+                return
+            except Exception as e:
+                last_error = e
+                tried.append("smtp")
+                logger.warning(
+                    "Outbound smtp failed to=%s subject=%r: %s",
+                    to_email,
+                    subject,
+                    e,
+                )
+        elif provider == "resend":
+            if not settings.RESEND_API_KEY:
+                continue
+            try:
+                await _send_via_resend(
+                    to_email=to_email,
+                    subject=subject,
+                    html_body=html_body,
+                    text_body=text_body,
+                    headers=headers,
+                )
+                logger.info(
+                    "Outbound email delivered via=resend to=%s subject=%r tried=%s",
+                    to_email,
+                    subject,
+                    tried,
+                )
+                return
+            except Exception as e:
+                last_error = e
+                tried.append("resend")
+                logger.warning(
+                    "Outbound resend failed to=%s subject=%r: %s",
+                    to_email,
+                    subject,
+                    e,
+                )
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(
+        "No usable outbound email provider for this strategy "
+        f"(chain={chain!s}, SMTP_HOST={'set' if settings.SMTP_HOST else 'unset'}, "
+        f"RESEND_API_KEY={'set' if settings.RESEND_API_KEY else 'unset'})"
+    )
 
 
 async def send_verification_email(email: EmailStr, otp: str):

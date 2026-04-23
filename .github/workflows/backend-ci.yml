@@ -149,6 +149,7 @@ jobs:
           BREVO_ENABLED: ${{secrets.BREVO_ENABLED}}
           RESEND_API_KEY: ${{secrets.RESEND_API_KEY}}
           RESEND_FROM_EMAIL: ${{secrets.RESEND_FROM_EMAIL}}
+          EMAIL_OUTBOUND_STRATEGY: ${{secrets.EMAIL_OUTBOUND_STRATEGY}}
           STRIPE_SECRET_KEY: ${{secrets.STRIPE_SECRET_KEY}}
           STRIPE_PUBLISHABLE_KEY: ${{secrets.STRIPE_PUBLISHABLE_KEY}}
           STRIPE_WEBHOOK_SECRET: ${{secrets.STRIPE_WEBHOOK_SECRET}}
@@ -322,6 +323,7 @@ jobs:
             export BREVO_ENABLED="${{secrets.BREVO_ENABLED}}"
             export RESEND_API_KEY="${{secrets.RESEND_API_KEY}}"
             export RESEND_FROM_EMAIL="${{secrets.RESEND_FROM_EMAIL}}"
+            export EMAIL_OUTBOUND_STRATEGY="${{secrets.EMAIL_OUTBOUND_STRATEGY}}"
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
@@ -863,6 +865,7 @@ jobs:
           BREVO_ENABLED: ${{ secrets.BREVO_ENABLED }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          EMAIL_OUTBOUND_STRATEGY: ${{ secrets.EMAIL_OUTBOUND_STRATEGY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -1133,6 +1136,7 @@ jobs:
           BREVO_ENABLED: ${{ secrets.BREVO_ENABLED }}
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_FROM_EMAIL: ${{ secrets.RESEND_FROM_EMAIL }}
+          EMAIL_OUTBOUND_STRATEGY: ${{ secrets.EMAIL_OUTBOUND_STRATEGY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -1284,6 +1288,7 @@ jobs:
             export BREVO_ENABLED="${{secrets.BREVO_ENABLED}}"
             export RESEND_API_KEY="${{secrets.RESEND_API_KEY}}"
             export RESEND_FROM_EMAIL="${{secrets.RESEND_FROM_EMAIL}}"
+            export EMAIL_OUTBOUND_STRATEGY="${{secrets.EMAIL_OUTBOUND_STRATEGY}}"
             export STRIPE_SECRET_KEY="${{ secrets.STRIPE_SECRET_KEY }}"
             export STRIPE_PUBLISHABLE_KEY="${{ secrets.STRIPE_PUBLISHABLE_KEY }}"
             export STRIPE_WEBHOOK_SECRET="${{ secrets.STRIPE_WEBHOOK_SECRET }}"
