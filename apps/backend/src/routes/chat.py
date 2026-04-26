@@ -1957,6 +1957,19 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                     for comp in onboarding_components:
                         await manager.send_json(comp, user.id)
 
+                    if onboarding_result.first_topic:
+                        await manager.send_json(
+                            {
+                                "type": "event",
+                                "payload": {
+                                    "status": "complete",
+                                    "action": "onboarding_complete",
+                                    "firstTopic": onboarding_result.first_topic,
+                                },
+                            },
+                            user.id,
+                        )
+
                     continue
                 except Exception as e:
                     # If onboarding fails for any reason, fall back to normal LLM flow.

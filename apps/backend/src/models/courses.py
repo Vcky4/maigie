@@ -9,6 +9,7 @@ See LICENSE file in the repository root for details.
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field  # <--- Added ConfigDict here
 
@@ -169,9 +170,17 @@ class CourseResponse(BaseModel):
     modules: list[ModuleResponse]
     createdAt: datetime
     updatedAt: datetime
+    outlineSatisfactionRecorded: bool = False
 
     # CHANGED: Replaced class Config with model_config
     model_config = ConfigDict(from_attributes=True)
+
+
+class CourseOutlineSatisfactionCreate(BaseModel):
+    """KPI payload when the learner reacts to an AI-generated outline."""
+
+    kind: Literal["SATISFIED", "NOT_SATISFIED", "MODIFICATION_REQUESTED"]
+    feedback: str | None = Field(None, max_length=4000)
 
 
 class CourseListItem(BaseModel):
