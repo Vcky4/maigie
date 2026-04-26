@@ -10,7 +10,7 @@ See LICENSE file in the repository root for details.
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # ============================================================================
 # User Analytics Models
@@ -61,6 +61,17 @@ class UserAnalyticsResponse(BaseModel):
 # ============================================================================
 
 
+class CourseOutlineSatisfactionPlatformStats(BaseModel):
+    """Aggregated learner feedback on AI-generated course outlines (admin KPI)."""
+
+    totalResponses: int = 0
+    satisfied: int = 0
+    notSatisfied: int = 0
+    modificationRequested: int = 0
+    satisfactionRatePercent: float | None = None
+    responsesLast30Days: int = 0
+
+
 class PlatformStatistics(BaseModel):
     """Platform-wide statistics."""
 
@@ -80,6 +91,9 @@ class PlatformStatistics(BaseModel):
     coursesByDifficulty: dict[str, int]  # {"BEGINNER": 50, "INTERMEDIATE": 30, ...}
     aiGeneratedCourses: int
     manualCourses: int
+    outlineSatisfaction: CourseOutlineSatisfactionPlatformStats = Field(
+        default_factory=CourseOutlineSatisfactionPlatformStats
+    )
 
 
 class UserAnalyticsItem(BaseModel):

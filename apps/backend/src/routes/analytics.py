@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from prisma import Client as PrismaClient
 
 from ..dependencies import CurrentUser, SuperAdminUser
+from ..services.outline_satisfaction_stats import fetch_outline_satisfaction_platform_stats
 from ..utils.progress import round_progress_percent
 from ..models.analytics import (
     AchievementBadge,
@@ -971,6 +972,11 @@ async def get_enhanced_admin_analytics(
     ai_generated = sum(1 for c in all_courses if c.isAIGenerated)
     manual_courses = len(all_courses) - ai_generated
 
+    thirty_days_cutoff = datetime.now(UTC) - timedelta(days=30)
+    outline_satisfaction = await fetch_outline_satisfaction_platform_stats(
+        db, thirty_days_ago=thirty_days_cutoff
+    )
+
     platform_stats = PlatformStatistics(
         totalUsers=len(all_users),
         activeUsers=len(active_users),
@@ -988,6 +994,7 @@ async def get_enhanced_admin_analytics(
         coursesByDifficulty=dict(courses_by_difficulty),
         aiGeneratedCourses=ai_generated,
         manualCourses=manual_courses,
+        outlineSatisfaction=outline_satisfaction,
     )
 
     # Get top users by progress
