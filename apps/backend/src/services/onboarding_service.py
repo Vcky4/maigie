@@ -181,7 +181,9 @@ async def _extract_courses_from_image(image_url: str) -> list[str]:
 def default_onboarding_state() -> dict[str, Any]:
     return {
         "version": 1,
-        "stage": "welcome",  # welcome | uni_name | uni_details | focus_level | commitment | courses | creating | done
+        "stage": "welcome",
+        # welcome | uni_name | uni_details | focus_level | commitment | course_title | starter_topic
+        # | courses (legacy) | creating | done
         "learnerType": None,
         "profile": {},
         "courses": [],
@@ -269,6 +271,7 @@ class OnboardingResult:
     is_complete: bool = False
     created_courses: list[dict[str, Any]] | None = None  # lightweight course list
     credit_limit_error: dict | None = None  # when set, frontend shows upgrade modal
+    first_topic: dict[str, str] | None = None  # courseId, moduleId, topicId for deep-link
 
 
 def _welcome_prompt() -> str:
@@ -276,6 +279,296 @@ def _welcome_prompt() -> str:
         "Welcome! I’m Maigie.\n\n"
         "Before we start: are you a **university student** or a **self‑paced learner**?\n"
         "Reply with `university` or `self-paced`."
+    )
+
+
+def _wants_maigie_topic_choice(text: str) -> bool:
+    t = _normalize_text(text)
+    if t in {"__maigie_choice__", "maigie", "surprise me", "surprise", "you decide"}:
+        return True
+    phrases = (
+        "let maigie",
+        "you pick",
+        "your choice",
+        "pick for me",
+        "you choose",
+        "maigie decide",
+        "maigie chooses",
+        "anything is fine",
+        "no preference",
+        "idk",
+        "i don't know",
+        "dont know",
+        "don't know",
+    )
+    return any(p in t for p in phrases)
+
+
+def _outline_user_message_from_profile(
+    profile: dict[str, Any],
+    learner_type: LearnerType | None,
+    *,
+    wants_maigie_topic: bool,
+    explicit_topic: str | None,
+) -> str:
+    lines: list[str] = []
+    if learner_type == "university":
+        if profile.get("universityName"):
+            lines.append(f"University: {profile['universityName']}.")
+        for key, label in (
+            ("faculty", "Faculty"),
+            ("department", "Department"),
+            ("level", "Level"),
+        ):
+            if profile.get(key):
+                lines.append(f"{label}: {profile[key]}.")
+    else:
+        if profile.get("focusArea"):
+            lines.append(f"Learner focus area: {profile['focusArea']}.")
+        if profile.get("level"):
+            lines.append(f"Self-reported level: {profile['level']}.")
+    if profile.get("commitmentRaw"):
+        lines.append(f"Semester improvement goal: {profile['commitmentRaw']}.")
+    if profile.get("courseTitle"):
+        lines.append(f"Official course title: {profile['courseTitle']}.")
+    if wants_maigie_topic:
+        lines.append(
+            "The learner asked Maigie to choose the first topic emphasis — prioritize a "
+            "strong Module 1 that feels immediately useful, then build prerequisites toward deeper ideas."
+        )
+    elif explicit_topic:
+        lines.append(
+            "The learner wants extra weight on this starting topic (place it early in the path, "
+            f"and scaffold toward it): "
+            f"{explicit_topic}."
+        )
+    return " ".join(lines).strip()
+
+
+async def _resolve_first_topic_path(db, course_id: str) -> dict[str, str] | None:
+    modules = await db.module.find_many(
+        where={"courseId": course_id},
+        order={"order": "asc"},
+        include={"topics": True},
+    )
+    if not modules:
+        return None
+    first_mod = modules[0]
+    topics = list(getattr(first_mod, "topics", None) or [])
+    topics.sort(key=lambda x: float(getattr(x, "order", 0) or 0))
+    if not topics:
+        return None
+    t0 = topics[0]
+    return {"courseId": course_id, "moduleId": first_mod.id, "topicId": t0.id}
+
+
+async def _finalize_onboarding_course_creation(
+    db,
+    *,
+    user_id: str,
+    learner_type: LearnerType | None,
+    courses: list[str],
+    state: dict[str, Any],
+    profile: dict[str, Any],
+    progress_callback: Callable[[str], Awaitable[None]] | None,
+    university_shell_instead_of_ai: bool,
+    outline_user_message: str | None,
+) -> OnboardingResult:
+    """
+    Persist course list, create courses (shell-only university legacy vs AI outline),
+    mark onboarding done, and return lightweight course rows + optional first topic.
+    """
+    state["courses"] = courses
+    state["stage"] = "creating"
+    await save_onboarding_state(db, user_id, state)
+
+    existing = await db.course.find_many(where={"userId": user_id}, take=200)
+    existing_by_norm = {_normalize_text(c.title): c for c in existing if getattr(c, "title", None)}
+
+    user_obj = await db.user.find_unique(where={"id": user_id})
+    tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
+    if tier == "FREE":
+        current_count = await db.course.count(where={"userId": user_id, "archived": False})
+        if current_count >= 2:
+            state["stage"] = "done"
+            await save_onboarding_state(db, user_id, state)
+            await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
+            return OnboardingResult(
+                reply_text="You already have the maximum number of courses for your plan. Let's head to your dashboard!",
+                is_complete=True,
+                credit_limit_error={
+                    "type": "credit_limit_error",
+                    "message": "You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
+                    "tier": tier,
+                    "is_daily_limit": False,
+                    "show_referral_option": True,
+                },
+            )
+
+        allowed_to_create = 2 - current_count
+        new_courses: list[str] = []
+        for t in courses:
+            if _normalize_text(t) in existing_by_norm:
+                new_courses.append(t)
+            elif allowed_to_create > 0:
+                new_courses.append(t)
+                allowed_to_create -= 1
+        courses = new_courses
+
+    created_course_ids: list[str] = []
+    created_courses_light: list[dict[str, Any]] = []
+
+    if learner_type == "university" and university_shell_instead_of_ai:
+        to_create: list[str] = []
+        for title in courses:
+            norm = _normalize_text(title)
+            if norm in existing_by_norm:
+                continue
+            to_create.append(title)
+        total_to_create = len(to_create)
+        created_count = 0
+
+        for title in courses:
+            norm = _normalize_text(title)
+            if norm in existing_by_norm:
+                continue
+            course = await db.course.create(
+                data={
+                    "userId": user_id,
+                    "title": title,
+                    "description": "University course (outline pending).",
+                    "isAIGenerated": False,
+                }
+            )
+            created_course_ids.append(course.id)
+            created_courses_light.append(
+                {
+                    "courseId": course.id,
+                    "id": course.id,
+                    "title": course.title,
+                    "description": course.description or "",
+                    "progress": 0.0,
+                    "difficulty": getattr(course, "difficulty", None),
+                    "completedTopics": 0,
+                    "totalTopics": 0,
+                }
+            )
+            created_count += 1
+            if progress_callback:
+                suffix = f" ({created_count}/{total_to_create})" if total_to_create else ""
+                await progress_callback(f"Created{suffix}: {course.title}")
+    else:
+        to_create = []
+        for title in courses:
+            norm = _normalize_text(title)
+            if norm in existing_by_norm:
+                continue
+            to_create.append(title)
+        total_to_create = len(to_create)
+        created_count = 0
+
+        for title in courses:
+            norm = _normalize_text(title)
+            if norm in existing_by_norm:
+                continue
+            if progress_callback:
+                suffix = f" ({created_count + 1}/{total_to_create})" if total_to_create else ""
+                await progress_callback(f"Creating{suffix}: {title}...")
+            payload: dict[str, Any] = {
+                "title": title,
+                "description": f"A structured course on {title}.",
+                "difficulty": "BEGINNER",
+                "modules": [],
+            }
+            if outline_user_message:
+                payload["outline_user_message"] = outline_user_message
+            result = await action_service.create_course(payload, user_id)
+            if result and result.get("credit_limit_error"):
+                error_payload = {
+                    "type": "credit_limit_error",
+                    "message": result.get(
+                        "message", "Credit limit reached. Start a free trial for more."
+                    ),
+                    "tier": result.get("tier", "FREE"),
+                    "is_daily_limit": result.get("is_daily_limit", False),
+                    "show_referral_option": result.get("show_referral_option", True),
+                }
+                state["stage"] = "done"
+                await save_onboarding_state(db, user_id, state)
+                await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
+                return OnboardingResult(
+                    reply_text=error_payload["message"],
+                    is_complete=True,
+                    created_courses=created_courses_light,
+                    credit_limit_error=error_payload,
+                )
+            if result and result.get("status") == "success":
+                cid = result.get("courseId") or result.get("course_id")
+                if cid:
+                    created_course_ids.append(cid)
+                    created_count += 1
+                    if progress_callback:
+                        suffix = f" ({created_count}/{total_to_create})" if total_to_create else ""
+                        await progress_callback(f"Created{suffix}: {title}")
+
+        if created_course_ids:
+            created = await db.course.find_many(
+                where={"id": {"in": created_course_ids}, "userId": user_id},
+                include={"modules": {"include": {"topics": True}}},
+            )
+            created_courses_light = []
+            for course in created:
+                total_topics = sum(len(m.topics) for m in course.modules)
+                completed_topics = sum(
+                    sum(1 for t in m.topics if t.completed) for m in course.modules
+                )
+                progress = (completed_topics / total_topics * 100) if total_topics else 0.0
+                created_courses_light.append(
+                    {
+                        "courseId": course.id,
+                        "id": course.id,
+                        "title": course.title,
+                        "description": course.description or "",
+                        "progress": progress,
+                        "difficulty": getattr(course, "difficulty", None),
+                        "completedTopics": completed_topics,
+                        "totalTopics": total_topics,
+                    }
+                )
+
+    state["createdCourseIds"] = created_course_ids
+    state["stage"] = "done"
+    await save_onboarding_state(db, user_id, state)
+
+    total_course_count = await db.course.count(where={"userId": user_id, "archived": False})
+    if total_course_count > 0:
+        await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
+
+    first_topic: dict[str, str] | None = None
+    for cid in created_course_ids:
+        first_topic = await _resolve_first_topic_path(db, cid)
+        if first_topic:
+            break
+
+    if learner_type == "university" and university_shell_instead_of_ai:
+        reply = (
+            "Perfect — I’ve set up your courses.\n\n"
+            "Next:\n"
+            "- Open a course and start studying, or\n"
+            "- When you’re ready, paste a course outline anytime and tell me which course it’s for.\n\n"
+            "Example: `Outline for Data Structures: ...`"
+        )
+    else:
+        reply = (
+            "All set — I’ve built your course with a full outline.\n\n"
+            "Jump into your first topic when you’re ready, or ask me to tweak anything."
+        )
+
+    return OnboardingResult(
+        reply_text=reply,
+        is_complete=True,
+        created_courses=created_courses_light,
+        first_topic=first_topic,
     )
 
 
@@ -382,26 +675,98 @@ async def handle_onboarding_message(
     if stage == "commitment":
         profile["commitmentRaw"] = text
         state["profile"] = profile
-        state["stage"] = "courses"
+        state["stage"] = "course_title"
         await save_onboarding_state(db, user_id, state)
-
-        reply = (
-            "Got it. What course are you currently struggling with?\n"
-            "You can also upload a screenshot/photo.\n"
-            "Example: `Data Structures`"
-        )
         return OnboardingResult(
-            reply_text=reply,
+            reply_text=(
+                "Great. What is the **exact course title** you want to start with?\n"
+                "Example: `Data Structures` or `BIO 201 — Cell Biology`"
+            ),
             is_complete=False,
         )
 
+    if stage == "course_title":
+        ct = (text or "").strip()
+        first_image = _pick_first_image_url(image_url)
+        if not ct and first_image:
+            if progress_callback:
+                await progress_callback("Reading your course list from the image...")
+            try:
+                extracted = await _extract_courses_from_image(first_image)
+                ct = (extracted[0] if extracted else "").strip()
+            except Exception:
+                ct = ""
+        if not ct:
+            return OnboardingResult(
+                reply_text="Please share your **course title** (one line is enough).",
+                is_complete=False,
+            )
+        profile["courseTitle"] = ct
+        state["profile"] = profile
+        state["stage"] = "starter_topic"
+        await save_onboarding_state(db, user_id, state)
+        return OnboardingResult(
+            reply_text=(
+                "Which **topic or unit** inside this course should we prioritize first?\n\n"
+                "Describe it in your own words (e.g. `Big-O notation`), or choose **Let Maigie decide** "
+                "and we’ll pick a strong starting path for you."
+            ),
+            is_complete=False,
+        )
+
+    if stage == "starter_topic":
+        title = (profile.get("courseTitle") or "").strip()
+        if not title:
+            state["stage"] = "course_title"
+            await save_onboarding_state(db, user_id, state)
+            return OnboardingResult(
+                reply_text="Let’s grab your course title first — what should we call this course?",
+                is_complete=False,
+            )
+
+        wants_maigie = _wants_maigie_topic_choice(text)
+        explicit = "" if wants_maigie else (text or "").strip()
+        if not wants_maigie and not explicit:
+            return OnboardingResult(
+                reply_text=(
+                    "Tell me one topic to start with, or pick **Let Maigie decide** if you’d like us to choose."
+                ),
+                is_complete=False,
+            )
+
+        if wants_maigie:
+            profile["topicPreference"] = "maigie_choice"
+            profile["starterTopicExplicit"] = None
+        else:
+            profile["topicPreference"] = "user_topic"
+            profile["starterTopicExplicit"] = explicit
+        state["profile"] = profile
+        await save_onboarding_state(db, user_id, state)
+
+        outline_ctx = _outline_user_message_from_profile(
+            profile,
+            learner_type,
+            wants_maigie_topic=wants_maigie,
+            explicit_topic=explicit or None,
+        )
+
+        return await _finalize_onboarding_course_creation(
+            db,
+            user_id=user_id,
+            learner_type=learner_type,
+            courses=[title],
+            state=state,
+            profile=profile,
+            progress_callback=progress_callback,
+            university_shell_instead_of_ai=False,
+            outline_user_message=outline_ctx or None,
+        )
+
     if stage == "courses":
-        # Free tier: university max 2 AI courses, self-paced max 1 (uses AI outline)
+        # Legacy path (users mid-flow before course_title / starter_topic existed)
         max_courses = 2 if learner_type == "university" else 1
         courses = _parse_list_items(text, max_items=max_courses)
         first_image = _pick_first_image_url(image_url)
-        # If the user sent an image and their text looks like a placeholder (e.g. "here"),
-        # prefer extracting from the image.
         if (
             first_image
             and _should_try_image_extraction(text)
@@ -422,201 +787,17 @@ async def handle_onboarding_message(
             else:
                 reply = "Please tell me the one topic or course you want to start with."
             return OnboardingResult(reply_text=reply, is_complete=False)
-        state["courses"] = courses
-        state["stage"] = "creating"
-        await save_onboarding_state(db, user_id, state)
 
-        # Create courses now.
-        # Avoid duplicates against existing courses.
-        existing = await db.course.find_many(where={"userId": user_id}, take=200)
-        existing_by_norm = {
-            _normalize_text(c.title): c for c in existing if getattr(c, "title", None)
-        }
-
-        # FREE tier: max 2 courses total
-        user_obj = await db.user.find_unique(where={"id": user_id})
-        tier = str(user_obj.tier) if user_obj and user_obj.tier else "FREE"
-        if tier == "FREE":
-            current_count = await db.course.count(where={"userId": user_id, "archived": False})
-            if current_count >= 2:
-                state["stage"] = "done"
-                await save_onboarding_state(db, user_id, state)
-                await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
-                return OnboardingResult(
-                    reply_text="You already have the maximum number of courses for your plan. Let's head to your dashboard!",
-                    is_complete=True,
-                    credit_limit_error={
-                        "type": "credit_limit_error",
-                        "message": "You can only create 2 courses in your current plan. Start a free trial to create unlimited courses.",
-                        "tier": tier,
-                        "is_daily_limit": False,
-                        "show_referral_option": True,
-                    },
-                )
-
-            allowed_to_create = 2 - current_count
-            new_courses = []
-            for t in courses:
-                if _normalize_text(t) in existing_by_norm:
-                    new_courses.append(t)
-                elif allowed_to_create > 0:
-                    new_courses.append(t)
-                    allowed_to_create -= 1
-            courses = new_courses
-
-        created_course_ids: list[str] = []
-        created_courses_light: list[dict[str, Any]] = []
-
-        # University: create courses WITHOUT AI outlines (no modules/topics).
-        # Self-paced: create AI generated outlines (using action_service.create_course).
-        if learner_type == "university":
-            to_create = []
-            for title in courses:
-                norm = _normalize_text(title)
-                if norm in existing_by_norm:
-                    continue
-                to_create.append(title)
-            total_to_create = len(to_create)
-            created_count = 0
-
-            for title in courses:
-                norm = _normalize_text(title)
-                if norm in existing_by_norm:
-                    continue
-                course = await db.course.create(
-                    data={
-                        "userId": user_id,
-                        "title": title,
-                        "description": "University course (outline pending).",
-                        "isAIGenerated": False,
-                    }
-                )
-                created_course_ids.append(course.id)
-                created_courses_light.append(
-                    {
-                        "courseId": course.id,
-                        "id": course.id,
-                        "title": course.title,
-                        "description": course.description or "",
-                        "progress": 0.0,
-                        "difficulty": getattr(course, "difficulty", None),
-                        "completedTopics": 0,
-                        "totalTopics": 0,
-                    }
-                )
-                created_count += 1
-                if progress_callback:
-                    suffix = f" ({created_count}/{total_to_create})" if total_to_create else ""
-                    await progress_callback(f"Created{suffix}: {course.title}")
-        else:
-            # self-paced
-            to_create = []
-            for title in courses:
-                norm = _normalize_text(title)
-                if norm in existing_by_norm:
-                    continue
-                to_create.append(title)
-            total_to_create = len(to_create)
-            created_count = 0
-
-            for title in courses:
-                norm = _normalize_text(title)
-                if norm in existing_by_norm:
-                    continue
-                if progress_callback:
-                    suffix = f" ({created_count + 1}/{total_to_create})" if total_to_create else ""
-                    await progress_callback(f"Creating{suffix}: {title}...")
-                # Let action_service generate outline by providing no modules.
-                result = await action_service.create_course(
-                    {
-                        "title": title,
-                        "description": f"A structured course on {title}.",
-                        "difficulty": "BEGINNER",
-                        "modules": [],
-                    },
-                    user_id,
-                )
-                if result and result.get("credit_limit_error"):
-                    # Surface limit error to user and stop creating more
-                    error_payload = {
-                        "type": "credit_limit_error",
-                        "message": result.get(
-                            "message", "Credit limit reached. Start a free trial for more."
-                        ),
-                        "tier": result.get("tier", "FREE"),
-                        "is_daily_limit": result.get("is_daily_limit", False),
-                        "show_referral_option": result.get("show_referral_option", True),
-                    }
-                    state["stage"] = "done"
-                    await save_onboarding_state(db, user_id, state)
-                    await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
-                    return OnboardingResult(
-                        reply_text=error_payload["message"],
-                        is_complete=True,
-                        created_courses=created_courses_light,
-                        credit_limit_error=error_payload,
-                    )
-                if result and result.get("status") == "success":
-                    cid = result.get("courseId") or result.get("course_id")
-                    if cid:
-                        created_course_ids.append(cid)
-                        created_count += 1
-                        if progress_callback:
-                            suffix = (
-                                f" ({created_count}/{total_to_create})" if total_to_create else ""
-                            )
-                            await progress_callback(f"Created{suffix}: {title}")
-
-            # Load created courses for lightweight list
-            if created_course_ids:
-                created = await db.course.find_many(
-                    where={"id": {"in": created_course_ids}, "userId": user_id},
-                    include={"modules": {"include": {"topics": True}}},
-                )
-                for course in created:
-                    total_topics = sum(len(m.topics) for m in course.modules)
-                    completed_topics = sum(
-                        sum(1 for t in m.topics if t.completed) for m in course.modules
-                    )
-                    progress = (completed_topics / total_topics * 100) if total_topics else 0.0
-                    created_courses_light.append(
-                        {
-                            "courseId": course.id,
-                            "id": course.id,
-                            "title": course.title,
-                            "description": course.description or "",
-                            "progress": progress,
-                            "difficulty": getattr(course, "difficulty", None),
-                            "completedTopics": completed_topics,
-                            "totalTopics": total_topics,
-                        }
-                    )
-
-        state["createdCourseIds"] = created_course_ids
-        state["stage"] = "done"
-        await save_onboarding_state(db, user_id, state)
-
-        # Mark user onboarded once at least one course exists (created now or already existed).
-        total_course_count = await db.course.count(where={"userId": user_id, "archived": False})
-        if total_course_count > 0:
-            await db.user.update(where={"id": user_id}, data={"isOnboarded": True})
-
-        if learner_type == "university":
-            reply = (
-                "Perfect — I’ve set up your courses.\n\n"
-                "Next:\n"
-                "- Open a course and start studying, or\n"
-                "- When you’re ready, paste a course outline anytime and tell me which course it’s for.\n\n"
-                "Example: `Outline for Data Structures: ...`"
-            )
-        else:
-            reply = (
-                "All set — I’ve created your courses with outlines.\n\n"
-                "Tell me what you want to study first (e.g. `Help me study Data Structures today`)."
-            )
-
-        return OnboardingResult(
-            reply_text=reply, is_complete=True, created_courses=created_courses_light
+        return await _finalize_onboarding_course_creation(
+            db,
+            user_id=user_id,
+            learner_type=learner_type,
+            courses=courses,
+            state=state,
+            profile=profile,
+            progress_callback=progress_callback,
+            university_shell_instead_of_ai=(learner_type == "university"),
+            outline_user_message=None,
         )
 
     # Fallback: restart prompt if state is weird

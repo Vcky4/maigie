@@ -133,11 +133,15 @@ class ActionService:
                 # Extract topic from title (remove "Learning " prefix if present)
                 topic = title.replace("Learning ", "").strip()
 
+                outline_user_message = (
+                    data.get("outline_user_message") or data.get("outlineUserMessage") or ""
+                ).strip() or None
+
                 # Generate outline
                 outline = await llm_service.generate_course_outline(
                     topic=topic,
                     difficulty=difficulty,
-                    user_message=None,
+                    user_message=outline_user_message,
                 )
 
                 if progress_callback:

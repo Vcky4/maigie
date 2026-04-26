@@ -145,6 +145,13 @@ enum CircleSessionStatus {
   CANCELLED
 }
 
+/// KPI: first-visit outline satisfaction on AI-generated courses
+enum CourseOutlineSatisfactionKind {
+  SATISFIED
+  NOT_SATISFIED
+  MODIFICATION_REQUESTED
+}
+
 /// Admin-recorded income vs operating expense (internal ledger).
 enum LedgerLineKind {
   INCOME
@@ -243,6 +250,8 @@ model User {
 
   // Feedback Relations
   feedback Feedback[]
+
+  courseOutlineSatisfactions CourseOutlineSatisfaction[]
 
   // Referral Relations
   referralCode        String?               @unique // User's unique referral code
@@ -442,9 +451,29 @@ model Course {
   studySessions StudySession[] // Study sessions for this course
   chatSessions  ChatSession[]
 
+  outlineSatisfactions CourseOutlineSatisfaction[]
+
   @@index([userId])
   @@index([userId, archived])
   @@index([circleId])
+}
+
+model CourseOutlineSatisfaction {
+  id       String @id @default(cuid())
+  userId   String
+  courseId String
+  kind     CourseOutlineSatisfactionKind
+  /// Optional detail when kind is NOT_SATISFIED or MODIFICATION_REQUESTED
+  feedback String?
+
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+  @@index([userId, courseId])
+  @@index([userId, createdAt])
 }
 
 model Module {

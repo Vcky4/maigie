@@ -29,9 +29,10 @@ from ..models.courses import (
     CourseContributionDay,
     CourseCreate,
     CourseDetailResponse,
+    CourseFootprint,
     CourseListItem,
     CourseListResponse,
-    CourseFootprint,
+    CourseOutlineSatisfactionCreate,
     CourseResponse,
     CourseStreakSummary,
     CourseUpdate,
@@ -225,6 +226,13 @@ async def check_course_ownership(db: PrismaClient, course_id: str, user_id: str)
         raise ForbiddenError("You don't have permission to access this course")
 
     return course
+
+
+async def outline_satisfaction_recorded_for_user(
+    db: PrismaClient, user_id: str, course_id: str
+) -> bool:
+    n = await db.courseoutlinesatisfaction.count(where={"userId": user_id, "courseId": course_id})
+    return n > 0
 
 
 async def check_module_ownership(db: PrismaClient, module_id: str, user_id: str) -> tuple[Any, Any]:
@@ -615,6 +623,7 @@ async def create_course(
         modules=[],
         createdAt=course.createdAt,
         updatedAt=course.updatedAt,
+        outlineSatisfactionRecorded=False,
     )
 
 
@@ -648,6 +657,8 @@ async def get_course(
     # Calculate overall course progress
     progress, total_topics, completed_topics = await calculate_course_progress(db, course_id)
 
+    outline_recorded = await outline_satisfaction_recorded_for_user(db, user_id, course_id)
+
     return CourseResponse(
         id=course.id,
         userId=course.userId,
@@ -663,7 +674,39 @@ async def get_course(
         modules=enriched_modules,
         createdAt=course.createdAt,
         updatedAt=course.updatedAt,
+        outlineSatisfactionRecorded=outline_recorded,
     )
+
+
+@router.post(
+    "/{course_id}/outline-satisfaction",
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_course_outline_satisfaction(
+    course_id: str,
+    body: CourseOutlineSatisfactionCreate,
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)],
+):
+    """
+    Record learner reaction to an AI-generated course outline (product KPI).
+    """
+    user_id = current_user.id
+    course = await check_course_ownership(db, course_id, user_id)
+    if not getattr(course, "isAIGenerated", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Outline feedback is only recorded for AI-generated courses.",
+        )
+    await db.courseoutlinesatisfaction.create(
+        data={
+            "userId": user_id,
+            "courseId": course_id,
+            "kind": body.kind,
+            "feedback": body.feedback,
+        }
+    )
+    return {"status": "ok"}
 
 
 @router.get("/{course_id}/detail", response_model=CourseDetailResponse)

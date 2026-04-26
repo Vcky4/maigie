@@ -1935,6 +1935,21 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                             json.dumps(onboarding_result.credit_limit_error), user.id
                         )
 
+                    # Deep-link payload must reach the client before stream ends so the web app
+                    # can store firstTopic before user refetch / redirect (avoids race with is_final).
+                    if onboarding_result.first_topic:
+                        await manager.send_json(
+                            {
+                                "type": "event",
+                                "payload": {
+                                    "status": "complete",
+                                    "action": "onboarding_complete",
+                                    "firstTopic": onboarding_result.first_topic,
+                                },
+                            },
+                            user.id,
+                        )
+
                     # Stream reply to the client so the user sees progress (word-by-word)
                     reply_text = onboarding_result.reply_text or ""
                     words = reply_text.split()

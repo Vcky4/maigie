@@ -37,6 +37,7 @@ from ..models.analytics import (
 from ..services.audit_service import log_admin_action
 from ..services.credit_service import initialize_user_credits
 from ..services.email import send_bulk_email
+from ..services.outline_satisfaction_stats import fetch_outline_satisfaction_platform_stats
 from ..services.subscription_service import update_user_subscription_from_stripe
 from ..utils.exceptions import ResourceNotFoundError
 
@@ -102,6 +103,9 @@ async def get_dashboard_stats(
     total_courses = await db.course.count()
     ai_courses = await db.course.count(where={"isAIGenerated": True})
     active_courses = await db.course.count(where={"archived": False})
+    outline_satisfaction = await fetch_outline_satisfaction_platform_stats(
+        db, thirty_days_ago=thirty_days_ago
+    )
 
     # Feedback statistics
     pending_feedback = await db.feedback.count(where={"status": "PENDING"})
@@ -157,6 +161,7 @@ async def get_dashboard_stats(
             "total": total_courses,
             "aiGenerated": ai_courses,
             "active": active_courses,
+            "outlineSatisfaction": outline_satisfaction.model_dump(),
         },
         "feedback": {
             "total": total_feedback,
@@ -775,6 +780,7 @@ async def get_platform_analytics(
 
     Only accessible by admin users.
     """
+    now = datetime.now(UTC)
     # Get all users
     all_users = await db.user.find_many(where={"role": "USER"})
     active_users = [u for u in all_users if u.isActive]
@@ -849,6 +855,11 @@ async def get_platform_analytics(
     ai_generated = sum(1 for c in all_courses if c.isAIGenerated)
     manual_courses = len(all_courses) - ai_generated
 
+    thirty_days_ago = now - timedelta(days=30)
+    outline_satisfaction = await fetch_outline_satisfaction_platform_stats(
+        db, thirty_days_ago=thirty_days_ago
+    )
+
     platform_stats = PlatformStatistics(
         totalUsers=len(all_users),
         activeUsers=len(active_users),
@@ -866,6 +877,7 @@ async def get_platform_analytics(
         coursesByDifficulty=courses_by_difficulty,
         aiGeneratedCourses=ai_generated,
         manualCourses=manual_courses,
+        outlineSatisfaction=outline_satisfaction,
     )
 
     # Get top users by progress
