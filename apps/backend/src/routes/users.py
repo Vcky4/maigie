@@ -1,4 +1,5 @@
 import logging
+import secrets
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Optional
@@ -10,6 +11,11 @@ from prisma import Client as PrismaClient
 from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.auth import UserResponse
+from src.services.account_deletion_service import (
+    account_deletion_scheduled_for,
+    pending_account_deletion_payload,
+    utc_now,
+)
 from src.services.credit_service import get_credit_usage
 from src.utils.dependencies import get_db_client
 
@@ -31,13 +37,41 @@ class PreferencesUpdate(BaseModel):
     emailWeeklyTips: bool | None = None
 
 
-@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_my_account(
+class AccountDeletionStatusResponse(BaseModel):
+    pending: bool
+    requestedAt: datetime | None = None
+    scheduledFor: datetime | None = None
+    daysUntilDeletion: int | None = None
+
+
+class CancelDeletionRequest(BaseModel):
+    token: str | None = None
+
+
+@router.get("/me/delete-request", response_model=AccountDeletionStatusResponse)
+async def get_account_deletion_status(
     current_user: CurrentUser,
     db: Annotated[PrismaClient, Depends(get_db_client)] = None,
 ):
     """
-    Permanently delete the authenticated user's account and related data.
+    Get pending account deletion state for the authenticated user.
+    """
+    user = await db.user.find_unique(where={"id": current_user.id})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    pending = pending_account_deletion_payload(user, utc_now())
+    if pending is None:
+        return AccountDeletionStatusResponse(pending=False)
+    return AccountDeletionStatusResponse(pending=True, **pending)
+
+
+@router.post("/me/delete-request", response_model=AccountDeletionStatusResponse)
+async def request_account_deletion(
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)] = None,
+):
+    """
+    Start a 90-day account deletion countdown (can be cancelled during the window).
     """
     user = await db.user.find_unique(where={"id": current_user.id})
     if not user:
@@ -46,11 +80,85 @@ async def delete_my_account(
     if str(user.role) == "ADMIN":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Admin accounts cannot be deleted from this endpoint.",
+            detail="Admin accounts cannot be deleted from this endpoint",
         )
 
-    await db.user.delete(where={"id": current_user.id})
-    logger.info("User %s deleted their account", current_user.id)
+    now = utc_now()
+    existing = pending_account_deletion_payload(user, now)
+    if existing is not None:
+        return AccountDeletionStatusResponse(pending=True, **existing)
+
+    scheduled_for = account_deletion_scheduled_for(now)
+    cancel_token = secrets.token_urlsafe(32)
+    updated = await db.user.update(
+        where={"id": current_user.id},
+        data={
+            "accountDeletionRequestedAt": now,
+            "accountDeletionScheduledFor": scheduled_for,
+            "accountDeletionCancelToken": cancel_token,
+            "accountDeletionReminder30SentAt": None,
+            "accountDeletionReminder7SentAt": None,
+        },
+    )
+    pending = pending_account_deletion_payload(updated, now)
+    logger.info(
+        "User %s requested account deletion for %s", current_user.id, scheduled_for.isoformat()
+    )
+    if pending is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to start deletion process",
+        )
+    return AccountDeletionStatusResponse(pending=True, **pending)
+
+
+@router.post("/me/delete-request/cancel", response_model=AccountDeletionStatusResponse)
+async def cancel_account_deletion(
+    body: CancelDeletionRequest,
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)] = None,
+):
+    """
+    Cancel a pending deletion request. If token is provided, it must match the current cancel token.
+    """
+    user = await db.user.find_unique(where={"id": current_user.id})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    pending = pending_account_deletion_payload(user, utc_now())
+    if pending is None:
+        return AccountDeletionStatusResponse(pending=False)
+
+    token_in_db = getattr(user, "accountDeletionCancelToken", None)
+    if body.token:
+        if not token_in_db or not secrets.compare_digest(str(body.token), str(token_in_db)):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cancellation token"
+            )
+
+    await db.user.update(
+        where={"id": current_user.id},
+        data={
+            "accountDeletionRequestedAt": None,
+            "accountDeletionScheduledFor": None,
+            "accountDeletionCancelToken": None,
+            "accountDeletionReminder30SentAt": None,
+            "accountDeletionReminder7SentAt": None,
+            "accountDeletionLastCancelledAt": utc_now(),
+        },
+    )
+    logger.info("User %s cancelled pending account deletion", current_user.id)
+    return AccountDeletionStatusResponse(pending=False)
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_account_alias(
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)] = None,
+):
+    """
+    Backward-compatible alias: starts account deletion schedule instead of immediate delete.
+    """
+    await request_account_deletion(current_user=current_user, db=db)
     return None
 
 

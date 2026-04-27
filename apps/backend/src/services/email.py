@@ -844,3 +844,110 @@ async def send_circle_invite_email(to_email: str, inviter_name: str, circle_name
     except Exception as e:
         logger.error(f"Failed to send circle invite email to {to_email}: {e}")
         # Don't raise here, as invite was created successfully
+
+
+async def send_account_deletion_reminder_email(
+    email: EmailStr,
+    name: str | None,
+    *,
+    days_left: int,
+    scheduled_for_iso: str,
+    cancel_url: str,
+):
+    """
+    Reminder before scheduled account deletion with cancellation link.
+    """
+    if not _email_transport_configured():
+        logger.warning(
+            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
+            "Skipping account deletion reminder to %s",
+            email,
+        )
+        return
+
+    subject = f"Your Maigie account is scheduled for deletion in {days_left} day(s)"
+    safe_name = name or "there"
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#0f172a;">
+      <p>Hi {safe_name},</p>
+      <p>
+        Your Maigie account is currently scheduled for permanent deletion in
+        <strong>{days_left} day(s)</strong>.
+      </p>
+      <p>Scheduled deletion date: <strong>{scheduled_for_iso}</strong></p>
+      <p>
+        If you want to keep your account, you can cancel this request now:
+      </p>
+      <p>
+        <a href="{cancel_url}" style="display:inline-block;padding:10px 14px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:8px;">
+          Cancel deletion
+        </a>
+      </p>
+      <p>If you do nothing, the account and related data will be permanently deleted on the scheduled date.</p>
+      <p>— Maigie Team</p>
+    </div>
+    """.strip()
+    text_body = (
+        f"Hi {safe_name},\n\n"
+        f"Your Maigie account is scheduled for permanent deletion in {days_left} day(s).\n"
+        f"Scheduled deletion date: {scheduled_for_iso}\n\n"
+        f"To cancel deletion, open: {cancel_url}\n\n"
+        "If you do nothing, the account and related data will be permanently deleted on the scheduled date.\n\n"
+        "— Maigie Team"
+    )
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"account-delete-reminder-{email}",
+    }
+    await _send_multipart_email(
+        to_email=str(email),
+        subject=subject,
+        html_body=html_body,
+        text_body=text_body,
+        headers=headers,
+    )
+
+
+async def send_account_deleted_email(email: EmailStr, name: str | None):
+    """
+    Confirmation sent after account deletion is completed.
+    """
+    if not _email_transport_configured():
+        logger.warning(
+            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
+            "Skipping account deleted confirmation to %s",
+            email,
+        )
+        return
+
+    safe_name = name or "there"
+    subject = "Your Maigie account has been deleted"
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; line-height:1.6; color:#0f172a;">
+      <p>Hi {safe_name},</p>
+      <p>
+        This confirms that your Maigie account and associated study data have been deleted.
+      </p>
+      <p>If this was not expected, contact us at <a href="mailto:privacy@maigie.com">privacy@maigie.com</a>.</p>
+      <p>— Maigie Team</p>
+    </div>
+    """.strip()
+    text_body = (
+        f"Hi {safe_name},\n\n"
+        "This confirms that your Maigie account and associated study data have been deleted.\n\n"
+        "If this was not expected, contact privacy@maigie.com.\n\n"
+        "— Maigie Team"
+    )
+    headers = {
+        "Reply-To": _from_email,
+        "X-Mailer": "Maigie API",
+        "X-Entity-Ref-ID": f"account-deleted-{email}",
+    }
+    await _send_multipart_email(
+        to_email=str(email),
+        subject=subject,
+        html_body=html_body,
+        text_body=text_body,
+        headers=headers,
+    )
