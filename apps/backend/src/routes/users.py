@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from prisma import Client as PrismaClient
@@ -29,6 +29,29 @@ class PreferencesUpdate(BaseModel):
     emailMorningSchedule: bool | None = None
     emailScheduleReminder: bool | None = None
     emailWeeklyTips: bool | None = None
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_my_account(
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)] = None,
+):
+    """
+    Permanently delete the authenticated user's account and related data.
+    """
+    user = await db.user.find_unique(where={"id": current_user.id})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if str(user.role) == "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Admin accounts cannot be deleted from this endpoint.",
+        )
+
+    await db.user.delete(where={"id": current_user.id})
+    logger.info("User %s deleted their account", current_user.id)
+    return None
 
 
 @router.put("/preferences", response_model=UserResponse)
