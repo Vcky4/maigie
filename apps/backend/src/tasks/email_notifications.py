@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 TASK_MORNING_SCHEDULE = "email_notifications.send_morning_schedule_emails"
 TASK_SCHEDULE_REMINDER = "email_notifications.send_schedule_reminders"
 TASK_WEEKLY_TIPS = "email_notifications.send_weekly_tips_emails"
+TASK_ACCOUNT_DELETION_LIFECYCLE = "email_notifications.process_account_deletion_lifecycle"
 PAID_TIERS = {
     "PREMIUM_MONTHLY",
     "PREMIUM_YEARLY",
@@ -324,6 +325,107 @@ async def _send_weekly_tips_emails_impl() -> dict:
     return {"sent": sent, "errors": errors}
 
 
+async def _process_account_deletion_lifecycle_impl() -> dict:
+    """
+    Process account deletion reminders and final deletions.
+
+    - 30 days before deletion: send reminder with cancel link
+    - 7 days before deletion: send reminder with cancel link
+    - on scheduled date (or after): delete account and send confirmation email
+    """
+    from src.core.database import db
+    from src.services import email
+    from src.services.account_deletion_service import (
+        ACCOUNT_DELETION_REMINDER_30_DAYS,
+        ACCOUNT_DELETION_REMINDER_7_DAYS,
+        build_account_deletion_cancel_url,
+        utc_now,
+    )
+
+    await _ensure_db_connected()
+    now = utc_now()
+    reminded_30 = 0
+    reminded_7 = 0
+    deleted = 0
+    errors: list[dict[str, str]] = []
+
+    users = await db.user.find_many(
+        where={
+            "accountDeletionScheduledFor": {"not": None},
+            "accountDeletionCancelToken": {"not": None},
+        }
+    )
+    for user in users:
+        try:
+            scheduled_for = getattr(user, "accountDeletionScheduledFor", None)
+            cancel_token = getattr(user, "accountDeletionCancelToken", None)
+            if not scheduled_for or not cancel_token:
+                continue
+
+            if scheduled_for <= now:
+                user_email = user.email
+                user_name = user.name
+                await db.user.delete(where={"id": user.id})
+                deleted += 1
+                try:
+                    await email.send_account_deleted_email(user_email, user_name)
+                except Exception as mail_err:
+                    logger.warning(
+                        "Failed to send account deleted email for user %s: %s", user.id, mail_err
+                    )
+                continue
+
+            cancel_url = build_account_deletion_cancel_url(cancel_token)
+            days_left = max(0, int((scheduled_for - now).total_seconds() // 86400) + 1)
+            scheduled_iso = scheduled_for.date().isoformat()
+            reminder_30_sent = getattr(user, "accountDeletionReminder30SentAt", None)
+            reminder_7_sent = getattr(user, "accountDeletionReminder7SentAt", None)
+
+            if reminder_30_sent is None and now >= scheduled_for - timedelta(
+                days=ACCOUNT_DELETION_REMINDER_30_DAYS
+            ):
+                await email.send_account_deletion_reminder_email(
+                    user.email,
+                    user.name,
+                    days_left=days_left,
+                    scheduled_for_iso=scheduled_iso,
+                    cancel_url=cancel_url,
+                )
+                await db.user.update(
+                    where={"id": user.id},
+                    data={"accountDeletionReminder30SentAt": now},
+                )
+                reminded_30 += 1
+
+            if reminder_7_sent is None and now >= scheduled_for - timedelta(
+                days=ACCOUNT_DELETION_REMINDER_7_DAYS
+            ):
+                await email.send_account_deletion_reminder_email(
+                    user.email,
+                    user.name,
+                    days_left=days_left,
+                    scheduled_for_iso=scheduled_iso,
+                    cancel_url=cancel_url,
+                )
+                await db.user.update(
+                    where={"id": user.id},
+                    data={"accountDeletionReminder7SentAt": now},
+                )
+                reminded_7 += 1
+        except Exception as e:
+            logger.exception(
+                "Account deletion lifecycle processing failed for user %s: %s", user.id, e
+            )
+            errors.append({"userId": user.id, "error": str(e)})
+
+    return {
+        "reminded30": reminded_30,
+        "reminded7": reminded_7,
+        "deleted": deleted,
+        "errors": errors,
+    }
+
+
 @register_task(
     name=TASK_MORNING_SCHEDULE,
     description="Send morning schedule emails (timezone-aware, 6 AM local)",
@@ -372,6 +474,22 @@ def send_weekly_tips_emails_task(self) -> dict:
     return run_async_in_celery(_send_weekly_tips_emails_impl())
 
 
+@register_task(
+    name=TASK_ACCOUNT_DELETION_LIFECYCLE,
+    description="Process account deletion reminders and due deletions",
+    category="email",
+    tags=["email", "account", "deletion"],
+)
+@task(name=TASK_ACCOUNT_DELETION_LIFECYCLE, bind=True, max_retries=2)
+def process_account_deletion_lifecycle_task(self) -> dict:
+    from src.config import settings
+
+    if settings.ENVIRONMENT == "development":
+        logger.info("Skipping account deletion lifecycle task (env=%s)", settings.ENVIRONMENT)
+        return {"skipped": True, "reason": "development environment"}
+    return run_async_in_celery(_process_account_deletion_lifecycle_impl())
+
+
 def register_email_notification_beat_tasks() -> None:
     """Register periodic Celery Beat tasks for email notifications."""
     from celery.schedules import crontab
@@ -395,6 +513,13 @@ def register_email_notification_beat_tasks() -> None:
         name="email_notifications.weekly_tips.sunday",
         schedule=crontab(hour=20, minute=0, day_of_week=0),
         task=TASK_WEEKLY_TIPS,
+    )
+
+    # Account deletion reminders + due deletion check: hourly
+    register_periodic_task(
+        name="email_notifications.account_deletion.hourly",
+        schedule=HOURLY,
+        task=TASK_ACCOUNT_DELETION_LIFECYCLE,
     )
 
 

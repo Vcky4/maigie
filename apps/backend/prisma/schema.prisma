@@ -222,6 +222,14 @@ model User {
   // Referral tracking
   referredByCode String? // Referral code of the user who referred this user (immutable once set)
 
+  // Account deletion lifecycle (user-initiated delete with cooling-off window)
+  accountDeletionRequestedAt   DateTime?
+  accountDeletionScheduledFor  DateTime?
+  accountDeletionCancelToken   String?
+  accountDeletionReminder30SentAt DateTime?
+  accountDeletionReminder7SentAt  DateTime?
+  accountDeletionLastCancelledAt  DateTime?
+
   // Limit reached email tracking (one email per period)
   limitReachedEmailLogs LimitReachedEmailLog[]
 

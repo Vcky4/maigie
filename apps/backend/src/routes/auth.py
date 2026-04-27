@@ -48,6 +48,7 @@ from src.services.email import (
     send_welcome_email,
 )
 from src.services.referral_service import track_referral_signup
+from src.services.account_deletion_service import pending_account_deletion_payload
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
 # Get logger for this module
@@ -424,7 +425,9 @@ async def read_users_me(current_user: CurrentUser):
     """
     Get current user information.
     """
-    return current_user
+    payload = UserResponse.model_validate(current_user, from_attributes=True).model_dump()
+    payload["pendingDeletion"] = pending_account_deletion_payload(current_user)
+    return payload
 
 
 @router.post("/logout")

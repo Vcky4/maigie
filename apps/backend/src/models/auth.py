@@ -79,6 +79,12 @@ class UserPreferencesResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class PendingDeletionResponse(BaseModel):
+    requestedAt: datetime
+    scheduledFor: datetime
+    daysUntilDeletion: int
+
+
 class UserResponse(BaseModel):
     """User response schema."""
 
@@ -93,6 +99,7 @@ class UserResponse(BaseModel):
     preferences: UserPreferencesResponse | None = None
     paymentProvider: str | None = None  # "stripe" | "paystack"
     subscriptionCurrentPeriodEnd: datetime | None = None
+    pendingDeletion: PendingDeletionResponse | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
