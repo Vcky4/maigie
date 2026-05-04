@@ -13,4 +13,3 @@ Visit your dashboard: {{ login_url }}
 If you have any questions, feel free to reply to this email.
 
 — Maigie — The Academic Operating System
-
