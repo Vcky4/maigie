@@ -6,6 +6,7 @@ Handles real-time messaging with Gemini AI and Action Execution.
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime, timedelta, UTC
 
@@ -160,6 +161,27 @@ def _map_db_role_to_client(role: str) -> str:
     if role == "ASSISTANT":
         return "assistant"
     return "system"
+
+
+_STUDIO_TOPIC_OPENER_INSTRUCTION = """You are Maigie. Write ONLY the body of the assistant chat message shown to a learner who just opened the Studio workspace for a course topic (markdown allowed).
+
+Rules:
+- Warm and concise: about 2–4 short paragraphs, under 230 words.
+- Briefly orient them on how to use this workspace for the topic (infer from the titles below; do not invent detailed facts beyond plausible study guidance).
+- Invite them to ask questions in this text thread.
+- Tell them they can open **Study** (voice tutor) for a live back-and-forth conversation using Maigie's **Gemini Live** voice tutor—good for talking ideas through hands-free. Do not mention ElevenLabs or other third-party brands.
+- Do NOT imply the learner already sent a message. Do NOT use placeholders like [Topic]—use the real titles given below.
+- No subject line or meta-commentary—only the message body."""
+
+
+def _static_studio_topic_opener(*, course_title: str, module_title: str, topic_title: str) -> str:
+    mod = f" in **{module_title}**" if module_title else ""
+    return (
+        f"Welcome! You're in **{topic_title}**{mod} as part of **{course_title}**.\n\n"
+        "I'm here to help you build intuition, clear up confusion, and pick concrete next steps. Ask anything in this chat whenever you like.\n\n"
+        "When you want to **talk it through** instead of typing, tap **Study** in the workspace header—that starts a **Gemini Live** voice tutor session so you can have a natural spoken back-and-forth while you stay focused on the material.\n\n"
+        "What should we focus on first?"
+    )
 
 
 MAIGIE_MENTION_PATTERN = re.compile(r"@maigie\b", re.IGNORECASE)
@@ -620,6 +642,106 @@ async def activate_my_chat_session(
     )
     session = await db.chatsession.update(where={"id": session_id}, data={"isActive": True})
     return {"id": session.id, "isActive": bool(session.isActive)}
+
+
+@router.post("/sessions/{session_id}/studio-topic-opener", response_model=dict)
+async def ensure_studio_topic_opener(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Idempotent: if the topic-scoped session has no general-thread messages yet, generate and persist
+    a proactive ASSISTANT opener (Gemini text). Clients call after loading empty history so the user
+    does not need to send the first message.
+    """
+    session = await db.chatsession.find_first(
+        where={
+            "id": session_id,
+            "userId": current_user.id,
+            "isCircleRoom": False,
+            "topicId": {"not": None},
+        },
+        include={"topic": {"include": {"module": {"include": {"course": True}}}}},
+    )
+    if not session or not getattr(session, "topicId", None):
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    where_thread = {
+        "sessionId": session_id,
+        "userId": current_user.id,
+        "reviewItemId": None,
+    }
+    msg_count = await db.chatmessage.count(where=where_thread)
+    if msg_count > 0:
+        return {"created": False, "message": None}
+
+    topic = getattr(session, "topic", None)
+    topic_title = (getattr(topic, "title", None) or "This topic").strip() or "This topic"
+    module_title = ""
+    course_title = "this course"
+    if topic and getattr(topic, "module", None):
+        module_title = (getattr(topic.module, "title", None) or "").strip()
+        course = getattr(topic.module, "course", None)
+        if course and getattr(course, "title", None):
+            course_title = str(course.title).strip() or course_title
+
+    opener_body: str | None = None
+    usage_info: dict = {"input_tokens": 0, "output_tokens": 0, "model_name": "static"}
+    if os.getenv("GEMINI_API_KEY"):
+        prompt = (
+            f"{_STUDIO_TOPIC_OPENER_INSTRUCTION}\n\n"
+            f"Course title: {course_title}\n"
+            f"Module title: {module_title or '(none)'}\n"
+            f"Topic title: {topic_title}\n\n"
+            "Output only the assistant message body."
+        )
+        try:
+            opener_body, usage_info = await llm_service.get_chat_response([], prompt, None)
+        except Exception as e:
+            logger.warning("studio-topic-opener LLM failed: %s", e, exc_info=True)
+            opener_body = None
+
+    text = (opener_body or "").strip()
+    if not text:
+        text = _static_studio_topic_opener(
+            course_title=course_title, module_title=module_title, topic_title=topic_title
+        )
+
+    msg_count2 = await db.chatmessage.count(where=where_thread)
+    if msg_count2 > 0:
+        return {"created": False, "message": None}
+
+    input_tokens = int(usage_info.get("input_tokens") or 0)
+    output_tokens = int(usage_info.get("output_tokens") or 0)
+    model_name = str(usage_info.get("model_name") or "gemini-2.5-flash")
+    row = await db.chatmessage.create(
+        data={
+            "sessionId": session_id,
+            "userId": current_user.id,
+            "role": "ASSISTANT",
+            "content": text,
+            "tokenCount": input_tokens + output_tokens,
+            "inputTokens": input_tokens,
+            "outputTokens": output_tokens,
+            "modelName": model_name,
+        }
+    )
+    ts = row.createdAt.isoformat() if hasattr(row.createdAt, "isoformat") else str(row.createdAt)
+    return {
+        "created": True,
+        "message": {
+            "id": row.id,
+            "role": _map_db_role_to_client(str(row.role)),
+            "content": row.content,
+            "timestamp": ts,
+            "userId": current_user.id,
+            "userName": getattr(current_user, "name", None),
+            "reviewItemId": None,
+            "imageUrl": None,
+            "imageUrls": [],
+        },
+    }
 
 
 @router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
