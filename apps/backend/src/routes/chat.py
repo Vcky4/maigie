@@ -2314,9 +2314,7 @@ async def websocket_endpoint(websocket: WebSocket, user: dict = Depends(get_curr
                                 )
                         else:
                             # Topic not found - log for debugging but keep topicId in context
-                            print(
-                                f"⚠️ Topic with ID {topic_id} not found during context enrichment"
-                            )
+                            print(f"⚠️ Topic with ID {topic_id} not found during context enrichment")
                             print(
                                 "⚠️ This topicId will still be passed to action service for validation"
                             )
