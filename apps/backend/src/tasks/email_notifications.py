@@ -336,8 +336,8 @@ async def _process_account_deletion_lifecycle_impl() -> dict:
     from src.core.database import db
     from src.services import email
     from src.services.account_deletion_service import (
-        ACCOUNT_DELETION_REMINDER_30_DAYS,
         ACCOUNT_DELETION_REMINDER_7_DAYS,
+        ACCOUNT_DELETION_REMINDER_30_DAYS,
         build_account_deletion_cancel_url,
         utc_now,
     )

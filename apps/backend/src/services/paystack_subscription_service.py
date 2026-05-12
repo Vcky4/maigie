@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
+
 from prisma import Prisma
 from prisma.models import User
 

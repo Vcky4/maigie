@@ -728,8 +728,8 @@ async def update_user_subscription_from_stripe(
         old_tier = str(user.tier) if user.tier else "FREE"
         new_tier = str(updated_user.tier)
 
-        PAID_TIER_PREFIXES = ("PREMIUM", "STUDY_CIRCLE", "SQUAD")
-        if old_tier == "FREE" and any(new_tier.startswith(p) for p in PAID_TIER_PREFIXES):
+        paid_tier_prefixes = ("PREMIUM", "STUDY_CIRCLE", "SQUAD")
+        if old_tier == "FREE" and any(new_tier.startswith(p) for p in paid_tier_prefixes):
             try:
                 # Run as background task or just await (it's async)
                 await send_subscription_success_email(

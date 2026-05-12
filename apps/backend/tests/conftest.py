@@ -23,7 +23,13 @@ async def db_lifecycle():
     """
     Connect to DB for tests that require database access.
     Skips database connection if DATABASE_URL is not set.
+
+    Set SKIP_DB_FIXTURE=1 to run tests that do not need Prisma (e.g. pure unit tests).
     """
+    if os.getenv("SKIP_DB_FIXTURE", "").lower() in ("1", "true", "yes"):
+        yield
+        return
+
     # Only connect if DATABASE_URL is configured
     database_url = os.getenv("DATABASE_URL", "")
     if not database_url:

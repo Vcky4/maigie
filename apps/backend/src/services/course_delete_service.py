@@ -6,7 +6,6 @@ Used by both the API route and the AI tool handler.
 from typing import Any
 
 from prisma import Prisma
-
 from src.utils.exceptions import ForbiddenError, ResourceNotFoundError
 
 

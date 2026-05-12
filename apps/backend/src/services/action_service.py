@@ -589,8 +589,6 @@ class ActionService:
                 )
 
             # Fetch updated note
-            from src.services import note_service
-
             updated_note = await note_service.get_note(db, note_id, user_id)
 
             return {

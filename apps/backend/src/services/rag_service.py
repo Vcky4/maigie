@@ -11,6 +11,7 @@ See LICENSE file in the repository root for details.
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -22,15 +23,27 @@ from google.genai import types
 from src.core.cache import cache
 from src.core.database import db
 from src.services.embedding_service import embedding_service
+from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
 from src.services.web_search_service import web_search_service
 
-# Configure the google-genai client
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    print("⚠️ GEMINI_API_KEY not found in environment variables.")
+logger = logging.getLogger(__name__)
 
-# Create client for google-genai SDK
-genai_client = genai.Client(api_key=api_key) if api_key else None
+_rag_genai_initialized = False
+_rag_genai_client: genai.Client | None = None
+
+
+def get_rag_genai_client() -> genai.Client | None:
+    """Lazily create the Gemini client for RAG generation (reads current settings)."""
+    global _rag_genai_initialized, _rag_genai_client
+    if _rag_genai_initialized:
+        return _rag_genai_client
+    _rag_genai_initialized = True
+    key = gemini_api_key()
+    if not key:
+        logger.warning("GEMINI_API_KEY not set – RAG generation client unavailable")
+        return None
+    _rag_genai_client = genai.Client(api_key=key)
+    return _rag_genai_client
 
 
 class RAGService:
@@ -266,6 +279,7 @@ Format your response as a JSON array with this structure:
 
 Return exactly {limit} high-quality recommendations with real URLs from your web search."""
 
+            genai_client = get_rag_genai_client()
             if not genai_client:
                 raise HTTPException(status_code=500, detail="Gemini API key not configured")
 
@@ -278,7 +292,7 @@ Return exactly {limit} high-quality recommendations with real URLs from your web
 
             # Call generation with Google Search grounding
             response = await genai_client.aio.models.generate_content(
-                model="gemini-2.0-flash",
+                model=default_model_for(LlmTask.STRUCTURED_COMPLETION),
                 contents=recommendation_prompt,
                 config=config,
             )

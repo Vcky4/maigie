@@ -33,7 +33,6 @@ from .config import get_settings
 from .core.cache import cache
 from .core.websocket import manager as websocket_manager
 from .dependencies import SettingsDep
-from .services.ws_event_bus import ws_event_forwarder
 from .exceptions import (
     AppException,
     app_exception_handler,
@@ -48,12 +47,10 @@ from .routes.admin_career_applications import router as admin_career_application
 from .routes.admin_content import router as admin_content_router
 from .routes.admin_finance import router as admin_finance_router
 from .routes.admin_staff import router as admin_staff_router
-from .routes.blog_public import router as blog_public_router
 from .routes.ai import router as ai_router
-from .routes.mcp_routes import mcp as mcp_server
-from .routes.mcp_oauth import router as mcp_oauth_router
 from .routes.analytics import router as analytics_router
 from .routes.auth import router as auth_router
+from .routes.blog_public import router as blog_public_router
 from .routes.careers import router as careers_router
 from .routes.circles import router as circles_router
 from .routes.courses import router as courses_router
@@ -65,19 +62,23 @@ from .routes.feedback import router as feedback_router
 from .routes.gemini_live import router as gemini_live_router
 from .routes.goals import router as goals_router
 from .routes.knowledge_base import router as knowledge_base_router
+from .routes.mcp_oauth import router as mcp_oauth_router
+from .routes.mcp_routes import mcp as mcp_server
+from .routes.paystack_webhook import router as paystack_webhook_router
 from .routes.realtime import router as realtime_router
 from .routes.referrals import router as referrals_router
-from .routes.reviews import router as reviews_router
 from .routes.resource_bank import router as resource_bank_router
 from .routes.resources import router as resources_router
+from .routes.reviews import router as reviews_router
 from .routes.schedule import router as schedule_router
-from .routes.studio import router as studio_router
 from .routes.stripe_webhook import router as stripe_webhook_router
-from .routes.paystack_webhook import router as paystack_webhook_router
+from .routes.studio import router as studio_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
 from .routes.waitlist import router as waitlist_router
+from .routes.model_selection import router as model_selection_router
 from .routes.websockets import router as websockets_router
+from .services.ws_event_bus import ws_event_forwarder
 from .utils.dependencies import (
     cleanup_db_client,
     close_redis_client,
@@ -444,6 +445,9 @@ def create_app() -> FastAPI:
 
     # Circle (study group) routes
     app.include_router(circles_router, prefix=f"{settings.API_V1_STR}")
+
+    # Model selection API (multi-provider LLM support)
+    app.include_router(model_selection_router)
 
     # Webhook endpoints (no auth required, verified by provider signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")

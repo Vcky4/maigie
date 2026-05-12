@@ -18,8 +18,6 @@ from pydantic import BaseModel
 from prisma import Client as PrismaClient
 
 from ..dependencies import CurrentUser, SuperAdminUser
-from ..services.outline_satisfaction_stats import fetch_outline_satisfaction_platform_stats
-from ..utils.progress import round_progress_percent
 from ..models.analytics import (
     AchievementBadge,
     AIFeatureUsage,
@@ -52,8 +50,10 @@ from ..models.analytics import (
     VoiceInteractionStats,
     WeeklyReport,
 )
+from ..services.outline_satisfaction_stats import fetch_outline_satisfaction_platform_stats
 from ..utils.dependencies import get_db_client
 from ..utils.exceptions import ResourceNotFoundError
+from ..utils.progress import round_progress_percent
 
 logger = logging.getLogger(__name__)
 

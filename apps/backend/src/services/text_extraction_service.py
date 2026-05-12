@@ -110,8 +110,9 @@ def _extract_txt(content: bytes) -> str | None:
 def _extract_pdf(content: bytes) -> str | None:
     """Extract text from PDF using pypdf."""
     try:
-        from pypdf import PdfReader
         from io import BytesIO
+
+        from pypdf import PdfReader
 
         reader = PdfReader(BytesIO(content))
         parts = []
@@ -133,8 +134,9 @@ def _extract_pdf(content: bytes) -> str | None:
 def _extract_docx(content: bytes) -> str | None:
     """Extract text from DOCX using python-docx."""
     try:
-        from docx import Document
         from io import BytesIO
+
+        from docx import Document
 
         doc = Document(BytesIO(content))
         parts = []
@@ -168,7 +170,6 @@ async def _extract_image_ocr_via_gemini(content: bytes, mime_type: str) -> str |
     Handles scanned documents, past question papers, handwritten notes etc.
     """
     try:
-        import os
         import warnings
 
         with warnings.catch_warnings():
@@ -176,7 +177,9 @@ async def _extract_image_ocr_via_gemini(content: bytes, mime_type: str) -> str |
             from google import genai
             from google.genai import types
 
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+        client = genai.Client(api_key=gemini_api_key() or None)
 
         prompt = """Extract ALL text content from this image. This may be a scanned document,
 exam paper, textbook page, or handwritten notes.
@@ -192,7 +195,7 @@ IMPORTANT:
 Extracted text:"""
 
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+            model=default_model_for(LlmTask.STRUCTURED_COMPLETION),
             contents=[prompt, types.Part.from_bytes(data=content, mime_type=mime_type)],
         )
 

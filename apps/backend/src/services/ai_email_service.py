@@ -24,19 +24,20 @@ async def _call_gemini_for_email(
     try:
         from google import genai
         from google.genai import types
-        import os
 
-        api_key = os.getenv("GEMINI_API_KEY")
+        from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+        api_key = gemini_api_key()
         if not api_key:
             logger.warning("GEMINI_API_KEY not set; skipping AI email draft")
             return None
 
         client = genai.Client(api_key=api_key)
 
-        # Try gemini-2.5-flash first, then gemini-2.0-flash-lite (1.5-flash IDs 404 on v1beta).
+        # Try primary flash first, then lite fallback (1.5-flash IDs 404 on v1beta).
         try:
             response = await client.aio.models.generate_content(
-                model="gemini-2.5-flash",
+                model=default_model_for(LlmTask.EMAIL_PRIMARY),
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
@@ -50,7 +51,7 @@ async def _call_gemini_for_email(
                     e,
                 )
                 response = await client.aio.models.generate_content(
-                    model="gemini-2.0-flash-lite",
+                    model=default_model_for(LlmTask.EMAIL_FALLBACK),
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         max_output_tokens=max_tokens,

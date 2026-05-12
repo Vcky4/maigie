@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Clean up chat.py by removing old code between continue and exception handler."""
 
-with open("src/routes/chat.py", "r", encoding="utf-8") as f:
+with open("src/routes/chat.py", encoding="utf-8") as f:
     lines = f.readlines()
 
 # Find the continue statement and the correct exception handler

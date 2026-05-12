@@ -73,7 +73,7 @@ async def evaluate_action_outcome(
         schedule_data = action_result.get("data", {})
         if schedule_data.get("startAt") and schedule_data.get("endAt"):
             # Check if schedule is in the past
-            from datetime import datetime, UTC
+            from datetime import UTC, datetime
 
             try:
                 start = schedule_data["startAt"]

@@ -14,9 +14,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from src.core.database import db
 from src.dependencies import CurrentUser
 from src.models.goals import (
-    GoalCreate,
     GoalContributionDay,
     GoalContributionSummary,
+    GoalCreate,
     GoalDetailResponse,
     GoalListResponse,
     GoalProgressUpdate,

@@ -96,12 +96,14 @@ celery_app = create_celery_app()
 # Celery worker entrypoint is `-A src.core.celery_app:celery_app`, so we import
 # task modules here to make them discoverable without requiring autodiscovery.
 try:
-    from ..tasks import course_generation  # noqa: F401
-    from ..tasks import email_notifications  # noqa: F401
-    from ..tasks import exam_prep_tasks  # noqa: F401
-    from ..tasks import resource_recommendations  # noqa: F401
-    from ..tasks import schedule_generation  # noqa: F401
-    from ..tasks import spaced_repetition  # noqa: F401
+    from ..tasks import (
+        course_generation,  # noqa: F401
+        email_notifications,  # noqa: F401
+        exam_prep_tasks,  # noqa: F401
+        resource_recommendations,  # noqa: F401
+        schedule_generation,  # noqa: F401
+        spaced_repetition,  # noqa: F401
+    )
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,
     # but do log so worker/task registration issues are visible.

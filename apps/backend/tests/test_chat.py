@@ -97,6 +97,7 @@ async def test_websocket_continue_after_message_processing():
     the WebSocket loop continues to the next message.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
+
     from fastapi import WebSocket
 
     # Mock WebSocket

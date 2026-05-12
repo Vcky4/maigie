@@ -9,14 +9,15 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-import os
 from typing import Any
 
 from fastapi import HTTPException
 from google import genai
 from google.genai import types
 
+from src.config import get_settings
 from src.core.database import db
+from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -27,11 +28,14 @@ _client = None
 def get_genai_client():
     global _client
     if _client is None:
-        _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        key = gemini_api_key()
+        if not key:
+            return None
+        _client = genai.Client(api_key=key)
     return _client
 
 
-EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_MODEL = default_model_for(LlmTask.EMBEDDING)
 
 # gemini-embedding-001 defaults to 3072d and the Pinecone index is 3072d.
 EMBEDDING_DIMENSION = 3072
@@ -41,8 +45,9 @@ def _get_pinecone_index():
     """Lazily initialise and return the Pinecone Index object."""
     from pinecone import Pinecone
 
-    api_key = os.getenv("PINECONE_API_KEY", "")
-    index_name = os.getenv("PINECONE_INDEX_NAME", "maigie")
+    settings = get_settings()
+    api_key = (settings.PINECONE_API_KEY or "").strip()
+    index_name = settings.PINECONE_INDEX_NAME or "maigie"
 
     if not api_key:
         logger.warning("PINECONE_API_KEY not set – vector search will be unavailable")
@@ -55,8 +60,8 @@ def _get_pinecone_index():
     if index_name not in existing_indexes:
         from pinecone import ServerlessSpec
 
-        cloud = os.getenv("PINECONE_CLOUD", "aws")
-        region = os.getenv("PINECONE_REGION", "us-east-1")
+        cloud = settings.PINECONE_CLOUD or "aws"
+        region = settings.PINECONE_REGION or "us-east-1"
         pc.create_index(
             name=index_name,
             dimension=EMBEDDING_DIMENSION,
@@ -92,6 +97,8 @@ class EmbeddingService:
         """Generate a document embedding vector via Gemini."""
         try:
             client = get_genai_client()
+            if client is None:
+                raise HTTPException(status_code=500, detail="Gemini API key not configured")
             result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=text,
@@ -109,6 +116,8 @@ class EmbeddingService:
         """Generate a query embedding vector via Gemini."""
         try:
             client = get_genai_client()
+            if client is None:
+                raise HTTPException(status_code=500, detail="Gemini API key not configured")
             result = await client.aio.models.embed_content(
                 model=EMBEDDING_MODEL,
                 contents=text,
@@ -151,7 +160,7 @@ class EmbeddingService:
             if metadata:
                 # Pinecone metadata values must be str/int/float/bool/list[str]
                 for k, v in metadata.items():
-                    if v is not None and isinstance(v, (str, int, float, bool)):
+                    if v is not None and isinstance(v, str | int | float | bool):
                         pc_meta[k] = v
 
             idx = _index()
@@ -211,7 +220,7 @@ class EmbeddingService:
             }
             if metadata:
                 for k, v in metadata.items():
-                    if v is not None and isinstance(v, (str, int, float, bool)):
+                    if v is not None and isinstance(v, str | int | float | bool):
                         pc_meta[k] = v
 
             idx = _index()

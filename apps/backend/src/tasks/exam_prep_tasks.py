@@ -335,6 +335,7 @@ async def _send_exam_prep_reminders() -> dict[str, Any]:
     Also marks completed exam preps (past exam date).
     """
     from datetime import UTC, datetime, timedelta
+
     from src.core.database import db
 
     await _ensure_db_connected()

@@ -15,12 +15,12 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated
 
 import httpx
-from prisma.errors import DataError as PrismaDataError
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 
+from prisma.errors import DataError as PrismaDataError
 from src.config import settings
 from src.core.database import db
 from src.core.oauth import OAuthProviderFactory
@@ -42,13 +42,13 @@ from src.models.auth import (
     UserResponse,
     UserSignup,
 )
+from src.services.account_deletion_service import pending_account_deletion_payload
 from src.services.email import (
     send_password_reset_email,
     send_verification_email,
     send_welcome_email,
 )
 from src.services.referral_service import track_referral_signup
-from src.services.account_deletion_service import pending_account_deletion_payload
 from src.services.user_service import OAuthUserInfo, get_or_create_oauth_user
 
 # Get logger for this module

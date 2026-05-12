@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import UploadFile
+
 from prisma import Prisma
 from prisma.models import User
 
@@ -249,7 +250,9 @@ async def _ai_moderate_content(content: str) -> dict:
             warnings.simplefilter("ignore")
             from google import genai
 
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+        client = genai.Client(api_key=gemini_api_key() or None)
 
         prompt = f"""You are a content moderator for an academic resource bank used by university students.
 Review the following uploaded resource and determine if it should be APPROVED or REJECTED.
@@ -272,7 +275,7 @@ Resource to review:
 {content[:3000]}"""
 
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash", contents=prompt
+            model=default_model_for(LlmTask.STRUCTURED_COMPLETION), contents=prompt
         )
 
         if response.text:
