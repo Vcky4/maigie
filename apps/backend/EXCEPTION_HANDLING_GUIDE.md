@@ -21,7 +21,7 @@ All errors follow the `ErrorResponse` Pydantic model:
 
 **Location:** `src/models/error_response.py`
 
-### 2. Custom Exception Classes
+### 2. Custom Exception Classes 
 
 All custom exceptions inherit from `MaigieError` base class:
 
