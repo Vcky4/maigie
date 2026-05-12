@@ -37,3 +37,6 @@ ios/
 
 
 vitest.config.*.timestamp*
+
+#kiro
+.kiro

@@ -436,18 +436,41 @@ async def upload_material(
     if category not in valid_categories:
         category = "OTHER"
 
-    material = await add_material(
-        db=db_client,
-        exam_prep_id=exam_prep_id,
-        user_id=current_user.id,
-        filename=result["filename"],
-        url=result["url"],
-        category=category,
-        label=label,
-        extracted_text=extracted_text,
-        file_type=file.content_type,
-        size=result.get("size"),
-    )
+    try:
+        material = await add_material(
+            db=db_client,
+            exam_prep_id=exam_prep_id,
+            user_id=current_user.id,
+            filename=result["filename"],
+            url=result["url"],
+            category=category,
+            label=label,
+            extracted_text=extracted_text,
+            file_type=file.content_type,
+            size=result.get("size"),
+        )
+    except Exception as e:
+        error_msg = str(e)
+        if "invalid byte sequence" in error_msg or "0x00" in error_msg:
+            # Retry without extracted text if it contains invalid bytes
+            logger.warning(
+                "Invalid byte sequence in extracted text for %s, retrying without text",
+                file.filename,
+            )
+            material = await add_material(
+                db=db_client,
+                exam_prep_id=exam_prep_id,
+                user_id=current_user.id,
+                filename=result["filename"],
+                url=result["url"],
+                category=category,
+                label=label,
+                extracted_text=None,
+                file_type=file.content_type,
+                size=result.get("size"),
+            )
+        else:
+            raise
 
     return ExamPrepMaterialResponse(
         id=material.id,

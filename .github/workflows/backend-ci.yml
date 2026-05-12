@@ -268,6 +268,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
           script: |
             # Set ALL GitHub secrets as environment variables (dynamically based on .env.example keys)
             # The script will check each key and use secret if available, otherwise use default from .env.example
@@ -947,6 +948,7 @@ jobs:
           host: ${{ secrets.PRODUCTION_VPS_HOST }}
           username: ${{ secrets.PRODUCTION_VPS_USER }}
           key: ${{ secrets.PRODUCTION_VPS_SSH_KEY }}
+          command_timeout: 10m
           script: |
             cd /opt/maigie/production
 
@@ -1234,6 +1236,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 10m
           script: |
             # Set ALL GitHub secrets as environment variables
             export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"

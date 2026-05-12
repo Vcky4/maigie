@@ -7,11 +7,15 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import asyncio
 import logging
 from typing import Any, Protocol
 
+import google.auth.exceptions
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
 from ..config import get_settings
 
@@ -19,6 +23,47 @@ logger = logging.getLogger(__name__)
 
 # Default httpx connect timeout (~5s) is tight for cloud → Google from some regions; OAuth is rare enough to wait longer.
 _OAUTH_HTTP_TIMEOUT = httpx.Timeout(60.0, connect=20.0)
+
+
+class GoogleIdTokenVerifier:
+    """Verifies Google ID tokens issued by the native mobile SDK."""
+
+    def __init__(self, client_id: str):
+        """
+        Initialize the verifier with the expected audience (client ID).
+
+        Args:
+            client_id: The Google OAuth 2.0 Web Client ID (expected audience)
+        """
+        self._client_id = client_id
+        self._request = google_requests.Request()
+
+    async def verify(self, token: str) -> dict[str, Any]:
+        """
+        Verify a Google ID token.
+
+        Returns the decoded token claims on success.
+
+        Args:
+            token: The Google ID token JWT string
+
+        Returns:
+            dict containing the verified token claims (sub, email, name, etc.)
+
+        Raises:
+            ValueError: If the token is not a valid JWT format
+            google.auth.exceptions.GoogleAuthError: If signature is invalid, token is expired,
+                or audience does not match
+            Network errors: If Google's servers are unreachable (httpx.ConnectError, etc.)
+        """
+        # google.oauth2.id_token.verify_oauth2_token is synchronous;
+        # run in a thread pool to avoid blocking the event loop.
+        loop = asyncio.get_event_loop()
+        claims = await loop.run_in_executor(
+            None,
+            lambda: google_id_token.verify_oauth2_token(token, self._request, self._client_id),
+        )
+        return claims
 
 
 class OAuthProvider(Protocol):
