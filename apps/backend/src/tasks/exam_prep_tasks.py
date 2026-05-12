@@ -109,6 +109,8 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
                             material.fileType,
                         )
                         if extracted:
+                            # Sanitize null bytes before storing
+                            extracted = extracted.replace("\x00", "")
                             await db.examprepmaterial.update(
                                 where={"id": material.id},
                                 data={"extractedText": extracted},

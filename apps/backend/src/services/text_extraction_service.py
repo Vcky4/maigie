@@ -30,23 +30,25 @@ def extract_text_from_file(
 
     try:
         if ext in (".txt", ".md") or "text/plain" in ct or "text/markdown" in ct:
-            return _extract_txt(file_content)
+            return _sanitize_text(_extract_txt(file_content))
 
         if ext == ".pdf" or "application/pdf" in ct:
-            return _extract_pdf(file_content)
+            return _sanitize_text(_extract_pdf(file_content))
 
         if ext in (".docx", ".doc") or "application/vnd.openxmlformats" in ct:
-            return _extract_docx(file_content)
+            return _sanitize_text(_extract_docx(file_content))
 
         # Image files -> OCR via Gemini Vision
         if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff") or ct.startswith(
             "image/"
         ):
-            return _extract_image_text_sync(file_content, ct or f"image/{ext.lstrip('.')}")
+            return _sanitize_text(
+                _extract_image_text_sync(file_content, ct or f"image/{ext.lstrip('.')}")
+            )
 
         # Fallback: try as UTF-8 text
         if ext in (".txt", ".md", ""):
-            return _extract_txt(file_content)
+            return _sanitize_text(_extract_txt(file_content))
     except Exception as e:
         logger.warning("Text extraction failed for %s: %s", filename, e)
         return None
@@ -67,7 +69,7 @@ async def extract_text_from_file_async(
 
     try:
         if ext in (".txt", ".md") or "text/plain" in ct or "text/markdown" in ct:
-            return _extract_txt(file_content)
+            return _sanitize_text(_extract_txt(file_content))
 
         if ext == ".pdf" or "application/pdf" in ct:
             text = _extract_pdf(file_content)
@@ -75,25 +77,35 @@ async def extract_text_from_file_async(
             if text and len(text.strip()) < 100:
                 ocr_text = await _extract_image_ocr_via_gemini(file_content, "application/pdf")
                 if ocr_text and len(ocr_text) > len(text or ""):
-                    return ocr_text
-            return text
+                    return _sanitize_text(ocr_text)
+            return _sanitize_text(text)
 
         if ext in (".docx", ".doc") or "application/vnd.openxmlformats" in ct:
-            return _extract_docx(file_content)
+            return _sanitize_text(_extract_docx(file_content))
 
         # Image files -> OCR via Gemini Vision
         if ext in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff") or ct.startswith(
             "image/"
         ):
-            return await _extract_image_ocr_via_gemini(
+            result = await _extract_image_ocr_via_gemini(
                 file_content, ct or f"image/{ext.lstrip('.')}"
             )
+            return _sanitize_text(result)
 
         # Fallback: try as UTF-8 text
-        return _extract_txt(file_content)
+        return _sanitize_text(_extract_txt(file_content))
     except Exception as e:
         logger.warning("Async text extraction failed for %s: %s", filename, e)
         return None
+
+
+def _sanitize_text(text: str | None) -> str | None:
+    """Remove null bytes and other characters that PostgreSQL rejects in UTF-8 text columns."""
+    if text is None:
+        return None
+    # Remove null bytes (0x00) which PostgreSQL cannot store in text/varchar columns
+    sanitized = text.replace("\x00", "")
+    return sanitized.strip() or None
 
 
 def _extract_txt(content: bytes) -> str | None:
