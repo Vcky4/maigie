@@ -295,85 +295,98 @@ class TestTierEnforcement:
 
     def test_free_tier_allows_gemini_flash(self, full_service):
         """Req 8.1: FREE tier allows gemini-2.5-flash."""
-        assert full_service.is_model_allowed(
-            "gemini", "gemini-2.5-flash", "free", "user-1"
-        ) is True
+        assert full_service.is_model_allowed("gemini", "gemini-2.5-flash", "free", "user-1") is True
 
     def test_free_tier_allows_gemini_flash_lite(self, full_service):
         """Req 8.1: FREE tier allows gemini-2.0-flash-lite."""
-        assert full_service.is_model_allowed(
-            "gemini", "gemini-2.0-flash-lite", "free", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed("gemini", "gemini-2.0-flash-lite", "free", "user-1")
+            is True
+        )
 
     def test_free_tier_denies_openai(self, full_service):
         """Req 8.1: FREE tier denies OpenAI models."""
-        assert full_service.is_model_allowed(
-            "openai", "gpt-4o-mini", "free", "user-1"
-        ) is False
+        assert full_service.is_model_allowed("openai", "gpt-4o-mini", "free", "user-1") is False
 
     def test_free_tier_denies_anthropic(self, full_service):
         """Req 8.1: FREE tier denies Anthropic models."""
-        assert full_service.is_model_allowed(
-            "anthropic", "claude-sonnet-4-20250514", "free", "user-1"
-        ) is False
+        assert (
+            full_service.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "free", "user-1")
+            is False
+        )
 
     # --- Requirement 8.2: PREMIUM allows Gemini + OpenAI ---
 
     def test_premium_monthly_allows_gemini(self, full_service):
         """Req 8.2: PREMIUM_MONTHLY allows Gemini models."""
-        assert full_service.is_model_allowed(
-            "gemini", "gemini-2.5-flash", "premium_monthly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "premium_monthly", "user-1")
+            is True
+        )
 
     def test_premium_yearly_allows_gemini(self, full_service):
         """Req 8.2: PREMIUM_YEARLY allows Gemini models."""
-        assert full_service.is_model_allowed(
-            "gemini", "gemini-2.5-flash", "premium_yearly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "premium_yearly", "user-1")
+            is True
+        )
 
     def test_premium_allows_openai(self, full_service):
         """Req 8.2: PREMIUM allows OpenAI models."""
-        assert full_service.is_model_allowed(
-            "openai", "gpt-4o-mini", "premium_monthly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed("openai", "gpt-4o-mini", "premium_monthly", "user-1")
+            is True
+        )
 
     def test_premium_denies_anthropic(self, full_service):
         """Req 8.2: PREMIUM denies Anthropic models."""
-        assert full_service.is_model_allowed(
-            "anthropic", "claude-sonnet-4-20250514", "premium_monthly", "user-1"
-        ) is False
+        assert (
+            full_service.is_model_allowed(
+                "anthropic", "claude-sonnet-4-20250514", "premium_monthly", "user-1"
+            )
+            is False
+        )
 
     # --- Requirement 8.3: STUDY_CIRCLE/SQUAD allows all providers ---
 
     def test_study_circle_allows_gemini(self, full_service):
         """Req 8.3: STUDY_CIRCLE allows Gemini."""
-        assert full_service.is_model_allowed(
-            "gemini", "gemini-2.5-flash", "study_circle_monthly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed(
+                "gemini", "gemini-2.5-flash", "study_circle_monthly", "user-1"
+            )
+            is True
+        )
 
     def test_study_circle_allows_openai(self, full_service):
         """Req 8.3: STUDY_CIRCLE allows OpenAI."""
-        assert full_service.is_model_allowed(
-            "openai", "gpt-4o", "study_circle_monthly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed("openai", "gpt-4o", "study_circle_monthly", "user-1")
+            is True
+        )
 
     def test_study_circle_allows_anthropic(self, full_service):
         """Req 8.3: STUDY_CIRCLE allows Anthropic."""
-        assert full_service.is_model_allowed(
-            "anthropic", "claude-sonnet-4-20250514", "study_circle_monthly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed(
+                "anthropic", "claude-sonnet-4-20250514", "study_circle_monthly", "user-1"
+            )
+            is True
+        )
 
     def test_squad_allows_all_providers(self, full_service):
         """Req 8.3: SQUAD allows all providers."""
-        assert full_service.is_model_allowed(
-            "gemini", "gemini-2.5-flash", "squad_monthly", "user-1"
-        ) is True
-        assert full_service.is_model_allowed(
-            "openai", "gpt-4o", "squad_monthly", "user-1"
-        ) is True
-        assert full_service.is_model_allowed(
-            "anthropic", "claude-sonnet-4-20250514", "squad_monthly", "user-1"
-        ) is True
+        assert (
+            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "squad_monthly", "user-1")
+            is True
+        )
+        assert full_service.is_model_allowed("openai", "gpt-4o", "squad_monthly", "user-1") is True
+        assert (
+            full_service.is_model_allowed(
+                "anthropic", "claude-sonnet-4-20250514", "squad_monthly", "user-1"
+            )
+            is True
+        )
 
     # --- Requirement 8.4: Global disable overrides everything ---
 
@@ -399,9 +412,10 @@ class TestTierEnforcement:
             store=store,
         )
         await svc.reload()
-        assert svc.is_model_allowed(
-            "anthropic", "claude-sonnet-4-20250514", "circle", "user-1"
-        ) is False
+        assert (
+            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "circle", "user-1")
+            is False
+        )
 
     # --- Requirement 8.5: Per-user override grants access ---
 
@@ -442,9 +456,7 @@ class TestTierEnforcement:
     def test_disallowed_model_rejected(self, full_service):
         """Req 8.7: Model not in tier allowlist is rejected."""
         # gpt-4o is not in the plus tier allowlist
-        assert full_service.is_model_allowed(
-            "openai", "gpt-4o", "plus", "user-1"
-        ) is False
+        assert full_service.is_model_allowed("openai", "gpt-4o", "plus", "user-1") is False
 
     # --- Requirement 8.8: Precedence order ---
 
@@ -461,9 +473,10 @@ class TestTierEnforcement:
         )
         await svc.reload()
         # Global disable wins over user grant
-        assert svc.is_model_allowed(
-            "anthropic", "claude-sonnet-4-20250514", "squad", "user-1"
-        ) is False
+        assert (
+            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "squad", "user-1")
+            is False
+        )
 
     @pytest.mark.asyncio
     async def test_precedence_override_beats_tier(self):

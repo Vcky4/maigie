@@ -39,9 +39,7 @@ def sample_tool() -> ToolDefinition:
 
 
 class TestToGemini:
-    def test_basic_conversion(
-        self, normalizer: ToolNormalizer, sample_tool: ToolDefinition
-    ):
+    def test_basic_conversion(self, normalizer: ToolNormalizer, sample_tool: ToolDefinition):
         result = normalizer.to_gemini([sample_tool])
         assert len(result) == 1
         decl = result[0]
@@ -67,9 +65,7 @@ class TestToGemini:
 
 
 class TestToOpenAI:
-    def test_basic_conversion(
-        self, normalizer: ToolNormalizer, sample_tool: ToolDefinition
-    ):
+    def test_basic_conversion(self, normalizer: ToolNormalizer, sample_tool: ToolDefinition):
         result = normalizer.to_openai([sample_tool])
         assert len(result) == 1
         wrapper = result[0]
@@ -91,9 +87,7 @@ class TestToOpenAI:
 
 
 class TestToAnthropic:
-    def test_basic_conversion(
-        self, normalizer: ToolNormalizer, sample_tool: ToolDefinition
-    ):
+    def test_basic_conversion(self, normalizer: ToolNormalizer, sample_tool: ToolDefinition):
         result = normalizer.to_anthropic([sample_tool])
         assert len(result) == 1
         tool_def = result[0]
@@ -231,9 +225,7 @@ class TestNormalizeToolCallsAnthropic:
         assert result[0].name == "search"
 
     def test_empty_input(self, normalizer: ToolNormalizer):
-        blocks = [
-            {"type": "tool_use", "id": "toolu_1", "name": "ping", "input": {}}
-        ]
+        blocks = [{"type": "tool_use", "id": "toolu_1", "name": "ping", "input": {}}]
         result = normalizer.normalize_tool_calls_anthropic(blocks)
         assert result[0].arguments == {}
 

@@ -114,25 +114,19 @@ class MockGeminiChunk:
 
 class TestFromOpenAIChunk:
     def test_text_delta(self):
-        chunk = MockOpenAIChunk(
-            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="Hello"))]
-        )
+        chunk = MockOpenAIChunk(choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="Hello"))])
         events = StreamNormalizer.from_openai_chunk(chunk)
         assert len(events) == 1
         assert events[0].type == "text_delta"
         assert events[0].text == "Hello"
 
     def test_empty_text_not_emitted(self):
-        chunk = MockOpenAIChunk(
-            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=""))]
-        )
+        chunk = MockOpenAIChunk(choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=""))])
         events = StreamNormalizer.from_openai_chunk(chunk)
         assert len(events) == 0
 
     def test_none_text_not_emitted(self):
-        chunk = MockOpenAIChunk(
-            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=None))]
-        )
+        chunk = MockOpenAIChunk(choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=None))])
         events = StreamNormalizer.from_openai_chunk(chunk)
         assert len(events) == 0
 
@@ -145,9 +139,7 @@ class TestFromOpenAIChunk:
                             MockOpenAIToolCallDelta(
                                 index=0,
                                 id="call_123",
-                                function=MockOpenAIFunction(
-                                    name="get_weather", arguments=None
-                                ),
+                                function=MockOpenAIFunction(name="get_weather", arguments=None),
                             )
                         ]
                     )
@@ -171,9 +163,7 @@ class TestFromOpenAIChunk:
                             MockOpenAIToolCallDelta(
                                 index=0,
                                 id=None,
-                                function=MockOpenAIFunction(
-                                    name=None, arguments='{"location":'
-                                ),
+                                function=MockOpenAIFunction(name=None, arguments='{"location":'),
                             )
                         ]
                     )
@@ -208,11 +198,7 @@ class TestFromOpenAIChunk:
 
     def test_done_event_on_finish_reason(self):
         chunk = MockOpenAIChunk(
-            choices=[
-                MockOpenAIChoice(
-                    delta=MockOpenAIDelta(content=None), finish_reason="stop"
-                )
-            ]
+            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=None), finish_reason="stop")]
         )
         events = StreamNormalizer.from_openai_chunk(chunk)
         assert len(events) == 1
@@ -221,11 +207,7 @@ class TestFromOpenAIChunk:
 
     def test_text_and_finish_in_same_chunk(self):
         chunk = MockOpenAIChunk(
-            choices=[
-                MockOpenAIChoice(
-                    delta=MockOpenAIDelta(content="end"), finish_reason="stop"
-                )
-            ]
+            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="end"), finish_reason="stop")]
         )
         events = StreamNormalizer.from_openai_chunk(chunk)
         assert len(events) == 2
@@ -313,9 +295,7 @@ class TestFromAnthropicEvent:
     def test_input_json_delta(self):
         event = MockAnthropicEvent(
             type="content_block_delta",
-            delta=MockAnthropicInputJsonDelta(
-                type="input_json_delta", partial_json='{"loc'
-            ),
+            delta=MockAnthropicInputJsonDelta(type="input_json_delta", partial_json='{"loc'),
         )
         events = StreamNormalizer.from_anthropic_event(event)
         assert len(events) == 1
@@ -341,9 +321,7 @@ class TestFromAnthropicEvent:
     def test_message_delta_with_stop_reason(self):
         event = MockAnthropicEvent(
             type="message_delta",
-            delta=MockAnthropicMessageDelta(
-                type="message_delta", stop_reason="end_turn"
-            ),
+            delta=MockAnthropicMessageDelta(type="message_delta", stop_reason="end_turn"),
         )
         events = StreamNormalizer.from_anthropic_event(event)
         assert len(events) == 1
@@ -382,11 +360,7 @@ class TestFromGeminiChunk:
     def test_text_delta(self):
         chunk = MockGeminiChunk(
             candidates=[
-                MockGeminiCandidate(
-                    content=MockGeminiContent(
-                        parts=[MockGeminiPart(text="Hello")]
-                    )
-                )
+                MockGeminiCandidate(content=MockGeminiContent(parts=[MockGeminiPart(text="Hello")]))
             ]
         )
         events = StreamNormalizer.from_gemini_chunk(chunk)
@@ -397,11 +371,7 @@ class TestFromGeminiChunk:
     def test_empty_text_not_emitted(self):
         chunk = MockGeminiChunk(
             candidates=[
-                MockGeminiCandidate(
-                    content=MockGeminiContent(
-                        parts=[MockGeminiPart(text="")]
-                    )
-                )
+                MockGeminiCandidate(content=MockGeminiContent(parts=[MockGeminiPart(text="")]))
             ]
         )
         events = StreamNormalizer.from_gemini_chunk(chunk)
@@ -541,9 +511,7 @@ class TestStreamSequenceInvariants:
 
     def test_text_delta_has_non_empty_text(self):
         """All text_delta events must have non-empty text."""
-        chunk = MockOpenAIChunk(
-            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="data"))]
-        )
+        chunk = MockOpenAIChunk(choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="data"))])
         events = StreamNormalizer.from_openai_chunk(chunk)
         for event in events:
             if event.type == "text_delta":
@@ -560,9 +528,7 @@ class TestStreamSequenceInvariants:
                             MockOpenAIToolCallDelta(
                                 index=0,
                                 id="call_abc",
-                                function=MockOpenAIFunction(
-                                    name="fn", arguments='{"x":1}'
-                                ),
+                                function=MockOpenAIFunction(name="fn", arguments='{"x":1}'),
                             )
                         ]
                     )
@@ -579,11 +545,7 @@ class TestStreamSequenceInvariants:
     def test_done_event_has_done_flag(self):
         """done events must have done=True."""
         chunk = MockOpenAIChunk(
-            choices=[
-                MockOpenAIChoice(
-                    delta=MockOpenAIDelta(content=None), finish_reason="stop"
-                )
-            ]
+            choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=None), finish_reason="stop")]
         )
         events = StreamNormalizer.from_openai_chunk(chunk)
         done_events = [e for e in events if e.type == "done"]
@@ -593,17 +555,11 @@ class TestStreamSequenceInvariants:
     def test_simulated_full_openai_stream(self):
         """Simulate a full OpenAI stream and verify exactly one done event at end."""
         chunks = [
-            MockOpenAIChunk(
-                choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="Hello"))]
-            ),
-            MockOpenAIChunk(
-                choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=" world"))]
-            ),
+            MockOpenAIChunk(choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content="Hello"))]),
+            MockOpenAIChunk(choices=[MockOpenAIChoice(delta=MockOpenAIDelta(content=" world"))]),
             MockOpenAIChunk(
                 choices=[
-                    MockOpenAIChoice(
-                        delta=MockOpenAIDelta(content=None), finish_reason="stop"
-                    )
+                    MockOpenAIChoice(delta=MockOpenAIDelta(content=None), finish_reason="stop")
                 ]
             ),
         ]

@@ -41,9 +41,7 @@ _DEFAULT_TIMEOUT = 60.0
 _DEFAULT_MAX_TOKENS = 4096
 
 
-def _map_anthropic_error(
-    exc: Exception, model: str
-) -> AnthropicError:
+def _map_anthropic_error(exc: Exception, model: str) -> AnthropicError:
     """Map an Anthropic SDK exception to a structured AnthropicError.
 
     Categories:
@@ -203,9 +201,7 @@ def _convert_history_to_anthropic(
                                         "type": "image",
                                         "source": {
                                             "type": "base64",
-                                            "media_type": img.get(
-                                                "mime_type", "image/jpeg"
-                                            ),
+                                            "media_type": img.get("mime_type", "image/jpeg"),
                                             "data": img.get("data", b""),
                                         },
                                     }
@@ -315,15 +311,11 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 tool_definitions.append(td)
 
             anthropic_tools = (
-                self._tool_normalizer.to_anthropic(tool_definitions)
-                if tool_definitions
-                else []
+                self._tool_normalizer.to_anthropic(tool_definitions) if tool_definitions else []
             )
 
             # Build enhanced message with context
-            enhanced_message_text = build_enhanced_chat_user_message(
-                user_message, context
-            )
+            enhanced_message_text = build_enhanced_chat_user_message(user_message, context)
 
             # Convert history to Anthropic format
             history_system, history_messages = _convert_history_to_anthropic(history)
@@ -370,15 +362,13 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
 
                 if stream_callback:
                     # Streaming path
-                    streamed_text, tool_use_blocks, usage = (
-                        await self._stream_response(
-                            api_kwargs, stream_callback, request_id, iteration
-                        )
+                    streamed_text, tool_use_blocks, usage = await self._stream_response(
+                        api_kwargs, stream_callback, request_id, iteration
                     )
                 else:
                     # Non-streaming path
-                    streamed_text, tool_use_blocks, usage = (
-                        await self._non_stream_response(api_kwargs)
+                    streamed_text, tool_use_blocks, usage = await self._non_stream_response(
+                        api_kwargs
                     )
 
                 total_llm_time += time.perf_counter() - llm_start
@@ -427,9 +417,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 async def _execute_tool(block: dict[str, Any]):
                     tool_name = block["name"]
                     tool_args = dict(block["input"]) if block["input"] else {}
-                    logger.debug(
-                        "Executing tool: %s with args: %s", tool_name, tool_args
-                    )
+                    logger.debug("Executing tool: %s with args: %s", tool_name, tool_args)
                     try:
                         tool_args = await enrich_tool_args_for_llm(
                             tool_name,
@@ -461,9 +449,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                     if isinstance(value, str):
                         return "$" in value
                     if isinstance(value, dict):
-                        return any(
-                            _has_dependency_placeholders(v) for v in value.values()
-                        )
+                        return any(_has_dependency_placeholders(v) for v in value.values())
                     if isinstance(value, list):
                         return any(_has_dependency_placeholders(v) for v in value)
                     return False
@@ -497,9 +483,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 for block in dependent_blocks:
                     dep_result = await _execute_tool(block)
                     execution_results.append(dep_result)
-                    _call_id, tool_name, _tool_args, tool_result, tool_error = (
-                        dep_result
-                    )
+                    _call_id, tool_name, _tool_args, tool_result, tool_error = dep_result
                     if tool_error is None:
                         merge_successful_tool_result_into_created_ids(
                             tool_created_ids, tool_name, tool_result
@@ -521,9 +505,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                                 {
                                     "tool_name": tool_name,
                                     "result": tool_result,
-                                    "component_type": tool_result.get(
-                                        "_component_type"
-                                    ),
+                                    "component_type": tool_result.get("_component_type"),
                                     "query_type": tool_result.get("_query_type"),
                                     "data": (
                                         tool_result.get("courses")
@@ -566,8 +548,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                 # Max iterations reached
                 if not final_text:
                     final_text = (
-                        "I encountered an issue processing your request. "
-                        "Please try again."
+                        "I encountered an issue processing your request. " "Please try again."
                     )
 
             usage_info = {
@@ -615,9 +596,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
             if isinstance(e, AnthropicError):
                 raise
             if is_websocket_consumer_disconnect(e):
-                logger.info(
-                    "[%s] client disconnected: %s", request_id, e
-                )
+                logger.info("[%s] client disconnected: %s", request_id, e)
                 return (
                     final_text,
                     {
@@ -674,18 +653,14 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                                     try:
                                         await stream_callback(text, False)
                                     except BaseException as stream_err:
-                                        if is_websocket_consumer_disconnect(
-                                            stream_err
-                                        ):
+                                        if is_websocket_consumer_disconnect(stream_err):
                                             raise StreamConsumerDisconnected(
                                                 "".join(streamed_text_parts)
                                             ) from stream_err
                                         raise
                             elif delta_type == "input_json_delta":
                                 # Accumulate tool input JSON fragments
-                                partial_json = getattr(
-                                    delta, "partial_json", ""
-                                )
+                                partial_json = getattr(delta, "partial_json", "")
                                 if partial_json and current_tool_block is not None:
                                     current_tool_json_parts.append(partial_json)
 
@@ -695,9 +670,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                             raw_json = "".join(current_tool_json_parts)
                             if raw_json:
                                 try:
-                                    current_tool_block["input"] = json.loads(
-                                        raw_json
-                                    )
+                                    current_tool_block["input"] = json.loads(raw_json)
                                 except json.JSONDecodeError:
                                     current_tool_block["input"] = {}
                             tool_use_blocks.append(current_tool_block)
@@ -709,16 +682,12 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                         if msg:
                             msg_usage = getattr(msg, "usage", None)
                             if msg_usage:
-                                usage["input_tokens"] += getattr(
-                                    msg_usage, "input_tokens", 0
-                                )
+                                usage["input_tokens"] += getattr(msg_usage, "input_tokens", 0)
 
                     elif event_type == "message_delta":
                         delta_usage = getattr(event, "usage", None)
                         if delta_usage:
-                            usage["output_tokens"] += getattr(
-                                delta_usage, "output_tokens", 0
-                            )
+                            usage["output_tokens"] += getattr(delta_usage, "output_tokens", 0)
 
             # Send done signal
             if streamed_text_parts:
@@ -737,9 +706,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
             raise
         except BaseException as e:
             if is_websocket_consumer_disconnect(e):
-                raise StreamConsumerDisconnected(
-                    "".join(streamed_text_parts)
-                ) from e
+                raise StreamConsumerDisconnected("".join(streamed_text_parts)) from e
             raise
 
         return "".join(streamed_text_parts), tool_use_blocks, usage

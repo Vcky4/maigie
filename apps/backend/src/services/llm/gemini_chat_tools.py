@@ -13,7 +13,11 @@ from typing import Any
 import httpx
 
 from src.services.llm.base_adapter import BaseProviderAdapter
-from src.services.llm.capabilities import ChatCapability, StructuredOutputCapability, VisionCapability
+from src.services.llm.capabilities import (
+    ChatCapability,
+    StructuredOutputCapability,
+    VisionCapability,
+)
 from src.services.llm.gemini_sdk import new_gemini_client, types as _types
 from src.services.llm.prompts import build_personalized_system_instruction
 from src.services.llm.streaming import StreamConsumerDisconnected, is_websocket_consumer_disconnect

@@ -17,6 +17,7 @@ from src.schemas.model_selection import (
     VALID_CAPABILITIES,
 )
 from src.services.llm.adapter_registry import get_feature_flag_service
+from src.utils.rate_limit import enforce_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,17 @@ async def set_model_preference(
     - The capability is valid (chat, vision, structured_output, embedding)
     - The model exists in the system
     - The model is allowed for the user's tier
+
+    Rate limited to 10 requests per minute per user.
     """
+    # Enforce rate limit: 10 preference changes per minute per user
+    await enforce_rate_limit(
+        user_id=current_user.id,
+        endpoint="models_pref",
+        max_requests=10,
+        window_seconds=60,
+    )
+
     user_tier = str(current_user.tier) if current_user.tier else "FREE"
     user_id = current_user.id
 

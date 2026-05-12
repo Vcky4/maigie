@@ -71,6 +71,7 @@ def _build_fallback_chains() -> dict[LlmTask, list[tuple[str, str]]]:
         LlmTask.COURSE_OUTLINE: chat_tools_chain,
         LlmTask.STRUCTURED_COMPLETION: chat_tools_chain,
         LlmTask.MEMORY_JSON: chat_default_chain,
+        LlmTask.EMBEDDING: [("gemini", "gemini-embedding-001")],
         LlmTask.EMAIL_PRIMARY: chat_default_chain,
         LlmTask.EMAIL_FALLBACK: chat_default_chain,
         LlmTask.VOICE_TRANSCRIPTION: chat_default_chain,
@@ -115,6 +116,16 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
             logger.info("Registered %d Gemini adapter(s)", len(gemini_models))
         except Exception as e:
             logger.warning("Failed to register Gemini adapters: %s", e)
+
+        # Gemini embedding adapter
+        try:
+            from src.services.llm.gemini_embedding import GeminiEmbeddingAdapter
+
+            embedding_adapter = GeminiEmbeddingAdapter(model_id="gemini-embedding-001")
+            registry["gemini:gemini-embedding-001"] = embedding_adapter
+            logger.info("Registered Gemini embedding adapter")
+        except Exception as e:
+            logger.warning("Failed to register Gemini embedding adapter: %s", e)
 
     # --- OpenAI adapters ---
     if "openai" in enabled and settings.OPENAI_API_KEY:

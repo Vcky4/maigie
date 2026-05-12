@@ -28,6 +28,15 @@ from src.services.llm.capabilities import TASK_CAPABILITY_MAP
 from src.services.llm.circuit_breaker import CircuitBreaker, CircuitState
 from src.services.llm.errors import LLMProviderError
 from src.services.llm.feature_flags import FeatureFlagService
+from src.services.llm.metrics import (
+    LLM_ALL_PROVIDERS_EXHAUSTED,
+    LLM_CIRCUIT_BREAKER_TRIPS,
+    LLM_COST_USD,
+    LLM_FALLBACK_TOTAL,
+    LLM_REQUEST_DURATION,
+    LLM_REQUESTS_TOTAL,
+    LLM_TOKENS_TOTAL,
+)
 from src.services.llm_registry import LlmTask
 
 logger = logging.getLogger(__name__)
@@ -218,6 +227,22 @@ class LLMRouter:
                 input_tokens = usage_dict.get("input_tokens", 0) if usage_dict else 0
                 output_tokens = usage_dict.get("output_tokens", 0) if usage_dict else 0
 
+                # Record metrics
+                duration = time.monotonic() - start_time
+                task_name = task.value
+                LLM_REQUESTS_TOTAL.labels(
+                    provider=provider, model=model, task=task_name, outcome="success"
+                ).inc()
+                LLM_REQUEST_DURATION.labels(
+                    provider=provider, model=model, task=task_name
+                ).observe(duration)
+                LLM_TOKENS_TOTAL.labels(
+                    provider=provider, model=model, direction="input"
+                ).inc(input_tokens)
+                LLM_TOKENS_TOTAL.labels(
+                    provider=provider, model=model, direction="output"
+                ).inc(output_tokens)
+
                 try:
                     await self._cost_tracker.record(
                         provider=provider,
@@ -232,12 +257,26 @@ class LLMRouter:
                     logger.exception(
                         "Failed to record cost for %s:%s", provider, model
                     )
+                else:
+                    # Record cost metric (only if DB write succeeded)
+                    from src.services.llm.cost_tracker import PROVIDER_PRICING
+
+                    pricing_key = f"{provider}:{model}"
+                    if pricing_key in PROVIDER_PRICING:
+                        input_rate, output_rate = PROVIDER_PRICING[pricing_key]
+                        cost = (input_tokens * input_rate) + (output_tokens * output_rate)
+                        LLM_COST_USD.labels(
+                            provider=provider, model=model, user_tier=user_tier
+                        ).inc(cost)
 
                 return result
 
             except asyncio.TimeoutError:
                 # Timeout is treated as a retriable failure
                 self._circuit_breaker.record_failure(provider, model)
+                LLM_REQUESTS_TOTAL.labels(
+                    provider=provider, model=model, task=task.value, outcome="timeout"
+                ).inc()
                 last_error = LLMProviderError(
                     provider=provider,
                     model=model,
@@ -258,6 +297,18 @@ class LLMRouter:
                 if e.retriable:
                     # Retriable: record failure and try next candidate
                     self._circuit_breaker.record_failure(provider, model)
+                    LLM_REQUESTS_TOTAL.labels(
+                        provider=provider, model=model, task=task.value, outcome="error_retriable"
+                    ).inc()
+                    # Record fallback metric if this isn't the first attempt
+                    if attempts > 1 and last_error:
+                        LLM_FALLBACK_TOTAL.labels(
+                            from_provider=last_error.provider,
+                            from_model=last_error.model,
+                            to_provider=provider,
+                            to_model=model,
+                            reason=last_error.category,
+                        ).inc()
                     last_error = e
                     logger.warning(
                         "Retriable error from %s:%s (category=%s), "
@@ -271,6 +322,7 @@ class LLMRouter:
                     raise
 
         # All attempts exhausted
+        LLM_ALL_PROVIDERS_EXHAUSTED.labels(task=task.value).inc()
         if last_error:
             raise LLMProviderError(
                 provider="router",

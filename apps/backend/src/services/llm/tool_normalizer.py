@@ -171,9 +171,7 @@ class ToolNormalizer:
     # Tool call normalization: provider response → internal ToolCallRequest
     # -------------------------------------------------------------------------
 
-    def normalize_tool_calls_gemini(
-        self, function_calls: list
-    ) -> list[ToolCallRequest]:
+    def normalize_tool_calls_gemini(self, function_calls: list) -> list[ToolCallRequest]:
         """Normalize Gemini FunctionCall objects to internal ToolCallRequest.
 
         Gemini FunctionCall objects have:
@@ -184,9 +182,7 @@ class ToolNormalizer:
         """
         results = []
         for fc in function_calls:
-            name = getattr(fc, "name", None) or (
-                fc.get("name") if isinstance(fc, dict) else None
-            )
+            name = getattr(fc, "name", None) or (fc.get("name") if isinstance(fc, dict) else None)
             if not name:
                 logger.warning("Skipping Gemini function call with no name: %s", fc)
                 continue
@@ -213,9 +209,7 @@ class ToolNormalizer:
             # Generate a unique ID since Gemini doesn't provide one
             call_id = str(uuid.uuid4())
 
-            results.append(
-                ToolCallRequest(id=call_id, name=name, arguments=dict(args))
-            )
+            results.append(ToolCallRequest(id=call_id, name=name, arguments=dict(args)))
         return results
 
     def normalize_tool_calls_openai(self, tool_calls: list) -> list[ToolCallRequest]:
@@ -233,9 +227,7 @@ class ToolNormalizer:
                 call_id = tc.get("id", str(uuid.uuid4()))
                 function = tc.get("function", {})
                 name = function.get("name", "") if isinstance(function, dict) else ""
-                raw_args = (
-                    function.get("arguments", "{}") if isinstance(function, dict) else "{}"
-                )
+                raw_args = function.get("arguments", "{}") if isinstance(function, dict) else "{}"
             else:
                 call_id = getattr(tc, "id", str(uuid.uuid4()))
                 function = getattr(tc, "function", None)
@@ -264,14 +256,10 @@ class ToolNormalizer:
             else:
                 arguments = {}
 
-            results.append(
-                ToolCallRequest(id=call_id, name=name, arguments=arguments)
-            )
+            results.append(ToolCallRequest(id=call_id, name=name, arguments=arguments))
         return results
 
-    def normalize_tool_calls_anthropic(
-        self, content_blocks: list
-    ) -> list[ToolCallRequest]:
+    def normalize_tool_calls_anthropic(self, content_blocks: list) -> list[ToolCallRequest]:
         """Normalize Anthropic tool_use content blocks to internal ToolCallRequest.
 
         Anthropic tool_use blocks have:
@@ -298,9 +286,7 @@ class ToolNormalizer:
                 input_data = getattr(block, "input", {})
 
             if not name:
-                logger.warning(
-                    "Skipping Anthropic tool_use block with no name: %s", block
-                )
+                logger.warning("Skipping Anthropic tool_use block with no name: %s", block)
                 continue
 
             # Input is typically already a dict, but handle string case defensively
@@ -319,9 +305,7 @@ class ToolNormalizer:
             elif not isinstance(input_data, dict):
                 input_data = {}
 
-            results.append(
-                ToolCallRequest(id=call_id, name=name, arguments=dict(input_data))
-            )
+            results.append(ToolCallRequest(id=call_id, name=name, arguments=dict(input_data)))
         return results
 
     # -------------------------------------------------------------------------

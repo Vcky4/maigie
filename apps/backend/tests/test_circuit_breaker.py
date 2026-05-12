@@ -230,15 +230,12 @@ class TestCircuitBreakerEdgeCases:
         assert cb.get_state("unknown", "model") == CircuitState.CLOSED
 
 
-
 class TestCircuitBreakerRollingWindow:
     """Tests for rolling window behavior (Requirement 7.7)."""
 
     def test_failures_outside_window_do_not_count(self):
         """Failures older than the rolling window are evicted and don't trigger OPEN."""
-        cb = CircuitBreaker(
-            failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=5.0
-        )
+        cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=5.0)
         # Record 2 failures at time 100.0
         with patch("src.services.llm.circuit_breaker.time.time", return_value=100.0):
             cb.record_failure("openai", "gpt-4o")
@@ -252,9 +249,7 @@ class TestCircuitBreakerRollingWindow:
 
     def test_failures_within_window_trigger_open(self):
         """Failures within the rolling window count toward the threshold."""
-        cb = CircuitBreaker(
-            failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=10.0
-        )
+        cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=10.0)
         # Record 3 failures within the window
         with patch("src.services.llm.circuit_breaker.time.time", return_value=100.0):
             cb.record_failure("openai", "gpt-4o")
@@ -267,9 +262,7 @@ class TestCircuitBreakerRollingWindow:
 
     def test_mixed_window_boundary(self):
         """Only failures within the window count; older ones are evicted."""
-        cb = CircuitBreaker(
-            failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=5.0
-        )
+        cb = CircuitBreaker(failure_threshold=3, cooldown_seconds=10.0, rolling_window_seconds=5.0)
         # Record failures at different times
         with patch("src.services.llm.circuit_breaker.time.time", return_value=100.0):
             cb.record_failure("openai", "gpt-4o")  # Will expire after 105.0

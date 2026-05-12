@@ -267,7 +267,9 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                 tool_definitions.append(td)
 
             # Convert to OpenAI format
-            openai_tools = self._tool_normalizer.to_openai(tool_definitions) if tool_definitions else None
+            openai_tools = (
+                self._tool_normalizer.to_openai(tool_definitions) if tool_definitions else None
+            )
 
             # Tool call loop
             iteration = 0
@@ -325,15 +327,11 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                 # Check for tool calls
                 if not tool_calls_raw:
                     # No tool calls — final turn
-                    logger.debug(
-                        "[%s] iteration %s completed with no tools", request_id, iteration
-                    )
+                    logger.debug("[%s] iteration %s completed with no tools", request_id, iteration)
                     break
 
                 # Normalize tool calls
-                normalized_calls = self._tool_normalizer.normalize_tool_calls_openai(
-                    tool_calls_raw
-                )
+                normalized_calls = self._tool_normalizer.normalize_tool_calls_openai(tool_calls_raw)
 
                 if not normalized_calls:
                     break
@@ -350,12 +348,16 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
                             "id": tc.id if hasattr(tc, "id") else tc.get("id", ""),
                             "type": "function",
                             "function": {
-                                "name": tc.function.name
-                                if hasattr(tc, "function")
-                                else tc.get("function", {}).get("name", ""),
-                                "arguments": tc.function.arguments
-                                if hasattr(tc, "function")
-                                else tc.get("function", {}).get("arguments", "{}"),
+                                "name": (
+                                    tc.function.name
+                                    if hasattr(tc, "function")
+                                    else tc.get("function", {}).get("name", "")
+                                ),
+                                "arguments": (
+                                    tc.function.arguments
+                                    if hasattr(tc, "function")
+                                    else tc.get("function", {}).get("arguments", "{}")
+                                ),
                             },
                         }
                         for tc in tool_calls_raw
@@ -441,9 +443,7 @@ class OpenAIChatToolsAdapter(BaseProviderAdapter):
             else:
                 # Max iterations reached without a final text-only response
                 if not final_text:
-                    final_text = (
-                        "I encountered an issue processing your request. Please try again."
-                    )
+                    final_text = "I encountered an issue processing your request. Please try again."
 
         except OpenAIError:
             # Re-raise our structured errors
