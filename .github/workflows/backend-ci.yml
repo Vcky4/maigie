@@ -268,6 +268,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          timeout: 20m
           command_timeout: 10m
           script: |
             # Set ALL GitHub secrets as environment variables (dynamically based on .env.example keys)
@@ -948,7 +949,8 @@ jobs:
           host: ${{ secrets.PRODUCTION_VPS_HOST }}
           username: ${{ secrets.PRODUCTION_VPS_USER }}
           key: ${{ secrets.PRODUCTION_VPS_SSH_KEY }}
-          command_timeout: 15m
+          timeout: 20m
+          command_timeout: 10m
           script: |
             cd /opt/maigie/production
 
@@ -967,20 +969,24 @@ jobs:
 
             # --- Kill zombie processes left by previous deploys ---
             echo "Reaping zombie processes..."
-            zombie_count=$(ps aux | grep -c '[d]efunct' || echo "0")
-            if [ "$zombie_count" -gt "0" ]; then
+            zombie_count=$(ps aux | grep -c '[d]efunct' 2>/dev/null || true)
+            zombie_count=${zombie_count:-0}
+            if [ "$zombie_count" -gt "0" ] 2>/dev/null; then
               echo "Found $zombie_count zombie processes, cleaning up..."
               # Kill parent processes of zombies to let init reap them
               ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print $2}' | sort -u | xargs -r kill -SIGCHLD 2>/dev/null || true
               sleep 2
             fi
 
-            # --- Prune unused Docker resources to free disk/memory ---
-            docker system prune -f --volumes 2>/dev/null || true
+            # --- Prune unused Docker resources ---
+            docker system prune -f 2>/dev/null || true
+            echo "✓ Docker pruned"
 
             # Load Docker image
+            echo "Loading Docker image..."
             docker load < /tmp/production-image.tar.gz
             rm /tmp/production-image.tar.gz
+            echo "✓ Image loaded"
 
             # Update .env from uploaded file
             if [ -f /tmp/.env ]; then
@@ -1086,16 +1092,16 @@ jobs:
 
             # Stop existing containers
             docker-compose down || true
+            echo "✓ Old containers stopped"
 
             # Deploy (no build needed, using pre-loaded image)
-            docker-compose up -d
+            docker-compose up -d 2>&1 | tail -5
+            echo "✓ Containers started"
 
-            # Wait for services to be ready
-            sleep 15
-
-            # Run db push
-            docker-compose exec -T backend prisma db push --accept-data-loss --skip-generate || echo "Schema push failed"
-
+            # Brief wait then confirm containers are running
+            sleep 5
+            echo "Container status:"
+            docker-compose ps
             echo "Production deployment complete!"
 
   deploy-staging:
@@ -1262,7 +1268,8 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 15m
+          timeout: 20m
+          command_timeout: 10m
           script: |
             # Set ALL GitHub secrets as environment variables
             export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
@@ -1350,7 +1357,7 @@ jobs:
 
             cd /opt/maigie/staging
 
-            # --- Ensure swap exists (prevents OOM during heavy deploys) ---
+            # --- Ensure swap exists (one-time setup) ---
             if [ ! -f /swapfile ]; then
               echo "Creating 2GB swap file..."
               sudo fallocate -l 2G /swapfile
@@ -1363,20 +1370,24 @@ jobs:
               sudo swapon /swapfile 2>/dev/null || true
             fi
 
-            # --- Kill zombie processes left by previous deploys ---
-            zombie_count=$(ps aux | grep -c '[d]efunct' || echo "0")
-            if [ "$zombie_count" -gt "0" ]; then
+            # --- Kill zombie processes ---
+            zombie_count=$(ps aux | grep -c '[d]efunct' 2>/dev/null || true)
+            zombie_count=${zombie_count:-0}
+            if [ "$zombie_count" -gt "0" ] 2>/dev/null; then
               echo "Found $zombie_count zombie processes, cleaning up..."
               ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print $2}' | sort -u | xargs -r kill -SIGCHLD 2>/dev/null || true
               sleep 2
             fi
 
-            # --- Prune unused Docker resources to free disk/memory ---
-            docker system prune -f --volumes 2>/dev/null || true
+            # --- Prune unused Docker resources (not volumes) ---
+            docker system prune -f 2>/dev/null || true
+            echo "✓ Docker pruned"
 
             # Load Docker image
+            echo "Loading Docker image..."
             docker load < /tmp/staging-image.tar.gz
             rm /tmp/staging-image.tar.gz
+            echo "✓ Image loaded"
 
             # Generate .env from template using generator script
             if [ -f ".env.example" ] && [ -f "scripts/generate-env-from-secrets.sh" ]; then
@@ -1487,20 +1498,19 @@ jobs:
                 driver: bridge
             EOF
 
-            # Stop existing containers
+            # Stop existing containers (preserve volumes - don't lose Redis data)
             docker-compose down || true
+            echo "✓ Old containers stopped"
 
             # Deploy (no build needed, using pre-loaded image)
-            docker-compose up -d
+            # Use --detach and print progress to keep SSH alive
+            docker-compose up -d 2>&1 | tail -5
+            echo "✓ Containers started"
 
-            # Wait for services to be ready
-            sleep 15
-
-            # Run cleanup and db push (already done in container startup, but ensure it's done)
-            docker-compose exec -T backend python prisma/cleanup-duplicates.py || echo "No duplicates to clean"
-            docker-compose exec -T backend prisma db push --accept-data-loss --skip-generate || echo "Schema push failed"
-            docker-compose exec -T backend python prisma/seed.py || echo "Seed already applied"
-
+            # Brief wait then confirm containers are running (don't wait for full health)
+            sleep 5
+            echo "Container status:"
+            docker-compose ps
             echo "Staging deployment complete!"
 
   cleanup-preview:
