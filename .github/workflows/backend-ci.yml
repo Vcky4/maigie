@@ -408,9 +408,16 @@ jobs:
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
 
-            # Load Docker image
+            # Load Docker image (with heartbeat to prevent SSH idle timeout)
+            echo "Loading Docker image..."
+            ( while true; do echo -n "."; sleep 30; done ) &
+            HEARTBEAT_PID=$!
             docker load < /tmp/preview-image.tar.gz
-            rm /tmp/preview-image.tar.gz
+            kill $HEARTBEAT_PID 2>/dev/null || true
+            wait $HEARTBEAT_PID 2>/dev/null || true
+            rm -f /tmp/preview-image.tar.gz
+            echo ""
+            echo "✓ Image loaded"
 
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -982,10 +989,15 @@ jobs:
             docker system prune -f 2>/dev/null || true
             echo "✓ Docker pruned"
 
-            # Load Docker image
+            # Load Docker image (with heartbeat to prevent SSH idle timeout)
             echo "Loading Docker image..."
+            ( while true; do echo -n "."; sleep 30; done ) &
+            HEARTBEAT_PID=$!
             docker load < /tmp/production-image.tar.gz
-            rm /tmp/production-image.tar.gz
+            kill $HEARTBEAT_PID 2>/dev/null || true
+            wait $HEARTBEAT_PID 2>/dev/null || true
+            rm -f /tmp/production-image.tar.gz
+            echo ""
             echo "✓ Image loaded"
 
             # Update .env from uploaded file
@@ -1383,10 +1395,15 @@ jobs:
             docker system prune -f 2>/dev/null || true
             echo "✓ Docker pruned"
 
-            # Load Docker image
+            # Load Docker image (with heartbeat to prevent SSH idle timeout)
             echo "Loading Docker image..."
+            ( while true; do echo -n "."; sleep 30; done ) &
+            HEARTBEAT_PID=$!
             docker load < /tmp/staging-image.tar.gz
-            rm /tmp/staging-image.tar.gz
+            kill $HEARTBEAT_PID 2>/dev/null || true
+            wait $HEARTBEAT_PID 2>/dev/null || true
+            rm -f /tmp/staging-image.tar.gz
+            echo ""
             echo "✓ Image loaded"
 
             # Generate .env from template using generator script
