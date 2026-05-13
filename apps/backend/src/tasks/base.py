@@ -4,6 +4,10 @@ This module provides base classes and decorators that establish consistent
 patterns for creating background tasks. All feature modules should use these
 patterns when implementing their specific tasks.
 
+It also registers Celery worker lifecycle signals to properly clean up
+Prisma's query-engine subprocess on worker shutdown, preventing zombie
+processes.
+
 Usage:
     ```python
     from .tasks.base import BaseTask, task
@@ -17,12 +21,13 @@ Usage:
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
-from functools import wraps
 from typing import Any, TypeVar
 
 from celery import Task
 from celery.exceptions import Retry
+from celery.signals import worker_process_shutdown
 
 from ..core.celery_app import celery_app
 from ..exceptions import TaskError, TaskRetryError
@@ -30,6 +35,47 @@ from ..exceptions import TaskError, TaskRetryError
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+# ---------------------------------------------------------------------------
+# Worker lifecycle: clean up Prisma engine subprocess on worker shutdown
+# ---------------------------------------------------------------------------
+
+
+@worker_process_shutdown.connect
+def _cleanup_prisma_on_worker_shutdown(**kwargs: Any) -> None:
+    """Disconnect Prisma and reap its query-engine child process.
+
+    Prisma spawns a query-engine binary as a subprocess when `db.connect()`
+    is called.  If the Celery worker process exits (e.g. due to
+    worker_max_tasks_per_child or a SIGTERM) without disconnecting, the
+    engine subprocess becomes a zombie (parent gone, no wait()).
+
+    This signal handler runs inside each prefork child just before it exits,
+    giving us a chance to gracefully shut down the engine.
+    """
+    try:
+        from ..core.database import db
+
+        if db.is_connected():
+            loop = _get_or_create_event_loop()
+            loop.run_until_complete(db.disconnect())
+            logger.info("Prisma disconnected on worker shutdown")
+    except Exception as e:
+        logger.warning("Prisma disconnect on worker shutdown failed: %s", e)
+
+    # As a safety net, reap any remaining child processes to prevent zombies.
+    # os.waitpid with WNOHANG collects zombie children without blocking.
+    if hasattr(os, "WNOHANG"):
+        try:
+            while True:
+                pid, _ = os.waitpid(-1, os.WNOHANG)
+                if pid == 0:
+                    break
+                logger.debug("Reaped zombie child process pid=%d", pid)
+        except ChildProcessError:
+            # No child processes remain — expected.
+            pass
 
 
 class BaseTask(Task):
@@ -230,12 +276,33 @@ def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
     return loop
 
 
+def _reap_zombies() -> None:
+    """Non-blocking reap of any zombie child processes.
+
+    Called after each task completes to prevent zombie accumulation.
+    Uses WNOHANG so it never blocks the worker.
+    """
+    if not hasattr(os, "WNOHANG"):
+        return  # Windows — not applicable
+    try:
+        while True:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+            if pid == 0:
+                break
+            logger.debug("Reaped zombie child pid=%d after task", pid)
+    except ChildProcessError:
+        pass  # No child processes — normal
+
+
 def run_async_in_celery(coro: Awaitable[T]) -> T:
     """Run an async coroutine in a Celery worker process.
 
     The event loop is **not** closed after each task so that
     connection pools (Prisma / httpx) survive between tasks on
     the same worker.  The loop is created lazily and reused.
+
+    After each coroutine completes, any zombie child processes are reaped
+    to prevent accumulation between worker_max_tasks_per_child cycles.
 
     Args:
         coro: The async coroutine to run
@@ -255,4 +322,9 @@ def run_async_in_celery(coro: Awaitable[T]) -> T:
         ```
     """
     loop = _get_or_create_event_loop()
-    return loop.run_until_complete(coro)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        # Reap any zombie child processes left by subprocesses (e.g. Prisma engine
+        # restarts, httpx subprocess calls, etc.) to prevent zombie accumulation.
+        _reap_zombies()
