@@ -948,9 +948,35 @@ jobs:
           host: ${{ secrets.PRODUCTION_VPS_HOST }}
           username: ${{ secrets.PRODUCTION_VPS_USER }}
           key: ${{ secrets.PRODUCTION_VPS_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             cd /opt/maigie/production
+
+            # --- Ensure swap exists (prevents OOM during heavy deploys) ---
+            if [ ! -f /swapfile ]; then
+              echo "Creating 2GB swap file..."
+              sudo fallocate -l 2G /swapfile
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+              echo "✓ Swap enabled"
+            elif ! swapon --show | grep -q /swapfile; then
+              sudo swapon /swapfile 2>/dev/null || true
+            fi
+
+            # --- Kill zombie processes left by previous deploys ---
+            echo "Reaping zombie processes..."
+            zombie_count=$(ps aux | grep -c '[d]efunct' || echo "0")
+            if [ "$zombie_count" -gt "0" ]; then
+              echo "Found $zombie_count zombie processes, cleaning up..."
+              # Kill parent processes of zombies to let init reap them
+              ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print $2}' | sort -u | xargs -r kill -SIGCHLD 2>/dev/null || true
+              sleep 2
+            fi
+
+            # --- Prune unused Docker resources to free disk/memory ---
+            docker system prune -f --volumes 2>/dev/null || true
 
             # Load Docker image
             docker load < /tmp/production-image.tar.gz
@@ -1236,7 +1262,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          command_timeout: 10m
+          command_timeout: 15m
           script: |
             # Set ALL GitHub secrets as environment variables
             export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
@@ -1323,6 +1349,30 @@ jobs:
             export ELEVENLABS_AGENT_ID="${{ secrets.ELEVENLABS_AGENT_ID }}"
 
             cd /opt/maigie/staging
+
+            # --- Ensure swap exists (prevents OOM during heavy deploys) ---
+            if [ ! -f /swapfile ]; then
+              echo "Creating 2GB swap file..."
+              sudo fallocate -l 2G /swapfile
+              sudo chmod 600 /swapfile
+              sudo mkswap /swapfile
+              sudo swapon /swapfile
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+              echo "✓ Swap enabled"
+            elif ! swapon --show | grep -q /swapfile; then
+              sudo swapon /swapfile 2>/dev/null || true
+            fi
+
+            # --- Kill zombie processes left by previous deploys ---
+            zombie_count=$(ps aux | grep -c '[d]efunct' || echo "0")
+            if [ "$zombie_count" -gt "0" ]; then
+              echo "Found $zombie_count zombie processes, cleaning up..."
+              ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print $2}' | sort -u | xargs -r kill -SIGCHLD 2>/dev/null || true
+              sleep 2
+            fi
+
+            # --- Prune unused Docker resources to free disk/memory ---
+            docker system prune -f --volumes 2>/dev/null || true
 
             # Load Docker image
             docker load < /tmp/staging-image.tar.gz
