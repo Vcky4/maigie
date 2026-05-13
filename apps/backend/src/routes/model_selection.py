@@ -202,3 +202,70 @@ async def set_model_preference(
         model_id=body.model_id,
         provider=provider_for_model,
     )
+
+
+# ---------------------------------------------------------------------------
+# Cost / Usage endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.get("/cost")
+async def get_model_cost_summary(
+    current_user: CurrentUser,
+    db: DBDep,
+    provider: str | None = None,
+    days: int = 30,
+):
+    """Return the user's LLM cost summary for the given period.
+
+    Query params:
+        provider: Optional filter by provider (e.g. "gemini", "openai")
+        days: Number of days to look back (default 30, max 90)
+
+    Returns cost breakdown by provider and model.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from src.services.llm.cost_tracker import PROVIDER_PRICING, CostTracker
+
+    days = min(max(days, 1), 90)
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+
+    tracker = CostTracker(pricing_table=PROVIDER_PRICING, db=db)
+
+    # Get aggregate for the user
+    summary = await tracker.aggregate(
+        user_id=current_user.id,
+        provider=provider,
+        start=start,
+    )
+
+    # Get per-provider breakdown
+    providers_breakdown = []
+    for p in ["gemini", "openai", "anthropic"]:
+        if provider and p != provider:
+            continue
+        p_summary = await tracker.aggregate(
+            user_id=current_user.id,
+            provider=p,
+            start=start,
+        )
+        if p_summary["record_count"] > 0:
+            providers_breakdown.append(
+                {
+                    "provider": p,
+                    "total_cost_usd": p_summary["total_cost_usd"],
+                    "total_input_tokens": p_summary["total_input_tokens"],
+                    "total_output_tokens": p_summary["total_output_tokens"],
+                    "request_count": p_summary["record_count"],
+                }
+            )
+
+    return {
+        "period_days": days,
+        "total_cost_usd": summary["total_cost_usd"],
+        "total_input_tokens": summary["total_input_tokens"],
+        "total_output_tokens": summary["total_output_tokens"],
+        "total_requests": summary["record_count"],
+        "by_provider": providers_breakdown,
+    }
