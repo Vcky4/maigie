@@ -14,6 +14,7 @@ import secrets
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated
 
+import google.auth.exceptions
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -23,7 +24,7 @@ from pydantic import BaseModel, EmailStr
 from prisma.errors import DataError as PrismaDataError
 from src.config import settings
 from src.core.database import db
-from src.core.oauth import OAuthProviderFactory
+from src.core.oauth import GoogleIdTokenVerifier, OAuthProviderFactory
 from src.core.security import (
     create_access_token,
     create_refresh_token,
@@ -125,6 +126,10 @@ class ChangePasswordRequest(BaseModel):
 
 class LinkReferralRequest(BaseModel):
     referralCode: str
+
+
+class NativeGoogleCallbackRequest(BaseModel):
+    id_token: str
 
 
 # ==========================================
@@ -616,6 +621,69 @@ async def get_oauth_providers():
     List available providers.
     """
     return {"providers": ["google"]}  # TODO: Add "github" when GitHub OAuth is enabled
+
+
+@router.post("/oauth/google/native-callback", response_model=Token)
+async def google_native_callback(data: NativeGoogleCallbackRequest, db: DBDep):
+    """
+    Accept a Google ID token from the native mobile SDK,
+    verify it, and return Maigie session tokens.
+
+    This is a public endpoint — no Authorization header required.
+    """
+    verifier = GoogleIdTokenVerifier(settings.OAUTH_GOOGLE_CLIENT_ID)
+
+    try:
+        claims = await verifier.verify(data.id_token)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid Google ID token format",
+        )
+    except google.auth.exceptions.GoogleAuthError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired Google ID token",
+        )
+    except (httpx.ConnectError, httpx.TimeoutException):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google authentication service unavailable",
+        )
+    except Exception:
+        logger.exception("Unexpected error during Google ID token verification")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+    email = claims.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Google ID token missing required email claim",
+        )
+
+    name = claims.get("name")
+    sub = claims.get("sub")
+
+    oauth_user_info = OAuthUserInfo(
+        email=email,
+        full_name=name,
+        provider="google",
+        provider_user_id=sub,
+    )
+    user = await get_or_create_oauth_user(oauth_user_info, db)
+
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(data={"sub": user.email}, expires_delta=access_token_expires)
+    refresh_token = create_refresh_token(data={"sub": user.email})
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 @router.get("/oauth/{provider}/authorize", response_model=OAuthAuthorizeResponse)

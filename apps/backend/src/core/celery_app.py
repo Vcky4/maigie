@@ -16,10 +16,11 @@ Usage:
 """
 
 import logging
+import signal
 from typing import Any
 
 from celery import Celery
-from celery.signals import setup_logging
+from celery.signals import setup_logging, worker_process_init
 
 from ..config import Settings, get_settings
 
@@ -69,7 +70,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_time_limit=300,  # Hard time limit (5 minutes)
         task_soft_time_limit=240,  # Soft time limit (4 minutes)
         # Worker settings
-        worker_max_tasks_per_child=1000,  # Restart worker after N tasks
+        worker_max_tasks_per_child=200,  # Restart worker after N tasks (prevents memory/zombie leaks)
         worker_disable_rate_limits=False,
         # Prisma spawns an engine subprocess; Celery's stdout redirection replaces
         # sys.stdout/sys.stderr with a LoggingProxy (no .fileno), which breaks
@@ -87,6 +88,22 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
 
     logger.info("Celery application configured successfully")
     return celery_app
+
+
+@worker_process_init.connect
+def _install_sigchld_handler(**kwargs: Any) -> None:
+    """Install SIGCHLD handler to automatically reap child processes.
+
+    Prisma spawns a query-engine subprocess. If that subprocess crashes or
+    restarts, the old process becomes a zombie unless the parent (Celery
+    worker) calls wait(). Setting SIGCHLD to SIG_IGN tells the kernel to
+    automatically reap children, eliminating zombie accumulation entirely.
+
+    This runs once per forked worker process.
+    """
+    if hasattr(signal, "SIGCHLD"):
+        signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+        logger.debug("SIGCHLD set to SIG_IGN — zombies will be auto-reaped")
 
 
 # Global Celery app instance

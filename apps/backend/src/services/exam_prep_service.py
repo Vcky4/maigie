@@ -138,6 +138,11 @@ async def add_material(
     exam_prep = await db.examprep.find_unique(where={"id": exam_prep_id})
     if not exam_prep:
         raise ValueError("ExamPrep not found")
+
+    # Sanitize extracted text: remove null bytes that PostgreSQL rejects
+    if extracted_text:
+        extracted_text = extracted_text.replace("\x00", "")
+
     return await db.examprepmaterial.create(
         data={
             "examPrepId": exam_prep_id,
