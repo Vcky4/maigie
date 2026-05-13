@@ -262,14 +262,21 @@ jobs:
             if [ $i -eq 5 ]; then exit 1; fi
           done
 
-      - name: Load Image and Deploy Preview
+      - name: Load Docker Image on VPS (Preview)
+        run: |
+          echo "Loading preview Docker image on remote server..."
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=10 \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true; docker load < /tmp/preview-image.tar.gz && rm -f /tmp/preview-image.tar.gz && echo 'Image loaded successfully'"
+
+      - name: Deploy Preview
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          timeout: 20m
-          command_timeout: 10m
+          timeout: 15m
+          command_timeout: 5m
           script: |
             # Set ALL GitHub secrets as environment variables (dynamically based on .env.example keys)
             # The script will check each key and use secret if available, otherwise use default from .env.example
@@ -407,17 +414,6 @@ jobs:
 
             # Remove old preview image if it exists (force remove to handle any dangling references)
             docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
-
-            # Load Docker image (with heartbeat to prevent SSH idle timeout)
-            echo "Loading Docker image..."
-            ( while true; do echo -n "."; sleep 30; done ) &
-            HEARTBEAT_PID=$!
-            docker load < /tmp/preview-image.tar.gz
-            kill $HEARTBEAT_PID 2>/dev/null || true
-            wait $HEARTBEAT_PID 2>/dev/null || true
-            rm -f /tmp/preview-image.tar.gz
-            echo ""
-            echo "✓ Image loaded"
 
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -950,18 +946,25 @@ jobs:
             if [ $i -eq 5 ]; then exit 1; fi
           done
 
-      - name: Load Image and Deploy Production
+      - name: Load Docker Image on Production VPS
+        run: |
+          echo "Loading Docker image on production server (this may take several minutes)..."
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=10 \
+            ${{ secrets.PRODUCTION_VPS_USER }}@${{ secrets.PRODUCTION_VPS_HOST }} \
+            "docker system prune -f 2>/dev/null || true; docker load < /tmp/production-image.tar.gz && rm -f /tmp/production-image.tar.gz && echo 'Image loaded successfully'"
+
+      - name: Deploy Production
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.PRODUCTION_VPS_HOST }}
           username: ${{ secrets.PRODUCTION_VPS_USER }}
           key: ${{ secrets.PRODUCTION_VPS_SSH_KEY }}
-          timeout: 20m
-          command_timeout: 10m
+          timeout: 10m
+          command_timeout: 5m
           script: |
             cd /opt/maigie/production
 
-            # --- Ensure swap exists (prevents OOM during heavy deploys) ---
+            # --- Ensure swap exists (one-time setup) ---
             if [ ! -f /swapfile ]; then
               echo "Creating 2GB swap file..."
               sudo fallocate -l 2G /swapfile
@@ -973,32 +976,6 @@ jobs:
             elif ! swapon --show | grep -q /swapfile; then
               sudo swapon /swapfile 2>/dev/null || true
             fi
-
-            # --- Kill zombie processes left by previous deploys ---
-            echo "Reaping zombie processes..."
-            zombie_count=$(ps aux | grep -c '[d]efunct' 2>/dev/null || true)
-            zombie_count=${zombie_count:-0}
-            if [ "$zombie_count" -gt "0" ] 2>/dev/null; then
-              echo "Found $zombie_count zombie processes, cleaning up..."
-              # Kill parent processes of zombies to let init reap them
-              ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print $2}' | sort -u | xargs -r kill -SIGCHLD 2>/dev/null || true
-              sleep 2
-            fi
-
-            # --- Prune unused Docker resources ---
-            docker system prune -f 2>/dev/null || true
-            echo "✓ Docker pruned"
-
-            # Load Docker image (with heartbeat to prevent SSH idle timeout)
-            echo "Loading Docker image..."
-            ( while true; do echo -n "."; sleep 30; done ) &
-            HEARTBEAT_PID=$!
-            docker load < /tmp/production-image.tar.gz
-            kill $HEARTBEAT_PID 2>/dev/null || true
-            wait $HEARTBEAT_PID 2>/dev/null || true
-            rm -f /tmp/production-image.tar.gz
-            echo ""
-            echo "✓ Image loaded"
 
             # Update .env from uploaded file
             if [ -f /tmp/.env ]; then
@@ -1274,14 +1251,21 @@ jobs:
             if [ $i -eq 5 ]; then exit 1; fi
           done
 
-      - name: Load Image and Deploy Staging
+      - name: Load Docker Image on VPS
+        run: |
+          echo "Loading Docker image on remote server (this may take several minutes)..."
+          ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=10 \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
+            "docker system prune -f 2>/dev/null || true; docker load < /tmp/staging-image.tar.gz && rm -f /tmp/staging-image.tar.gz && echo 'Image loaded successfully'"
+
+      - name: Deploy Staging
         uses: appleboy/ssh-action@v1.2.5
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          timeout: 20m
-          command_timeout: 10m
+          timeout: 10m
+          command_timeout: 5m
           script: |
             # Set ALL GitHub secrets as environment variables
             export SENTRY_DSN="${{ secrets.SENTRY_DSN }}"
@@ -1381,30 +1365,6 @@ jobs:
             elif ! swapon --show | grep -q /swapfile; then
               sudo swapon /swapfile 2>/dev/null || true
             fi
-
-            # --- Kill zombie processes ---
-            zombie_count=$(ps aux | grep -c '[d]efunct' 2>/dev/null || true)
-            zombie_count=${zombie_count:-0}
-            if [ "$zombie_count" -gt "0" ] 2>/dev/null; then
-              echo "Found $zombie_count zombie processes, cleaning up..."
-              ps -eo pid,ppid,stat,cmd | awk '$3 ~ /Z/ {print $2}' | sort -u | xargs -r kill -SIGCHLD 2>/dev/null || true
-              sleep 2
-            fi
-
-            # --- Prune unused Docker resources (not volumes) ---
-            docker system prune -f 2>/dev/null || true
-            echo "✓ Docker pruned"
-
-            # Load Docker image (with heartbeat to prevent SSH idle timeout)
-            echo "Loading Docker image..."
-            ( while true; do echo -n "."; sleep 30; done ) &
-            HEARTBEAT_PID=$!
-            docker load < /tmp/staging-image.tar.gz
-            kill $HEARTBEAT_PID 2>/dev/null || true
-            wait $HEARTBEAT_PID 2>/dev/null || true
-            rm -f /tmp/staging-image.tar.gz
-            echo ""
-            echo "✓ Image loaded"
 
             # Generate .env from template using generator script
             if [ -f ".env.example" ] && [ -f "scripts/generate-env-from-secrets.sh" ]; then

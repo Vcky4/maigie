@@ -6,7 +6,7 @@ The Maigie backend implements a comprehensive, standardized exception handling s
 
 ## Architecture
 
-### 1. Standardized Error Response Model 
+### 1. Standardized Error Response Model
 
 All errors follow the `ErrorResponse` Pydantic model:
 
