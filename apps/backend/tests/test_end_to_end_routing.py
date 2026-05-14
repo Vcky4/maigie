@@ -7,19 +7,20 @@ Run with: SKIP_DB_FIXTURE=1 pytest tests/test_end_to_end_routing.py -v
 """
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
 
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
-from src.services.llm.base_adapter import BaseProviderAdapter
-from src.services.llm.capabilities import ChatCapability, EmbeddingCapability
-from src.services.llm.circuit_breaker import CircuitBreaker
-from src.services.llm.errors import GeminiError, LLMProviderError, OpenAIError
-from src.services.llm.feature_flags import FeatureFlagService
-from src.services.llm.router import LLMRouter
-from src.services.llm_registry import LlmTask
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402
+
+import pytest  # noqa: E402
+
+from src.services.llm.base_adapter import BaseProviderAdapter  # noqa: E402
+from src.services.llm.capabilities import ChatCapability, EmbeddingCapability  # noqa: E402
+from src.services.llm.circuit_breaker import CircuitBreaker  # noqa: E402
+from src.services.llm.errors import GeminiError, LLMProviderError, OpenAIError  # noqa: E402
+from src.services.llm.feature_flags import FeatureFlagService  # noqa: E402
+from src.services.llm.router import LLMRouter  # noqa: E402
+from src.services.llm_registry import LlmTask  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

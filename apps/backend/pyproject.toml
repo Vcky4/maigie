@@ -79,6 +79,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # E203: whitespace before ':' — Black slices; keep Black as source of truth for layout
 ignore = ["E501", "E203", "N818", "F401", "F841", "N803", "N815", "UP035"]
 
+[tool.ruff.lint.per-file-ignores]
+# Test files set env vars before imports (SKIP_DB_FIXTURE pattern)
+"tests/**" = ["E402"]
+
 [tool.black]
 line-length = 100
 target-version = ["py312"]
