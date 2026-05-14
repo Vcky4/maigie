@@ -412,8 +412,8 @@ jobs:
               export PREVIEW_ID="${{ steps.preview.outputs.id }}"
             fi
 
-            # Remove old preview image if it exists (force remove to handle any dangling references)
-            docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
+            # The image was already loaded in the "Load Docker Image on VPS" step.
+            # Do NOT remove it here — it was previously causing "No such image" errors.
 
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
