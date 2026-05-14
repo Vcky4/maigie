@@ -31,7 +31,7 @@ async def test_action_execution_flow():
         mock_db.module.create.return_value = MagicMock(id="mod_123")
 
         # Also mock credit service to avoid real credit checks
-        with patch("src.services.action_service.consume_credits", new_callable=AsyncMock):
+        with patch("src.services.credit_service.consume_credits", new_callable=AsyncMock):
             # valid action payload
             action_data = {
                 "title": "Test Python Course",

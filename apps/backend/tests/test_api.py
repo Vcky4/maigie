@@ -11,8 +11,9 @@ async def test_health_check(client: AsyncClient):
     if response.status_code == 200:
         assert data["status"] == "healthy"
     else:
-        # 503 is acceptable in CI where DB/Redis aren't running
-        assert "status" in data
+        # 503 response may nest status under 'detail' key
+        detail = data.get("detail", data)
+        assert "status" in detail or "db" in detail
 
 
 @pytest.mark.asyncio
