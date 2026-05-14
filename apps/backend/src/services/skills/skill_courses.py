@@ -174,7 +174,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the course management skill."""
-    from src.services.gemini_tool_handlers import (
+    from src.services.skills.handlers import (
         handle_create_course,
         handle_delete_course,
         handle_get_user_courses,

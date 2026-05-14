@@ -140,7 +140,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the memory & personalization skill."""
-    from src.services.gemini_tool_handlers import (
+    from src.services.skills.handlers import (
         handle_complete_review,
         handle_email_user,
         handle_get_my_profile,

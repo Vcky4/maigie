@@ -21,9 +21,8 @@ from src.services.llm.gemini_chat_tools import run_gemini_chat_with_tools
 from src.services.llm.gemini_sdk import genai, new_gemini_client, types as _types
 from src.services.llm.prompts import SYSTEM_INSTRUCTION
 from src.services.llm.protocol import ChatWithToolsProvider
-from src.services.llm_chat_context import (
+from src.services.llm.context import (
     build_enhanced_chat_user_message,
-    map_gemini_tool_to_action_type,
 )
 from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
 

@@ -651,7 +651,7 @@ async def run_gemini_live_bridge(
                         args,
                     )
 
-                    import src.services.gemini_tool_handlers as tool_handlers
+                    import src.services.skills.handlers as tool_handlers
 
                     current_course_id = None
                     current_topic_id = None
@@ -718,9 +718,9 @@ async def run_gemini_live_bridge(
                     await ws_conn.send(json.dumps(tool_resp))
                     logger.info("Sent toolResponse back to Gemini: %s", tool_resp)
 
-    from src.services.gemini_tools import get_all_tools
+    from src.services.skills import skill_registry
 
-    session_tools = tools if tools is not None else get_all_tools()
+    session_tools = tools if tools is not None else skill_registry.get_all_tools_legacy_format()
 
     setup: dict[str, Any] = {
         "setup": {
@@ -737,7 +737,16 @@ async def run_gemini_live_bridge(
     }
 
     if session_tools:
-        setup["setup"]["tools"] = session_tools
+        # Convert snake_case keys to camelCase for the raw Gemini WebSocket API
+        converted_tools = []
+        for tool_group in session_tools:
+            if "function_declarations" in tool_group:
+                converted_tools.append(
+                    {"functionDeclarations": tool_group["function_declarations"]}
+                )
+            else:
+                converted_tools.append(tool_group)
+        setup["setup"]["tools"] = converted_tools
 
     try:
         async with websockets.connect(url) as ws:  # type: ignore[union-attr]

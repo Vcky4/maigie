@@ -21,9 +21,9 @@ from src.services.llm.capabilities import (
 from src.services.llm.gemini_sdk import new_gemini_client, types as _types
 from src.services.llm.prompts import build_personalized_system_instruction
 from src.services.llm.streaming import StreamConsumerDisconnected, is_websocket_consumer_disconnect
-from src.services.llm_chat_context import (
+from src.services.llm.context import (
     build_enhanced_chat_user_message,
-    map_gemini_tool_to_action_type,
+    map_tool_to_action_type,
 )
 from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
 
@@ -80,8 +80,8 @@ async def run_gemini_chat_with_tools(
         enrich_tool_args_for_llm,
         merge_successful_tool_result_into_created_ids,
     )
-    from src.services.gemini_tool_handlers import handle_tool_call
-    from src.services.gemini_tools import get_all_tools
+    from src.services.skills.handlers import handle_tool_call
+    from src.services.skills import skill_registry
 
     try:
         request_start = time.perf_counter()
@@ -95,8 +95,8 @@ async def run_gemini_chat_with_tools(
         total_tool_time = 0.0
 
         # Get tool definitions and convert to new SDK format
-        raw_tools = get_all_tools()
-        # raw_tools is [{"function_declarations": [...]}] (old format)
+        raw_tools = skill_registry.get_all_tools_legacy_format()
+        # raw_tools is [{"function_declarations": [...]}] format
         # New SDK expects a list of types.Tool objects with UPPERCASE type strings
         all_declarations = []
         for tool_group in raw_tools:
@@ -509,7 +509,7 @@ async def run_gemini_chat_with_tools(
                     ]:
                         executed_actions.append(
                             {
-                                "type": map_gemini_tool_to_action_type(tool_name),
+                                "type": map_tool_to_action_type(tool_name),
                                 "data": tool_args,
                                 "result": tool_result,
                             }

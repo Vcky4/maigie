@@ -1,7 +1,7 @@
 """
-Prompt/context helpers for chat-style LLM calls (Gemini agentic loop today).
+Prompt/context helpers for chat-style LLM calls.
 
-Keeps `llm_service.py` smaller and gives a stable place for Phase B adapter code to reuse.
+Keeps `llm_service.py` smaller and gives a stable place for adapter code to reuse.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-def map_gemini_tool_to_action_type(tool_name: str) -> str:
-    """Map Gemini tool name to action type for logging / executed_actions."""
+def map_tool_to_action_type(tool_name: str) -> str:
+    """Map tool name to action type for logging / executed_actions."""
     mapping = {
         "create_course": "create_course",
         "create_note": "create_note",

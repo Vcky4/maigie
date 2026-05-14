@@ -6,7 +6,6 @@ Provides:
 - Tool definition retrieval in provider-neutral format
 - Tool execution dispatch
 - Category-based and trigger-based filtering
-- Backward-compatible bridge to the legacy gemini_tools format
 """
 
 from __future__ import annotations
@@ -179,24 +178,23 @@ class SkillRegistry:
     # ─── Legacy Bridge ────────────────────────────────────────────────────
 
     def get_all_tools_legacy_format(self) -> list[dict[str, Any]]:
-        """Return tools in the legacy Gemini functionDeclarations format.
+        """Return tools in the function_declarations dict format.
 
-        This provides backward compatibility with existing adapter code that
-        expects the old `get_all_tools()` return format.
+        Returns [{"function_declarations": [...]}] for adapter consumption.
         """
         self._ensure_initialized()
         declarations = []
         for tool_def in self.get_all_tool_definitions():
             declarations.append(_to_legacy_declaration(tool_def))
-        return [{"functionDeclarations": declarations}]
+        return [{"function_declarations": declarations}]
 
     def get_study_tools_legacy_format(self) -> list[dict[str, Any]]:
-        """Return study tools in legacy format for Gemini Live."""
+        """Return study tools in function_declarations format for voice mode."""
         self._ensure_initialized()
         declarations = []
         for tool_def in self.get_study_tools():
             declarations.append(_to_legacy_declaration(tool_def))
-        return [{"functionDeclarations": declarations}]
+        return [{"function_declarations": declarations}]
 
     # ─── Trigger Matching ─────────────────────────────────────────────────
 
@@ -258,7 +256,7 @@ skill_registry = SkillRegistry()
 
 
 def _enrich_args_from_context(args: dict[str, Any], context: dict[str, Any]) -> None:
-    """Merge context IDs into tool args (same logic as gemini_tool_handlers)."""
+    """Merge context IDs into tool args."""
     _CONTEXT_MAPPINGS = [
         ("courseId", "course_id"),
         ("topicId", "topic_id"),

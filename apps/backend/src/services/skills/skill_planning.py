@@ -97,7 +97,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the planning & insights skill."""
-    from src.services.gemini_tool_handlers import (
+    from src.services.skills.handlers import (
         handle_create_study_plan,
         handle_get_learning_insights,
         handle_get_pending_nudges,

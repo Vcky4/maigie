@@ -45,7 +45,7 @@ class ToolDefinition:
     name: str
     description: str
     parameters: dict[str, Any] = field(default_factory=dict)
-    # JSON Schema "properties" object — same format used today in gemini_tools.py
+    # JSON Schema "properties" object
     # but without the Gemini-specific wrapper
 
 

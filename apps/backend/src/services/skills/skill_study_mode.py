@@ -51,7 +51,7 @@ SKILL = Skill(
                         "type": "string",
                         "description": (
                             "Mermaid source only — no markdown fences. For flowchart/graph nodes, "
-                            'use quoted labels when text has parentheses. '
+                            "use quoted labels when text has parentheses. "
                             "Example: flowchart LR\\n  A-->B\\n  B-->C"
                         ),
                     },
@@ -72,7 +72,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the study mode skill."""
-    from src.services.gemini_tool_handlers import (
+    from src.services.skills.handlers import (
         handle_complete_topic_and_continue,
         handle_study_show_visual,
     )

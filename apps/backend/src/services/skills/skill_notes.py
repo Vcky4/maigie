@@ -143,7 +143,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the note taking skill."""
-    from src.services.gemini_tool_handlers import (
+    from src.services.skills.handlers import (
         handle_add_summary_to_note,
         handle_add_tags_to_note,
         handle_create_note,

@@ -1,13 +1,13 @@
-"""Tests for llm_chat_context helpers."""
+"""Tests for LLM context helpers."""
 
-from src.services.llm_chat_context import (
+from src.services.llm.context import (
     build_enhanced_chat_user_message,
-    map_gemini_tool_to_action_type,
+    map_tool_to_action_type,
 )
 
 
 def test_map_add_summary_alias():
-    assert map_gemini_tool_to_action_type("add_summary_to_note") == "add_summary"
+    assert map_tool_to_action_type("add_summary_to_note") == "add_summary"
 
 
 def test_build_enhanced_includes_user_message_and_date():
