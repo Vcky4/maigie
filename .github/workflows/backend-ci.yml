@@ -473,6 +473,7 @@ jobs:
 
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                pull_policy: never
                 container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
                 env_file:
                   - .env
@@ -497,6 +498,7 @@ jobs:
 
               worker:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                pull_policy: never
                 container_name: maigie-preview-worker-${{ steps.preview.outputs.id }}
                 env_file:
                   - .env
@@ -1030,6 +1032,7 @@ jobs:
 
               celery-worker:
                 image: maigie-backend:latest
+                pull_policy: never
                 container_name: maigie-celery-worker-prod
                 restart: unless-stopped
                 env_file:
@@ -1042,6 +1045,7 @@ jobs:
 
               celery-beat:
                 image: maigie-backend:latest
+                pull_policy: never
                 container_name: maigie-celery-beat-prod
                 restart: unless-stopped
                 env_file:
@@ -1054,6 +1058,7 @@ jobs:
 
               backend:
                 image: maigie-backend:latest
+                pull_policy: never
                 container_name: maigie-backend-prod
                 restart: unless-stopped
                 env_file:
@@ -1425,6 +1430,7 @@ jobs:
 
               celery-worker:
                 image: maigie-backend:staging
+                pull_policy: never
                 container_name: maigie-celery-worker-staging
                 restart: unless-stopped
                 env_file:
@@ -1437,6 +1443,7 @@ jobs:
 
               celery-beat:
                 image: maigie-backend:staging
+                pull_policy: never
                 container_name: maigie-celery-beat-staging
                 restart: unless-stopped
                 env_file:
@@ -1449,6 +1456,7 @@ jobs:
 
               backend:
                 image: maigie-backend:staging
+                pull_policy: never
                 container_name: maigie-backend-staging
                 restart: unless-stopped
                 env_file:
