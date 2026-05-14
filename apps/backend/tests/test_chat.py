@@ -40,9 +40,7 @@ async def test_action_execution_flow():
             }
 
             # Run the service
-            result = await action_service.execute_action(
-                "create_course", action_data, "user_123"
-            )
+            result = await action_service.execute_action("create_course", action_data, "user_123")
 
             # Assertions
             assert result["status"] == "success"
@@ -87,9 +85,7 @@ async def test_voice_endpoint_success():
         mock_user.id = "user_123"
 
         with patch("src.routes.chat.get_current_user_ws", return_value=mock_user):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as ac:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 files = {"file": ("test.mp3", b"audio_data", "audio/mpeg")}
 
                 # Call with a fake token
