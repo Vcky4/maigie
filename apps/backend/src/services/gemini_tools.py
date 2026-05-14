@@ -1,46 +1,22 @@
 """
-Gemini tool definitions for function calling.
-Defines all available tools (queries and actions) as Gemini function schemas.
+Tool definitions for LLM function calling.
+
+DEPRECATED: This module is a backward-compatibility shim. New code should import from:
+    from src.services.skills import skill_registry
+    from src.services.skills.compat import get_all_tools, get_study_tools
+
+The canonical tool definitions now live in src/services/skills/skill_*.py modules.
+This file delegates to the skill registry and preserves the legacy per-tool functions
+for any code that still references them directly.
 """
 
 from typing import Any
 
+from src.services.skills.compat import get_all_tools, get_study_tools  # noqa: F401
 
-def get_all_tools() -> list[dict[str, Any]]:
-    """Return all tool definitions for Gemini."""
-    return [
-        {
-            "functionDeclarations": [
-                # Query tools
-                get_user_courses_tool(),
-                get_user_goals_tool(),
-                get_user_schedule_tool(),
-                get_user_notes_tool(),
-                get_user_resources_tool(),
-                get_my_profile_tool(),
-                # Action tools
-                create_course_tool(),
-                create_note_tool(),
-                create_goal_tool(),
-                create_schedule_tool(),
-                check_schedule_conflicts_tool(),
-                recommend_resources_tool(),
-                retake_note_tool(),
-                add_summary_to_note_tool(),
-                add_tags_to_note_tool(),
-                complete_review_tool(),
-                update_course_outline_tool(),
-                delete_course_tool(),
-                save_user_fact_tool(),
-                complete_topic_and_continue_tool(),
-                # Agentic tools
-                create_study_plan_tool(),
-                get_learning_insights_tool(),
-                get_pending_nudges_tool(),
-                get_email_user_tool(),
-            ]
-        }
-    ]
+
+# Re-export get_all_tools and get_study_tools at module level for backward compat.
+# They are imported above from the skills.compat bridge.
 
 
 def get_email_user_tool() -> dict[str, Any]:
@@ -710,20 +686,8 @@ def study_show_visual_tool() -> dict[str, Any]:
     }
 
 
-def get_study_tools() -> list[dict[str, Any]]:
-    """Return only study-relevant tools for Gemini Live voice sessions.
-
-    Keeping the tool list minimal improves reliability of function calling
-    in the native audio model.
-    """
-    return [
-        {
-            "functionDeclarations": [
-                complete_topic_and_continue_tool(),
-                study_show_visual_tool(),
-            ]
-        }
-    ]
+# The get_study_tools function is now imported from src.services.skills.compat
+# at the top of this file. The definition below is removed.
 
 
 # ==========================================

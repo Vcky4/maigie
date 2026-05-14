@@ -1,6 +1,12 @@
 """
-Handlers for Gemini tool calls.
+Handlers for tool calls (provider-agnostic).
+
 Executes DB queries or calls action_service methods based on tool calls.
+These handlers are registered with the skill registry and also accessible
+directly via the legacy `handle_tool_call` dispatch function.
+
+NOTE: The canonical tool definitions now live in src/services/skills/skill_*.py.
+This module contains the handler implementations that skills reference.
 """
 
 import logging
