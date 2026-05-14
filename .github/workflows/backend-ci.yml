@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check Test Workflow Status
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const branch = context.payload.pull_request?.head?.ref || context.ref.replace('refs/heads/', '');
@@ -80,10 +80,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed' && !(github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'development')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: List variables in .env.example
         run: |
@@ -714,7 +714,7 @@ jobs:
           echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
 
       - name: Comment Preview URL on PR
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
         env:
           PREVIEW_URL: ${{ steps.get-preview-url.outputs.url }}
@@ -735,10 +735,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Generate .env from .env.example for production
         env:
@@ -1027,10 +1027,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/development' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Generate .env from .env.example for staging
         env:
@@ -1426,7 +1426,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Generate Preview ID
         id: preview
@@ -1541,7 +1541,7 @@ jobs:
             echo '✓ Cleaned up preview environment'"
 
       - name: Comment on PR
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
