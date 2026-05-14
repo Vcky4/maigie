@@ -621,10 +621,13 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                 data={"sessionId": onboarding_session_id},
                             )
                             # Notify client that the message belongs to the onboarding session
+                            # (sent as "event" type so existing WS handlers ignore unknown actions gracefully)
                             await manager.send_connection_json(
                                 {
-                                    "type": "message_relocated",
+                                    "type": "event",
                                     "payload": {
+                                        "status": "info",
+                                        "action": "message_relocated",
                                         "messageId": user_message.id,
                                         "fromSessionId": session.id,
                                         "toSessionId": onboarding_session_id,
