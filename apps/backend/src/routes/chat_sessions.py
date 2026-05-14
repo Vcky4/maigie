@@ -15,7 +15,10 @@ from src.routes.chat_helpers import (
     _serialize_reply_preview,
     _static_studio_topic_opener,
 )
-from src.services.chat_session_service import merge_generic_sessions
+from src.services.chat_session_service import (
+    get_or_create_onboarding_session,
+    merge_generic_sessions,
+)
 from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
 from src.services.llm_service import llm_service
 
@@ -30,7 +33,7 @@ async def get_my_general_session(
 ):
     """
     Get the general chat session for the current user.
-    Creates one if it doesn't exist.
+    Creates one if it doesn't exist. Excludes onboarding sessions.
     """
     session = await merge_generic_sessions(current_user.id, db)
 
@@ -47,6 +50,7 @@ async def get_my_general_session(
                 "title": "Chat",
                 "isActive": True,
                 "isCircleRoom": False,
+                "sessionType": "general",
             }
         )
     else:
@@ -62,6 +66,37 @@ async def get_my_general_session(
         "id": session.id,
         "title": session.title,
         "isActive": bool(session.isActive),
+        "sessionType": getattr(session, "sessionType", "general"),
+        "createdAt": (
+            session.createdAt.isoformat()
+            if hasattr(session.createdAt, "isoformat")
+            else str(session.createdAt)
+        ),
+        "updatedAt": (
+            session.updatedAt.isoformat()
+            if hasattr(session.updatedAt, "isoformat")
+            else str(session.updatedAt)
+        ),
+    }
+
+
+@session_router.get("/onboarding-session", response_model=dict)
+async def get_my_onboarding_session(
+    current_user: CurrentUser,
+    db: DBDep,
+):
+    """
+    Get the dedicated onboarding session for the current user.
+    Creates one if it doesn't exist. Onboarding messages are kept
+    separate from the general conversation session.
+    """
+    session = await get_or_create_onboarding_session(current_user.id, db)
+
+    return {
+        "id": session.id,
+        "title": session.title or "Onboarding",
+        "isActive": bool(session.isActive),
+        "sessionType": "onboarding",
         "createdAt": (
             session.createdAt.isoformat()
             if hasattr(session.createdAt, "isoformat")
@@ -83,6 +118,7 @@ async def list_my_chat_sessions(
 ):
     """
     List the current user's chat sessions (for conversation history UI).
+    Excludes onboarding sessions — those are accessed via /onboarding-session.
     """
     # Trigger JIT merge for generic sessions before listing
     await merge_generic_sessions(current_user.id, db)
@@ -91,6 +127,7 @@ async def list_my_chat_sessions(
         where={
             "userId": current_user.id,
             "isCircleRoom": False,
+            "sessionType": {"not": "onboarding"},
         },
         include={"topic": {"include": {"module": True}}},
         order={"updatedAt": "desc"},
@@ -294,6 +331,7 @@ async def create_my_chat_session(
         where={
             "userId": current_user.id,
             "isCircleRoom": False,
+            "sessionType": "general",
             "courseId": None,
             "topicId": None,
             "examPrepId": None,
@@ -352,6 +390,7 @@ async def create_my_chat_session(
             "title": "Chat",
             "isActive": True,
             "isCircleRoom": False,
+            "sessionType": "general",
         }
     )
 
@@ -574,39 +613,48 @@ async def get_my_chat_messages(
 
     # For non-onboarded users fetching general chat: if session is empty, seed welcome message.
     # This is the single source of truth - handles createSession reuse, stored session, etc.
+    # Onboarding messages go into the dedicated onboarding session.
     if (
         not is_circle_session
         and not reviewItemId
         and not is_resource_scoped
         and not getattr(current_user, "isOnboarded", False)
     ):
-        msg_count = await db.chatmessage.count(
-            where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
-        )
-        if msg_count == 0:
-            try:
-                from src.services.onboarding_service import ensure_onboarding_initialized
+        # Check if this is the onboarding session or general session
+        session_type = getattr(session, "sessionType", "general")
+        if session_type == "onboarding":
+            # Seed welcome message into the onboarding session
+            msg_count = await db.chatmessage.count(
+                where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
+            )
+            if msg_count == 0:
+                try:
+                    from src.services.onboarding_service import ensure_onboarding_initialized
 
-                await ensure_onboarding_initialized(db, current_user.id)
-                # Re-check count before insert to reduce race (another request may have just seeded)
-                msg_count = await db.chatmessage.count(
-                    where={"sessionId": session_id, "userId": current_user.id, "reviewItemId": None}
-                )
-                if msg_count == 0:
-                    await db.chatmessage.create(
-                        data={
+                    await ensure_onboarding_initialized(db, current_user.id)
+                    # Re-check count before insert to reduce race
+                    msg_count = await db.chatmessage.count(
+                        where={
                             "sessionId": session_id,
                             "userId": current_user.id,
-                            "role": "ASSISTANT",
-                            "content": (
-                                "Welcome! I'm Maigie.\n\n"
-                                "Before we start: are you a **university student** or a **self‑paced learner**?\n"
-                                "Reply with `university` or `self-paced`."
-                            ),
+                            "reviewItemId": None,
                         }
                     )
-            except Exception as e:
-                logger.warning("Failed to seed onboarding message in get_messages: %s", e)
+                    if msg_count == 0:
+                        await db.chatmessage.create(
+                            data={
+                                "sessionId": session_id,
+                                "userId": current_user.id,
+                                "role": "ASSISTANT",
+                                "content": (
+                                    "Welcome! I'm Maigie.\n\n"
+                                    "Before we start: are you a **university student** or a **self‑paced learner**?\n"
+                                    "Reply with `university` or `self-paced`."
+                                ),
+                            }
+                        )
+                except Exception as e:
+                    logger.warning("Failed to seed onboarding message in get_messages: %s", e)
 
     # Get latest `take` messages with optional skip for pagination
     records = await db.chatmessage.find_many(

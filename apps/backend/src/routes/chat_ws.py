@@ -119,7 +119,12 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
 
         if not session:
             session = await db.chatsession.create(
-                data={"userId": user.id, "title": "New Chat", "isCircleRoom": False}
+                data={
+                    "userId": user.id,
+                    "title": "New Chat",
+                    "isCircleRoom": False,
+                    "sessionType": "general",
+                }
             )
 
         # 2b. Deliver pending AI nudges on connect
@@ -585,6 +590,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             ensure_onboarding_initialized,
                             handle_onboarding_message,
                         )
+                        from src.services.chat_session_service import (
+                            get_or_create_onboarding_session,
+                        )
 
                         async def send_onboarding_progress(message: str) -> None:
                             await manager.send_json(
@@ -600,10 +608,36 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             )
 
                         await ensure_onboarding_initialized(db, user.id)
+
+                        # Use a dedicated onboarding session instead of the general session
+                        onboarding_session = await get_or_create_onboarding_session(user.id, db)
+                        onboarding_session_id = onboarding_session.id
+
+                        # Move the user message we just saved to the onboarding session
+                        # if it was saved to the general session
+                        if user_message and session.id != onboarding_session_id:
+                            await db.chatmessage.update(
+                                where={"id": user_message.id},
+                                data={"sessionId": onboarding_session_id},
+                            )
+                            # Notify client that the message belongs to the onboarding session
+                            await manager.send_connection_json(
+                                {
+                                    "type": "message_relocated",
+                                    "payload": {
+                                        "messageId": user_message.id,
+                                        "fromSessionId": session.id,
+                                        "toSessionId": onboarding_session_id,
+                                        "sessionType": "onboarding",
+                                    },
+                                },
+                                connection_id,
+                            )
+
                         onboarding_result = await handle_onboarding_message(
                             db,
                             user=user,
-                            session_id=session.id,
+                            session_id=onboarding_session_id,
                             user_text=user_text,
                             image_url=file_urls_list[0] if file_urls_list else None,
                             progress_callback=send_onboarding_progress,
@@ -619,7 +653,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             )
                             onboarding_components = [component]
                         onboarding_data: dict = {
-                            "sessionId": session.id,
+                            "sessionId": onboarding_session_id,
                             "userId": user.id,
                             "role": "ASSISTANT",
                             "content": onboarding_result.reply_text,
@@ -646,6 +680,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                         "status": "complete",
                                         "action": "onboarding_complete",
                                         "firstTopic": onboarding_result.first_topic,
+                                        "onboardingSessionId": onboarding_session_id,
                                     },
                                 },
                                 user.id,

@@ -546,6 +546,9 @@ model ChatSession {
   isActive Boolean @default(true) // False if archived/deleted
   isCircleRoom Boolean @default(false)
 
+  // Session type: "general" (default), "onboarding"
+  sessionType String @default("general")
+
   // Resource linkage (New: for per-page history persistence)
   courseId String?
   course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
@@ -577,6 +580,7 @@ model ChatSession {
   @@index([noteId])
   @@index([updatedAt]) // Useful for sorting "Recent Chats"
   @@index([isCircleRoom])
+  @@index([sessionType])
 }
 
 model ChatMessage {
