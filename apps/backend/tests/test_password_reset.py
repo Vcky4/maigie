@@ -1,3 +1,4 @@
+import os
 from uuid import uuid4
 
 import pytest
@@ -5,6 +6,12 @@ from httpx import AsyncClient
 
 from src.core.database import db
 from src.core.security import get_password_hash
+
+# Skip this entire module if no DATABASE_URL is configured (CI without DB)
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("DATABASE_URL"),
+    reason="DATABASE_URL not set — skipping DB-dependent password reset tests",
+)
 
 
 @pytest.mark.asyncio
