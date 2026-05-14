@@ -223,16 +223,26 @@ class Settings(BaseSettings):
     LLM_RETRY_BASE_DELAY_SECONDS: float = 1.0
 
     # Fallback chains (comma-separated provider:model pairs)
-    FALLBACK_CHAT_DEFAULT: str = "gemini:gemini-2.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
-    FALLBACK_CHAT_TOOLS: str = "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    FALLBACK_CHAT_DEFAULT: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
+    )
+    FALLBACK_CHAT_TOOLS: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    )
 
     # Feature flags — enabled providers (comma-separated)
     LLM_ENABLED_PROVIDERS: str = "gemini"
     # Tier-based model allowlists (comma-separated provider:model pairs)
     LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
-    LLM_TIER_ALLOWLIST_PLUS: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
-    LLM_TIER_ALLOWLIST_CIRCLE: str = "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
-    LLM_TIER_ALLOWLIST_SQUAD: str = "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    LLM_TIER_ALLOWLIST_PLUS: str = (
+        "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
+    )
+    LLM_TIER_ALLOWLIST_CIRCLE: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    )
+    LLM_TIER_ALLOWLIST_SQUAD: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
     GEMINI_LIVE_CREDITS_PER_MINUTE: float = 100.0

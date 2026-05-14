@@ -109,9 +109,7 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
                 "gemini-3-flash-preview",
             ]
             for model_id in gemini_models:
-                adapter = GeminiChatToolsAdapter(
-                    safety_settings=safety_settings, model_id=model_id
-                )
+                adapter = GeminiChatToolsAdapter(safety_settings=safety_settings, model_id=model_id)
                 registry[f"gemini:{model_id}"] = adapter
             logger.info("Registered %d Gemini adapter(s)", len(gemini_models))
         except Exception as e:
@@ -160,9 +158,7 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
             logger.warning("Failed to register Anthropic adapters: %s", e)
 
     if not registry:
-        logger.warning(
-            "No LLM adapters registered! Enabled providers: %s", enabled
-        )
+        logger.warning("No LLM adapters registered! Enabled providers: %s", enabled)
 
     return registry
 

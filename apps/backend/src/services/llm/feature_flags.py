@@ -64,9 +64,7 @@ class FeatureFlagStore(Protocol):
     The service works without a store (env-only mode) when None is passed.
     """
 
-    async def get_user_override(
-        self, user_id: str, provider: str
-    ) -> bool | None:
+    async def get_user_override(self, user_id: str, provider: str) -> bool | None:
         """Return True/False if an explicit override exists, None otherwise."""
         ...
 
@@ -113,11 +111,9 @@ class FeatureFlagService:
         self._store = store
 
         # Parse initial configuration
-        self._enabled_providers: set[str] = self._parse_enabled_providers(
-            enabled_providers
-        )
-        self._tier_allowlists: dict[str, list[tuple[str, str]]] = (
-            self._parse_tier_allowlists(tier_allowlists or {})
+        self._enabled_providers: set[str] = self._parse_enabled_providers(enabled_providers)
+        self._tier_allowlists: dict[str, list[tuple[str, str]]] = self._parse_tier_allowlists(
+            tier_allowlists or {}
         )
 
         # Cache for database-sourced user overrides (populated on reload)
@@ -161,11 +157,7 @@ class FeatureFlagService:
         """
         tier_key = self._resolve_tier_key(user_tier)
         allowlist = self._tier_allowlists.get(tier_key, [])
-        return [
-            model
-            for p, model in allowlist
-            if p == provider.lower()
-        ]
+        return [model for p, model in allowlist if p == provider.lower()]
 
     def has_user_override(self, user_id: str, provider: str) -> bool | None:
         """Check if a per-user override exists for a provider.
@@ -230,17 +222,13 @@ class FeatureFlagService:
         # Step 3: Tier allowlist (lowest precedence)
         tier_key = self._resolve_tier_key(user_tier)
         allowlist = self._tier_allowlists.get(tier_key, [])
-        if (provider_lower, model.lower()) in [
-            (p, m.lower()) for p, m in allowlist
-        ]:
+        if (provider_lower, model.lower()) in [(p, m.lower()) for p, m in allowlist]:
             return True
 
         # Not allowed by any rule
         return False
 
-    def set_user_override(
-        self, user_id: str, provider: str, *, grant: bool
-    ) -> None:
+    def set_user_override(self, user_id: str, provider: str, *, grant: bool) -> None:
         """Set a per-user override for a provider.
 
         This updates the in-memory cache immediately. For persistence,
@@ -322,9 +310,7 @@ class FeatureFlagService:
                 extra={"user_id": user_id, "provider": provider.lower()},
             )
 
-    def get_available_models_for_user(
-        self, user_id: str, user_tier: str
-    ) -> list[tuple[str, str]]:
+    def get_available_models_for_user(self, user_id: str, user_tier: str) -> list[tuple[str, str]]:
         """Return all (provider, model) pairs available to a user.
 
         Evaluates global enable/disable, per-user overrides, and tier
@@ -361,9 +347,7 @@ class FeatureFlagService:
         __init__ again or use a factory to pick up env changes.
         """
         if self._store is None:
-            logger.debug(
-                "FeatureFlagService reload skipped: no database store configured"
-            )
+            logger.debug("FeatureFlagService reload skipped: no database store configured")
             return
 
         try:
@@ -413,11 +397,7 @@ class FeatureFlagService:
         """Parse comma-separated provider list into a set of lowercase names."""
         if not value or not value.strip():
             return set()
-        return {
-            p.strip().lower()
-            for p in value.split(",")
-            if p.strip()
-        }
+        return {p.strip().lower() for p in value.split(",") if p.strip()}
 
     @staticmethod
     def _parse_tier_allowlists(

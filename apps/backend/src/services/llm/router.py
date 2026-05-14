@@ -173,18 +173,14 @@ class LLMRouter:
                     model="none",
                     status_code=None,
                     category="overloaded",
-                    message=(
-                        f"Router selection exceeded {self._timeout_seconds}s timeout."
-                    ),
+                    message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
                     retriable=True,
                 )
 
             adapter_key = f"{provider}:{model}"
             adapter = self._adapter_registry.get(adapter_key)
             if adapter is None:
-                logger.warning(
-                    "No adapter registered for %s, skipping", adapter_key
-                )
+                logger.warning("No adapter registered for %s, skipping", adapter_key)
                 continue
 
             attempts += 1
@@ -198,9 +194,7 @@ class LLMRouter:
                         model="none",
                         status_code=None,
                         category="overloaded",
-                        message=(
-                            f"Router selection exceeded {self._timeout_seconds}s timeout."
-                        ),
+                        message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
                         retriable=True,
                     )
 
@@ -233,15 +227,15 @@ class LLMRouter:
                 LLM_REQUESTS_TOTAL.labels(
                     provider=provider, model=model, task=task_name, outcome="success"
                 ).inc()
-                LLM_REQUEST_DURATION.labels(
-                    provider=provider, model=model, task=task_name
-                ).observe(duration)
-                LLM_TOKENS_TOTAL.labels(
-                    provider=provider, model=model, direction="input"
-                ).inc(input_tokens)
-                LLM_TOKENS_TOTAL.labels(
-                    provider=provider, model=model, direction="output"
-                ).inc(output_tokens)
+                LLM_REQUEST_DURATION.labels(provider=provider, model=model, task=task_name).observe(
+                    duration
+                )
+                LLM_TOKENS_TOTAL.labels(provider=provider, model=model, direction="input").inc(
+                    input_tokens
+                )
+                LLM_TOKENS_TOTAL.labels(provider=provider, model=model, direction="output").inc(
+                    output_tokens
+                )
 
                 try:
                     await self._cost_tracker.record(
@@ -254,9 +248,7 @@ class LLMRouter:
                     )
                 except Exception:
                     # Cost tracking failure should not break the request
-                    logger.exception(
-                        "Failed to record cost for %s:%s", provider, model
-                    )
+                    logger.exception("Failed to record cost for %s:%s", provider, model)
                 else:
                     # Record cost metric (only if DB write succeeded)
                     from src.services.llm.cost_tracker import PROVIDER_PRICING
@@ -282,9 +274,7 @@ class LLMRouter:
                     model=model,
                     status_code=None,
                     category="overloaded",
-                    message=(
-                        f"Request to {provider}:{model} timed out."
-                    ),
+                    message=(f"Request to {provider}:{model} timed out."),
                     retriable=True,
                 )
                 logger.warning(
@@ -311,8 +301,7 @@ class LLMRouter:
                         ).inc()
                     last_error = e
                     logger.warning(
-                        "Retriable error from %s:%s (category=%s), "
-                        "attempting next candidate",
+                        "Retriable error from %s:%s (category=%s), " "attempting next candidate",
                         provider,
                         model,
                         e.category,
