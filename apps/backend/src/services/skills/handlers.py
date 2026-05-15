@@ -1,10 +1,16 @@
 """
-Handlers for Gemini tool calls.
+Handlers for tool calls (provider-agnostic).
+
 Executes DB queries or calls action_service methods based on tool calls.
+These handlers are registered with the skill registry and also accessible
+directly via the legacy `handle_tool_call` dispatch function.
+
+NOTE: The canonical tool definitions now live in src/services/skills/skill_*.py.
+This module contains the handler implementations that skills reference.
 """
 
 import logging
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.core.database import db
@@ -68,7 +74,7 @@ async def handle_tool_call(
     if not handler:
         return {"error": f"Unknown tool: {tool_name}"}
 
-    # Enrich args with context
+    # Enrich args with context (IDs normally come from the client on the WebSocket message)
     if context:
         if "courseId" in context and "course_id" not in args:
             args["course_id"] = context["courseId"]
@@ -78,6 +84,8 @@ async def handle_tool_call(
             args["note_id"] = context["noteId"]
         if "reviewItemId" in context and "review_item_id" not in args:
             args["review_item_id"] = context["reviewItemId"]
+        if "circleId" in context and "circle_id" not in args:
+            args["circle_id"] = context["circleId"]
 
     try:
         # Pass progress_callback to handlers that support it
@@ -104,7 +112,7 @@ async def handle_get_user_courses(
 ) -> dict[str, Any]:
     """Handle get_user_courses tool call."""
     limit = args.get("limit", 20)
-    if not isinstance(limit, (int, float)) or limit < 1 or limit > 100:
+    if not isinstance(limit, int | float) or limit < 1 or limit > 100:
         limit = 20
 
     include_archived = args.get("include_archived", False)
@@ -157,7 +165,7 @@ async def handle_get_user_goals(
         status = "ACTIVE"
 
     limit = args.get("limit", 20)
-    if not isinstance(limit, (int, float)) or limit < 1 or limit > 100:
+    if not isinstance(limit, int | float) or limit < 1 or limit > 100:
         limit = 20
 
     course_id = args.get("course_id")
@@ -209,7 +217,7 @@ async def handle_get_user_schedule(
     start_date_str = args.get("start_date", "today")
     end_date_str = args.get("end_date", "+30days")
     limit = args.get("limit", 50)
-    if not isinstance(limit, (int, float)) or limit < 1 or limit > 200:
+    if not isinstance(limit, int | float) or limit < 1 or limit > 200:
         limit = 50
 
     course_id = args.get("course_id")
@@ -295,7 +303,7 @@ async def handle_get_user_notes(
 ) -> dict[str, Any]:
     """Handle get_user_notes tool call."""
     limit = args.get("limit", 20)
-    if not isinstance(limit, (int, float)) or limit < 1 or limit > 100:
+    if not isinstance(limit, int | float) or limit < 1 or limit > 100:
         limit = 20
 
     include_archived = args.get("include_archived", False)
@@ -349,7 +357,7 @@ async def handle_get_user_resources(
 ) -> dict[str, Any]:
     """Handle get_user_resources tool call."""
     limit = args.get("limit", 20)
-    if not isinstance(limit, (int, float)) or limit < 1 or limit > 100:
+    if not isinstance(limit, int | float) or limit < 1 or limit > 100:
         limit = 20
 
     topic_id = args.get("topic_id")
@@ -590,6 +598,8 @@ async def handle_recommend_resources(
         "topicId": args.get("topic_id"),
         "courseId": args.get("course_id"),
     }
+    if args.get("circle_id"):
+        action_data["circleId"] = args["circle_id"]
 
     # Call existing action service
     result = await action_service.recommend_resources(action_data, user_id)

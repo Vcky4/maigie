@@ -15,7 +15,6 @@ from typing import Any
 
 from prisma import Prisma
 
-
 # ── SM-2 Algorithm Constants ────────────────────────────────────────────────
 INITIAL_EASE_FACTOR = 2.5  # Starting ease for new items
 MIN_EASE_FACTOR = 1.3  # Floor – prevents intervals from shrinking too aggressively

@@ -99,7 +99,7 @@ async def chat(request: ChatRequest, current_user: CurrentUser):
     AI_USAGE_COUNTER.inc()
 
     from ..core.database import db
-    from ..services.llm_service import llm_service
+    from ..services.llm_service import chat_with_tools_provider
     from ..services.memory_service import get_memory_context
 
     try:
@@ -125,14 +125,17 @@ async def chat(request: ChatRequest, current_user: CurrentUser):
                 history.append({"role": role, "parts": [msg.content or ""]})
 
         # Get AI response with tools
-        response_text, usage_info, executed_actions, query_results = (
-            await llm_service.get_chat_response_with_tools(
-                history=history,
-                user_message=request.message,
-                context=context,
-                user_id=current_user.id,
-                user_name=current_user.name,
-            )
+        (
+            response_text,
+            usage_info,
+            executed_actions,
+            query_results,
+        ) = await chat_with_tools_provider().get_chat_response_with_tools(
+            history=history,
+            user_message=request.message,
+            context=context,
+            user_id=current_user.id,
+            user_name=current_user.name,
         )
 
         return {
@@ -203,7 +206,7 @@ async def process(request: ProcessRequest, current_user: CurrentUser):
     """
     AI_USAGE_COUNTER.inc()
 
-    from ..services.llm_service import llm_service
+    from ..services.llm_service import chat_with_tools_provider
     from ..services.memory_service import get_memory_context
 
     try:
@@ -217,14 +220,17 @@ async def process(request: ProcessRequest, current_user: CurrentUser):
             pass
 
         # Run through the full tool-calling pipeline
-        response_text, usage_info, executed_actions, query_results = (
-            await llm_service.get_chat_response_with_tools(
-                history=[],
-                user_message=request.message,
-                context=context,
-                user_id=current_user.id,
-                user_name=current_user.name,
-            )
+        (
+            response_text,
+            usage_info,
+            executed_actions,
+            query_results,
+        ) = await chat_with_tools_provider().get_chat_response_with_tools(
+            history=[],
+            user_message=request.message,
+            context=context,
+            user_id=current_user.id,
+            user_name=current_user.name,
         )
 
         # Evaluate actions using reflection service

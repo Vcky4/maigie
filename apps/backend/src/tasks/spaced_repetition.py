@@ -8,7 +8,6 @@ Spaced repetition and schedule review tasks (Celery).
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -121,8 +120,8 @@ def create_review_blocks_task(self: Any) -> dict[str, Any]:
 
 async def _ai_review_schedules_for_user(user_id: str, db: Any) -> dict[str, Any]:
     """Gather user's recent behaviour and schedule; call LLM to suggest new blocks; create and log."""
-    from src.services.spaced_repetition_service import log_behaviour
     from src.services.llm_service import get_schedule_review_suggestions
+    from src.services.spaced_repetition_service import log_behaviour
 
     suggestions = await get_schedule_review_suggestions(user_id, db)
     created = 0
@@ -205,7 +204,9 @@ async def _ai_review_schedules_daily() -> dict[str, Any]:
     for uid in sorted(union_ids - seen):
         ordered_user_ids.append(uid)
 
-    max_users = max(1, int(os.getenv("AI_SCHEDULE_REVIEW_MAX_USERS", "500")))
+    from src.config import get_settings
+
+    max_users = max(1, int(get_settings().AI_SCHEDULE_REVIEW_MAX_USERS))
     results = {}
     for uid in ordered_user_ids[:max_users]:
         try:

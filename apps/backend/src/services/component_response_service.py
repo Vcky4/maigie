@@ -3,10 +3,10 @@ Component Response Service.
 Maps action types to frontend component types and formats component responses.
 """
 
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 
-def map_action_to_component(action_type: str) -> Optional[str]:
+def map_action_to_component(action_type: str) -> str | None:
     """
     Map backend action type to frontend component type.
 
@@ -27,8 +27,8 @@ def map_action_to_component(action_type: str) -> Optional[str]:
 
 
 def format_component_response(
-    component_type: str, data: Dict[str, Any], text: Optional[str] = None
-) -> Dict[str, Any]:
+    component_type: str, data: dict[str, Any], text: str | None = None
+) -> dict[str, Any]:
     """
     Format a component response for the frontend.
 
@@ -50,11 +50,11 @@ def format_component_response(
 
 async def format_action_component_response(
     action_type: str,
-    action_result: Dict[str, Any],
-    action_data: Optional[Dict[str, Any]] = None,
-    user_id: Optional[str] = None,
+    action_result: dict[str, Any],
+    action_data: dict[str, Any] | None = None,
+    user_id: str | None = None,
     db=None,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Format an action result as a component response.
     Fetches full data from database to include in component.
@@ -251,8 +251,8 @@ async def format_action_component_response(
 
 
 def format_list_component_response(
-    component_type: str, items: list, text: Optional[str] = None
-) -> Dict[str, Any]:
+    component_type: str, items: list, text: str | None = None
+) -> dict[str, Any]:
     """
     Format a list component response (e.g., CourseListMessage, GoalListMessage).
 

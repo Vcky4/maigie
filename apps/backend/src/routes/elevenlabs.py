@@ -11,9 +11,9 @@ from typing import Annotated, Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from prisma import Prisma
 from pydantic import BaseModel
 
+from prisma import Prisma
 from src.config import get_settings
 from src.dependencies import CurrentUser
 from src.services.elevenlabs_service import elevenlabs_service

@@ -12,7 +12,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import re
 import uuid
 from typing import Any, Callable, Coroutine
@@ -54,29 +53,41 @@ def _tier_has_standby_voice_billing(tier: str | None) -> bool:
 
 
 def _gemini_live_credits_per_minute() -> float:
-    return float(os.getenv("GEMINI_LIVE_CREDITS_PER_MINUTE", "100"))
+    from src.config import get_settings
+
+    return float(get_settings().GEMINI_LIVE_CREDITS_PER_MINUTE)
 
 
 def _gemini_live_min_session_credits_wall_clock() -> int:
-    return int(os.getenv("GEMINI_LIVE_MIN_SESSION_CREDITS", "500"))
+    from src.config import get_settings
+
+    return int(get_settings().GEMINI_LIVE_MIN_SESSION_CREDITS)
 
 
 def _gemini_live_standby_idle_seconds() -> float:
     """No user PCM and no AI audio for this long → standby (no billable time for paid tiers)."""
-    return float(os.getenv("GEMINI_LIVE_STANDBY_IDLE_SECONDS", "2.5"))
+    from src.config import get_settings
+
+    return float(get_settings().GEMINI_LIVE_STANDBY_IDLE_SECONDS)
 
 
 def _gemini_live_billing_tick_seconds() -> float:
-    return float(os.getenv("GEMINI_LIVE_BILLING_TICK_SECONDS", "2.0"))
+    from src.config import get_settings
+
+    return float(get_settings().GEMINI_LIVE_BILLING_TICK_SECONDS)
 
 
 def _gemini_live_billing_min_consume_chunk() -> int:
     """Pre-multiplier credits; batch DB writes until delta reaches this (or flush interval)."""
-    return int(os.getenv("GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK", "50"))
+    from src.config import get_settings
+
+    return int(get_settings().GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK)
 
 
 def _gemini_live_billing_flush_interval_seconds() -> float:
-    return float(os.getenv("GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS", "60"))
+    from src.config import get_settings
+
+    return float(get_settings().GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS)
 
 
 def voice_credits_from_billable_seconds_raw(billable_seconds: float) -> int:
@@ -101,7 +112,10 @@ DEFAULT_LIVE_GREETING_PROMPT = "Start with a brief, warm greeting and immediatel
 
 
 def _get_api_key() -> str | None:
-    return os.getenv("GEMINI_API_KEY")
+    from src.config import get_settings
+
+    key = (get_settings().GEMINI_API_KEY or "").strip()
+    return key or None
 
 
 # In-memory session store: session_id -> { user_id, system_instruction, course_id, topic_id, created_at }
@@ -319,10 +333,13 @@ async def run_gemini_live_bridge(
             _sessions[session_id]["billing_last_flush_mono"] = None
             _sessions[session_id]["consumed_credits"] = 0
 
+    from src.config import get_settings
+
+    _settings = get_settings()
     url = f"{GEMINI_LIVE_WS_URL}?key={api_key}"
-    model = os.getenv("GEMINI_LIVE_MODEL", DEFAULT_LIVE_MODEL)
+    model = (_settings.GEMINI_LIVE_MODEL or "").strip() or DEFAULT_LIVE_MODEL
     system_text = system_instruction or "You are a helpful and friendly AI assistant."
-    greeting_env = os.getenv("GEMINI_LIVE_GREETING_PROMPT")
+    greeting_env = _settings.GEMINI_LIVE_GREETING_PROMPT
     greeting_prompt = (
         greeting_env if greeting_env is not None else DEFAULT_LIVE_GREETING_PROMPT
     ).strip()
@@ -634,7 +651,7 @@ async def run_gemini_live_bridge(
                         args,
                     )
 
-                    import src.services.gemini_tool_handlers as tool_handlers
+                    import src.services.skills.handlers as tool_handlers
 
                     current_course_id = None
                     current_topic_id = None
@@ -701,9 +718,9 @@ async def run_gemini_live_bridge(
                     await ws_conn.send(json.dumps(tool_resp))
                     logger.info("Sent toolResponse back to Gemini: %s", tool_resp)
 
-    from src.services.gemini_tools import get_all_tools
+    from src.services.skills import skill_registry
 
-    session_tools = tools if tools is not None else get_all_tools()
+    session_tools = tools if tools is not None else skill_registry.get_all_tools_legacy_format()
 
     setup: dict[str, Any] = {
         "setup": {
@@ -720,7 +737,16 @@ async def run_gemini_live_bridge(
     }
 
     if session_tools:
-        setup["setup"]["tools"] = session_tools
+        # Convert snake_case keys to camelCase for the raw Gemini WebSocket API
+        converted_tools = []
+        for tool_group in session_tools:
+            if "function_declarations" in tool_group:
+                converted_tools.append(
+                    {"functionDeclarations": tool_group["function_declarations"]}
+                )
+            else:
+                converted_tools.append(tool_group)
+        setup["setup"]["tools"] = converted_tools
 
     try:
         async with websockets.connect(url) as ws:  # type: ignore[union-attr]
@@ -926,8 +952,9 @@ async def generate_study_diagram_for_topic(
     transcript_tail: str | None,
 ) -> dict[str, str]:
     """Use the text Gemini model to produce Mermaid / display math for Study Mode (REST fallback)."""
-    from src.core.database import db
     from google import genai
+
+    from src.core.database import db
 
     topic = await db.topic.find_unique(
         where={"id": topic_id},
@@ -1053,7 +1080,9 @@ async def post_gemini_live_session(
 
         from google import genai
 
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+        client = genai.Client(api_key=gemini_api_key() or None)
         prompt = (
             "From this voice study conversation transcript, create a short structured study note "
             "as the student would write from what they learnt. Output exactly two lines:\n"
@@ -1063,7 +1092,7 @@ async def post_gemini_live_session(
         ) + transcript[:12000]
 
         response = await client.aio.models.generate_content(
-            model="gemini-2.5-flash",
+            model=default_model_for(LlmTask.CHAT_DEFAULT),
             contents=prompt,
         )
         text = (response.text or "").strip()

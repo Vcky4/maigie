@@ -32,15 +32,16 @@ async def _call_gemini(prompt: str, max_tokens: int = 600) -> dict[str, Any] | N
     try:
         from google import genai
         from google.genai import types
-        import os
 
-        api_key = os.getenv("GEMINI_API_KEY")
+        from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+        api_key = gemini_api_key()
         if not api_key:
             return None
 
         client = genai.Client(api_key=api_key)
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash-lite",
+            model=default_model_for(LlmTask.MEMORY_JSON),
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=max_tokens,

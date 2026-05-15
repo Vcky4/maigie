@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal
 
 from prisma import Json
-
 from src.services.action_service import action_service
 from src.services.llm_service import llm_service
 
@@ -21,7 +20,7 @@ LearnerType = Literal["university", "self_paced"]
 
 def _now_iso() -> str:
     # Keep it lightweight; we don't need timezone-aware for simple client display.
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat()
 

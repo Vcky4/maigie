@@ -20,6 +20,11 @@ from pydantic import BaseModel, Field
 
 from ..config import Settings, get_settings
 from ..dependencies import CurrentUser
+from ..services.paystack_subscription_service import (
+    cancel_paystack_subscription,
+    initialize_paystack_subscription,
+    verify_paystack_transaction,
+)
 from ..services.subscription_service import (
     cancel_subscription,
     create_checkout_session,
@@ -28,11 +33,6 @@ from ..services.subscription_service import (
 )
 from ..services.subscription_service import (
     create_portal_session as create_stripe_portal_session,
-)
-from ..services.paystack_subscription_service import (
-    initialize_paystack_subscription,
-    verify_paystack_transaction,
-    cancel_paystack_subscription,
 )
 
 logger = logging.getLogger(__name__)

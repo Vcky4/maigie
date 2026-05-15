@@ -199,6 +199,64 @@ class Settings(BaseSettings):
     ELEVENLABS_VOICE_ID: str = "56AoDkrOh6qfVPDXZ7Pt"  # Default voice
     ELEVENLABS_AGENT_ID: str = ""  # Conversational AI agent ID
 
+    # --- LLM (Gemini primary; OpenAI / Anthropic reserved for multi-provider work) ---
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
+    # Optional comma-separated model fallback chains (see llm_service rotation helpers)
+    GEMINI_ROTATING_MODELS: str | None = None
+    GEMINI_EXAM_PREP_MODELS: str | None = None
+    GEMINI_SCHEDULE_AI_MODELS: str | None = None
+
+    # --- Multi-Provider LLM Configuration ---
+    # Default models per provider
+    OPENAI_DEFAULT_MODEL: str = "gpt-4o-mini"
+    ANTHROPIC_DEFAULT_MODEL: str = "claude-sonnet-4-20250514"
+
+    # Circuit Breaker
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = 5
+    CIRCUIT_BREAKER_COOLDOWN_SECONDS: float = 30.0
+    CIRCUIT_BREAKER_ROLLING_WINDOW_SECONDS: float = 60.0
+
+    # Retry
+    LLM_MAX_RETRIES: int = 2
+    LLM_RETRY_BASE_DELAY_SECONDS: float = 1.0
+
+    # Fallback chains (comma-separated provider:model pairs)
+    FALLBACK_CHAT_DEFAULT: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
+    )
+    FALLBACK_CHAT_TOOLS: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    )
+
+    # Feature flags — enabled providers (comma-separated)
+    LLM_ENABLED_PROVIDERS: str = "gemini"
+    # Tier-based model allowlists (comma-separated provider:model pairs)
+    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
+    LLM_TIER_ALLOWLIST_PLUS: str = (
+        "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
+    )
+    LLM_TIER_ALLOWLIST_CIRCLE: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    )
+    LLM_TIER_ALLOWLIST_SQUAD: str = (
+        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+    )
+
+    # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
+    GEMINI_LIVE_CREDITS_PER_MINUTE: float = 100.0
+    GEMINI_LIVE_MIN_SESSION_CREDITS: int = 500
+    GEMINI_LIVE_STANDBY_IDLE_SECONDS: float = 2.5
+    GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
+    GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
+    GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
+    GEMINI_LIVE_MODEL: str = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+    GEMINI_LIVE_GREETING_PROMPT: str | None = None
+
+    # --- Background tasks (schedule AI batching) ---
+    AI_SCHEDULE_REVIEW_MAX_USERS: int = 500
+
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent / ".env"),
         env_file_encoding="utf-8",

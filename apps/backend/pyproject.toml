@@ -45,6 +45,8 @@ pypdf = "^4.0.0"
 python-docx = "^1.1.0"
 pinecone = "^6.0.0"
 mcp = "^1.2.1"
+openai = "^1.40.0"
+anthropic = "^0.34.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
@@ -74,7 +76,12 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # F841 = Unused local variables
 # N818 = Exception naming
 # E501 = Line length
-ignore = ["E501", "N818", "F401", "F841", "N803", "N815", "UP035"] 
+# E203: whitespace before ':' — Black slices; keep Black as source of truth for layout
+ignore = ["E501", "E203", "N818", "F401", "F841", "N803", "N815", "UP035"]
+
+[tool.ruff.lint.per-file-ignores]
+# Test files set env vars before imports (SKIP_DB_FIXTURE pattern)
+"tests/**" = ["E402"]
 
 [tool.black]
 line-length = 100
@@ -92,7 +99,16 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"  
 testpaths = ["tests"]
 filterwarnings = [
-    "ignore::DeprecationWarning:httplib2.*"
+    "ignore::DeprecationWarning:httplib2.*",
+    # Third-party noise under Python 3.12+ / pytest-asyncio / FastAPI
+    "ignore::DeprecationWarning:fastapi.*",
+    "ignore::DeprecationWarning:starlette.*",
+    "ignore::DeprecationWarning:pytest_asyncio.*",
+    "ignore::DeprecationWarning:asyncio.*",
+    # Prisma ships a Pydantic v1 compat shim that warns on newer Python
+    "ignore:Core Pydantic V1 functionality isn't compatible:UserWarning",
+    # Pydantic v2 migration (our models still use class-based Config in places)
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20",
 ]
 
 

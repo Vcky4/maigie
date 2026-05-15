@@ -1,16 +1,16 @@
-import logging
-import secrets
 import base64
 import hashlib
-from datetime import datetime, timedelta, UTC
+import logging
+import secrets
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Form, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
+from src.config import settings
 from src.core.database import db
 from src.dependencies import CurrentUser
-from src.config import settings
 
 logger = logging.getLogger(__name__)
 

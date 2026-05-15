@@ -9,7 +9,6 @@ See LICENSE file in the repository root for details.
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # --------------------------------------------------
 # Request Models
 # --------------------------------------------------

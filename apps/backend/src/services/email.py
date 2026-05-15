@@ -442,7 +442,7 @@ async def send_subscription_success_email(email: EmailStr, name: str, tier: str)
         )
         return
 
-    TIER_NAMES = {
+    tier_names = {
         "PREMIUM_MONTHLY": "Maigie Plus Monthly",
         "PREMIUM_YEARLY": "Maigie Plus Yearly",
         "STUDY_CIRCLE_MONTHLY": "Study Circle Monthly",
@@ -450,7 +450,7 @@ async def send_subscription_success_email(email: EmailStr, name: str, tier: str)
         "SQUAD_MONTHLY": "Squad Plan Monthly",
         "SQUAD_YEARLY": "Squad Plan Yearly",
     }
-    tier_name = TIER_NAMES.get(str(tier), str(tier).replace("_", " "))
+    tier_name = tier_names.get(str(tier), str(tier).replace("_", " "))
     dashboard_url = f"{settings.FRONTEND_BASE_URL}/dashboard"
 
     template_data = {

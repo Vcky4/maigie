@@ -115,6 +115,18 @@ This will:
    powershell -ExecutionPolicy Bypass -File scripts/start-beat.ps1
    ```
 
+## Code style
+
+Formatting uses **[Black](https://black.readthedocs.io/)** (line length **100**, see `pyproject.toml`). Run it from `apps/backend` before committing:
+
+```bash
+poetry run black src tests
+# or, if Black is on your PATH / current interpreter:
+python -m black src tests
+```
+
+Linting uses **Ruff** (`poetry run ruff check src`). Ruff is configured so routine layout stays aligned with Black (for example `E203` is ignored).
+
 ## Background Workers
 
 The backend uses Celery for background task processing. Workers run independently from the main API server.

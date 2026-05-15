@@ -13,7 +13,7 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Optional, Tuple
 
 from prisma import Prisma
@@ -41,7 +41,7 @@ FEATURE_LIMITS = {
 }
 
 
-async def get_feature_limit(tier: str, feature: str) -> Optional[int]:
+async def get_feature_limit(tier: str, feature: str) -> int | None:
     """
     Get the limit for a specific feature and tier.
 
@@ -71,7 +71,7 @@ async def ensure_usage_period(user: User, feature: str, db_client: Prisma | None
     if db_client is None:
         db_client = db
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     tier_str = str(user.tier) if user.tier else "FREE"
 
     # Premium users don't need tracking
@@ -98,7 +98,7 @@ async def ensure_usage_period(user: User, feature: str, db_client: Prisma | None
     else:
         # Normalize: DB may return naive or aware datetimes; ensure we can compare
         if period_start.tzinfo is None:
-            period_start = period_start.replace(tzinfo=timezone.utc)
+            period_start = period_start.replace(tzinfo=UTC)
         period_end = period_start + timedelta(days=30)
         if now >= period_end:
             needs_reset = True
@@ -116,7 +116,7 @@ async def ensure_usage_period(user: User, feature: str, db_client: Prisma | None
 
 async def check_feature_limit(
     user: User, feature: str, db_client: Prisma | None = None
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Check if user can use a feature (hasn't reached limit).
 

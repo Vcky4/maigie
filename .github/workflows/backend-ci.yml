@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check Test Workflow Status
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           script: |
             const branch = context.payload.pull_request?.head?.ref || context.ref.replace('refs/heads/', '');
@@ -80,10 +80,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action != 'closed' && !(github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'development')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: List variables in .env.example
         run: |
@@ -412,8 +412,8 @@ jobs:
               export PREVIEW_ID="${{ steps.preview.outputs.id }}"
             fi
 
-            # Remove old preview image if it exists (force remove to handle any dangling references)
-            docker rmi -f maigie-backend-preview:${{ steps.preview.outputs.id }} 2>/dev/null || true
+            # The image was already loaded in the "Load Docker Image on VPS" step.
+            # Do NOT remove it here — it was previously causing "No such image" errors.
 
             # Generate random password for preview database
             POSTGRES_PASSWORD=$(openssl rand -hex 16)
@@ -473,6 +473,7 @@ jobs:
 
               backend:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                pull_policy: never
                 container_name: maigie-preview-backend-${{ steps.preview.outputs.id }}
                 env_file:
                   - .env
@@ -497,6 +498,7 @@ jobs:
 
               worker:
                 image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                pull_policy: never
                 container_name: maigie-preview-worker-${{ steps.preview.outputs.id }}
                 env_file:
                   - .env
@@ -525,98 +527,22 @@ jobs:
             # Start preview environment (this will create fresh database)
             docker-compose up -d
 
-            # Give containers a moment to start, then check initial logs
-            sleep 5
-            echo "Initial container status:"
+            # Give containers time to start (prisma db push + seed + uvicorn startup)
+            echo "Waiting for containers to initialize..."
+            sleep 30
+            echo "Container status:"
             docker-compose ps
-            echo "Initial backend logs:"
-            docker-compose logs --tail=50 backend || true
+            echo "Recent backend logs:"
+            docker-compose logs --tail=20 backend || true
 
-            # Wait for backend container to be running and get port
-            echo "Waiting for backend container to start..."
-            PORT=""
-            for i in {1..30}; do
-              if docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
-                PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
-                if [ -n "$PORT" ]; then
-                  echo "Backend container is running on port $PORT"
-                  break
-                fi
-              fi
-              sleep 2
-            done
-
+            # Get the assigned port
+            PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
             if [ -z "$PORT" ]; then
-              echo "❌ Failed to get port after 30 attempts"
-              echo "Container logs:"
+              echo "❌ Failed to get port"
               docker-compose logs backend
-              echo "Container status:"
-              docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
               exit 1
             fi
-
-            # Wait for backend application to be ready (health check)
-            echo "Waiting for backend application to be ready..."
-            MAX_HEALTH_CHECKS=60
-            HEALTH_CHECK_COUNT=0
-            PORT_OPEN=false
-
-            while [ $HEALTH_CHECK_COUNT -lt $MAX_HEALTH_CHECKS ]; do
-              # Check if container is still running
-              if ! docker ps --filter "name=maigie-preview-backend-${{ steps.preview.outputs.id }}" --format "{{.Status}}" | grep -q "Up"; then
-                echo "❌ Backend container stopped unexpectedly"
-                echo "Container logs:"
-                docker-compose logs backend
-                echo "Container status:"
-                docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
-                exit 1
-              fi
-              
-              # Try to connect to the health endpoint
-              HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:$PORT/health 2>/dev/null || echo "000")
-              
-              if [ "$HTTP_CODE" = "200" ]; then
-                echo "✓ Backend is healthy and responding on port $PORT"
-                break
-              elif [ "$HTTP_CODE" = "503" ]; then
-                # Service is running but not ready yet (database/cache not connected)
-                PORT_OPEN=true
-                if [ $((HEALTH_CHECK_COUNT % 5)) -eq 0 ]; then
-                  echo "Backend is running but not ready yet (HTTP $HTTP_CODE), waiting..."
-                  echo "Health check response:"
-                  curl -s http://localhost:$PORT/health || true
-                fi
-              elif [ "$HTTP_CODE" = "000" ]; then
-                # Connection refused or timeout - port not open yet
-                if [ $((HEALTH_CHECK_COUNT % 5)) -eq 0 ]; then
-                  echo "Port $PORT not responding yet (attempt $HEALTH_CHECK_COUNT/$MAX_HEALTH_CHECKS)..."
-                  echo "Recent container logs:"
-                  docker-compose logs --tail=30 backend
-                fi
-              else
-                # Got a response but unexpected status code
-                PORT_OPEN=true
-                echo "⚠️  Backend responded with HTTP $HTTP_CODE"
-                curl -s http://localhost:$PORT/health || true
-              fi
-              
-              HEALTH_CHECK_COUNT=$((HEALTH_CHECK_COUNT + 1))
-              if [ $HEALTH_CHECK_COUNT -eq $MAX_HEALTH_CHECKS ]; then
-                echo "❌ Backend health check failed after $MAX_HEALTH_CHECKS attempts"
-                echo "Port open: $PORT_OPEN, Last HTTP code: $HTTP_CODE"
-                echo "Full container logs:"
-                docker-compose logs backend
-                echo "Attempting to curl health endpoint:"
-                curl -v --max-time 5 http://localhost:$PORT/health || echo "Failed to connect"
-                echo "Container status:"
-                docker ps -a | grep maigie-preview-backend-${{ steps.preview.outputs.id }}
-                echo "Checking if port is listening:"
-                netstat -tlnp 2>/dev/null | grep ":$PORT " || ss -tlnp 2>/dev/null | grep ":$PORT " || echo "Port not found in listening ports"
-                exit 1
-              fi
-              sleep 2
-            done
-
+            echo "Backend running on port $PORT"
             echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
             echo "Preview deployed on port: $PORT"
 
@@ -788,7 +714,7 @@ jobs:
           echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
 
       - name: Comment Preview URL on PR
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
         env:
           PREVIEW_URL: ${{ steps.get-preview-url.outputs.url }}
@@ -809,10 +735,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Generate .env from .env.example for production
         env:
@@ -1030,6 +956,7 @@ jobs:
 
               celery-worker:
                 image: maigie-backend:latest
+                pull_policy: never
                 container_name: maigie-celery-worker-prod
                 restart: unless-stopped
                 env_file:
@@ -1042,6 +969,7 @@ jobs:
 
               celery-beat:
                 image: maigie-backend:latest
+                pull_policy: never
                 container_name: maigie-celery-beat-prod
                 restart: unless-stopped
                 env_file:
@@ -1054,6 +982,7 @@ jobs:
 
               backend:
                 image: maigie-backend:latest
+                pull_policy: never
                 container_name: maigie-backend-prod
                 restart: unless-stopped
                 env_file:
@@ -1098,10 +1027,10 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/development' && github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Generate .env from .env.example for staging
         env:
@@ -1425,6 +1354,7 @@ jobs:
 
               celery-worker:
                 image: maigie-backend:staging
+                pull_policy: never
                 container_name: maigie-celery-worker-staging
                 restart: unless-stopped
                 env_file:
@@ -1437,6 +1367,7 @@ jobs:
 
               celery-beat:
                 image: maigie-backend:staging
+                pull_policy: never
                 container_name: maigie-celery-beat-staging
                 restart: unless-stopped
                 env_file:
@@ -1449,6 +1380,7 @@ jobs:
 
               backend:
                 image: maigie-backend:staging
+                pull_policy: never
                 container_name: maigie-backend-staging
                 restart: unless-stopped
                 env_file:
@@ -1494,7 +1426,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' && github.event.action == 'closed'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Generate Preview ID
         id: preview
@@ -1609,7 +1541,7 @@ jobs:
             echo '✓ Cleaned up preview environment'"
 
       - name: Comment on PR
-        uses: actions/github-script@v6
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
