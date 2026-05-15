@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from prisma import Prisma
-
 from src.services.exam_prep_service import _calculate_question_mastery
 
 logger = logging.getLogger(__name__)

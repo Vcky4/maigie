@@ -32,9 +32,10 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
     """Call Gemini for plan generation. Returns parsed JSON or None."""
     from google import genai
     from google.genai import types
-    import os
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+    api_key = gemini_api_key()
     if not api_key:
         return None
 
@@ -45,7 +46,7 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
     for attempt in range(max_attempts):
         try:
             response = await client.aio.models.generate_content(
-                model="gemini-2.0-flash",
+                model=default_model_for(LlmTask.STRUCTURED_COMPLETION),
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     max_output_tokens=max_tokens,

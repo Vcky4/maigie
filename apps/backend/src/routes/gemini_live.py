@@ -24,16 +24,22 @@ from src.dependencies import CurrentUser
 from src.services.credit_service import CREDIT_COSTS, check_credit_availability, consume_credits
 from src.services.gemini_live_service import (
     create_session as create_live_session,
+)
+from src.services.gemini_live_service import (
     delete_session as delete_live_session,
+)
+from src.services.gemini_live_service import (
     generate_study_diagram_for_topic,
-    get_session as get_live_session,
     list_sessions_for_user,
     post_gemini_live_session,
     run_gemini_live_bridge,
     update_session_context,
 )
+from src.services.gemini_live_service import (
+    get_session as get_live_session,
+)
+from src.services.skills import skill_registry
 from src.utils.exceptions import SubscriptionLimitError
-from src.services.gemini_tools import get_study_tools
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +360,9 @@ async def gemini_live_websocket(
                     # stream markdown diagrams in speech transcription; `study_show_visual` pushes
                     # Mermaid/math to the client). Topic completion is still detected client-side from speech.
                     session_tools: list[dict] | None = (
-                        get_study_tools() if session.get("topic_id") else None
+                        skill_registry.get_study_tools_legacy_format()
+                        if session.get("topic_id")
+                        else None
                     )
 
                     bridge_task = asyncio.create_task(

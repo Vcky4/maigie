@@ -3,22 +3,22 @@ Voice Service.
 Handles Audio Transcription using Google Gemini.
 """
 
-import os
-
+from fastapi import HTTPException, UploadFile
 from google import genai
 from google.genai import types
-from fastapi import HTTPException, UploadFile
+
+from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
 
 
 # Get the client lazily
 def get_client():
-    return genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    return genai.Client(api_key=gemini_api_key() or None)
 
 
 class VoiceService:
     def __init__(self):
         # We use Flash because it's fast and supports audio
-        self.model_name = "gemini-3-flash-preview"
+        self.model_name = default_model_for(LlmTask.VOICE_TRANSCRIPTION)
 
     async def transcribe_audio(self, file: UploadFile) -> str:
         """

@@ -2,9 +2,13 @@
 Cost calculator for AI API usage.
 
 This module handles:
-- Calculating costs for different AI providers (Gemini, OpenAI, etc.)
+- Calculating costs for different AI providers (Gemini today; OpenAI / Anthropic later)
 - Calculating revenue based on user tier
 - Tracking cost vs revenue margins
+
+Pricing for Gemini text is aligned with Google AI Gemini API **Paid tier, Standard**
+where applicable. Update `_EXACT_MODEL_PRICING` and heuristics when Google publishes
+changes (see https://ai.google.dev/gemini-api/docs/pricing).
 
 Copyright (C) 2025 Maigie
 
@@ -12,21 +16,91 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
-from typing import Optional
+from __future__ import annotations
 
-# Gemini pricing (as of 2024)
-# Gemini 1.5 Pro pricing per 1M tokens
-GEMINI_15_PRO_INPUT_COST_PER_MILLION = 1.25  # $1.25 per 1M input tokens
-GEMINI_15_PRO_OUTPUT_COST_PER_MILLION = 5.00  # $5.00 per 1M output tokens
+from src.services.llm_registry import LlmTask, default_model_for
 
-# Gemini 1.5 Flash pricing per 1M tokens
-GEMINI_15_FLASH_INPUT_COST_PER_MILLION = 0.075  # $0.075 per 1M input tokens
-GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION = 0.30  # $0.30 per 1M output tokens
+# Legacy Gemini 1.5 (explicit ids only)
+GEMINI_15_PRO_INPUT_COST_PER_MILLION = 1.25
+GEMINI_15_PRO_OUTPUT_COST_PER_MILLION = 5.00
+GEMINI_15_FLASH_INPUT_COST_PER_MILLION = 0.075
+GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION = 0.30
 
-# Default model (if not specified)
-DEFAULT_MODEL = "gemini-1.5-pro"
-DEFAULT_INPUT_COST = GEMINI_15_PRO_INPUT_COST_PER_MILLION
-DEFAULT_OUTPUT_COST = GEMINI_15_PRO_OUTPUT_COST_PER_MILLION
+# USD per 1M tokens (input, output) — Paid tier Standard from Gemini API pricing page.
+_EXACT_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "gemini-3-flash-preview": (0.50, 3.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-2.0-flash-lite": (0.075, 0.30),
+    "gemini-embedding-001": (0.15, 0.0),
+    "gemini-1.5-pro": (
+        GEMINI_15_PRO_INPUT_COST_PER_MILLION,
+        GEMINI_15_PRO_OUTPUT_COST_PER_MILLION,
+    ),
+    "gemini-1.5-flash": (
+        GEMINI_15_FLASH_INPUT_COST_PER_MILLION,
+        GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION,
+    ),
+}
+
+# Gemini 3.1 Flash-Lite Standard (text / image / video)
+_GEMINI_31_FLASH_LITE = (0.25, 1.50)
+
+DEFAULT_MODEL = default_model_for(LlmTask.CHAT_DEFAULT)
+
+
+def _normalize_model_id(model_name: str | None) -> str:
+    if not model_name:
+        return ""
+    n = model_name.strip().lower()
+    if n.startswith("models/"):
+        n = n.removeprefix("models/")
+    return n
+
+
+def _pricing_for_model(model_name: str | None) -> tuple[float, float]:
+    """
+    Return (input_cost_per_million, output_cost_per_million) in USD.
+    Unknown models fall back to sensible Gemini Flash-tier defaults.
+    """
+    normalized = _normalize_model_id(model_name)
+    if not normalized:
+        normalized = _normalize_model_id(DEFAULT_MODEL)
+
+    if normalized in _EXACT_MODEL_PRICING:
+        return _EXACT_MODEL_PRICING[normalized]
+
+    if "embedding" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-embedding-001"]
+
+    # Preview / variant ids not listed exactly above
+    if "gemini-3" in normalized and "lite" in normalized:
+        return _GEMINI_31_FLASH_LITE
+    if "gemini-3" in normalized and "flash" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-3-flash-preview"]
+    if "2.5" in normalized and "flash-lite" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-2.5-flash-lite"]
+    if "2.5" in normalized and "flash" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-2.5-flash"]
+    if "2.0" in normalized and "flash-lite" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-2.0-flash-lite"]
+    if "2.0" in normalized and "flash" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-2.0-flash"]
+    if "1.5" in normalized and "flash" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-1.5-flash"]
+    if "1.5" in normalized and "pro" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-1.5-pro"]
+    if "flash-lite" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-2.5-flash-lite"]
+    if "flash" in normalized:
+        return _EXACT_MODEL_PRICING["gemini-2.5-flash"]
+
+    # Non-flash / unknown: use Pro-tier legacy as upper-bound-ish default
+    return (
+        GEMINI_15_PRO_INPUT_COST_PER_MILLION,
+        GEMINI_15_PRO_OUTPUT_COST_PER_MILLION,
+    )
 
 
 def calculate_ai_cost(
@@ -40,24 +114,13 @@ def calculate_ai_cost(
     Args:
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
-        model_name: Name of the model used (e.g., "gemini-1.5-pro", "gemini-1.5-flash")
+        model_name: Model id (e.g. gemini-2.5-flash, gemini-3-flash-preview)
 
     Returns:
         Cost in USD
     """
-    if model_name is None:
-        model_name = DEFAULT_MODEL
+    input_cost_per_million, output_cost_per_million = _pricing_for_model(model_name)
 
-    # Determine pricing based on model
-    if "flash" in model_name.lower():
-        input_cost_per_million = GEMINI_15_FLASH_INPUT_COST_PER_MILLION
-        output_cost_per_million = GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION
-    else:
-        # Default to Pro pricing
-        input_cost_per_million = GEMINI_15_PRO_INPUT_COST_PER_MILLION
-        output_cost_per_million = GEMINI_15_PRO_OUTPUT_COST_PER_MILLION
-
-    # Calculate costs
     input_cost = (input_tokens / 1_000_000) * input_cost_per_million
     output_cost = (output_tokens / 1_000_000) * output_cost_per_million
 

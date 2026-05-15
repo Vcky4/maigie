@@ -2,24 +2,23 @@
 Service for Circle (study group) management.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-from prisma import Prisma
 
-from src.services.email import send_circle_invite_email
+from prisma import Prisma
 from src.models.circles import (
     CircleChatGroupCreate,
     CircleChatGroupUpdate,
     CircleCreate,
-    CircleInviteCreate,
-    CircleUpdate,
-    TransferOwnershipRequest,
     CircleImportRequest,
+    CircleInviteCreate,
     CircleSessionCreate,
     CircleSessionUpdate,
+    CircleUpdate,
+    TransferOwnershipRequest,
 )
-
+from src.services.email import send_circle_invite_email
 
 # --- Tier constants ---
 
@@ -351,7 +350,7 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
             if invitee_circle_count >= MAX_CIRCLES_PER_USER:
                 continue  # Can't join more circles
 
-        expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_EXPIRY_DAYS)
+        expires_at = datetime.now(UTC) + timedelta(days=INVITE_EXPIRY_DAYS)
 
         if existing:
             # Update existing invite (e.g., re-invite after decline/expire)
@@ -464,7 +463,7 @@ async def accept_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str
             detail=f"This invite has already been {invite.status.lower()}.",
         )
 
-    if invite.expiresAt < datetime.now(timezone.utc):
+    if invite.expiresAt < datetime.now(UTC):
         await db.circleinvite.update(
             where={"id": invite_id},
             data={"status": "EXPIRED"},
@@ -959,15 +958,17 @@ Provide your response strictly as valid JSON matching this schema:
 ]
 """
     try:
-        import os
         import json
         import re
+
         from google import genai
         from google.genai import types
 
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+        client = genai.Client(api_key=gemini_api_key() or None)
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+            model=default_model_for(LlmTask.STRUCTURED_COMPLETION),
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=800,

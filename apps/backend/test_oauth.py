@@ -1,7 +1,8 @@
 import asyncio
-import httpx
 import json
 import uuid
+
+import httpx
 
 BASE_URL = "http://localhost:8000"
 API_V1 = f"{BASE_URL}/api/v1"

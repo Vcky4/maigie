@@ -10,221 +10,35 @@ import logging
 import os
 import random
 import time
-import warnings
-from typing import Any
 from datetime import UTC
+from typing import Any, cast
 
 import httpx
 from fastapi import HTTPException
 
+from src.config import get_settings
+from src.services.llm.gemini_chat_tools import run_gemini_chat_with_tools
+from src.services.llm.gemini_sdk import genai, new_gemini_client, types as _types
+from src.services.llm.prompts import SYSTEM_INSTRUCTION
+from src.services.llm.protocol import ChatWithToolsProvider
+from src.services.llm.context import (
+    build_enhanced_chat_user_message,
+)
+from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
 logger = logging.getLogger(__name__)
-
-
-class StreamConsumerDisconnected(Exception):
-    """WebSocket client left while streaming; not an LLM failure."""
-
-    __slots__ = ("partial_turn_text",)
-
-    def __init__(self, partial_turn_text: str = "") -> None:
-        self.partial_turn_text = partial_turn_text
-        super().__init__("client disconnected during stream")
-
-
-def _stream_disconnect_exception_types() -> tuple[type[BaseException], ...]:
-    types_list: list[type[BaseException]] = []
-    try:
-        import starlette.websockets as starlette_ws
-
-        types_list.append(starlette_ws.WebSocketDisconnect)
-    except Exception:
-        pass
-    try:
-        from uvicorn.protocols.utils import ClientDisconnected as UvicornClientDisconnected
-
-        types_list.append(UvicornClientDisconnected)
-    except Exception:
-        pass
-    try:
-        import uvicorn.protocols.websockets.websockets_impl as uvicorn_ws_impl
-
-        _cd = getattr(uvicorn_ws_impl, "ClientDisconnected", None)
-        if isinstance(_cd, type) and issubclass(_cd, BaseException) and _cd not in types_list:
-            types_list.append(_cd)
-    except Exception:
-        pass
-    try:
-        import websockets.exceptions as websockets_exc
-
-        for _name in ("ConnectionClosed", "ConnectionClosedError", "ConnectionClosedOK"):
-            _t = getattr(websockets_exc, _name, None)
-            if isinstance(_t, type) and issubclass(_t, BaseException):
-                types_list.append(_t)
-    except Exception:
-        pass
-    return tuple(types_list)
-
-
-_STREAM_DISCONNECT_TYPES = _stream_disconnect_exception_types()
-
-
-def _is_websocket_consumer_disconnect(exc: BaseException) -> bool:
-    """True when the failure is only because the HTTP/WebSocket client went away."""
-    visited: set[int] = set()
-
-    def walk(err: BaseException | None) -> bool:
-        if err is None or id(err) in visited:
-            return False
-        visited.add(id(err))
-        if isinstance(err, _STREAM_DISCONNECT_TYPES):
-            return True
-        if isinstance(err, RuntimeError):
-            _m = str(err).lower()
-            if "close message has been sent" in _m or "cannot call" in _m and "send" in _m:
-                return True
-        if isinstance(err, BaseExceptionGroup):
-            return any(walk(x) for x in err.exceptions)
-        if walk(err.__cause__):
-            return True
-        ctx = err.__context__
-        if ctx is not err.__cause__ and walk(ctx):
-            return True
-        return False
-
-    return walk(exc)
-
-
-genai = None
-# Suppress the Google Gemini deprecation warning temporarily
-with warnings.catch_warnings():
-    warnings.simplefilter("ignore")
-    try:
-        from google import genai as _genai
-        from google.genai import types as _types
-
-        genai = _genai
-    except Exception:
-        # Keep module importable even if the dependency isn't installed.
-        # We'll raise a clearer error when the service is actually used.
-        genai = None
-
-
-# Base system instruction to define Maigie's persona
-_SYSTEM_INSTRUCTION_BASE = """
-You are Maigie, the AI-powered academic operating system.
-Your goal is to help students run one coordinated workflow: organize learning, generate courses, manage schedules, create notes, and summarize content.
-
-IMPORTANT DATE CONTEXT:
-- The user's current date and time will be provided in the context of each conversation
-- When creating schedules, goals, or any date-related actions, ALWAYS use dates relative to the CURRENT DATE provided in the context
-- NEVER use hardcoded years - always calculate dates based on the current date provided
-
-CRITICAL - AVOID DUPLICATES:
-- BEFORE creating any new course, ALWAYS first use get_user_courses to check if the user already has a relevant course on that topic
-- If a matching or similar course exists, USE that existing course instead of creating a duplicate
-- When creating schedules or goals for a topic, first check existing courses and link to them
-- Only create a new course if no relevant course exists
-
-COURSE OUTLINE UPDATES:
-- When a user provides a course outline (text or image), use update_course_outline to populate the course with modules and topics.
-- ALWAYS call get_user_courses first to find the matching course by name.
-- If the outline is a FLAT list of topics (no modules), group them into logical modules (4-6 modules) before calling update_course_outline.
-- If the user says "outline for X" or "here is the outline for X", match X to an existing course.
-- Images may contain course outlines/syllabi — extract the topics from the image and structure them into modules.
-
-PERSONALIZATION & MEMORY:
-- You have access to get_my_profile to retrieve the user's full profile including their name, courses, goals, study streak, and remembered facts about them.
-- When the user asks personal questions like "who am I?", "what do you know about me?", or anything about their profile/progress, use get_my_profile.
-- You have access to save_user_fact to remember important things the user tells you about themselves.
-- When the user shares personal information relevant to their learning (e.g., learning preferences, exam dates, struggles, strengths, personal goals, background), use save_user_fact to remember it.
-- Do NOT save trivial or obvious facts. Focus on information that helps you support the user more effectively inside Maigie.
-- Examples of facts worth saving: "I'm a visual learner", "My bar exam is in June", "I struggle with organic chemistry", "I prefer studying in the morning", "I'm a 3rd year medical student".
-
-GUIDELINES:
-- Be friendly, supportive, and encouraging
-- Address the user by their first name when appropriate (their name is provided below)
-- When users ask questions or want to see their data, use the appropriate query tools (get_user_courses, get_user_goals, etc.)
-- When users want to create or modify something, use the appropriate action tools (create_course, create_note, etc.)
-- For casual conversation (greetings, thanks, etc.), respond naturally without using tools
-- Always provide helpful context and explanations in your responses
-- When a user asks for a study plan/schedule for a topic they already have a course for, use the existing course
-
-ADAPTIVE SCHEDULING & SEASON AWARENESS:
-- You MUST understand where the student is in their academic year. If you don't know their current semester dates, exam periods, or term breaks, PROACTIVELY ask them (e.g., "By the way, when do your midterms start?" or "Are we in finals week or a new semester?").
-- Use save_user_fact to memorize these milestone dates (e.g., 'Fall semester ends Dec 15', 'Midterms are Oct 10-20').
-- Adjust scheduling based on the season: during exam periods, suggest more intense, compacted review sessions; during breaks, suggest lighter reading or rest; at the start of a semester, focus on establishing routine.
-- Timetables change every semester. If asked to schedule sessions but you don't know the user's current semester timetable, availability, or work hours, you MUST ask them before creating the schedule (e.g., "Before I build this schedule, what does your new semester timetable look like so I can find the best gaps?").
-- ALWAYS use check_schedule_conflicts before calling create_schedule to ensure the time slot is truly free.
-- Remember to use Learning Insights (like 'Optimal study time') and User Facts when picking times.
-"""
-
-# Static fallback for cases where user_name is unavailable
-SYSTEM_INSTRUCTION = _SYSTEM_INSTRUCTION_BASE + "\nThe user's name is not available.\n"
-
-
-def build_personalized_system_instruction(user_name: str | None = None) -> str:
-    """Build a personalized system instruction with the user's name."""
-    if user_name:
-        first_name = user_name.strip().split()[0] if user_name.strip() else "there"
-        return (
-            _SYSTEM_INSTRUCTION_BASE
-            + f"\nThe user's name is {user_name} (first name: {first_name}).\n"
-        )
-    return SYSTEM_INSTRUCTION
-
-
-def _convert_proto_to_dict(obj):
-    """Recursively convert protobuf objects to plain Python dicts/lists.
-
-    This handles Google protobuf types like MapComposite and RepeatedComposite
-    that can't be directly serialized to JSON.
-    """
-    import json
-
-    if obj is None:
-        return None
-
-    # Handle protobuf MapComposite (dict-like)
-    if hasattr(obj, "keys") and callable(obj.keys):
-        return {k: _convert_proto_to_dict(v) for k, v in obj.items()}
-
-    # Handle protobuf RepeatedComposite (list-like)
-    if hasattr(obj, "__iter__") and not isinstance(obj, (str, bytes, dict)):
-        try:
-            return [_convert_proto_to_dict(item) for item in obj]
-        except TypeError:
-            pass
-
-    # Handle basic types
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-
-    # Handle dict
-    if isinstance(obj, dict):
-        return {k: _convert_proto_to_dict(v) for k, v in obj.items()}
-
-    # Handle list/tuple
-    if isinstance(obj, (list, tuple)):
-        return [_convert_proto_to_dict(item) for item in obj]
-
-    # Fallback: try to convert to string
-    try:
-        # Try JSON serialization to test if it's serializable
-        json.dumps(obj)
-        return obj
-    except (TypeError, ValueError):
-        return str(obj)
 
 
 class GeminiService:
     def __init__(self):
         if genai is None:
             raise RuntimeError(
-                "google-generativeai is not installed. Install it to enable Gemini features."
+                "google-genai is not installed. Install it to enable Gemini features."
             )
 
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = default_model_for(LlmTask.CHAT_DEFAULT)
         self.system_instruction = SYSTEM_INSTRUCTION
-        self.client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        self.client = new_gemini_client(gemini_api_key() or None)
 
         # Safety settings (new google.genai SDK format)
         self.safety_settings = [
@@ -247,76 +61,7 @@ class GeminiService:
         Context can include: topicId, courseId, pageContext, etc.
         """
         try:
-            # Build enhanced message with context if provided
-            enhanced_message = user_message
-
-            # Always add current date/time context
-            from datetime import datetime, timezone
-
-            current_datetime = datetime.now(UTC)
-            current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
-
-            context_parts = [f"Current Date & Time: {current_date_str}"]
-
-            if context:
-                if context.get("pageContext"):
-                    context_parts.append(f"Current Page Context: {context['pageContext']}")
-
-                # Course information
-                if context.get("courseTitle"):
-                    context_parts.append(f"Current Course: {context['courseTitle']}")
-                    if context.get("courseDescription"):
-                        context_parts.append(f"Course Description: {context['courseDescription']}")
-                elif context.get("courseId"):
-                    context_parts.append(f"Current Course ID: {context['courseId']}")
-
-                # Topic information
-                if context.get("topicTitle"):
-                    context_parts.append(f"Current Topic: {context['topicTitle']}")
-                    if context.get("moduleTitle"):
-                        context_parts.append(f"Module: {context['moduleTitle']}")
-                    if context.get("topicContent"):
-                        # Include topic content for context (truncated for cost savings)
-                        topic_content = context["topicContent"]
-                        if len(topic_content) > 300:
-                            topic_content = topic_content[:300] + "..."
-                        context_parts.append(f"Topic Content: {topic_content}")
-                    if context.get("topicUploadedResources"):
-                        context_parts.append(
-                            "Topic Uploaded/Manual Resources (highest priority references):"
-                        )
-                        context_parts.append(str(context["topicUploadedResources"]))
-                    if context.get("topicResources"):
-                        context_parts.append("Topic Resources:")
-                        context_parts.append(str(context["topicResources"]))
-                elif context.get("topicId"):
-                    context_parts.append(f"Current Topic ID: {context['topicId']}")
-
-                # Note information
-                if context.get("noteTitle"):
-                    context_parts.append(f"Current Note: {context['noteTitle']}")
-                    if context.get("noteContent"):
-                        # Include note content for context (truncated for cost savings)
-                        note_content = context["noteContent"]
-                        if len(note_content) > 300:
-                            note_content = note_content[:300] + "..."
-                        context_parts.append(f"Note Content: {note_content}")
-                    if context.get("noteSummary"):
-                        context_parts.append(f"Note Summary: {context['noteSummary']}")
-                elif context.get("noteId"):
-                    context_parts.append(f"Current Note ID: {context['noteId']}")
-
-                # Retrieved Items (from RAG/Database Search)
-                if context.get("retrieved_items"):
-                    context_parts.append("\nPossibly Relevant Items found in Database:")
-                    for item in context["retrieved_items"]:
-                        context_parts.append(str(item))
-                    context_parts.append("(Use these IDs if the user refers to these items)")
-
-            # Always include context_parts (at minimum current date/time)
-            if context_parts:
-                context_str = "\n".join(context_parts)
-                enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
+            enhanced_message = build_enhanced_chat_user_message(user_message, context)
 
             # Process history - replace image URLs with downloaded data (if any) or just format to Content objects
             processed_history = []
@@ -353,7 +98,7 @@ class GeminiService:
             usage_info = {
                 "input_tokens": 0,
                 "output_tokens": 0,
-                "model_name": "gemini-1.5-flash",  # Default model name
+                "model_name": default_model_for(LlmTask.CHAT_DEFAULT),
             }
 
             # Try to get usage metadata from response
@@ -392,628 +137,18 @@ class GeminiService:
         progress_callback=None,
         stream_callback=None,
     ) -> tuple[str, dict, list[dict], list[dict]]:
-        """
-        Send message to Gemini with function calling support.
-
-        Args:
-            history: Chat history
-            user_message: User's text message
-            context: Additional context dictionary
-            user_id: User ID for tool execution
-            user_name: User's display name for personalization
-            image_url: Optional image URL to include in the message
-            progress_callback: Optional async callback for progress updates during tool execution
-                              Signature: async def callback(progress: int, stage: str, message: str, **kwargs)
-            stream_callback: Optional async callback for streaming text responses
-                            Signature: async def callback(chunk: str, is_final: bool)
-
-        Returns:
-            tuple: (response_text, usage_info, executed_actions, query_results)
-            - response_text: Final text response from model
-            - usage_info: Token usage information
-            - executed_actions: List of actions executed via tool calls
-            - query_results: List of query tool results formatted for component responses
-        """
-        from src.services.gemini_tools import get_all_tools
-        from src.services.gemini_tool_handlers import handle_tool_call
-        import httpx
-
-        try:
-            request_start = time.perf_counter()
-            request_id = f"agentic_{int(request_start * 1000)}"
-            executed_actions: list[dict[str, Any]] = []
-            query_results: list[dict[str, Any]] = []
-            total_input_tokens = 0
-            total_output_tokens = 0
-            final_text = ""
-            total_llm_time = 0.0
-            total_tool_time = 0.0
-
-            # Get tool definitions and convert to new SDK format
-            raw_tools = get_all_tools()
-            # raw_tools is [{"function_declarations": [...]}] (old format)
-            # New SDK expects a list of types.Tool objects with UPPERCASE type strings
-            all_declarations = []
-            for tool_group in raw_tools:
-                if isinstance(tool_group, dict) and "function_declarations" in tool_group:
-                    all_declarations.extend(tool_group["function_declarations"])
-
-            def _uppercase_types(obj):
-                """Recursively convert lowercase type strings to uppercase for new SDK."""
-                if isinstance(obj, dict):
-                    result = {}
-                    for k, v in obj.items():
-                        if k == "type" and isinstance(v, str):
-                            result[k] = v.upper()
-                        else:
-                            result[k] = _uppercase_types(v)
-                    return result
-                elif isinstance(obj, list):
-                    return [_uppercase_types(item) for item in obj]
-                return obj
-
-            all_declarations = [_uppercase_types(d) for d in all_declarations]
-            tools = (
-                [_types.Tool(function_declarations=all_declarations)] if all_declarations else None
-            )
-
-            # Build personalized system instruction with user's name
-            system_instruction = build_personalized_system_instruction(user_name)
-
-            # Create client
-            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-            # Build enhanced message with context
-            enhanced_message_text = self._build_enhanced_message(user_message, context)
-
-            # Helper to check if URL is an image
-            def _is_image_url(url: str) -> bool:
-                return (
-                    any(ext in url.lower() for ext in [".jpg", ".jpeg", ".png", ".webp"])
-                    or "image" in url.lower()
-                    or any(domain in url.lower() for domain in ["bunnycdn", "storage", "cdn"])
-                )
-
-            # Collect all image URLs to download (current message + history)
-            image_urls_to_download = []
-            if image_url:
-                image_urls_to_download.append(image_url)
-
-            # Scan history for image URLs
-            history_image_positions = []  # [(msg_idx, part_idx, url), ...]
-            for msg_idx, hist_msg in enumerate(history):
-                if isinstance(hist_msg, dict) and "parts" in hist_msg:
-                    for part_idx, part in enumerate(hist_msg["parts"]):
-                        if isinstance(part, str) and part.startswith(("http://", "https://")):
-                            if _is_image_url(part):
-                                history_image_positions.append((msg_idx, part_idx, part))
-                                image_urls_to_download.append(part)
-
-            # Download all images in parallel
-            downloaded_images = {}  # url -> {"mime_type": ..., "data": ...}
-            if image_urls_to_download:
-                async with httpx.AsyncClient(timeout=15.0) as http_client:
-
-                    async def download_image(url: str):
-                        try:
-                            response = await http_client.get(url)
-                            if response.status_code == 200:
-                                return url, {
-                                    "mime_type": response.headers.get("content-type", "image/jpeg"),
-                                    "data": response.content,
-                                }
-                        except Exception as e:
-                            print(f"⚠️ Failed to download image {url[:50]}...: {e}")
-                        try:
-                            from src.services.storage_service import storage_service as _storage
-
-                            fb = await _storage.fetch_public_chat_image_bytes(url)
-                            if fb:
-                                data, raw_ct = fb
-                                mt = (raw_ct or "").split(";", 1)[0].strip() or "image/jpeg"
-                                return url, {"mime_type": mt, "data": data}
-                        except Exception as e2:
-                            print(f"⚠️ Storage fallback failed for {url[:50]}...: {e2}")
-                        return url, None
-
-                    # Download all images in parallel
-                    results = await asyncio.gather(
-                        *[download_image(url) for url in image_urls_to_download]
-                    )
-                    for url, img_data in results:
-                        if img_data:
-                            downloaded_images[url] = img_data
-                            print(f"🖼️ Downloaded image: {url[:50]}...")
-
-            # Prepare message content (multimodal if image_url provided)
-            message_content = [_types.Part(text=enhanced_message_text)]
-            if image_url and image_url in downloaded_images:
-                img_data = downloaded_images[image_url]
-                message_content = [
-                    _types.Part(text=enhanced_message_text),
-                    _types.Part(
-                        inline_data=_types.Blob(
-                            mime_type=img_data["mime_type"], data=img_data["data"]
-                        )
-                    ),
-                ]
-                print(f"🖼️ Including image in message: {image_url}")
-
-            # Process history - replace image URLs with downloaded data
-            processed_history = []
-            for msg_idx, hist_msg in enumerate(history):
-                if isinstance(hist_msg, dict) and "parts" in hist_msg:
-                    processed_parts = []
-                    for part_idx, part in enumerate(hist_msg["parts"]):
-                        if isinstance(part, str):
-                            if part.startswith(("http://", "https://")) and _is_image_url(part):
-                                # Replace URL with downloaded image data
-                                if part in downloaded_images:
-                                    img_data = downloaded_images[part]
-                                    processed_parts.append(
-                                        {
-                                            "inline_data": {
-                                                "mime_type": img_data["mime_type"],
-                                                "data": img_data["data"],
-                                            }
-                                        }
-                                    )
-                                # Skip if download failed
-                            else:
-                                processed_parts.append({"text": part})
-                        elif isinstance(part, dict):
-                            # Function calls or other dicts. For safety, pass them in if they match schema
-                            processed_parts.append(part)
-                        else:
-                            processed_parts.append(part)
-                    processed_history.append(
-                        {"role": hist_msg.get("role", "user"), "parts": processed_parts}
-                    )
-                else:
-                    processed_history.append(hist_msg)
-
-            # Start chat session
-            chat = client.aio.chats.create(
-                model="gemini-2.5-flash",
-                history=processed_history,
-                config=_types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    tools=tools,
-                    safety_settings=self.safety_settings,
-                    # Manual tool loop below; disable SDK automatic function calling to avoid
-                    # UNEXPECTED_TOOL_CALL / AFC state issues (see googleapis/python-genai#1818).
-                    automatic_function_calling=_types.AutomaticFunctionCallingConfig(disable=True),
-                ),
-            )
-
-            # Tool call loop
-            max_iterations = 6  # Prevent infinite loops while reducing latency
-            iteration = 0
-            tool_results = []  # Initialize tool_results
-
-            while iteration < max_iterations:
-                iteration += 1
-
-                # Send message (first iteration) or tool results (subsequent iterations)
-                streamed_turn_text = ""
-
-                async def _send_streaming_request(payload):
-                    # google-genai AsyncChat: await coroutine, then async-iterate chunks
-                    response_stream = await chat.send_message_stream(payload)
-                    last_response = None
-                    streamed_text_parts = []
-                    last_chunk_text = None
-                    streamed_function_calls = []
-
-                    async for chunk in response_stream:
-                        last_response = chunk
-                        try:
-                            # In the new SDK, reading .text when a function call is present throws a ValueError
-                            chunk_text = chunk.text
-                        except ValueError:
-                            chunk_text = None
-                        except Exception:
-                            chunk_text = None
-
-                        # Extract function calls
-                        if hasattr(chunk, "function_calls") and chunk.function_calls:
-                            streamed_function_calls.extend(chunk.function_calls)
-                        elif (
-                            hasattr(chunk, "candidates")
-                            and chunk.candidates
-                            and chunk.candidates[0].content
-                            and chunk.candidates[0].content.parts
-                        ):
-                            for part in chunk.candidates[0].content.parts:
-                                if hasattr(part, "function_call") and part.function_call:
-                                    streamed_function_calls.append(part.function_call)
-
-                        if chunk_text:
-                            text_delta = chunk_text
-                            if last_chunk_text and chunk_text.startswith(last_chunk_text):
-                                text_delta = chunk_text[len(last_chunk_text) :]
-                            last_chunk_text = chunk_text
-
-                            if text_delta:
-                                streamed_text_parts.append(text_delta)
-                                if stream_callback:
-                                    try:
-                                        await stream_callback(text_delta, False)
-                                    except BaseException as stream_err:
-                                        if _is_websocket_consumer_disconnect(stream_err):
-                                            raise StreamConsumerDisconnected(
-                                                "".join(streamed_text_parts)
-                                            ) from stream_err
-                                        raise
-
-                    if stream_callback and last_chunk_text is not None:
-                        try:
-                            await stream_callback("", True)
-                        except BaseException as stream_err:
-                            if _is_websocket_consumer_disconnect(stream_err):
-                                raise StreamConsumerDisconnected(
-                                    "".join(streamed_text_parts)
-                                ) from stream_err
-                            raise
-
-                    return last_response, "".join(streamed_text_parts), streamed_function_calls
-
-                stream_payload = message_content if iteration == 1 else tool_results
-                llm_start = time.perf_counter()
-                try:
-                    response, streamed_turn_text, streamed_function_calls = (
-                        await _send_streaming_request(stream_payload)
-                    )
-                except StreamConsumerDisconnected as disc:
-                    streamed_turn_text = disc.partial_turn_text
-                    streamed_function_calls = []
-                    response = None
-                    total_llm_time += time.perf_counter() - llm_start
-                    if streamed_turn_text:
-                        stripped_turn = streamed_turn_text.strip()
-                        if final_text and stripped_turn.startswith(final_text.strip()):
-                            new_part = stripped_turn[len(final_text.strip()) :]
-                            final_text += new_part
-                        else:
-                            if final_text and not final_text.endswith(("\n", " ")):
-                                final_text += " "
-                            final_text += streamed_turn_text
-                    logger.info(
-                        "[%s] client disconnected during stream (iteration %s)",
-                        request_id,
-                        iteration,
-                    )
-                    break
-                total_llm_time += time.perf_counter() - llm_start
-
-                # Accumulate final_text, but avoid duplicating prefix if model repeats itself
-                if streamed_turn_text:
-                    stripped_turn = streamed_turn_text.strip()
-                    if final_text and stripped_turn.startswith(final_text.strip()):
-                        # Model repeated previous turn's text, only add the new part
-                        new_part = stripped_turn[len(final_text.strip()) :]
-                        final_text += new_part
-                    else:
-                        if final_text and not final_text.endswith(("\n", " ")):
-                            final_text += " "
-                        final_text += streamed_turn_text
-
-                # Some streamed turns may not end with a final response object.
-                # Avoid hard failures and return a graceful fallback instead.
-                if response is None and not streamed_turn_text and not streamed_function_calls:
-                    final_text = (
-                        "I'm sorry, I couldn't generate a response right now. " "Please try again."
-                    )
-                    print(f"⏱️ [{request_id}] LLM iteration {iteration} ended without response")
-                    break
-
-                # Track token usage
-                if hasattr(response, "usage_metadata"):
-                    total_input_tokens += response.usage_metadata.prompt_token_count or 0
-                    total_output_tokens += response.usage_metadata.candidates_token_count or 0
-
-                # Check for function calls
-                function_calls = []
-                if streamed_function_calls:
-                    function_calls = streamed_function_calls
-                elif hasattr(response, "function_calls") and response.function_calls:
-                    function_calls = list(response.function_calls)
-                elif hasattr(response, "parts") and getattr(response, "parts", None):
-                    for part in response.parts:
-                        if hasattr(part, "function_call") and part.function_call:
-                            function_calls.append(part.function_call)
-
-                if not function_calls:
-                    # No tool calls - final turn
-                    finish_reason = None
-                    try:
-                        cands = getattr(response, "candidates", None)
-                        if cands:
-                            finish_reason = cands[0].finish_reason
-                    except Exception:
-                        finish_reason = None
-
-                    if finish_reason == _types.FinishReason.UNEXPECTED_TOOL_CALL and not final_text:
-                        final_text = (
-                            "I hit a temporary issue coordinating tools for that request. "
-                            "Please try again or rephrase your message slightly."
-                        )
-                    elif not final_text:
-                        try:
-                            final_text = (
-                                response.text if hasattr(response, "text") and response.text else ""
-                            )
-                        except (ValueError, Exception):
-                            final_text = "I'm sorry, I couldn't generate a response."
-                    print(f"⏱️ [{request_id}] LLM iteration {iteration} completed with no tools")
-                    break
-
-                # Execute function calls
-                tool_results = []
-
-                def _has_dependency_placeholders(value) -> bool:
-                    if isinstance(value, str):
-                        return "$" in value
-                    if isinstance(value, dict):
-                        return any(_has_dependency_placeholders(v) for v in value.values())
-                    if isinstance(value, list):
-                        return any(_has_dependency_placeholders(v) for v in value)
-                    return False
-
-                async def _execute_tool(function_call):
-                    tool_name = function_call.name
-                    tool_args = _convert_proto_to_dict(dict(function_call.args))
-                    print(f"🔧 Executing tool: {tool_name} with args: {tool_args}")
-                    try:
-                        tool_result = await handle_tool_call(
-                            tool_name=tool_name,
-                            args=tool_args,
-                            user_id=user_id,
-                            context=context,
-                            progress_callback=progress_callback,
-                        )
-                        return tool_name, tool_args, tool_result, None
-                    except Exception as e:
-                        print(f"❌ Tool execution error: {e}")
-                        return tool_name, tool_args, {"error": str(e)}, str(e)
-
-                tool_start = time.perf_counter()
-                independent_calls = []
-                dependent_calls = []
-                for function_call in function_calls:
-                    tool_args = _convert_proto_to_dict(dict(function_call.args))
-                    if _has_dependency_placeholders(tool_args):
-                        dependent_calls.append(function_call)
-                    else:
-                        independent_calls.append(function_call)
-
-                execution_results = []
-                if independent_calls:
-                    execution_results.extend(
-                        await asyncio.gather(
-                            *[_execute_tool(function_call) for function_call in independent_calls]
-                        )
-                    )
-                for function_call in dependent_calls:
-                    execution_results.append(await _execute_tool(function_call))
-                total_tool_time += time.perf_counter() - tool_start
-
-                for tool_name, tool_args, tool_result, tool_error in execution_results:
-                    if tool_error is None:
-                        if tool_name.startswith("get_user_"):
-                            query_results.append(
-                                {
-                                    "tool_name": tool_name,
-                                    "result": tool_result,
-                                    "component_type": tool_result.get("_component_type"),
-                                    "query_type": tool_result.get("_query_type"),
-                                    "data": (
-                                        tool_result.get("courses")
-                                        or tool_result.get("goals")
-                                        or tool_result.get("schedules")
-                                        or tool_result.get("notes")
-                                        or tool_result.get("resources")
-                                    ),
-                                }
-                            )
-
-                        if tool_name.startswith("create_") or tool_name in [
-                            "recommend_resources",
-                            "retake_note",
-                            "add_summary_to_note",
-                            "add_tags_to_note",
-                            "complete_review",
-                            "update_course_outline",
-                        ]:
-                            executed_actions.append(
-                                {
-                                    "type": self._map_tool_to_action_type(tool_name),
-                                    "data": tool_args,
-                                    "result": tool_result,
-                                }
-                            )
-
-                    tool_results.append(
-                        _types.Part.from_function_response(name=tool_name, response=tool_result)
-                    )
-            else:
-                # Max iterations reached
-                final_text = "I encountered an issue processing your request. Please try again."
-
-            usage_info = {
-                "input_tokens": total_input_tokens,
-                "output_tokens": total_output_tokens,
-                "model_name": "gemini-3-flash-preview",
-            }
-
-            total_time = time.perf_counter() - request_start
-            print(
-                f"⏱️ [{request_id}] total={total_time:.2f}s llm={total_llm_time:.2f}s "
-                f"tools={total_tool_time:.2f}s iterations={iteration}"
-            )
-
-            return final_text, usage_info, executed_actions, query_results
-
-        except Exception as e:
-            if isinstance(e, StreamConsumerDisconnected):
-                pt = e.partial_turn_text or ""
-                if pt:
-                    stripped_turn = pt.strip()
-                    if final_text and stripped_turn.startswith(final_text.strip()):
-                        final_text += stripped_turn[len(final_text.strip()) :]
-                    else:
-                        if final_text and not final_text.endswith(("\n", " ")):
-                            final_text += " "
-                        final_text += pt
-                logger.info("get_chat_response_with_tools: client disconnected (stream): %s", e)
-                return (
-                    final_text,
-                    {
-                        "input_tokens": total_input_tokens,
-                        "output_tokens": total_output_tokens,
-                        "model_name": "gemini-3-flash-preview",
-                    },
-                    executed_actions,
-                    query_results,
-                )
-            if _is_websocket_consumer_disconnect(e):
-                logger.info("get_chat_response_with_tools: client disconnected: %s", e)
-                return (
-                    final_text,
-                    {
-                        "input_tokens": total_input_tokens,
-                        "output_tokens": total_output_tokens,
-                        "model_name": "gemini-3-flash-preview",
-                    },
-                    executed_actions,
-                    query_results,
-                )
-            print(f"Gemini Error with tools: {e}")
-            raise HTTPException(status_code=500, detail="AI Service unavailable")
-
-    def _map_tool_to_action_type(self, tool_name: str) -> str:
-        """Map tool name to action type for backward compatibility."""
-        mapping = {
-            "create_course": "create_course",
-            "create_note": "create_note",
-            "create_goal": "create_goal",
-            "create_schedule": "create_schedule",
-            "check_schedule_conflicts": "check_schedule_conflicts",
-            "recommend_resources": "recommend_resources",
-            "retake_note": "retake_note",
-            "add_summary_to_note": "add_summary",
-            "add_tags_to_note": "add_tags",
-            "complete_review": "complete_review",
-            "update_course_outline": "update_course_outline",
-            "delete_course": "delete_course",
-        }
-        return mapping.get(tool_name, tool_name)
-
-    def _build_enhanced_message(self, user_message: str, context: dict = None) -> str:
-        """Build enhanced message with context."""
-        enhanced_message = user_message
-
-        # Always add current date/time context
-        from datetime import datetime
-
-        current_datetime = datetime.now(UTC)
-        current_date_str = current_datetime.strftime("%A, %B %d, %Y at %H:%M UTC")
-
-        context_parts = [f"Current Date & Time: {current_date_str}"]
-
-        if context:
-            if context.get("pageContext"):
-                context_parts.append(f"Current Page Context: {context['pageContext']}")
-
-            # Course information
-            if context.get("courseTitle"):
-                context_parts.append(f"Current Course: {context['courseTitle']}")
-                if context.get("courseDescription"):
-                    context_parts.append(f"Course Description: {context['courseDescription']}")
-            elif context.get("courseId"):
-                context_parts.append(f"Current Course ID: {context['courseId']}")
-
-            # Topic information
-            if context.get("topicTitle"):
-                context_parts.append(f"Current Topic: {context['topicTitle']}")
-                if context.get("moduleTitle"):
-                    context_parts.append(f"Module: {context['moduleTitle']}")
-                if context.get("topicContent"):
-                    # Include topic content for context (truncated for cost savings)
-                    topic_content = context["topicContent"]
-                    if len(topic_content) > 300:
-                        topic_content = topic_content[:300] + "..."
-                    context_parts.append(f"Topic Content: {topic_content}")
-                if context.get("topicUploadedResources"):
-                    context_parts.append(
-                        "Topic Uploaded/Manual Resources (highest priority references):"
-                    )
-                    context_parts.append(str(context["topicUploadedResources"]))
-                if context.get("topicResources"):
-                    context_parts.append("Topic Resources:")
-                    context_parts.append(str(context["topicResources"]))
-            elif context.get("topicId"):
-                context_parts.append(f"Current Topic ID: {context['topicId']}")
-
-            # Note information
-            if context.get("noteTitle"):
-                context_parts.append(f"Current Note: {context['noteTitle']}")
-                if context.get("noteContent"):
-                    # Include note content for context (truncated for cost savings)
-                    note_content = context["noteContent"]
-                    if len(note_content) > 300:
-                        note_content = note_content[:300] + "..."
-                    context_parts.append(f"Note Content: {note_content}")
-                if context.get("noteSummary"):
-                    context_parts.append(f"Note Summary: {context['noteSummary']}")
-            elif context.get("noteId"):
-                context_parts.append(f"Current Note ID: {context['noteId']}")
-
-            # Circle information (when operating in a circle chat)
-            if context.get("circleName"):
-                context_parts.append(f"Circle Group: {context['circleName']}")
-                if context.get("chatGroupName"):
-                    context_parts.append(f"Chat Group: {context['chatGroupName']}")
-                if context.get("circleId"):
-                    context_parts.append(f"Circle ID: {context['circleId']}")
-                if context.get("memberCount"):
-                    context_parts.append(f"Circle Members: {context['memberCount']}")
-
-            if context.get("replyContext"):
-                reply_context = context["replyContext"]
-                reply_content = (reply_context.get("content") or "").strip()
-                if len(reply_content) > 280:
-                    reply_content = reply_content[:280] + "..."
-
-                reply_role = reply_context.get("role") or "user"
-                reply_author = reply_context.get("userName") or (
-                    "Maigie" if reply_role == "assistant" else "Member"
-                )
-                context_parts.append("Reply Context:")
-                context_parts.append(
-                    f"Replying to {reply_author} ({reply_role}): {reply_content or '[no content]'}"
-                )
-                context_parts.append(
-                    "Interpret the user's message as a direct reply to this message first."
-                )
-
-            # Retrieved Items (from RAG/Database Search)
-            if context.get("retrieved_items"):
-                context_parts.append("\nPossibly Relevant Items found in Database:")
-                for item in context["retrieved_items"]:
-                    context_parts.append(str(item))
-                context_parts.append("(Use these IDs if the user refers to these items)")
-
-            # Long-term memory context (conversation summaries + learning insights)
-            if context.get("memory_context"):
-                context_parts.append(f"\n{context['memory_context']}")
-
-        # Always include context_parts (at minimum current date/time)
-        if context_parts:
-            context_str = "\n".join(context_parts)
-            enhanced_message = f"Context:\n{context_str}\n\nUser Message: {user_message}"
-
-        return enhanced_message
+        """Send message to Gemini with function calling (delegates to run_gemini_chat_with_tools)."""
+        return await run_gemini_chat_with_tools(
+            history=history,
+            user_message=user_message,
+            context=context,
+            user_id=user_id,
+            user_name=user_name,
+            image_url=image_url,
+            progress_callback=progress_callback,
+            stream_callback=stream_callback,
+            safety_settings=self.safety_settings,
+        )
 
     async def extract_user_facts_from_conversation(
         self, messages: list[dict], user_id: str
@@ -1068,9 +203,10 @@ User messages:
 JSON array:"""
 
         try:
-            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            client = new_gemini_client(gemini_api_key() or None)
             response = await client.aio.models.generate_content(
-                model="gemini-2.0-flash-lite", contents=extraction_prompt
+                model=default_model_for(LlmTask.FACT_EXTRACTION_LITE),
+                contents=extraction_prompt,
             )
 
             if not response or not response.text:
@@ -1238,9 +374,9 @@ Summary:"""
         """
         try:
             # Use Flash model for minimal responses (faster and cheaper)
-            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            client = new_gemini_client(gemini_api_key() or None)
             response = await client.aio.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model=default_model_for(LlmTask.MINIMAL_RESPONSE),
                 contents=prompt,
                 config=_types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
@@ -1314,9 +450,9 @@ User message: {user_msg}
 
 JSON:"""
 
-            client = _genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            client = new_gemini_client(gemini_api_key() or None)
             response = await client.aio.models.generate_content(
-                model="gemini-2.0-flash",
+                model=default_model_for(LlmTask.COURSE_OUTLINE),
                 contents=prompt,
                 config=_types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
@@ -1580,9 +716,7 @@ Tags (JSON array):"""
 
             # 3. Generate response
             # Convert image bytes to part and prepare content list properly
-            from google.genai import types as genai_types
-
-            img_part = genai_types.Part.from_bytes(data=image_data, mime_type=mime_type)
+            img_part = _types.Part.from_bytes(data=image_data, mime_type=mime_type)
             new_content = [prompt, img_part]
             response = await self.client.aio.models.generate_content(
                 model=self.model_name,
@@ -1630,12 +764,20 @@ _DEFAULT_GEMINI_ROTATING_MODELS = "gemini-2.0-flash,gemini-2.5-flash,gemini-2.0-
 
 
 def _gemini_rotating_model_list(primary_env: str) -> list[str]:
-    """Models for a feature: primary env, else GEMINI_ROTATING_MODELS, else built-in default."""
-    raw = (
-        os.getenv(primary_env)
-        or os.getenv("GEMINI_ROTATING_MODELS")
-        or _DEFAULT_GEMINI_ROTATING_MODELS
-    )
+    """Models for a feature: feature-specific setting, else GEMINI_ROTATING_MODELS, else default."""
+    s = get_settings()
+    if primary_env == "GEMINI_EXAM_PREP_MODELS":
+        raw = (
+            s.GEMINI_EXAM_PREP_MODELS or s.GEMINI_ROTATING_MODELS or _DEFAULT_GEMINI_ROTATING_MODELS
+        )
+    elif primary_env == "GEMINI_SCHEDULE_AI_MODELS":
+        raw = (
+            s.GEMINI_SCHEDULE_AI_MODELS
+            or s.GEMINI_ROTATING_MODELS
+            or _DEFAULT_GEMINI_ROTATING_MODELS
+        )
+    else:
+        raw = s.GEMINI_ROTATING_MODELS or _DEFAULT_GEMINI_ROTATING_MODELS
     return [m.strip() for m in raw.split(",") if m.strip()]
 
 
@@ -1711,7 +853,7 @@ async def _gemini_generate_content_with_model_rotation(
     if not models:
         raise RuntimeError("No Gemini models configured")
 
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    client = new_gemini_client(gemini_api_key() or None)
     last_exc: BaseException | None = None
     unavailable: set[str] = set()
     initial_n = len(models)
@@ -1824,11 +966,9 @@ Guidelines:
 JSON array:"""
 
     try:
-        from google.genai import types as genai_types
-
         response = await _exam_prep_generate_with_retry(
             contents=prompt,
-            config=genai_types.GenerateContentConfig(
+            config=_types.GenerateContentConfig(
                 max_output_tokens=2000,
                 temperature=0.2,
             ),
@@ -1880,11 +1020,9 @@ If you can't identify the correct answer with certainty, still provide your best
 JSON array:"""
 
     try:
-        from google.genai import types as genai_types
-
         response = await _exam_prep_generate_with_retry(
             contents=prompt,
-            config=genai_types.GenerateContentConfig(
+            config=_types.GenerateContentConfig(
                 max_output_tokens=4000,
                 temperature=0.1,
             ),
@@ -1966,11 +1104,9 @@ No markdown, no code fences.
 JSON array:"""
 
     try:
-        from google.genai import types as genai_types
-
         response = await _exam_prep_generate_with_retry(
             contents=prompt,
-            config=genai_types.GenerateContentConfig(
+            config=_types.GenerateContentConfig(
                 max_output_tokens=4000,
                 temperature=0.4,
             ),
@@ -2020,7 +1156,7 @@ async def get_schedule_review_suggestions(user_id: str, db: Any) -> list[dict[st
 
     if genai is None:
         return []
-    if not os.getenv("GEMINI_API_KEY"):
+    if not gemini_api_key():
         logger.warning(
             "get_schedule_review_suggestions skipped for user %s: GEMINI_API_KEY not set",
             user_id,
@@ -2120,11 +1256,9 @@ Return ONLY a JSON array of 0-5 blocks. Each block: {{ "title": "string", "start
 Use times in the next 7 days. Prefer morning/afternoon slots for study. No markdown, no code fence, no commentary.
 JSON:"""
     try:
-        from google.genai import types as genai_types
-
         response = await _gemini_generate_content_with_model_rotation(
             contents=prompt,
-            config=genai_types.GenerateContentConfig(
+            config=_types.GenerateContentConfig(
                 max_output_tokens=600,
                 temperature=0.3,
             ),
@@ -2169,9 +1303,9 @@ JSON:"""
 class _LazyGeminiService:
     """Lazy proxy to avoid import-time side effects/crashes."""
 
-    _instance: "GeminiService | None" = None
+    _instance: GeminiService | None = None
 
-    def _get(self) -> "GeminiService":
+    def _get(self) -> GeminiService:
         if self._instance is None:
             self._instance = GeminiService()
         return self._instance
@@ -2179,6 +1313,33 @@ class _LazyGeminiService:
     def __getattr__(self, name: str):
         return getattr(self._get(), name)
 
+    async def get_chat_response_with_tools(
+        self,
+        history: list,
+        user_message: str,
+        context: dict | None = None,
+        user_id: str | None = None,
+        user_name: str | None = None,
+        image_url: str | None = None,
+        progress_callback: Any = None,
+        stream_callback: Any = None,
+    ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+        return await self._get().get_chat_response_with_tools(
+            history,
+            user_message,
+            context,
+            user_id,
+            user_name,
+            image_url,
+            progress_callback,
+            stream_callback,
+        )
+
 
 # Backwards-compatible global proxy
 llm_service = _LazyGeminiService()
+
+
+def chat_with_tools_provider() -> ChatWithToolsProvider:
+    """Return the process-wide :class:`ChatWithToolsProvider` (Gemini today)."""
+    return cast(ChatWithToolsProvider, llm_service)

@@ -20,11 +20,11 @@ from typing import Optional
 from prisma import Prisma
 from prisma.models import User
 
-from ..config import Settings, get_settings
-from ..core.database import db
-from ..services.referral_service import get_daily_limit_increase
-from ..services.email import send_limit_reached_email
-from ..utils.exceptions import SubscriptionLimitError
+from src.config import Settings, get_settings
+from src.core.database import db
+from src.services.email import send_limit_reached_email
+from src.services.referral_service import get_daily_limit_increase
+from src.utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
 

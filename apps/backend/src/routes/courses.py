@@ -7,24 +7,24 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 
 from prisma import Client as PrismaClient
-from datetime import datetime, timedelta, timezone
 
 # Import the AI worker service
 from src.services.ai_course import generate_course_content_task
 
-from ..dependencies import CurrentUser
-from ..models.analytics import (
+from src.dependencies import CurrentUser
+from src.models.analytics import (
     CourseProgressItem,
     UserAnalyticsResponse,
     UserProgressSummary,
 )
-from ..models.courses import (
+from src.models.courses import (
     AICourseRequest,
     CourseContributionDay,
     CourseCreate,
@@ -45,228 +45,33 @@ from ..models.courses import (
     TopicResponse,
     TopicUpdate,
 )
-from ..models.schedule import ScheduleResponse
-from ..services.credit_service import (
+from src.models.schedule import ScheduleResponse
+from src.services.credit_service import (
     CREDIT_COSTS,
     consume_credits,
     get_credit_usage,
 )
-from ..services.spaced_repetition_service import ensure_review_item_for_completed_topic
-from ..utils.dependencies import get_db_client
-from ..utils.progress import round_progress_percent
-from ..utils.exceptions import (
-    ForbiddenError,
-    ResourceNotFoundError,
+from src.services.spaced_repetition_service import ensure_review_item_for_completed_topic
+from src.utils.dependencies import get_db_client
+from src.utils.exceptions import (
     SubscriptionLimitError,
     ValidationError,
 )
+from src.utils.progress import round_progress_percent
+from src.routes.courses_helpers import (
+    calculate_course_progress,
+    calculate_module_progress,
+    calculate_topic_list_progress,
+    check_course_ownership,
+    check_module_ownership,
+    check_topic_ownership,
+    enrich_module_with_progress,
+    outline_satisfaction_recorded_for_user,
+    update_goal_progress_for_course,
+    update_goal_progress_for_topic,
+)
 
 router = APIRouter(tags=["courses"])
-
-
-# ============================================================================
-# Helper Functions for Progress Calculation
-# ============================================================================
-
-
-async def calculate_topic_list_progress(topics: list[Any]) -> tuple[float, int, int]:
-    """
-    Calculate progress from a list of topics.
-    """
-    total = len(topics)
-    if total == 0:
-        return 0.0, 0, 0
-
-    completed = sum(1 for topic in topics if topic.completed)
-    progress = round_progress_percent((completed / total) * 100)
-
-    return progress, total, completed
-
-
-async def calculate_module_progress(db: PrismaClient, module_id: str) -> tuple[float, bool]:
-    """
-    Calculate progress for a single module.
-    """
-    topics = await db.topic.find_many(where={"moduleId": module_id})
-
-    if not topics:
-        return 0.0, True  # No topics = considered complete
-
-    progress, total, completed = await calculate_topic_list_progress(topics)
-    is_completed = completed == total
-
-    return progress, is_completed
-
-
-async def calculate_course_progress(db: PrismaClient, course_id: str) -> tuple[float, int, int]:
-    """
-    Calculate overall course progress based on total topics.
-    """
-    total_topics = await db.topic.count(where={"module": {"courseId": course_id}})
-
-    if total_topics == 0:
-        return 0.0, 0, 0
-
-    completed_topics = await db.topic.count(
-        where={"module": {"courseId": course_id}, "completed": True}
-    )
-
-    progress = round_progress_percent((completed_topics / total_topics) * 100)
-
-    return progress, total_topics, completed_topics
-
-
-async def update_goal_progress_for_course(db: PrismaClient, course_id: str, user_id: str) -> None:
-    """
-    Update progress for all goals linked to a course.
-    """
-    # Find all goals linked to this course
-    goals = await db.goal.find_many(
-        where={"courseId": course_id, "userId": user_id, "status": "ACTIVE"}
-    )
-
-    if not goals:
-        return
-
-    # Calculate course progress
-    course_progress, _, _ = await calculate_course_progress(db, course_id)
-
-    # Update each goal
-    for goal in goals:
-        await db.goal.update(
-            where={"id": goal.id},
-            data={"progress": course_progress},
-        )
-
-        # Auto-complete goal if progress reaches 100%
-        if course_progress >= 100.0:
-            await db.goal.update(
-                where={"id": goal.id},
-                data={"status": "COMPLETED"},
-            )
-
-
-async def update_goal_progress_for_topic(
-    db: PrismaClient, topic_id: str, user_id: str, completed: bool
-) -> None:
-    """
-    Update progress for all goals linked to a specific topic.
-    """
-    # Find all goals linked to this topic
-    goals = await db.goal.find_many(
-        where={"topicId": topic_id, "userId": user_id, "status": "ACTIVE"}
-    )
-
-    if not goals:
-        return
-
-    # Topic-based goals: 100% if completed, 0% if not
-    progress = 100.0 if completed else 0.0
-
-    # Update each goal
-    for goal in goals:
-        await db.goal.update(
-            where={"id": goal.id},
-            data={"progress": progress},
-        )
-
-        # Auto-complete goal if topic is completed
-        if completed:
-            await db.goal.update(
-                where={"id": goal.id},
-                data={"status": "COMPLETED"},
-            )
-
-
-async def enrich_module_with_progress(
-    db: PrismaClient, module: Any, include_topics: bool = True
-) -> dict[str, Any]:
-    """
-    Enrich a module with calculated progress and completion status.
-    """
-    topics = await db.topic.find_many(
-        where={"moduleId": module.id}, include={"notes": True}, order={"order": "asc"}
-    )
-
-    progress, total, completed = await calculate_topic_list_progress(topics)
-    is_completed = completed == total if total > 0 else True
-
-    topic_payload = (
-        [TopicResponse.model_validate(t, from_attributes=True) for t in topics]
-        if include_topics
-        else []
-    )
-
-    return {
-        "id": module.id,
-        "courseId": module.courseId,
-        "title": module.title,
-        "order": module.order,
-        "description": module.description,
-        "completed": is_completed,
-        "progress": progress,
-        "topicCount": total,
-        "completedTopicCount": completed,
-        "topics": topic_payload,
-        "createdAt": module.createdAt,
-        "updatedAt": module.updatedAt,
-    }
-
-
-async def check_course_ownership(db: PrismaClient, course_id: str, user_id: str) -> Any:
-    """
-    Check if course exists and belongs to user.
-    """
-    course = await db.course.find_unique(where={"id": course_id})
-
-    if not course:
-        raise ResourceNotFoundError("Course", course_id)
-
-    if course.userId != user_id:
-        raise ForbiddenError("You don't have permission to access this course")
-
-    return course
-
-
-async def outline_satisfaction_recorded_for_user(
-    db: PrismaClient, user_id: str, course_id: str
-) -> bool:
-    n = await db.courseoutlinesatisfaction.count(where={"userId": user_id, "courseId": course_id})
-    return n > 0
-
-
-async def check_module_ownership(db: PrismaClient, module_id: str, user_id: str) -> tuple[Any, Any]:
-    """
-    Check if module exists and belongs to user (via course).
-    """
-    module = await db.module.find_unique(where={"id": module_id}, include={"course": True})
-
-    if not module:
-        raise ResourceNotFoundError("Module", module_id)
-
-    if module.course.userId != user_id:
-        raise ForbiddenError("You don't have permission to access this module")
-
-    return module, module.course
-
-
-async def check_topic_ownership(
-    db: PrismaClient, topic_id: str, user_id: str
-) -> tuple[Any, Any, Any]:
-    """
-    Check if topic exists and belongs to user (via module > course).
-    """
-    topic = await db.topic.find_unique(
-        where={"id": topic_id}, include={"module": {"include": {"course": True}}, "notes": True}
-    )
-
-    if not topic:
-        raise ResourceNotFoundError("Topic", topic_id)
-
-    if topic.module.course.userId != user_id:
-        raise ForbiddenError("You don't have permission to access this topic")
-
-    return topic, topic.module, topic.module.course
 
 
 # ============================================================================
@@ -290,7 +95,7 @@ async def generate_ai_course(
 
     # 1. Check Subscription Limits (Free Tier = Max 2 Courses/month)
     if current_user.tier == "FREE":
-        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
         course_count = await db.course.count(
             where={"userId": user_id, "createdAt": {"gte": thirty_days_ago}}
         )
@@ -585,7 +390,7 @@ async def create_course(
 
     # Check subscription tier limits (Free Tier = Max 2 Courses/month)
     if current_user.tier == "FREE":
-        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+        thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
         course_count = await db.course.count(
             where={"userId": user_id, "createdAt": {"gte": thirty_days_ago}}
         )
@@ -721,7 +526,7 @@ async def get_course_detail(
 
     course = await get_course(course_id, current_user, db)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     streak = await db.userstreak.find_unique(where={"userId": user_id})
     user_streak = CourseStreakSummary(
@@ -742,7 +547,7 @@ async def get_course_detail(
 
     daily_map: dict[str, float] = {}
     for s in sessions:
-        d = s.startTime.astimezone(timezone.utc).date().isoformat()
+        d = s.startTime.astimezone(UTC).date().isoformat()
         daily_map[d] = float(daily_map.get(d, 0.0) + float(s.duration or 0.0))
 
     daily: list[CourseContributionDay] = []
@@ -756,7 +561,7 @@ async def get_course_detail(
     last7_minutes = 0.0
     last30_minutes = 0.0
     for s in sessions:
-        st = s.startTime.astimezone(timezone.utc)
+        st = s.startTime.astimezone(UTC)
         dur = float(s.duration or 0.0)
         if st >= last7_start:
             last7_minutes += dur
@@ -778,7 +583,7 @@ async def get_course_detail(
         },
         order={"startTime": "asc"},
     )
-    all_dates = sorted({s.startTime.astimezone(timezone.utc).date() for s in streak_sessions})
+    all_dates = sorted({s.startTime.astimezone(UTC).date() for s in streak_sessions})
 
     def _compute_streaks(dates: list) -> tuple[int, int]:
         if not dates:

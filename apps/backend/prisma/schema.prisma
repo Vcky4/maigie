@@ -301,6 +301,9 @@ model User {
   // Knowledge Base (user uploads indexed for RAG context)
   userUploads UserUpload[]
 
+  // Model Preferences (multi-model support)
+  modelPreferences ModelPreference[]
+
   // Gamification
   // points Int @default(0) // Note: using dynamic calculation for now
 
@@ -543,6 +546,9 @@ model ChatSession {
   isActive Boolean @default(true) // False if archived/deleted
   isCircleRoom Boolean @default(false)
 
+  // Session type: "general" (default), "onboarding"
+  sessionType String @default("general")
+
   // Resource linkage (New: for per-page history persistence)
   courseId String?
   course   Course? @relation(fields: [courseId], references: [id], onDelete: SetNull)
@@ -574,6 +580,7 @@ model ChatSession {
   @@index([noteId])
   @@index([updatedAt]) // Useful for sorting "Recent Chats"
   @@index([isCircleRoom])
+  @@index([sessionType])
 }
 
 model ChatMessage {
@@ -645,6 +652,45 @@ model AIActionLog {
   createdAt DateTime @default(now())
 
   @@index([messageId])
+}
+
+// ==========================================
+//  LLM COST TRACKING MODULE
+// ==========================================
+
+model LlmCostRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  userTier     String   // Tier at time of request
+  provider     String   // "gemini", "openai", "anthropic"
+  model        String   // Model ID used
+  inputTokens  Int
+  outputTokens Int
+  costUsd      Decimal  @db.Decimal(12, 6) // 6 decimal places
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([provider, model])
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+// ==========================================
+//  MODEL PREFERENCES (Multi-Model Support)
+// ==========================================
+
+model ModelPreference {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  capability String   // "chat", "vision", "structured_output", "embedding"
+  provider   String   // "gemini", "openai", "anthropic"
+  modelId    String   // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, capability])
+  @@index([userId])
 }
 
 // ==========================================

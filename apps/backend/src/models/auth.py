@@ -8,8 +8,8 @@ See LICENSE file in the repository root for details.
 """
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
 
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator
 
 # --- Token Schemas ---
 
