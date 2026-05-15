@@ -49,6 +49,62 @@ from src.utils.exceptions import SubscriptionLimitError
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Skill badge mapping — maps tool/action names to user-facing skill labels
+# ---------------------------------------------------------------------------
+
+_TOOL_SKILL_MAP: dict[str, dict[str, str]] = {
+    # Course Management
+    "get_user_courses": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "create_course": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "update_course_outline": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "delete_course": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    # Note Taking
+    "get_user_notes": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "create_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "retake_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "add_summary_to_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "add_tags_to_note": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    # Goal Management
+    "get_user_goals": {"id": "goals", "name": "Goal Management", "icon": "target"},
+    "create_goal": {"id": "goals", "name": "Goal Management", "icon": "target"},
+    # Scheduling
+    "get_user_schedule": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    "check_schedule_conflicts": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    "create_schedule": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    # Resources
+    "get_user_resources": {"id": "resources", "name": "Resource Finder", "icon": "search"},
+    "recommend_resources": {"id": "resources", "name": "Resource Finder", "icon": "search"},
+    # Memory & Profile
+    "get_my_profile": {"id": "memory", "name": "Memory", "icon": "user"},
+    "save_user_fact": {"id": "memory", "name": "Memory", "icon": "user"},
+    "complete_review": {"id": "memory", "name": "Spaced Repetition", "icon": "refresh-cw"},
+    "email_user": {"id": "email", "name": "Email", "icon": "mail"},
+    # Planning
+    "create_study_plan": {"id": "planning", "name": "Study Planning", "icon": "map"},
+    "get_learning_insights": {"id": "planning", "name": "Learning Insights", "icon": "bar-chart"},
+    "get_pending_nudges": {"id": "planning", "name": "Smart Nudges", "icon": "bell"},
+}
+
+_QUERY_TYPE_SKILL_MAP: dict[str, dict[str, str]] = {
+    "courses": {"id": "courses", "name": "Course Management", "icon": "book-open"},
+    "goals": {"id": "goals", "name": "Goal Management", "icon": "target"},
+    "schedule": {"id": "scheduling", "name": "Scheduling", "icon": "calendar"},
+    "notes": {"id": "notes", "name": "Note Taking", "icon": "file-text"},
+    "resources": {"id": "resources", "name": "Resource Finder", "icon": "search"},
+}
+
+
+def _tool_to_skill_badge(tool_name: str) -> dict[str, str] | None:
+    """Map a tool/action name to a skill badge for the frontend."""
+    return _TOOL_SKILL_MAP.get(tool_name)
+
+
+def _query_type_to_skill_badge(query_type: str) -> dict[str, str] | None:
+    """Map a query result type to a skill badge."""
+    return _QUERY_TYPE_SKILL_MAP.get(query_type)
+
+
+# ---------------------------------------------------------------------------
 # LLMProviderError category → user-facing message mapping
 # ---------------------------------------------------------------------------
 
@@ -1593,6 +1649,21 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                 if all_components and clean_response:
                     main_content, suggestion_text = _extract_suggestion(clean_response)
 
+                # Build skill badges from executed actions and query results
+                skills_used: list[dict[str, str]] = []
+                _seen_skills: set[str] = set()
+                for action_info in executed_actions:
+                    badge = _tool_to_skill_badge(action_info["type"])
+                    if badge and badge["id"] not in _seen_skills:
+                        skills_used.append(badge)
+                        _seen_skills.add(badge["id"])
+                for qr in query_results:
+                    qt = qr.get("query_type", "")
+                    badge = _query_type_to_skill_badge(qt)
+                    if badge and badge["id"] not in _seen_skills:
+                        skills_used.append(badge)
+                        _seen_skills.add(badge["id"])
+
                 create_data: dict = {
                     "sessionId": session.id,
                     "userId": user.id,
@@ -1627,6 +1698,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         "id": assistant_message.id,
                         "content": main_content,
                         "suggestionText": suggestion_text,
+                        "skillsUsed": skills_used if skills_used else None,
                         "sessionId": session.id,
                         "requestId": ai_request_id,
                         "replyToMessageId": ai_reply_target_id,
@@ -1644,6 +1716,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                     "type": "assistant_final",
                                     "id": assistant_message.id,
                                     "content": main_content,
+                                    "skillsUsed": skills_used if skills_used else None,
                                     "sessionId": session.id,
                                     "requestId": ai_request_id,
                                     "replyToMessageId": ai_reply_target_id,
@@ -1659,6 +1732,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         "payload": {
                             "id": assistant_message.id,
                             "role": "assistant",
+                            "skillsUsed": skills_used if skills_used else None,
                             "sessionId": session.id,
                             "requestId": ai_request_id,
                             "replyToMessageId": ai_reply_target_id,

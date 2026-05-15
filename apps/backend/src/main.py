@@ -27,6 +27,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from src.core.database import check_db_health, connect_db, disconnect_db
 from src.routes import auth, chat, courses
 from src.routes.notes import router as notes_router
+from src.routes.skills import router as skills_router
 from src.routes.upload import router as upload_router
 
 from .config import get_settings
@@ -448,6 +449,9 @@ def create_app() -> FastAPI:
 
     # Model selection API (multi-provider LLM support)
     app.include_router(model_selection_router)
+
+    # Skills API (skill suggestions for chat UI)
+    app.include_router(skills_router)
 
     # Webhook endpoints (no auth required, verified by provider signature)
     app.include_router(stripe_webhook_router, prefix=f"{settings.API_V1_STR}/webhooks")
