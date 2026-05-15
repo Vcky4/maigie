@@ -254,6 +254,12 @@ class Settings(BaseSettings):
     GEMINI_LIVE_MODEL: str = "models/gemini-2.5-flash-native-audio-preview-12-2025"
     GEMINI_LIVE_GREETING_PROMPT: str | None = None
 
+    # --- Firebase Cloud Messaging (Push Notifications) ---
+    # Path to Firebase service account JSON file (preferred for production)
+    FIREBASE_SERVICE_ACCOUNT_PATH: str = ""
+    # Alternatively, provide the JSON content directly (useful for Docker/env-based deploys)
+    FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
+
     # --- Background tasks (schedule AI batching) ---
     AI_SCHEDULE_REVIEW_MAX_USERS: int = 500
 

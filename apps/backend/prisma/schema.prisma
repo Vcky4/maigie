@@ -304,6 +304,9 @@ model User {
   // Model Preferences (multi-model support)
   modelPreferences ModelPreference[]
 
+  // Push Notification Device Tokens (FCM)
+  deviceTokens DeviceToken[]
+
   // Gamification
   // points Int @default(0) // Note: using dynamic calculation for now
 
@@ -1911,4 +1914,32 @@ model UserUpload {
 
   @@index([userId])
   @@index([userId, createdAt])
+}
+
+// ==========================================
+//  PUSH NOTIFICATIONS (FCM)
+// ==========================================
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+model DeviceToken {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token    String         @unique // FCM registration token
+  platform DevicePlatform
+  deviceId String?        // Optional device identifier for deduplication
+
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([token])
+  @@index([userId, isActive])
 }
