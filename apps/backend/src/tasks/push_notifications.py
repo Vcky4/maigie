@@ -2,8 +2,8 @@
 Push notification tasks (Celery).
 
 Background tasks for sending FCM push notifications.
-These tasks are enqueued by other services (e.g., schedule reminders,
-chat messages, study tips) and processed asynchronously.
+- Schedule reminder: Every 15 minutes (15 min before start) — all users with active device tokens
+- Generic push: On-demand single/batch notifications
 
 Copyright (C) 2025 Maigie
 
@@ -14,16 +14,154 @@ See LICENSE file in the repository root for details.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.tasks.base import run_async_in_celery, task
 from src.tasks.registry import register_task
+from src.tasks.schedules import (
+    EVERY_15_MINUTES,
+    register_periodic_task,
+)
 
 logger = logging.getLogger(__name__)
 
 TASK_SEND_PUSH = "push_notifications.send_push"
 TASK_SEND_PUSH_BATCH = "push_notifications.send_push_batch"
-TASK_SEND_SCHEDULE_PUSH_REMINDER = "push_notifications.send_schedule_push_reminder"
+TASK_SCHEDULE_PUSH_REMINDER = "push_notifications.send_schedule_push_reminders"
+
+REMINDER_WINDOW_MINUTES = 15
+
+
+async def _ensure_db_connected() -> None:
+    from src.core.database import db
+
+    if not db.is_connected():
+        await db.connect()
+
+
+async def _send_schedule_push_reminders_impl() -> dict[str, Any]:
+    """
+    Find ScheduleBlocks starting in the next 15 minutes and send push reminders.
+
+    Respects user preferences:
+    - notifications must be enabled (global toggle)
+    - pushScheduleReminder must be enabled
+    - User must have at least one active device token
+    """
+    from src.core.database import db
+    from src.services.push_notification_service import send_push_notification
+
+    await _ensure_db_connected()
+
+    now = datetime.now(UTC)
+    window_end = now + timedelta(minutes=REMINDER_WINDOW_MINUTES)
+    sent = 0
+    skipped = 0
+    errors: list[dict[str, str]] = []
+
+    # Find schedule blocks starting in the next 15 minutes
+    blocks = await db.scheduleblock.find_many(
+        where={
+            "startAt": {"gte": now, "lte": window_end},
+        },
+        include={
+            "user": {
+                "include": {
+                    "preferences": True,
+                    "deviceTokens": {"where": {"isActive": True}},
+                }
+            },
+            "course": True,
+        },
+    )
+
+    for block in blocks:
+        try:
+            user = block.user
+            if not user:
+                continue
+
+            # Check if user has active device tokens
+            device_tokens = getattr(user, "deviceTokens", None) or []
+            if not device_tokens:
+                skipped += 1
+                continue
+
+            # Check user preferences
+            prefs = user.preferences
+            if prefs and not getattr(prefs, "notifications", True):
+                skipped += 1
+                continue
+            if prefs and not getattr(prefs, "pushScheduleReminder", True):
+                skipped += 1
+                continue
+
+            # Format the start time in user's timezone
+            tz_str = (getattr(prefs, "timezone", None) if prefs else None) or "UTC"
+            try:
+                tz = ZoneInfo(tz_str)
+            except Exception:
+                tz = ZoneInfo("UTC")
+
+            local_start = block.startAt.astimezone(tz)
+            start_time = local_start.strftime("%I:%M %p")
+
+            # Build notification content
+            title = "📚 Study Reminder"
+            body = f"{block.title} starts at {start_time}"
+
+            # Add course context if available
+            course = getattr(block, "course", None)
+            if course:
+                body = f"{block.title} ({course.title}) starts at {start_time}"
+
+            # Data payload for client-side navigation
+            data: dict[str, str] = {
+                "type": "schedule_reminder",
+                "schedule_id": block.id,
+                "start_at": block.startAt.isoformat(),
+            }
+            if block.courseId:
+                data["course_id"] = block.courseId
+            if block.topicId:
+                data["topic_id"] = block.topicId
+
+            result = await send_push_notification(
+                user_id=user.id,
+                title=title,
+                body=body,
+                data=data,
+            )
+
+            if result.get("sent", 0) > 0:
+                sent += 1
+            elif result.get("skipped"):
+                skipped += 1
+
+        except Exception as e:
+            logger.exception("Push schedule reminder failed for block %s: %s", block.id, e)
+            errors.append({"blockId": block.id, "error": str(e)})
+
+    logger.info(
+        "Push schedule reminders: sent=%d, skipped=%d, errors=%d, blocks_checked=%d",
+        sent,
+        skipped,
+        len(errors),
+        len(blocks),
+    )
+    return {
+        "sent": sent,
+        "skipped": skipped,
+        "errors": errors,
+        "blocks_checked": len(blocks),
+    }
+
+
+# ============================================================================
+# Celery Tasks
+# ============================================================================
 
 
 @register_task(
@@ -54,13 +192,9 @@ def send_push_notification_task(
     """
 
     async def _send() -> dict[str, Any]:
-        from src.core.database import db
-
-        if not db.is_connected():
-            await db.connect()
-
         from src.services.push_notification_service import send_push_notification
 
+        await _ensure_db_connected()
         return await send_push_notification(
             user_id=user_id,
             title=title,
@@ -100,13 +234,9 @@ def send_push_batch_task(
     """
 
     async def _send() -> dict[str, Any]:
-        from src.core.database import db
-
-        if not db.is_connected():
-            await db.connect()
-
         from src.services.push_notification_service import send_push_to_multiple_users
 
+        await _ensure_db_connected()
         return await send_push_to_multiple_users(
             user_ids=user_ids,
             title=title,
@@ -119,70 +249,42 @@ def send_push_batch_task(
 
 
 @register_task(
-    name=TASK_SEND_SCHEDULE_PUSH_REMINDER,
-    description="Send schedule reminder push notifications (15 min before)",
+    name=TASK_SCHEDULE_PUSH_REMINDER,
+    description="Send push schedule reminders 15 minutes before start",
     category="notification",
-    tags=["push", "fcm", "schedule"],
+    tags=["push", "fcm", "schedule", "reminder"],
 )
-@task(name=TASK_SEND_SCHEDULE_PUSH_REMINDER, max_retries=2, default_retry_delay=30)
-def send_schedule_push_reminder_task() -> dict[str, Any]:
+@task(name=TASK_SCHEDULE_PUSH_REMINDER, bind=True, max_retries=2)
+def send_schedule_push_reminders_task(self) -> dict[str, Any]:
     """Celery task: check upcoming schedule blocks and send push reminders.
 
-    Runs every 15 minutes. Finds schedule blocks starting in the next 15 minutes
-    and sends push notifications to the users.
-
-    Returns:
-        Result dict with count of reminders sent.
+    Runs every 15 minutes via Celery Beat. Finds schedule blocks starting
+    in the next 15 minutes and sends push notifications to users who have:
+    - Active device tokens registered
+    - Push notifications enabled in preferences
     """
-    from datetime import UTC, datetime, timedelta
+    from src.config import settings
 
-    async def _send_reminders() -> dict[str, Any]:
-        from src.core.database import db
+    if settings.ENVIRONMENT == "development":
+        logger.info("Skipping push schedule reminders (env=%s)", settings.ENVIRONMENT)
+        return {"skipped": True, "reason": "development environment"}
 
-        if not db.is_connected():
-            await db.connect()
+    return run_async_in_celery(_send_schedule_push_reminders_impl())
 
-        from src.services.push_notification_service import send_push_notification
 
-        now = datetime.now(UTC)
-        window_start = now
-        window_end = now + timedelta(minutes=15)
+# ============================================================================
+# Celery Beat Registration
+# ============================================================================
 
-        # Find schedule blocks starting in the next 15 minutes
-        upcoming_blocks = await db.scheduleblock.find_many(
-            where={
-                "startAt": {
-                    "gte": window_start,
-                    "lte": window_end,
-                },
-            },
-            include={"user": True},
-        )
 
-        sent_count = 0
-        for block in upcoming_blocks:
-            # Format the start time nicely
-            start_time = block.startAt.strftime("%I:%M %p")
-            title = "📚 Study Reminder"
-            body = f"{block.title} starts at {start_time}"
+def register_push_notification_beat_tasks() -> None:
+    """Register periodic Celery Beat tasks for push notifications."""
+    # Schedule push reminders: every 15 minutes
+    register_periodic_task(
+        name="push_notifications.schedule_reminder.every_15min",
+        schedule=EVERY_15_MINUTES,
+        task=TASK_SCHEDULE_PUSH_REMINDER,
+    )
 
-            data = {
-                "type": "schedule_reminder",
-                "schedule_id": block.id,
-            }
-            if block.courseId:
-                data["course_id"] = block.courseId
 
-            result = await send_push_notification(
-                user_id=block.userId,
-                title=title,
-                body=body,
-                data=data,
-            )
-            if result.get("sent", 0) > 0:
-                sent_count += 1
-
-        logger.info(f"Schedule push reminders sent: {sent_count}/{len(upcoming_blocks)}")
-        return {"reminders_sent": sent_count, "blocks_checked": len(upcoming_blocks)}
-
-    return run_async_in_celery(_send_reminders())
+register_push_notification_beat_tasks()

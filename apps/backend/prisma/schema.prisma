@@ -417,6 +417,10 @@ model UserPreferences {
   emailMorningSchedule  Boolean @default(true)
   emailScheduleReminder Boolean @default(true)
   emailWeeklyTips       Boolean @default(true)
+
+  // Push notification preferences
+  pushScheduleReminder Boolean @default(true)
+  pushStudyTips        Boolean @default(true)
 }
 
 /// Tracks when we sent "limit reached" email to avoid spamming (one per credit period).

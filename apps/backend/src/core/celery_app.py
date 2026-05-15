@@ -117,6 +117,7 @@ try:
         course_generation,  # noqa: F401
         email_notifications,  # noqa: F401
         exam_prep_tasks,  # noqa: F401
+        push_notifications,  # noqa: F401
         resource_recommendations,  # noqa: F401
         schedule_generation,  # noqa: F401
         spaced_repetition,  # noqa: F401
