@@ -540,6 +540,7 @@ class DashboardScheduleItem(BaseModel):
     courseId: str | None
     topicId: str | None
     goalId: str | None
+    reviewItemId: str | None = None
 
 
 class DashboardNudgeItem(BaseModel):

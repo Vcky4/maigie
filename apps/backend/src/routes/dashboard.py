@@ -197,6 +197,7 @@ async def get_dashboard(
                 courseId=getattr(schedule, "courseId", None),
                 topicId=getattr(schedule, "topicId", None),
                 goalId=getattr(schedule, "goalId", None),
+                reviewItemId=getattr(schedule, "reviewItemId", None),
             )
             for schedule in upcoming_schedules
         ]
