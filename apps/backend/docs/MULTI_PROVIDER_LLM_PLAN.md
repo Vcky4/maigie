@@ -6,7 +6,7 @@ This document tracks the roadmap for **codebase improvements** first, then **Ope
 
 1. **Single source of truth** for API keys (typed `Settings`), default model IDs per *logical task*, and billing alignment.
 2. **Provider-agnostic boundary** so chat, tools, streaming, and batch jobs can swap implementations without rewriting product logic.
-3. **Safe rollout** via feature flags, allowlists, and tests on the agentic tool loop.
+3. **Safe rollout** via feature flags, allowlists, and tests on the agentic tool loop. 
 
 ## Phase A — Foundations (done)
 
