@@ -266,6 +266,7 @@ model User {
   referralRewards     ReferralReward[] // Rewards earned as referrer
   referralRewardClaim ReferralRewardClaim[] // Claims made by this user
   referredByRewards   ReferralReward[]      @relation("ReferredUser") // Rewards where this user was referred
+  adRewardClaims      AdRewardClaim[] // Ad reward claims made by this user
 
   // Audit Relations
   auditLogs AuditLog[] @relation("AdminAuditLogs") // Audit logs created by this admin
@@ -1505,6 +1506,22 @@ model ReferralRewardClaim {
   @@index([userId])
   @@index([rewardId])
   @@index([claimDate])
+}
+
+model AdRewardClaim {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  adType   String // e.g. "rewarded_video"
+  credits  Int // Credits earned from this ad view
+  adUnitId String? // Optional: AdMob ad unit ID for tracking
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
 }
 
 // ==========================================

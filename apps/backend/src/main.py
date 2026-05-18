@@ -68,6 +68,7 @@ from .routes.mcp_routes import mcp as mcp_server
 from .routes.paystack_webhook import router as paystack_webhook_router
 from .routes.realtime import router as realtime_router
 from .routes.referrals import router as referrals_router
+from .routes.ads import router as ads_router
 from .routes.resource_bank import router as resource_bank_router
 from .routes.resources import router as resources_router
 from .routes.reviews import router as reviews_router
@@ -409,6 +410,7 @@ def create_app() -> FastAPI:
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
     app.include_router(referrals_router, prefix=f"{settings.API_V1_STR}/referrals")
+    app.include_router(ads_router, prefix=f"{settings.API_V1_STR}/ads")
 
     # Admin routes (admin-only access)
     app.include_router(admin_router)
