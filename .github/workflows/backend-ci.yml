@@ -173,6 +173,11 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_ENABLED_PROVIDERS: ${{ secrets.LLM_ENABLED_PROVIDERS }}
+          LLM_ROUTER_TIMEOUT_SECONDS: ${{ secrets.LLM_ROUTER_TIMEOUT_SECONDS }}
+          LLM_ADAPTER_TIMEOUT_SECONDS: ${{ secrets.LLM_ADAPTER_TIMEOUT_SECONDS }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
           PINECONE_CLOUD: ${{ secrets.PINECONE_CLOUD }}
@@ -356,6 +361,11 @@ jobs:
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+            export ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}"
+            export LLM_ENABLED_PROVIDERS="${{ secrets.LLM_ENABLED_PROVIDERS }}"
+            export LLM_ROUTER_TIMEOUT_SECONDS="${{ secrets.LLM_ROUTER_TIMEOUT_SECONDS }}"
+            export LLM_ADAPTER_TIMEOUT_SECONDS="${{ secrets.LLM_ADAPTER_TIMEOUT_SECONDS }}"
             export PINECONE_API_KEY="${{ secrets.PINECONE_API_KEY }}"
             export PINECONE_INDEX_NAME="${{ secrets.PINECONE_INDEX_NAME }}"
             export PINECONE_CLOUD="${{ secrets.PINECONE_CLOUD }}"
@@ -819,6 +829,11 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_ENABLED_PROVIDERS: ${{ secrets.LLM_ENABLED_PROVIDERS }}
+          LLM_ROUTER_TIMEOUT_SECONDS: ${{ secrets.LLM_ROUTER_TIMEOUT_SECONDS }}
+          LLM_ADAPTER_TIMEOUT_SECONDS: ${{ secrets.LLM_ADAPTER_TIMEOUT_SECONDS }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
           PINECONE_CLOUD: ${{ secrets.PINECONE_CLOUD }}
@@ -1111,6 +1126,11 @@ jobs:
           BUNNY_STORAGE_ZONE: ${{ secrets.BUNNY_STORAGE_ZONE }}
           BUNNY_CDN_HOSTNAME: ${{ secrets.BUNNY_CDN_HOSTNAME }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_ENABLED_PROVIDERS: ${{ secrets.LLM_ENABLED_PROVIDERS }}
+          LLM_ROUTER_TIMEOUT_SECONDS: ${{ secrets.LLM_ROUTER_TIMEOUT_SECONDS }}
+          LLM_ADAPTER_TIMEOUT_SECONDS: ${{ secrets.LLM_ADAPTER_TIMEOUT_SECONDS }}
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
           PINECONE_CLOUD: ${{ secrets.PINECONE_CLOUD }}
@@ -1273,6 +1293,11 @@ jobs:
             export BUNNY_STORAGE_ZONE="${{ secrets.BUNNY_STORAGE_ZONE }}"
             export BUNNY_CDN_HOSTNAME="${{ secrets.BUNNY_CDN_HOSTNAME }}"
             export GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
+            export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
+            export ANTHROPIC_API_KEY="${{ secrets.ANTHROPIC_API_KEY }}"
+            export LLM_ENABLED_PROVIDERS="${{ secrets.LLM_ENABLED_PROVIDERS }}"
+            export LLM_ROUTER_TIMEOUT_SECONDS="${{ secrets.LLM_ROUTER_TIMEOUT_SECONDS }}"
+            export LLM_ADAPTER_TIMEOUT_SECONDS="${{ secrets.LLM_ADAPTER_TIMEOUT_SECONDS }}"
             export PINECONE_API_KEY="${{ secrets.PINECONE_API_KEY }}"
             export PINECONE_INDEX_NAME="${{ secrets.PINECONE_INDEX_NAME }}"
             export PINECONE_CLOUD="${{ secrets.PINECONE_CLOUD }}"

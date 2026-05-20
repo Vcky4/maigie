@@ -218,6 +218,14 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_COOLDOWN_SECONDS: float = 30.0
     CIRCUIT_BREAKER_ROLLING_WINDOW_SECONDS: float = 60.0
 
+    # Router timeout — max seconds for the entire route_request pipeline (selection + execution).
+    # Must be generous enough for streaming LLM responses (typically 10–60s).
+    LLM_ROUTER_TIMEOUT_SECONDS: float = 90.0
+
+    # Per-adapter request timeout — max seconds for a single adapter call before
+    # the router treats it as a timeout failure and falls back to the next provider.
+    LLM_ADAPTER_TIMEOUT_SECONDS: float = 60.0
+
     # Retry
     LLM_MAX_RETRIES: int = 2
     LLM_RETRY_BASE_DELAY_SECONDS: float = 1.0
@@ -231,7 +239,7 @@ class Settings(BaseSettings):
     )
 
     # Feature flags — enabled providers (comma-separated)
-    LLM_ENABLED_PROVIDERS: str = "gemini"
+    LLM_ENABLED_PROVIDERS: str = "gemini,openai"
     # Tier-based model allowlists (comma-separated provider:model pairs)
     LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
