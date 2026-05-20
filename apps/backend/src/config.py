@@ -141,7 +141,9 @@ class Settings(BaseSettings):
 
     # WebSocket
     WEBSOCKET_HEARTBEAT_INTERVAL: int = 30  # seconds
-    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 120  # seconds — must exceed LLM_ADAPTER_TIMEOUT_SECONDS + fallback time
+    WEBSOCKET_HEARTBEAT_TIMEOUT: int = (
+        120  # seconds — must exceed LLM_ADAPTER_TIMEOUT_SECONDS + fallback time
+    )
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
     # Brevo (formerly Sendinblue) CRM Integration
