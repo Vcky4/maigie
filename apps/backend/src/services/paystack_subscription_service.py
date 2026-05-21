@@ -539,9 +539,7 @@ async def _handle_charge_success(payload: dict, db_client: Prisma) -> None:
                         f"(reference={reference}, user_id={transaction.userId})"
                     )
                 else:
-                    logger.info(
-                        f"Credit pack purchase already fulfilled for reference={reference}"
-                    )
+                    logger.info(f"Credit pack purchase already fulfilled for reference={reference}")
                 return  # Don't process as subscription charge
         except Exception as e:
             logger.error(

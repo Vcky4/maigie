@@ -35,12 +35,8 @@ class PurchaseInitiateRequest(BaseModel):
     """Request body for initiating a credit pack purchase."""
 
     packId: str = Field(..., description="ID of the credit pack to purchase")
-    successUrl: str = Field(
-        ..., description="URL to redirect to after successful payment"
-    )
-    cancelUrl: str = Field(
-        ..., description="URL to redirect to if payment is cancelled"
-    )
+    successUrl: str = Field(..., description="URL to redirect to after successful payment")
+    cancelUrl: str = Field(..., description="URL to redirect to if payment is cancelled")
 
 
 class PurchaseSessionResponse(BaseModel):
@@ -93,9 +89,7 @@ class AdminCreditAdjustRequest(BaseModel):
         ...,
         description="Adjustment amount. Positive = grant, negative = deduct. Must be non-zero.",
     )
-    reason: str = Field(
-        ..., description="Admin-provided reason for the adjustment"
-    )
+    reason: str = Field(..., description="Admin-provided reason for the adjustment")
 
     @field_validator("amount")
     @classmethod
@@ -103,9 +97,7 @@ class AdminCreditAdjustRequest(BaseModel):
         if v == 0:
             raise ValueError("Adjustment amount must be non-zero")
         if abs(v) > 999_999_999:
-            raise ValueError(
-                "Adjustment amount must be between -999999999 and 999999999"
-            )
+            raise ValueError("Adjustment amount must be between -999999999 and 999999999")
         return v
 
 

@@ -184,9 +184,7 @@ async def main() -> None:
         ]
 
         for pack_data in credit_packs:
-            existing = await prisma.creditpack.find_first(
-                where={"name": pack_data["name"]}
-            )
+            existing = await prisma.creditpack.find_first(where={"name": pack_data["name"]})
             if existing:
                 # Update existing pack to ensure data stays in sync
                 await prisma.creditpack.update(

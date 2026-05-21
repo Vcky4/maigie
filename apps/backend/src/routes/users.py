@@ -256,7 +256,9 @@ class UsageResponse(BaseModel):
     # Purchased credits
     purchasedCreditsBalance: int
     totalAvailable: int  # subscription remaining + purchased credits
-    purchasedCreditsAvailableAfterLimit: bool | None  # For FREE tier: purchased credits usable after daily limit
+    purchasedCreditsAvailableAfterLimit: (
+        bool | None
+    )  # For FREE tier: purchased credits usable after daily limit
 
     # Daily usage (for FREE tier)
     creditsUsedToday: int | None

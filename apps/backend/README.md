@@ -26,7 +26,11 @@ Run the automated setup script:
 ```powershell
 cd apps/backend
 .\setup-dev.ps1
+or
+./setup-dev.sh
 ```
+
+
 
 This will:
 

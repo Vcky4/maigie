@@ -95,8 +95,7 @@ async def initiate_purchase(
         )
     except Exception as e:
         logger.error(
-            f"Error initiating purchase for user {current_user.id}, "
-            f"pack {body.packId}: {e}"
+            f"Error initiating purchase for user {current_user.id}, " f"pack {body.packId}: {e}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -133,9 +132,7 @@ async def get_purchase_history(
             detail=e.message,
         )
     except Exception as e:
-        logger.error(
-            f"Error fetching purchase history for user {current_user.id}: {e}"
-        )
+        logger.error(f"Error fetching purchase history for user {current_user.id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve purchase history",
@@ -182,8 +179,7 @@ async def admin_adjust_balance(
         )
     except Exception as e:
         logger.error(
-            f"Error adjusting credits for user {body.userId} "
-            f"by admin {admin_user.id}: {e}"
+            f"Error adjusting credits for user {body.userId} " f"by admin {admin_user.id}: {e}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

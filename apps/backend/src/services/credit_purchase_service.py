@@ -103,16 +103,18 @@ async def get_credit_packs(user: User, db_client: Prisma | None = None) -> list[
 
         total_credits = pack.credits + pack.bonusCredits
 
-        result.append({
-            "id": pack.id,
-            "name": pack.name,
-            "credits": pack.credits,
-            "bonusCredits": pack.bonusCredits,
-            "totalCredits": total_credits,
-            "price": price,
-            "currency": currency,
-            "priceFormatted": _format_price(price, currency),
-        })
+        result.append(
+            {
+                "id": pack.id,
+                "name": pack.name,
+                "credits": pack.credits,
+                "bonusCredits": pack.bonusCredits,
+                "totalCredits": total_credits,
+                "price": price,
+                "currency": currency,
+                "priceFormatted": _format_price(price, currency),
+            }
+        )
 
     return result
 
@@ -149,9 +151,7 @@ async def initiate_purchase(
     settings = get_settings()
 
     # Validate the credit pack exists and is active
-    pack = await db_client.creditpack.find_first(
-        where={"id": pack_id, "isActive": True}
-    )
+    pack = await db_client.creditpack.find_first(where={"id": pack_id, "isActive": True})
     if not pack:
         raise ResourceNotFoundError("CreditPack", pack_id)
 
@@ -393,9 +393,7 @@ async def get_purchase_history(
         page = 1
 
     # Get total count
-    total = await db_client.creditpurchasetransaction.count(
-        where={"userId": user_id}
-    )
+    total = await db_client.creditpurchasetransaction.count(where={"userId": user_id})
 
     # Calculate pagination
     total_pages = math.ceil(total / page_size) if total > 0 else 0
@@ -414,17 +412,19 @@ async def get_purchase_history(
     items = []
     for txn in transactions:
         pack_name = txn.creditPack.name if txn.creditPack else "Unknown Pack"
-        items.append({
-            "id": txn.id,
-            "creditPackName": pack_name,
-            "creditsGranted": txn.creditsGranted,
-            "amountPaid": txn.amountPaid,
-            "currency": txn.currency,
-            "priceFormatted": _format_price(txn.amountPaid, txn.currency),
-            "status": txn.status,
-            "completedAt": txn.completedAt.isoformat() if txn.completedAt else None,
-            "createdAt": txn.createdAt.isoformat(),
-        })
+        items.append(
+            {
+                "id": txn.id,
+                "creditPackName": pack_name,
+                "creditsGranted": txn.creditsGranted,
+                "amountPaid": txn.amountPaid,
+                "currency": txn.currency,
+                "priceFormatted": _format_price(txn.amountPaid, txn.currency),
+                "status": txn.status,
+                "completedAt": txn.completedAt.isoformat() if txn.completedAt else None,
+                "createdAt": txn.createdAt.isoformat(),
+            }
+        )
 
     return {
         "items": items,
@@ -552,7 +552,9 @@ async def _send_purchase_receipt_email(
     template_data = get_email_template_data(data)
     template_data["app_name"] = "Maigie"
     template_data["logo_url"] = settings.EMAIL_LOGO_URL or ""
-    template_data["dashboard_url"] = f"{settings.FRONTEND_BASE_URL or 'https://app.maigie.com'}/dashboard"
+    template_data["dashboard_url"] = (
+        f"{settings.FRONTEND_BASE_URL or 'https://app.maigie.com'}/dashboard"
+    )
 
     subject = format_email_subject(data.pack_name, data.credits_granted)
 

@@ -59,6 +59,7 @@ class CreditConsumptionResult:
     notice: str | None
     purchased_balance_remaining: int
 
+
 settings = get_settings()
 
 
@@ -557,10 +558,7 @@ async def consume_credits(
         referral_increase = await get_daily_limit_increase(user, db_client)
         effective_daily_limit = daily_limit + referral_increase
 
-        if (
-            effective_daily_limit > 0
-            and credits_used_today + credits > effective_daily_limit
-        ):
+        if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
             daily_limit_hit = True
 
     # Case 1: FREE tier daily limit hit - try purchased credits
@@ -630,7 +628,7 @@ async def consume_credits(
 
         # Check for 80% soft cap warning
         warning_message = None
-        new_credits_used = (updated_user.creditsUsed or 0)
+        new_credits_used = updated_user.creditsUsed or 0
         if soft_cap > 0 and new_credits_used >= soft_cap:
             new_remaining = hard_cap - new_credits_used
             warning_message = (
