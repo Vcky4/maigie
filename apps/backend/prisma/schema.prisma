@@ -201,6 +201,9 @@ model User {
   creditsSoftCap     Int? // Soft cap (warning threshold) - null means no soft cap
   creditsHardCap     Int? // Hard cap (blocking threshold) - null means no hard cap
 
+  // Purchased credits (never expire, consumed after subscription credits)
+  purchasedCreditsBalance Int @default(0)
+
   // Daily credit tracking (for FREE tier)
   creditsUsedToday  Int       @default(0) // Credits consumed today
   creditsDailyLimit Int? // Daily limit (only for FREE tier)
@@ -267,6 +270,9 @@ model User {
   referralRewardClaim ReferralRewardClaim[] // Claims made by this user
   referredByRewards   ReferralReward[]      @relation("ReferredUser") // Rewards where this user was referred
   adRewardClaims      AdRewardClaim[] // Ad reward claims made by this user
+
+  // Credit Purchase Relations
+  creditPurchaseTransactions CreditPurchaseTransaction[]
 
   // Audit Relations
   auditLogs AuditLog[] @relation("AdminAuditLogs") // Audit logs created by this admin
@@ -1935,6 +1941,64 @@ model UserUpload {
 
   @@index([userId])
   @@index([userId, createdAt])
+}
+
+// ==========================================
+//  CREDIT PURCHASE MODULE
+// ==========================================
+
+model CreditPack {
+  id           String @id @default(cuid())
+  name         String // e.g., "Starter Pack", "Value Pack", "Power Pack"
+  credits      Int    // Base credit amount
+  bonusCredits Int    @default(0) // Bonus credits included
+
+  // Pricing (stored in smallest currency unit: cents for USD, kobo for NGN)
+  priceUsdCents Int // Price in USD cents
+  priceNgnKobo  Int // Price in NGN kobo
+
+  sortOrder Int     @default(0) // For ordering (lowest to highest)
+  isActive  Boolean @default(true) // Soft-disable packs
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions CreditPurchaseTransaction[]
+
+  @@index([isActive, sortOrder])
+}
+
+model CreditPurchaseTransaction {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  creditPackId String
+  creditPack   CreditPack @relation(fields: [creditPackId], references: [id])
+
+  creditsGranted Int // Total credits added (base + bonus)
+
+  // Payment details
+  amountPaid        Int    // Amount in smallest currency unit
+  currency          String // "USD", "NGN", etc.
+  paymentProvider   String // "stripe" | "paystack"
+  providerReference String @unique // Stripe payment_intent ID or Paystack reference
+
+  // Session tracking
+  sessionId        String?   // Stripe checkout session ID or Paystack access code
+  sessionExpiresAt DateTime? // When the payment session expires
+
+  status      String    @default("pending") // "pending", "completed", "failed", "expired"
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([providerReference])
+  @@index([status])
+  @@index([sessionId])
 }
 
 // ==========================================

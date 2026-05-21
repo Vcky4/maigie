@@ -6,6 +6,7 @@ This module handles:
 - Hard/soft cap enforcement
 - Credit period management
 - Fair usage prevention
+- Purchased credits fallback
 
 Copyright (C) 2025 Maigie
 
@@ -14,8 +15,9 @@ See LICENSE file in the repository root for details.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Literal
 
 from prisma import Prisma
 from prisma.models import User
@@ -27,6 +29,35 @@ from src.services.referral_service import get_daily_limit_increase
 from src.utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
+
+
+# Deep link for in-app credit purchase flow
+PURCHASE_DEEP_LINK = "maigie://credits/purchase"
+
+
+@dataclass
+class CreditConsumptionResult:
+    """Result of a credit consumption operation with source metadata.
+
+    Attributes:
+        user: The updated User object after consumption.
+        credits_consumed: Total credits consumed in this operation.
+        source: Where credits were consumed from ('subscription', 'purchased', or 'both').
+        subscription_deducted: Credits deducted from subscription balance.
+        purchased_deducted: Credits deducted from purchased balance.
+        warning: Optional 80% threshold warning message.
+        notice: Optional notice when purchased credits were used.
+        purchased_balance_remaining: Remaining purchased credits balance after operation.
+    """
+
+    user: User
+    credits_consumed: int
+    source: Literal["subscription", "purchased", "both"]
+    subscription_deducted: int
+    purchased_deducted: int
+    warning: str | None
+    notice: str | None
+    purchased_balance_remaining: int
 
 settings = get_settings()
 
@@ -296,6 +327,8 @@ async def check_credit_availability(
     """
     Check if user (or circle) has enough credits available.
 
+    Checks subscription credits first, then falls back to purchased credits balance.
+
     Args:
         user: User model instance
         credits_needed: Number of credits required (raw tokens - multiplier will be applied)
@@ -303,9 +336,9 @@ async def check_credit_availability(
         circle_id: Optional ID of the circle to check credits for
 
     Returns:
-        Tuple of (is_available, warning_message)
-        - is_available: True if credits can be consumed, False if hard cap reached
-        - warning_message: Optional warning if soft cap is reached
+        Tuple of (is_available, warning_or_notice_message)
+        - is_available: True if credits can be consumed, False if all credits exhausted
+        - warning_or_notice_message: Optional warning/notice message
     """
     if db_client is None:
         db_client = db
@@ -339,6 +372,7 @@ async def check_credit_availability(
     hard_cap = user.creditsHardCap or 0
     soft_cap = user.creditsSoftCap or 0
     credits_used = user.creditsUsed or 0
+    purchased_balance = user.purchasedCreditsBalance or 0
 
     # For FREE tier, check daily limit first
     if tier_str == "FREE":
@@ -349,24 +383,67 @@ async def check_credit_availability(
         referral_increase = await get_daily_limit_increase(user, db_client)
         effective_daily_limit = daily_limit + referral_increase
 
-        # Check daily limit first
+        # Check daily limit
         if (
             effective_daily_limit > 0
             and credits_used_today + credits_needed > effective_daily_limit
         ):
-            return False, None
+            # Daily limit hit - check if purchased credits can cover it
+            if purchased_balance >= credits_needed:
+                return True, (
+                    f"Daily limit reached. Using purchased credits. "
+                    f"Remaining purchased balance: {purchased_balance - credits_needed:,} credits."
+                )
+            elif purchased_balance > 0:
+                return False, (
+                    f"Daily limit reached. Your purchased credits balance ({purchased_balance:,}) "
+                    f"is insufficient for this operation ({credits_needed:,} credits required). "
+                    f"Purchase more credits to continue."
+                )
+            else:
+                return False, None
 
     # Check monthly hard cap
     if hard_cap > 0 and credits_used + credits_needed > hard_cap:
-        return False, None
+        # Subscription credits exhausted - check purchased credits
+        remaining_subscription = max(0, hard_cap - credits_used)
+        shortfall = credits_needed - remaining_subscription
+
+        if purchased_balance >= shortfall:
+            # Purchased credits can cover the shortfall
+            notice = (
+                f"Subscription credits exhausted. Using purchased credits. "
+                f"Remaining purchased balance after operation: "
+                f"{purchased_balance - shortfall:,} credits."
+            )
+            return True, notice
+        elif purchased_balance > 0:
+            # Purchased balance is positive but insufficient
+            return False, (
+                f"Insufficient credits. Subscription credits exhausted. "
+                f"Your purchased credits balance ({purchased_balance:,}) "
+                f"is insufficient for this operation ({shortfall:,} credits required from purchased balance). "
+                f"Purchase more credits to continue."
+            )
+        else:
+            # Both exhausted
+            return False, None
 
     # Check soft cap (warning only, doesn't block)
     warning_message = None
     if soft_cap > 0 and credits_used >= soft_cap:
         remaining = hard_cap - credits_used
         warning_message = (
-            f"You've reached {soft_cap:,} credits (soft cap). "
-            f"You have {remaining:,} credits remaining before hitting the hard cap."
+            f"You've used 80% of your credit allocation. "
+            f"You have {remaining:,} credits remaining before hitting your limit. "
+            f"Consider purchasing additional credits to avoid interruption."
+        )
+    elif soft_cap > 0 and credits_used + credits_needed >= soft_cap:
+        remaining = hard_cap - (credits_used + credits_needed)
+        warning_message = (
+            f"You've used 80% of your credit allocation. "
+            f"You have {remaining:,} credits remaining before hitting your limit. "
+            f"Consider purchasing additional credits to avoid interruption."
         )
 
     return True, warning_message
@@ -394,9 +471,16 @@ async def consume_credits(
     operation: str = "unknown",
     db_client: Prisma | None = None,
     circle_id: str | None = None,
-) -> User:
+) -> CreditConsumptionResult:
     """
     Consume credits for a user or circle operation.
+
+    Supports three consumption modes:
+    - Subscription only: when subscription credits are sufficient
+    - Split (both): when subscription partially covers and purchased covers the rest
+    - Purchased only: when subscription is exhausted but purchased balance is sufficient
+
+    For FREE tier: if daily limit is hit but purchasedCreditsBalance > 0, consumes from purchased.
 
     Args:
         user: User model instance
@@ -406,10 +490,10 @@ async def consume_credits(
         circle_id: Optional ID of the circle to consume credits from
 
     Returns:
-        Updated User object
+        CreditConsumptionResult with source metadata
 
     Raises:
-        SubscriptionLimitError: If hard cap would be exceeded
+        SubscriptionLimitError: If all credits (subscription + purchased) are exhausted
     """
     if db_client is None:
         db_client = db
@@ -417,12 +501,11 @@ async def consume_credits(
     # Apply token multiplier to reduce credits charged
     credits = apply_token_multiplier(credits)
 
-    # Check availability before consuming
-    is_available, warning_message = await check_credit_availability(
-        user, credits, db_client, circle_id
-    )
-
+    # Handle circle consumption (unchanged behavior)
     if circle_id:
+        is_available, warning_message = await check_credit_availability(
+            user, credits, db_client, circle_id
+        )
         if not is_available:
             raise SubscriptionLimitError(
                 message="Circle credit limit exceeded.",
@@ -433,7 +516,16 @@ async def consume_credits(
             where={"id": circle_id}, data={"credits": {"increment": credits}}
         )
         logger.info(f"Consumed {credits} credits for circle {circle_id} (operation: {operation})")
-        return user
+        return CreditConsumptionResult(
+            user=user,
+            credits_consumed=credits,
+            source="subscription",
+            subscription_deducted=credits,
+            purchased_deducted=0,
+            warning=None,
+            notice=None,
+            purchased_balance_remaining=user.purchasedCreditsBalance or 0,
+        )
 
     # Ensure credit period is active
     user = await ensure_credit_period(user, db_client)
@@ -441,97 +533,279 @@ async def consume_credits(
     # Reset daily credits if needed (for FREE tier)
     user = await reset_daily_credits_if_needed(user, db_client)
 
-    # Check availability before consuming
-    is_available, warning_message = await check_credit_availability(user, credits, db_client)
-    if not is_available:
-        tier_str = str(user.tier) if user.tier else "FREE"
-        hard_cap = user.creditsHardCap or 0
-        credits_used = user.creditsUsed or 0
+    # Refresh user from database to get latest state
+    user = await db_client.user.find_unique(where={"id": user.id})
+    if not user:
+        raise ValueError("User not found after refresh")
 
-        # For FREE tier, check if it's daily or monthly limit
-        if tier_str == "FREE":
-            daily_limit = user.creditsDailyLimit or 0
-            credits_used_today = user.creditsUsedToday or 0
+    tier_str = str(user.tier) if user.tier else "FREE"
+    hard_cap = user.creditsHardCap or 0
+    soft_cap = user.creditsSoftCap or 0
+    credits_used = user.creditsUsed or 0
+    purchased_balance = user.purchasedCreditsBalance or 0
+    remaining_subscription = max(0, hard_cap - credits_used)
 
-            # Get daily limit increase from claimed referral rewards
-            referral_increase = await get_daily_limit_increase(user, db_client)
-            effective_daily_limit = daily_limit + referral_increase
+    # Determine consumption strategy
+    daily_limit_hit = False
 
-            # Check if daily limit is exceeded
-            if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
-                raise SubscriptionLimitError(
-                    message=f"Daily credit limit exceeded. You've used {credits_used_today:,} of {effective_daily_limit:,} credits today.",
-                    detail=f"This operation requires {credits} credits. Your daily limit resets at midnight UTC. Start a free trial for higher limits.",
-                )
+    # For FREE tier, check daily limit first
+    if tier_str == "FREE":
+        daily_limit = user.creditsDailyLimit or 0
+        credits_used_today = user.creditsUsedToday or 0
 
-        # Monthly limit exceeded
-        if tier_str == "FREE":
-            # Send limit-reached email once per period (encourage free trial)
-            period_end = user.creditsPeriodEnd
-            if period_end:
-                try:
-                    existing = await db_client.limitreachedemaillog.find_first(
-                        where={"userId": user.id, "periodEnd": period_end}
-                    )
-                    if not existing:
-                        await send_limit_reached_email(
-                            email=user.email,
-                            name=user.name or None,
-                        )
-                        await db_client.limitreachedemaillog.create(
-                            data={"userId": user.id, "periodEnd": period_end}
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to send limit reached email to {user.id}: {e}")
+        # Get daily limit increase from claimed referral rewards
+        referral_increase = await get_daily_limit_increase(user, db_client)
+        effective_daily_limit = daily_limit + referral_increase
 
+        if (
+            effective_daily_limit > 0
+            and credits_used_today + credits > effective_daily_limit
+        ):
+            daily_limit_hit = True
+
+    # Case 1: FREE tier daily limit hit - try purchased credits
+    if daily_limit_hit:
+        if purchased_balance >= credits:
+            # Consume entirely from purchased credits
+            updated_user = await db_client.user.update(
+                where={"id": user.id},
+                data={"purchasedCreditsBalance": {"decrement": credits}},
+            )
+            new_purchased_balance = updated_user.purchasedCreditsBalance or 0
+            notice = (
+                f"Daily limit reached. {credits:,} credits consumed from purchased balance. "
+                f"Remaining purchased credits: {new_purchased_balance:,}."
+            )
+            logger.info(
+                f"Consumed {credits} purchased credits for user {user.id} "
+                f"(daily limit hit, operation: {operation}). "
+                f"Purchased balance: {purchased_balance} -> {new_purchased_balance}"
+            )
+            return CreditConsumptionResult(
+                user=updated_user,
+                credits_consumed=credits,
+                source="purchased",
+                subscription_deducted=0,
+                purchased_deducted=credits,
+                warning=None,
+                notice=notice,
+                purchased_balance_remaining=new_purchased_balance,
+            )
+        elif purchased_balance > 0:
+            # Purchased balance positive but insufficient
             raise SubscriptionLimitError(
-                message=f"Monthly credit limit exceeded. You've used {credits_used:,} of {hard_cap:,} credits this month.",
-                detail=f"This operation requires {credits} credits. Please wait until next month for your credits to reset, or start a free trial for higher limits.",
+                message=(
+                    f"Daily credit limit exceeded. You've used {credits_used_today:,} of "
+                    f"{effective_daily_limit:,} credits today. "
+                    f"Your purchased credits balance ({purchased_balance:,}) is insufficient "
+                    f"for this operation ({credits:,} credits required)."
+                ),
+                detail=(
+                    f"credits_required={credits}, purchased_balance={purchased_balance}, "
+                    f"purchase_deep_link={PURCHASE_DEEP_LINK}"
+                ),
             )
         else:
+            # No purchased credits available
             raise SubscriptionLimitError(
-                message=f"Monthly credit limit exceeded. You've used {credits_used:,} of {hard_cap:,} credits this month.",
-                detail=f"This operation requires {credits} credits. Please wait until your credit period resets or start a free trial.",
+                message=(
+                    f"Daily credit limit exceeded. You've used {credits_used_today:,} of "
+                    f"{effective_daily_limit:,} credits today."
+                ),
+                detail=(
+                    f"This operation requires {credits} credits. Your daily limit resets at midnight UTC. "
+                    f"Purchase credits to continue without waiting. "
+                    f"purchase_deep_link={PURCHASE_DEEP_LINK}"
+                ),
             )
 
-    # Prepare update data
-    update_data = {"creditsUsed": {"increment": credits}}
+    # Case 2: Subscription credits are sufficient
+    if remaining_subscription >= credits:
+        # Standard subscription-only consumption
+        update_data = {"creditsUsed": {"increment": credits}}
+        if tier_str == "FREE":
+            update_data["creditsUsedToday"] = {"increment": credits}
 
-    # For FREE tier, also increment daily usage
-    tier_str = str(user.tier) if user.tier else "FREE"
-    if tier_str == "FREE":
-        update_data["creditsUsedToday"] = {"increment": credits}
+        updated_user = await db_client.user.update(where={"id": user.id}, data=update_data)
 
-    # Consume credits
-    updated_user = await db_client.user.update(where={"id": user.id}, data=update_data)
+        # Check for 80% soft cap warning
+        warning_message = None
+        new_credits_used = (updated_user.creditsUsed or 0)
+        if soft_cap > 0 and new_credits_used >= soft_cap:
+            new_remaining = hard_cap - new_credits_used
+            warning_message = (
+                f"You've used 80% of your credit allocation. "
+                f"You have {new_remaining:,} credits remaining before hitting your limit. "
+                f"Consider purchasing additional credits to avoid interruption."
+            )
 
-    logger.info(
-        f"Consumed {credits} credits for user {user.id} (operation: {operation}). "
-        f"Total used: {updated_user.creditsUsed}/{updated_user.creditsHardCap}"
-        + (
-            f", Daily used: {updated_user.creditsUsedToday}/{updated_user.creditsDailyLimit}"
-            if tier_str == "FREE"
-            else ""
+        # Check FREE tier daily 80% warning
+        if tier_str == "FREE" and not warning_message:
+            new_daily_used = updated_user.creditsUsedToday or 0
+            daily_soft_cap = int(effective_daily_limit * 0.8)
+            if daily_soft_cap > 0 and new_daily_used >= daily_soft_cap:
+                daily_remaining = effective_daily_limit - new_daily_used
+                warning_message = (
+                    f"You've used 80% of your daily credit allocation. "
+                    f"You have {daily_remaining:,} credits remaining today. "
+                    f"Consider purchasing additional credits to avoid interruption."
+                )
+
+        logger.info(
+            f"Consumed {credits} subscription credits for user {user.id} "
+            f"(operation: {operation}). "
+            f"Total used: {updated_user.creditsUsed}/{updated_user.creditsHardCap}"
+            + (
+                f", Daily used: {updated_user.creditsUsedToday}/{updated_user.creditsDailyLimit}"
+                if tier_str == "FREE"
+                else ""
+            )
         )
-    )
 
-    # Log warning if soft cap reached
-    if warning_message:
-        logger.warning(f"Soft cap warning for user {user.id}: {warning_message}")
+        return CreditConsumptionResult(
+            user=updated_user,
+            credits_consumed=credits,
+            source="subscription",
+            subscription_deducted=credits,
+            purchased_deducted=0,
+            warning=warning_message,
+            notice=None,
+            purchased_balance_remaining=updated_user.purchasedCreditsBalance or 0,
+        )
 
-    return updated_user
+    # Case 3: Subscription partially covers - split consumption
+    if remaining_subscription > 0 and purchased_balance >= (credits - remaining_subscription):
+        shortfall = credits - remaining_subscription
+
+        # Atomic transaction: consume remaining subscription + deduct from purchased
+        async with db_client.tx() as tx:
+            # Set subscription credits to hard cap (fully consumed)
+            await tx.user.update(
+                where={"id": user.id},
+                data={
+                    "creditsUsed": hard_cap,
+                    "purchasedCreditsBalance": {"decrement": shortfall},
+                    **({"creditsUsedToday": {"increment": credits}} if tier_str == "FREE" else {}),
+                },
+            )
+
+        # Refresh user after transaction
+        updated_user = await db_client.user.find_unique(where={"id": user.id})
+        new_purchased_balance = updated_user.purchasedCreditsBalance or 0
+
+        notice = (
+            f"Subscription credits exhausted. {shortfall:,} credits consumed from purchased balance. "
+            f"Remaining purchased credits: {new_purchased_balance:,}."
+        )
+
+        logger.info(
+            f"Split consumption for user {user.id} (operation: {operation}): "
+            f"subscription={remaining_subscription}, purchased={shortfall}. "
+            f"Purchased balance: {purchased_balance} -> {new_purchased_balance}"
+        )
+
+        return CreditConsumptionResult(
+            user=updated_user,
+            credits_consumed=credits,
+            source="both",
+            subscription_deducted=remaining_subscription,
+            purchased_deducted=shortfall,
+            warning=None,
+            notice=notice,
+            purchased_balance_remaining=new_purchased_balance,
+        )
+
+    # Case 4: Subscription exhausted, purchased credits cover entirely
+    if remaining_subscription == 0 and purchased_balance >= credits:
+        updated_user = await db_client.user.update(
+            where={"id": user.id},
+            data={"purchasedCreditsBalance": {"decrement": credits}},
+        )
+        new_purchased_balance = updated_user.purchasedCreditsBalance or 0
+
+        notice = (
+            f"Subscription credits exhausted. {credits:,} credits consumed from purchased balance. "
+            f"Remaining purchased credits: {new_purchased_balance:,}."
+        )
+
+        logger.info(
+            f"Consumed {credits} purchased credits for user {user.id} "
+            f"(subscription exhausted, operation: {operation}). "
+            f"Purchased balance: {purchased_balance} -> {new_purchased_balance}"
+        )
+
+        return CreditConsumptionResult(
+            user=updated_user,
+            credits_consumed=credits,
+            source="purchased",
+            subscription_deducted=0,
+            purchased_deducted=credits,
+            warning=None,
+            notice=notice,
+            purchased_balance_remaining=new_purchased_balance,
+        )
+
+    # Case 5: Both subscription and purchased credits insufficient
+    # Send limit-reached email for FREE tier (once per period)
+    if tier_str == "FREE":
+        period_end = user.creditsPeriodEnd
+        if period_end:
+            try:
+                existing = await db_client.limitreachedemaillog.find_first(
+                    where={"userId": user.id, "periodEnd": period_end}
+                )
+                if not existing:
+                    await send_limit_reached_email(
+                        email=user.email,
+                        name=user.name or None,
+                    )
+                    await db_client.limitreachedemaillog.create(
+                        data={"userId": user.id, "periodEnd": period_end}
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send limit reached email to {user.id}: {e}")
+
+    # Determine error message based on state
+    if purchased_balance > 0:
+        # Purchased balance positive but insufficient for the operation
+        shortfall = credits - remaining_subscription
+        raise SubscriptionLimitError(
+            message=(
+                f"Insufficient credits. This operation requires {shortfall:,} credits "
+                f"from purchased balance, but you only have {purchased_balance:,} purchased credits remaining."
+            ),
+            detail=(
+                f"credits_required={shortfall}, purchased_balance={purchased_balance}, "
+                f"purchase_deep_link={PURCHASE_DEEP_LINK}"
+            ),
+        )
+    else:
+        # Both fully exhausted
+        raise SubscriptionLimitError(
+            message=(
+                f"Credit limit exceeded. You've used {credits_used:,} of {hard_cap:,} "
+                f"subscription credits and have no purchased credits remaining. "
+                f"Purchase credits to continue or wait for your next period reset."
+            ),
+            detail=(
+                f"This operation requires {credits} credits. "
+                f"purchase_deep_link={PURCHASE_DEEP_LINK}"
+            ),
+        )
 
 
 async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
     """
     Get current credit usage information for a user.
 
+    Includes purchased credits balance and total available credits.
+
     Args:
         user: User model instance
         db_client: Optional Prisma client (defaults to global db)
 
     Returns:
-        Dictionary with credit usage information
+        Dictionary with credit usage information including purchased credits
     """
     if db_client is None:
         db_client = db
@@ -551,13 +825,16 @@ async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
     credits_used = user.creditsUsed or 0
     hard_cap = user.creditsHardCap or 0
     soft_cap = user.creditsSoftCap or 0
+    purchased_balance = user.purchasedCreditsBalance or 0
 
     usage_percentage = (credits_used / hard_cap * 100) if hard_cap > 0 else 0
     soft_cap_percentage = (soft_cap / hard_cap * 100) if hard_cap > 0 else 0
+    subscription_remaining = max(0, hard_cap - credits_used)
+    total_available = subscription_remaining + purchased_balance
 
     result = {
         "credits_used": credits_used,
-        "credits_remaining": max(0, hard_cap - credits_used),
+        "credits_remaining": subscription_remaining,
         "hard_cap": hard_cap,
         "soft_cap": soft_cap,
         "usage_percentage": round(usage_percentage, 2),
@@ -566,6 +843,8 @@ async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
         "period_end": user.creditsPeriodEnd.isoformat() if user.creditsPeriodEnd else None,
         "is_soft_cap_reached": soft_cap > 0 and credits_used >= soft_cap,
         "is_hard_cap_reached": hard_cap > 0 and credits_used >= hard_cap,
+        "purchased_credits_balance": purchased_balance,
+        "total_available": total_available,
     }
 
     # Add daily usage info for FREE tier
@@ -573,17 +852,21 @@ async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
         credits_used_today = user.creditsUsedToday or 0
         daily_limit = user.creditsDailyLimit or 0
         daily_usage_percentage = (credits_used_today / daily_limit * 100) if daily_limit > 0 else 0
+        is_daily_limit_reached = daily_limit > 0 and credits_used_today >= daily_limit
         result.update(
             {
                 "credits_used_today": credits_used_today,
                 "credits_remaining_today": max(0, daily_limit - credits_used_today),
                 "daily_limit": daily_limit,
                 "daily_usage_percentage": round(daily_usage_percentage, 2),
-                "is_daily_limit_reached": daily_limit > 0 and credits_used_today >= daily_limit,
+                "is_daily_limit_reached": is_daily_limit_reached,
                 "next_daily_reset": (
                     (datetime.utcnow() + timedelta(days=1))
                     .replace(hour=0, minute=0, second=0, microsecond=0)
                     .isoformat()
+                ),
+                "purchased_credits_available_after_daily_limit": (
+                    purchased_balance > 0 and is_daily_limit_reached
                 ),
             }
         )

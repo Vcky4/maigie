@@ -1,0 +1,16 @@
+Credits Added!
+
+Hi {{ name }},
+
+Your credit purchase was successful. Here's your receipt:
+
+Pack: {{ pack_name }}
+Credits Added: {{ credits_granted }}
+Amount Paid: {{ price_formatted }}
+New Balance: {{ new_balance }} credits
+
+Your purchased credits never expire and will be used automatically after your subscription credits are consumed.
+
+Continue learning: {{ dashboard_url }}
+
+— Maigie, The Academic Operating System

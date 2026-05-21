@@ -80,6 +80,7 @@ from .routes.users import router as users_router
 from .routes.waitlist import router as waitlist_router
 from .routes.device_tokens import router as device_tokens_router
 from .routes.model_selection import router as model_selection_router
+from .routes.credit_packs import router as credit_packs_router
 from .routes.websockets import router as websockets_router
 from .services.ws_event_bus import ws_event_forwarder
 from .utils.dependencies import (
@@ -462,6 +463,9 @@ def create_app() -> FastAPI:
 
     # Waitlist router
     app.include_router(waitlist_router)
+
+    # Credit packs (purchase system)
+    app.include_router(credit_packs_router, prefix=f"{settings.API_V1_STR}")
 
     # Device token registration (push notifications)
     app.include_router(device_tokens_router)
