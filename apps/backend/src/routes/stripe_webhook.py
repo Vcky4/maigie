@@ -1,7 +1,8 @@
 """
-Stripe webhook handler for subscription events.
+Stripe webhook handler for subscription and one-time payment events.
 
-This module handles Stripe webhook events via webhook destinations to keep subscription data in sync.
+This module handles Stripe webhook events via webhook destinations to keep subscription data in sync
+and fulfill one-time credit pack purchases.
 
 Copyright (C) 2025 Maigie
 """
@@ -100,21 +101,76 @@ async def stripe_webhook(
 
     logger.info(f"Received Stripe webhook event: {event_type}")
 
-    # Handle checkout.session.completed - sync subscription immediately when checkout completes
-    # (User may land here before customer.subscription.created, or when success page isn't hit e.g. mobile)
+    # Handle checkout.session.completed - distinguish between subscription and one-time payment
     if event_type == "checkout.session.completed":
         session = event_data.get("object", {})
-        subscription_id = session.get("subscription")
-        if subscription_id:
-            try:
-                from ..services.subscription_service import update_user_subscription_from_stripe
+        session_mode = session.get("mode")
 
-                await update_user_subscription_from_stripe(str(subscription_id))
-                logger.info(
-                    f"Synced subscription {subscription_id} from " "checkout.session.completed"
-                )
+        if session_mode == "payment":
+            # One-time credit pack purchase
+            try:
+                from ..services.credit_purchase_service import fulfill_purchase
+
+                payment_intent = session.get("payment_intent")
+                if payment_intent:
+                    await fulfill_purchase(
+                        provider_reference=str(payment_intent),
+                        provider="stripe",
+                        db_client=db,
+                    )
+                    logger.info(
+                        f"Fulfilled credit pack purchase from checkout.session.completed "
+                        f"(payment_intent={payment_intent})"
+                    )
+                else:
+                    # Fallback: use session ID as reference if payment_intent is not available
+                    session_id = session.get("id")
+                    if session_id:
+                        await fulfill_purchase(
+                            provider_reference=str(session_id),
+                            provider="stripe",
+                            db_client=db,
+                        )
+                        logger.info(
+                            f"Fulfilled credit pack purchase from checkout.session.completed "
+                            f"(session_id={session_id})"
+                        )
+                    else:
+                        logger.warning(
+                            "checkout.session.completed (mode=payment): "
+                            "no payment_intent or session id found. "
+                            "Logging for manual reconciliation.",
+                            extra={
+                                "event": "missing_payment_reference",
+                                "session": session,
+                            },
+                        )
             except Exception as e:
-                logger.error(f"Error syncing from checkout.session.completed: {e}")
+                logger.error(
+                    f"Error fulfilling credit pack purchase from "
+                    f"checkout.session.completed: {e}",
+                    exc_info=True,
+                )
+                # Return 200 to prevent Stripe from retrying
+                return Response(status_code=200)
+
+        elif session_mode == "subscription" or session.get("subscription"):
+            # Subscription checkout - existing behavior
+            subscription_id = session.get("subscription")
+            if subscription_id:
+                try:
+                    from ..services.subscription_service import update_user_subscription_from_stripe
+
+                    await update_user_subscription_from_stripe(str(subscription_id))
+                    logger.info(
+                        f"Synced subscription {subscription_id} from " "checkout.session.completed"
+                    )
+                except Exception as e:
+                    logger.error(f"Error syncing from checkout.session.completed: {e}")
+        else:
+            logger.info(
+                f"checkout.session.completed with unhandled mode: {session_mode}. Ignoring."
+            )
 
     # Handle subscription-related events
     elif event_type.startswith("customer.subscription."):

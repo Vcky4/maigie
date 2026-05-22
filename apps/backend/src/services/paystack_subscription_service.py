@@ -509,10 +509,47 @@ async def _handle_subscription_disable(payload: dict, db_client: Prisma) -> None
 
 
 async def _handle_charge_success(payload: dict, db_client: Prisma) -> None:
-    """On successful charge (e.g. subscription renewal), sync subscription."""
+    """On successful charge, check if it's a credit pack purchase or subscription renewal."""
     data = payload.get("data", {})
     metadata = data.get("metadata", {}) or {}
     user_id = metadata.get("user_id")
     reference = data.get("reference")
+
+    # First, check if this charge matches a pending CreditPurchaseTransaction
+    # This distinguishes one-time credit pack purchases from subscription charges
+    if reference:
+        try:
+            from ..services.credit_purchase_service import fulfill_purchase
+
+            # Check if a pending transaction exists for this reference
+            transaction = await db_client.creditpurchasetransaction.find_first(
+                where={"providerReference": str(reference)},
+            )
+
+            if transaction:
+                # This is a credit pack purchase - fulfill it
+                result = await fulfill_purchase(
+                    provider_reference=str(reference),
+                    provider="paystack",
+                    db_client=db_client,
+                )
+                if result:
+                    logger.info(
+                        f"Fulfilled credit pack purchase from charge.success "
+                        f"(reference={reference}, user_id={transaction.userId})"
+                    )
+                else:
+                    logger.info(f"Credit pack purchase already fulfilled for reference={reference}")
+                return  # Don't process as subscription charge
+        except Exception as e:
+            logger.error(
+                f"Error fulfilling credit pack purchase from charge.success "
+                f"(reference={reference}): {e}",
+                exc_info=True,
+            )
+            # Return without raising - webhook should still return 200
+            return
+
+    # Not a credit pack purchase - handle as subscription charge (existing behavior)
     if reference and user_id:
         await verify_paystack_transaction(str(reference), str(user_id), db_client)

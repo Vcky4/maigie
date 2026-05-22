@@ -98,7 +98,7 @@ class Settings(BaseSettings):
 
     # --- WebSocket ---
     WEBSOCKET_HEARTBEAT_INTERVAL: int = 30
-    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60
+    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 120
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
     # --- OAuth Providers (Placeholders) ---
@@ -141,7 +141,9 @@ class Settings(BaseSettings):
 
     # WebSocket
     WEBSOCKET_HEARTBEAT_INTERVAL: int = 30  # seconds
-    WEBSOCKET_HEARTBEAT_TIMEOUT: int = 60  # seconds
+    WEBSOCKET_HEARTBEAT_TIMEOUT: int = (
+        120  # seconds — must exceed LLM_ADAPTER_TIMEOUT_SECONDS + fallback time
+    )
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
     # Brevo (formerly Sendinblue) CRM Integration
@@ -218,6 +220,14 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_COOLDOWN_SECONDS: float = 30.0
     CIRCUIT_BREAKER_ROLLING_WINDOW_SECONDS: float = 60.0
 
+    # Router timeout — max seconds for the entire route_request pipeline (selection + execution).
+    # Must be generous enough for streaming LLM responses (typically 10–60s).
+    LLM_ROUTER_TIMEOUT_SECONDS: float = 90.0
+
+    # Per-adapter request timeout — max seconds for a single adapter call before
+    # the router treats it as a timeout failure and falls back to the next provider.
+    LLM_ADAPTER_TIMEOUT_SECONDS: float = 60.0
+
     # Retry
     LLM_MAX_RETRIES: int = 2
     LLM_RETRY_BASE_DELAY_SECONDS: float = 1.0
@@ -231,7 +241,7 @@ class Settings(BaseSettings):
     )
 
     # Feature flags — enabled providers (comma-separated)
-    LLM_ENABLED_PROVIDERS: str = "gemini"
+    LLM_ENABLED_PROVIDERS: str = "gemini,openai"
     # Tier-based model allowlists (comma-separated provider:model pairs)
     LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
@@ -253,6 +263,12 @@ class Settings(BaseSettings):
     GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
     GEMINI_LIVE_MODEL: str = "models/gemini-2.5-flash-native-audio-preview-12-2025"
     GEMINI_LIVE_GREETING_PROMPT: str | None = None
+
+    # --- Firebase Cloud Messaging (Push Notifications) ---
+    # Path to Firebase service account JSON file (preferred for production)
+    FIREBASE_SERVICE_ACCOUNT_PATH: str = ""
+    # Alternatively, provide the JSON content directly (useful for Docker/env-based deploys)
+    FIREBASE_SERVICE_ACCOUNT_JSON: str = ""
 
     # --- Background tasks (schedule AI batching) ---
     AI_SCHEDULE_REVIEW_MAX_USERS: int = 500

@@ -152,8 +152,58 @@ async def main() -> None:
         # )
         # print(f"✓ Seeded test user: {test_user.email}")
 
-        # Add more seed data as needed
-        # For example: sample courses, goals, resources, etc.
+        # Seed Credit Pack catalog (idempotent - skip if already exists)
+        credit_packs = [
+            {
+                "name": "Starter Pack",
+                "credits": 50000,
+                "bonusCredits": 0,
+                "priceUsdCents": 199,
+                "priceNgnKobo": 320000,
+                "sortOrder": 1,
+                "isActive": True,
+            },
+            {
+                "name": "Value Pack",
+                "credits": 150000,
+                "bonusCredits": 15000,
+                "priceUsdCents": 499,
+                "priceNgnKobo": 800000,
+                "sortOrder": 2,
+                "isActive": True,
+            },
+            {
+                "name": "Power Pack",
+                "credits": 500000,
+                "bonusCredits": 75000,
+                "priceUsdCents": 1299,
+                "priceNgnKobo": 2100000,
+                "sortOrder": 3,
+                "isActive": True,
+            },
+        ]
+
+        for pack_data in credit_packs:
+            existing = await prisma.creditpack.find_first(where={"name": pack_data["name"]})
+            if existing:
+                # Update existing pack to ensure data stays in sync
+                await prisma.creditpack.update(
+                    where={"id": existing.id},
+                    data={
+                        "credits": pack_data["credits"],
+                        "bonusCredits": pack_data["bonusCredits"],
+                        "priceUsdCents": pack_data["priceUsdCents"],
+                        "priceNgnKobo": pack_data["priceNgnKobo"],
+                        "sortOrder": pack_data["sortOrder"],
+                        "isActive": pack_data["isActive"],
+                    },
+                )
+                print(f"  ✓ Credit pack already exists (updated): {pack_data['name']}")
+            else:
+                await prisma.creditpack.create(data=pack_data)
+                print(f"  ✓ Credit pack created: {pack_data['name']}")
+
+        print(f"✓ Seeded {len(credit_packs)} credit packs")
 
         print("✓ Database seeded successfully!")
         print(f"  Environment: {os.getenv('ENVIRONMENT', 'unknown')}")

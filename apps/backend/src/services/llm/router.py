@@ -77,7 +77,10 @@ class LLMRouter:
         cost_tracker: Records per-request cost data.
         adapter_registry: Mapping of "provider:model" keys to adapter instances.
         fallback_chains: Per-task ordered lists of (provider, model) pairs.
-        timeout_seconds: Maximum time allowed for the selection + execution pipeline.
+        timeout_seconds: Maximum time allowed for the entire selection + execution
+            pipeline including all fallback attempts (default: 90.0).
+        adapter_timeout_seconds: Maximum time allowed for a single adapter call
+            before treating it as a timeout and falling back (default: 60.0).
     """
 
     def __init__(
@@ -87,7 +90,8 @@ class LLMRouter:
         cost_tracker: CostTrackerProtocol,
         adapter_registry: dict[str, BaseProviderAdapter],
         fallback_chains: dict[LlmTask, list[tuple[str, str]]],
-        timeout_seconds: float = 5.0,
+        timeout_seconds: float = 90.0,
+        adapter_timeout_seconds: float = 60.0,
     ) -> None:
         self._feature_flags = feature_flags
         self._circuit_breaker = circuit_breaker
@@ -95,6 +99,7 @@ class LLMRouter:
         self._adapter_registry = adapter_registry
         self._fallback_chains = fallback_chains
         self._timeout_seconds = timeout_seconds
+        self._adapter_timeout_seconds = adapter_timeout_seconds
 
     # ------------------------------------------------------------------
     # Public API
@@ -186,7 +191,7 @@ class LLMRouter:
             attempts += 1
 
             try:
-                # Calculate remaining time for this attempt
+                # Use the per-adapter timeout, capped by remaining pipeline time
                 remaining = self._timeout_seconds - (time.monotonic() - start_time)
                 if remaining <= 0:
                     raise LLMProviderError(
@@ -197,6 +202,10 @@ class LLMRouter:
                         message=(f"Router selection exceeded {self._timeout_seconds}s timeout."),
                         retriable=True,
                     )
+
+                # Per-adapter timeout: use the configured adapter timeout, but never
+                # exceed the remaining pipeline budget.
+                effective_timeout = min(self._adapter_timeout_seconds, remaining)
 
                 # Execute the request with timeout
                 result = await asyncio.wait_for(
@@ -210,7 +219,7 @@ class LLMRouter:
                         progress_callback=progress_callback,
                         stream_callback=stream_callback,
                     ),
-                    timeout=remaining,
+                    timeout=effective_timeout,
                 )
 
                 # Success: record with circuit breaker and cost tracker

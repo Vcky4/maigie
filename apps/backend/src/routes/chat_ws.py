@@ -34,6 +34,7 @@ from src.services.component_response_service import (
 )
 from src.services.cost_calculator import calculate_ai_cost, calculate_revenue
 from src.services.credit_service import (
+    PURCHASE_DEEP_LINK,
     check_credit_availability,
     consume_credits,
     get_credit_usage,
@@ -1558,6 +1559,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             "tier": tier,
                             "is_daily_limit": is_daily,
                             "show_referral_option": True,
+                            "blocked": True,
+                            "purchaseDeepLink": PURCHASE_DEEP_LINK,
                             "sessionId": session.id,
                             "requestId": ai_request_id,
                             "replyToMessageId": ai_reply_target_id,
@@ -1584,6 +1587,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         "tier": tier,
                         "is_daily_limit": False,
                         "show_referral_option": True,
+                        "blocked": True,
+                        "purchaseDeepLink": PURCHASE_DEEP_LINK,
                         "sessionId": session.id,
                         "requestId": ai_request_id,
                         "replyToMessageId": ai_reply_target_id,
@@ -1608,8 +1613,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                 actual_total_tokens = actual_input_tokens + actual_output_tokens
 
                 # Consume credits based on actual token usage
+                credit_result = None
                 try:
-                    await consume_credits(
+                    credit_result = await consume_credits(
                         user_obj,
                         actual_total_tokens,
                         operation="chat_message",
@@ -1750,6 +1756,26 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         await manager.send_room_json(component_response, session.id)
                     else:
                         await manager.send_json(component_response, user.id)
+
+                # 14b. Send credit info (warning/notice) if applicable
+                if credit_result:
+                    credit_info = {}
+                    if credit_result.warning:
+                        credit_info["warning"] = credit_result.warning
+                    if credit_result.notice:
+                        credit_info["notice"] = credit_result.notice
+                    if credit_info:
+                        credit_info["type"] = "credit_info"
+                        credit_info["purchaseDeepLink"] = PURCHASE_DEEP_LINK
+                        credit_info["purchasedCreditsRemaining"] = (
+                            credit_result.purchased_balance_remaining
+                        )
+                        credit_info["sessionId"] = session.id
+                        credit_info["requestId"] = ai_request_id
+                        if is_circle_session:
+                            await manager.send_room_json(credit_info, session.id)
+                        else:
+                            await manager.send_json(credit_info, user.id)
 
                 # 15. When split, suggestion is in assistant_final; no separate send needed
 

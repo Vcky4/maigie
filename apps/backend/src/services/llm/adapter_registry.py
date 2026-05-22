@@ -267,7 +267,8 @@ def get_llm_router() -> LLMRouter:
         cost_tracker=cost_tracker,
         adapter_registry=adapter_registry,
         fallback_chains=fallback_chains,
-        timeout_seconds=5.0,
+        timeout_seconds=settings.LLM_ROUTER_TIMEOUT_SECONDS,
+        adapter_timeout_seconds=settings.LLM_ADAPTER_TIMEOUT_SECONDS,
     )
 
     logger.info(

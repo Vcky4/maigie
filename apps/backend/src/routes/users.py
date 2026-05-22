@@ -253,6 +253,13 @@ class UsageResponse(BaseModel):
     isSoftCapReached: bool
     isHardCapReached: bool
 
+    # Purchased credits
+    purchasedCreditsBalance: int
+    totalAvailable: int  # subscription remaining + purchased credits
+    purchasedCreditsAvailableAfterLimit: (
+        bool | None
+    )  # For FREE tier: purchased credits usable after daily limit
+
     # Daily usage (for FREE tier)
     creditsUsedToday: int | None
     creditsRemainingToday: int | None
@@ -384,6 +391,11 @@ async def get_usage(
             usagePercentage=credit_usage.get("usage_percentage", 0),
             isSoftCapReached=credit_usage.get("is_soft_cap_reached", False),
             isHardCapReached=credit_usage.get("is_hard_cap_reached", False),
+            purchasedCreditsBalance=credit_usage.get("purchased_credits_balance", 0),
+            totalAvailable=credit_usage.get("total_available", 0),
+            purchasedCreditsAvailableAfterLimit=credit_usage.get(
+                "purchased_credits_available_after_daily_limit"
+            ),
             creditsUsedToday=credit_usage.get("credits_used_today"),
             creditsRemainingToday=credit_usage.get("credits_remaining_today"),
             dailyLimit=credit_usage.get("daily_limit"),

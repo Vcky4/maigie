@@ -68,6 +68,7 @@ from .routes.mcp_routes import mcp as mcp_server
 from .routes.paystack_webhook import router as paystack_webhook_router
 from .routes.realtime import router as realtime_router
 from .routes.referrals import router as referrals_router
+from .routes.ads import router as ads_router
 from .routes.resource_bank import router as resource_bank_router
 from .routes.resources import router as resources_router
 from .routes.reviews import router as reviews_router
@@ -77,7 +78,9 @@ from .routes.studio import router as studio_router
 from .routes.subscriptions import router as subscriptions_router
 from .routes.users import router as users_router
 from .routes.waitlist import router as waitlist_router
+from .routes.device_tokens import router as device_tokens_router
 from .routes.model_selection import router as model_selection_router
+from .routes.credit_packs import router as credit_packs_router
 from .routes.websockets import router as websockets_router
 from .services.ws_event_bus import ws_event_forwarder
 from .utils.dependencies import (
@@ -408,6 +411,7 @@ def create_app() -> FastAPI:
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
     app.include_router(referrals_router, prefix=f"{settings.API_V1_STR}/referrals")
+    app.include_router(ads_router, prefix=f"{settings.API_V1_STR}/ads")
 
     # Admin routes (admin-only access)
     app.include_router(admin_router)
@@ -459,6 +463,12 @@ def create_app() -> FastAPI:
 
     # Waitlist router
     app.include_router(waitlist_router)
+
+    # Credit packs (purchase system)
+    app.include_router(credit_packs_router, prefix=f"{settings.API_V1_STR}")
+
+    # Device token registration (push notifications)
+    app.include_router(device_tokens_router)
 
     # Example/demonstration endpoints
     app.include_router(examples_router)

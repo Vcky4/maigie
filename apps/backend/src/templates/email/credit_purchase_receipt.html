@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Purchase Receipt | Maigie</title>
+</head>
+<body style="font-family: Helvetica, Arial, sans-serif; color: #333333; line-height: 1.6; padding: 20px; background-color: #ffffff;">
+
+    <div style="max-width: 600px; margin: 0;">
+        {% if logo_url %}
+        <div style="margin-bottom: 30px; text-align: center;">
+            <img src="{{ logo_url }}" alt="{{ app_name }}" style="max-width: 200px; height: auto;" />
+        </div>
+        {% endif %}
+
+        <h1 style="color: #222222; font-size: 24px; font-weight: bold; margin-bottom: 20px;">Credits Added!</h1>
+
+        <p style="margin-bottom: 15px;">Hi {{ name }},</p>
+
+        <p style="margin-bottom: 25px;">
+            Your credit purchase was successful. Here's your receipt:
+        </p>
+
+        <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin-bottom: 25px;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Pack</td>
+                    <td style="padding: 8px 0; text-align: right; font-weight: bold;">{{ pack_name }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Credits Added</td>
+                    <td style="padding: 8px 0; text-align: right; font-weight: bold;">{{ credits_granted }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 8px 0; color: #6b7280; font-size: 14px;">Amount Paid</td>
+                    <td style="padding: 8px 0; text-align: right; font-weight: bold;">{{ price_formatted }}</td>
+                </tr>
+                <tr style="border-top: 1px solid #e5e7eb;">
+                    <td style="padding: 12px 0 8px; color: #6b7280; font-size: 14px;">New Balance</td>
+                    <td style="padding: 12px 0 8px; text-align: right; font-weight: bold; color: #059669;">{{ new_balance }} credits</td>
+                </tr>
+            </table>
+        </div>
+
+        <p style="margin-bottom: 25px; color: #4b5563;">
+            Your purchased credits never expire and will be used automatically after your subscription credits are consumed.
+        </p>
+
+        <div style="margin-bottom: 30px;">
+            <a href="{{ dashboard_url }}" style="
+                background-color: #4F46E5;
+                color: #ffffff;
+                display: inline-block;
+                padding: 12px 24px;
+                border-radius: 5px;
+                font-size: 16px;
+                font-weight: bold;
+                text-decoration: none;">
+                Continue Learning
+            </a>
+        </div>
+
+        <p style="font-size: 12px; color: #999999; margin-top: 24px; border-top: 1px solid #eeeeee; padding-top: 16px;">
+            Maigie — The Academic Operating System
+        </p>
+
+    </div>
+
+</body>
+</html>
