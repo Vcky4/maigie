@@ -168,7 +168,7 @@ if (-not (Test-Path ".env")) {
 Write-Host ""
 Write-Host "Verifying setup..." -ForegroundColor Yellow
 try {
-    poetry run python verify_setup.py
+    poetry run python scripts/debug/verify_setup.py
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
         Write-Host "[SUCCESS] Setup complete! You can now start the server with:" -ForegroundColor Green

@@ -620,7 +620,7 @@ async def get_oauth_providers():
     """
     List available providers.
     """
-    return {"providers": ["google"]}  # TODO: Add "github" when GitHub OAuth is enabled
+    return {"providers": ["google"]}
 
 
 @router.post("/oauth/google/native-callback", response_model=Token)
