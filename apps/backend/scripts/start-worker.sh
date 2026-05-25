@@ -9,7 +9,7 @@ cd "$BACKEND_DIR"
 # Default values
 WORKER_NAME="worker@%h"
 QUEUE="default"
-CONCURRENCY="4"
+CONCURRENCY="${CELERY_CONCURRENCY:-2}"
 LOGLEVEL="info"
 
 # Parse arguments

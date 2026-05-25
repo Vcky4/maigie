@@ -29,6 +29,10 @@ services:
       retries: 5
     networks:
       - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   celery-worker:
     build:
@@ -44,7 +48,19 @@ services:
       - redis
     networks:
       - maigie_network
-    command: celery -A src.core.celery_app worker --loglevel=info
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    command: >
+      celery -A src.core.celery_app worker
+      --loglevel=info
+      --concurrency=2
+      --max-tasks-per-child=100
+      --without-gossip
+      --without-mingle
+      --without-heartbeat
+      -Ofair
 
   celery-beat:
     build:
@@ -60,6 +76,10 @@ services:
       - redis
     networks:
       - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     command: celery -A src.core.celery_app beat --loglevel=info
 
   backend:
@@ -79,10 +99,14 @@ services:
       - redis
     networks:
       - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
     command: >
       sh -c "
         prisma migrate deploy &&
-        uvicorn src.main:app --host 0.0.0.0 --port 8000
+        uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 2 --limit-max-requests 5000
       "
 
 volumes:

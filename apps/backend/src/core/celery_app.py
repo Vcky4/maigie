@@ -70,7 +70,8 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_time_limit=300,  # Hard time limit (5 minutes)
         task_soft_time_limit=240,  # Soft time limit (4 minutes)
         # Worker settings
-        worker_max_tasks_per_child=200,  # Restart worker after N tasks (prevents memory/zombie leaks)
+        worker_max_tasks_per_child=100,  # Restart worker after N tasks (prevents memory leaks)
+        worker_max_memory_per_child=400_000,  # Kill worker if it exceeds ~400MB RSS (kB)
         worker_disable_rate_limits=False,
         # Prisma spawns an engine subprocess; Celery's stdout redirection replaces
         # sys.stdout/sys.stderr with a LoggingProxy (no .fileno), which breaks
