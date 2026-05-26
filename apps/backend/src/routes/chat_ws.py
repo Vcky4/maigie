@@ -1401,8 +1401,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             "tier": action_result.get("tier", "FREE"),
                             "is_daily_limit": action_result.get("is_daily_limit", False),
                             "show_referral_option": action_result.get("show_referral_option", True),
+                            "blocked": True,
+                            "purchaseDeepLink": PURCHASE_DEEP_LINK,
                         }
-                        await manager.send_personal_message(json.dumps(error_data), user.id)
+                        await manager.send_connection_json(error_data, connection_id)
                         continue
 
                     # Send success event for create actions
