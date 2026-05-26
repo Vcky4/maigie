@@ -63,15 +63,16 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_default_routing_key=settings.CELERY_TASK_DEFAULT_ROUTING_KEY,
         result_expires=settings.CELERY_RESULT_EXPIRES,
         # Task routing — separate lightweight from AI-heavy tasks
+        # Pattern matching uses fnmatch (glob): * matches any characters
         task_routes={
             "agent.*": {"queue": "default"},
-            "push.*": {"queue": "default"},
-            "email.*": {"queue": "default"},
+            "push_notifications.*": {"queue": "default"},
+            "email_notifications.*": {"queue": "default"},
+            "spaced_repetition.*": {"queue": "default"},
             "course.*": {"queue": "heavy"},
             "schedule.*": {"queue": "heavy"},
             "exam_prep.*": {"queue": "heavy"},
-            "resource.*": {"queue": "heavy"},
-            "spaced_repetition.*": {"queue": "default"},
+            "resources.*": {"queue": "heavy"},
         },
         # Task time limits
         task_time_limit=300,  # Hard time limit (5 minutes) — override per-task for lightweight

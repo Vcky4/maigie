@@ -54,16 +54,23 @@ services:
         limits:
           memory: 1G
     command: >
-      celery -A src.core.celery_app worker
-      --beat
-      --loglevel=info
-      --concurrency=2
-      --max-tasks-per-child=50
-      --queues=default,heavy
-      --without-gossip
-      --without-mingle
-      --without-heartbeat
-      -Ofair
+      sh -c "
+        if [ \"$$ENVIRONMENT\" = 'production' ]; then
+          CONCURRENCY=3;
+        else
+          CONCURRENCY=1;
+        fi;
+        celery -A src.core.celery_app worker
+        --beat
+        --loglevel=info
+        --concurrency=$$CONCURRENCY
+        --max-tasks-per-child=50
+        --queues=default,heavy
+        --without-gossip
+        --without-mingle
+        --without-heartbeat
+        -Ofair
+      "
 
   backend:
     build:
