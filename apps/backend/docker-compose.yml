@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    command: redis-server --maxmemory 200mb --maxmemory-policy allkeys-lru --save 60 1000
+    command: redis-server --maxmemory 200mb --maxmemory-policy noeviction --save 60 1000
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -61,7 +61,6 @@ services:
           CONCURRENCY=1;
         fi;
         celery -A src.core.celery_app worker
-        --beat
         --loglevel=info
         --concurrency=$$CONCURRENCY
         --max-tasks-per-child=50
@@ -71,6 +70,26 @@ services:
         --without-heartbeat
         -Ofair
       "
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-celery-beat
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      - redis
+    networks:
+      - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    command: celery -A src.core.celery_app beat --loglevel=info
 
   backend:
     build:
