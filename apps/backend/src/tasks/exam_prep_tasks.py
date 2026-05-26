@@ -55,7 +55,6 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
     5. Generate study plan
     6. Transition to ACTIVE
     """
-    from src.core.database import db
     from src.services.exam_prep_service import (
         generate_study_plan,
         save_questions,
@@ -70,6 +69,19 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
     from src.services.text_extraction_service import extract_text_from_file_async
 
     await _ensure_db_connected()
+
+    # Idempotency check: if exam prep is already ACTIVE, it was already processed.
+    # Prevents duplicate processing on task redelivery.
+    from src.core.database import db
+
+    exam_status_check = await db.examprep.find_first(
+        where={"id": exam_prep_id, "userId": user_id},
+        select={"status": True},
+    )
+    if exam_status_check and exam_status_check.status == "ACTIVE":
+        logger.info("ExamPrep %s already ACTIVE — skipping duplicate processing", exam_prep_id)
+        await _emit_progress(user_id, exam_prep_id, "complete", 100, "Already processed!")
+        return {"status": "already_processed", "idempotent": True}
 
     # Fetch exam prep with materials
     exam_prep = await db.examprep.find_first(
