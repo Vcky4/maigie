@@ -1404,7 +1404,7 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
-                command: celery -A src.core.celery_app worker --loglevel=info
+                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
 
               celery-beat:
                 image: maigie-backend:staging

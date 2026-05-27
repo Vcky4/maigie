@@ -1733,7 +1733,19 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                 session.id,
                             )
                         else:
-                            await manager.send_personal_message(main_content, user.id)
+                            await manager.send_json(
+                                {
+                                    "type": "assistant_final",
+                                    "id": assistant_message.id,
+                                    "content": main_content,
+                                    "skillsUsed": skills_used if skills_used else None,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                    "replyToMessageId": ai_reply_target_id,
+                                    "replyToMessage": assistant_reply_preview,
+                                },
+                                user.id,
+                            )
                     # Send confirmation with ID
                     payload = {
                         "type": "message_saved",
