@@ -265,19 +265,22 @@ async def create_schedule_block(
                     f"{data.startAt} - {data.endAt}"
                 )
 
-        schedule = await db.scheduleblock.create(
-            data={
-                "userId": current_user.id,
-                "title": data.title,
-                "description": data.description,
-                "startAt": data.startAt,
-                "endAt": data.endAt,
-                "recurringRule": data.recurringRule,
-                "courseId": data.courseId,
-                "topicId": data.topicId,
-                "goalId": data.goalId,
-            }
-        )
+        schedule_create_data: dict = {
+            "user": {"connect": {"id": current_user.id}},
+            "title": data.title,
+            "description": data.description,
+            "startAt": data.startAt,
+            "endAt": data.endAt,
+            "recurringRule": data.recurringRule,
+        }
+        if data.courseId:
+            schedule_create_data["course"] = {"connect": {"id": data.courseId}}
+        if data.topicId:
+            schedule_create_data["topic"] = {"connect": {"id": data.topicId}}
+        if data.goalId:
+            schedule_create_data["goal"] = {"connect": {"id": data.goalId}}
+
+        schedule = await db.scheduleblock.create(data=schedule_create_data)
 
         # Record interaction for user memory
         await user_memory_service.record_interaction(

@@ -75,18 +75,19 @@ async def _create_review_blocks_for_due_items() -> dict[str, Any]:
             if start_at.tzinfo is None:
                 start_at = start_at.replace(tzinfo=UTC)
             end_at = start_at + timedelta(minutes=REVIEW_BLOCK_DURATION_MINUTES)
-            block = await db.scheduleblock.create(
-                data={
-                    "userId": review.userId,
-                    "title": f"Review: {topic_title}",
-                    "description": "Spaced repetition review (quiz recommended)",
-                    "startAt": start_at,
-                    "endAt": end_at,
-                    "topicId": review.topicId,
-                    "courseId": course.id if course else None,
-                    "reviewItemId": review.id,
-                },
-            )
+            block_data: dict = {
+                "user": {"connect": {"id": review.userId}},
+                "title": f"Review: {topic_title}",
+                "description": "Spaced repetition review (quiz recommended)",
+                "startAt": start_at,
+                "endAt": end_at,
+                "reviewItem": {"connect": {"id": review.id}},
+            }
+            if review.topicId:
+                block_data["topic"] = {"connect": {"id": review.topicId}}
+            if course:
+                block_data["course"] = {"connect": {"id": course.id}}
+            block = await db.scheduleblock.create(data=block_data)
             # Relation is maintained via block.reviewItemId; no update on ReviewItem
             await log_behaviour(
                 db,

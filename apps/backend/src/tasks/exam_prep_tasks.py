@@ -407,12 +407,12 @@ async def _send_exam_prep_reminders() -> dict[str, Any]:
                 if not existing:
                     await db.scheduleblock.create(
                         data={
-                            "userId": ep.userId,
+                            "user": {"connect": {"id": ep.userId}},
                             "title": f"Review Weak Areas: {ep.subject}",
                             "description": f"You have {weak_count} questions to review. Focus on weak areas!",
                             "startAt": review_start,
                             "endAt": review_end,
-                            "examPrepId": ep.id,
+                            "examPrep": {"connect": {"id": ep.id}},
                         }
                     )
                     reminders_created += 1

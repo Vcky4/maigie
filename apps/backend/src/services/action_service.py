@@ -945,8 +945,8 @@ class ActionService:
                 }
 
             # Build schedule data
-            schedule_data = {
-                "userId": user_id,
+            schedule_data: dict = {
+                "user": {"connect": {"id": user_id}},
                 "title": data.get("title", "AI Generated Schedule Block"),
                 "description": data.get("description"),
                 "startAt": start_at,
@@ -960,7 +960,7 @@ class ActionService:
                 # Verify course exists and belongs to user
                 course = await db.course.find_first(where={"id": course_id, "userId": user_id})
                 if course:
-                    schedule_data["courseId"] = course_id
+                    schedule_data["course"] = {"connect": {"id": course_id}}
                 else:
                     print(f"⚠️ Course not found: {course_id}")
 
@@ -969,7 +969,7 @@ class ActionService:
             if topic_id:
                 topic = await db.topic.find_first(where={"id": topic_id})
                 if topic:
-                    schedule_data["topicId"] = topic_id
+                    schedule_data["topic"] = {"connect": {"id": topic_id}}
                 else:
                     print(f"⚠️ Topic not found: {topic_id}")
 
@@ -978,7 +978,7 @@ class ActionService:
             if goal_id:
                 goal = await db.goal.find_first(where={"id": goal_id, "userId": user_id})
                 if goal:
-                    schedule_data["goalId"] = goal_id
+                    schedule_data["goal"] = {"connect": {"id": goal_id}}
                 else:
                     print(f"⚠️ Goal not found: {goal_id}")
 

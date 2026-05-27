@@ -365,12 +365,12 @@ async def generate_study_plan(db: Prisma, exam_prep_id: str, user_id: str) -> in
 
         await db.scheduleblock.create(
             data={
-                "userId": user_id,
+                "user": {"connect": {"id": user_id}},
                 "title": f"Exam Prep: {exam_prep.subject}{topic_title}",
                 "description": "Study session for exam preparation",
                 "startAt": start_at,
                 "endAt": end_at,
-                "examPrepId": exam_prep.id,
+                "examPrep": {"connect": {"id": exam_prep.id}},
             }
         )
     return len(blocks)
