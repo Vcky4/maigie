@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 
 from prisma import Client as PrismaClient
 
+from ..core.cache import cache
 from ..dependencies import CurrentUser
 from ..models.analytics import (
     ActivityDataItem,
@@ -33,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/dashboard", tags=["Dashboard"])
 
+# Dashboard cache TTL in seconds (60s — balances freshness with performance)
+_DASHBOARD_CACHE_TTL = 60
+
 
 @router.get("", response_model=DashboardResponse)
 async def get_dashboard(
@@ -43,9 +47,22 @@ async def get_dashboard(
     Get dashboard overview data for the current user.
 
     Returns aggregated stats, recent courses, active goals, and upcoming schedules.
+    Results are cached in Redis for 60 seconds per user.
     """
     try:
         user_id = current_user.id
+
+        # ========================================================================
+        # Check Redis cache first
+        # ========================================================================
+        cache_key = cache.make_key(["dashboard", user_id])
+        cached = await cache.get(cache_key)
+        if cached and isinstance(cached, dict):
+            try:
+                return DashboardResponse.model_validate(cached)
+            except Exception:
+                pass  # Cache data invalid, proceed to rebuild
+
         now = datetime.now(UTC)
 
         # ========================================================================
@@ -315,7 +332,7 @@ async def get_dashboard(
         except Exception as leaderboard_err:
             logger.warning("Failed to fetch leaderboard for dashboard: %s", leaderboard_err)
 
-        return DashboardResponse(
+        response = DashboardResponse(
             stats=stats,
             recentCourses=recent_courses,
             activeGoals=active_goals_list,
@@ -325,6 +342,13 @@ async def get_dashboard(
             activityData=activity_data,
             leaderboard=leaderboard_items,
         )
+
+        # ========================================================================
+        # Write to Redis cache
+        # ========================================================================
+        await cache.set(cache_key, response.model_dump(mode="json"), expire=_DASHBOARD_CACHE_TTL)
+
+        return response
 
     except Exception as e:
         logger.error(f"Error in get_dashboard: {str(e)}", exc_info=True)

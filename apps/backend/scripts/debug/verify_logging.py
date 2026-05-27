@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.utils.logging_config import configure_logging  # noqa: E402, I001
 from src.utils.exceptions import (  # noqa: E402, I001

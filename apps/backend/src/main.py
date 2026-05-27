@@ -270,6 +270,12 @@ async def lifespan(app: FastAPI):
     app.state.ws_event_forwarder_task = ws_forwarder_task
     logger.info("WS event forwarder initialized")
 
+    # Start WebSocket broadcast subscriber (multi-instance pub/sub)
+    from src.services.ws_broadcast import broadcast
+
+    await broadcast.start_subscriber()
+    logger.info("WebSocket broadcast subscriber initialized")
+
     yield  # Application runs here
 
     # Shutdown
@@ -289,6 +295,12 @@ async def lifespan(app: FastAPI):
         pass
     await websocket_manager.stop_heartbeat()
     await websocket_manager.stop_cleanup()
+
+    # Stop WebSocket broadcast subscriber
+    try:
+        await broadcast.stop_subscriber()
+    except Exception:
+        pass
 
     for connection_id in list(websocket_manager.active_connections.keys()):
         await websocket_manager.disconnect(connection_id, reason="server_shutdown")

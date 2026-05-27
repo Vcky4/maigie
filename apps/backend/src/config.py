@@ -101,12 +101,9 @@ class Settings(BaseSettings):
     WEBSOCKET_HEARTBEAT_TIMEOUT: int = 120
     WEBSOCKET_MAX_RECONNECT_ATTEMPTS: int = 5
 
-    # --- OAuth Providers (Placeholders) ---
+    # --- OAuth Providers ---
     OAUTH_GOOGLE_CLIENT_ID: str | None = None
     OAUTH_GOOGLE_CLIENT_SECRET: str | None = None
-    # TODO: Enable GitHub OAuth provider in the future
-    # OAUTH_GITHUB_CLIENT_ID: str | None = None
-    # OAUTH_GITHUB_CLIENT_SECRET: str | None = None
     # OAuth base URL for redirect URI (use deployed domain for both local and production)
     # If set, this will override the dynamically constructed base URL from request
     # Example: https://api.maigie.com or https://pr-51-api-preview.maigie.com

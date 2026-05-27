@@ -26,6 +26,7 @@ TASK_STUDY_GAP = "agent.study_gap_detector"
 TASK_REVIEW_NUDGE = "agent.review_due_nudge"
 TASK_CONVO_SUMMARIZER = "agent.conversation_summarizer"
 TASK_INSIGHT_GENERATOR = "agent.learning_insight_generator"
+TASK_REENGAGEMENT = "agent.reengagement_nudge"
 
 
 async def _ensure_db_connected():
@@ -234,6 +235,20 @@ async def _study_gap_detector_impl():
             # Send email for streaks about to break
             if days_since >= 3 and streak.user:
                 await _send_nudge_email_if_enabled(streak.user, "study_gap", title, message, action)
+
+            # Send push notification for streak-at-risk
+            try:
+                from src.services.push_notification_service import send_push_notification
+
+                await send_push_notification(
+                    user_id=streak.userId,
+                    title=title,
+                    body=message,
+                    data={"type": "streak_at_risk", "streak": str(streak.currentStreak)},
+                )
+            except Exception as push_err:
+                logger.debug("Streak push notification failed for %s: %s", streak.userId, push_err)
+
             nudges_created += 1
 
         logger.info("Study gap detector: created %d nudges", nudges_created)
@@ -463,6 +478,125 @@ def learning_insight_generator_task(self: Any):
 
 
 # ---------------------------------------------------------------------------
+#  Re-engagement Nudge (Win-back for inactive users)
+# ---------------------------------------------------------------------------
+
+
+async def _reengagement_nudge_impl():
+    """
+    Send re-engagement push notifications to users inactive for 3+ days.
+    Highlights what they've missed (circle activity, upcoming exams, review items due).
+    """
+    await _ensure_db_connected()
+    from src.core.database import db
+    from src.services.push_notification_service import send_push_notification
+
+    now = datetime.now(UTC)
+    three_days_ago = now - timedelta(days=3)
+    seven_days_ago = now - timedelta(days=7)
+
+    try:
+        # Find users who haven't had a study session in 3-7 days
+        # (beyond 7 days, they've already received study_gap nudges)
+        inactive_users = await db.user.find_many(
+            where={
+                "isActive": True,
+                "isOnboarded": True,
+                "updatedAt": {"lt": three_days_ago, "gt": seven_days_ago},
+            },
+            include={
+                "reviewItems": {
+                    "where": {"nextReviewDate": {"lte": now}},
+                    "take": 1,
+                },
+                "goals": {
+                    "where": {"status": "ACTIVE", "targetDate": {"lte": now + timedelta(days=7)}},
+                    "take": 1,
+                },
+            },
+            take=50,
+        )
+
+        nudges_sent = 0
+        for user in inactive_users:
+            # Skip if we already sent a re-engagement nudge recently
+            existing = await db.aiagenttask.find_first(
+                where={
+                    "userId": user.id,
+                    "taskType": "reengagement",
+                    "createdAt": {"gte": now - timedelta(days=5)},
+                },
+            )
+            if existing:
+                continue
+
+            # Build personalized message
+            user_name = (user.name or "").split()[0] if user.name else "there"
+            has_reviews = len(user.reviewItems) > 0 if user.reviewItems else False
+            has_upcoming_goals = len(user.goals) > 0 if user.goals else False
+
+            if has_reviews and has_upcoming_goals:
+                title = f"Hey {user_name}, you have reviews due and goals approaching!"
+                body = "Your spaced repetition items are waiting and a goal deadline is near. A quick session will keep you on track."
+            elif has_reviews:
+                title = f"Hey {user_name}, you have reviews waiting!"
+                body = "Your spaced repetition items are piling up. A 10-minute review session will keep your memory fresh."
+            elif has_upcoming_goals:
+                title = f"Hey {user_name}, a goal deadline is approaching!"
+                body = "You have an active goal due soon. Jump back in to make progress before it's too late."
+            else:
+                title = f"Welcome back, {user_name}!"
+                body = "It's been a few days. Even 15 minutes of study today will make a difference. Your AI tutor is ready when you are."
+
+            # Create nudge record
+            await db.aiagenttask.create(
+                data={
+                    "userId": user.id,
+                    "taskType": "reengagement",
+                    "status": "sent",
+                    "priority": 3,
+                    "title": title,
+                    "message": body,
+                    "scheduledAt": now,
+                    "actionData": {
+                        "hasReviews": has_reviews,
+                        "hasUpcomingGoals": has_upcoming_goals,
+                    },
+                }
+            )
+
+            # Send push notification
+            try:
+                await send_push_notification(
+                    user_id=user.id,
+                    title=title,
+                    body=body,
+                    data={"type": "reengagement"},
+                )
+            except Exception as push_err:
+                logger.debug("Re-engagement push failed for %s: %s", user.id, push_err)
+
+            nudges_sent += 1
+
+        logger.info("Re-engagement nudge: sent %d notifications", nudges_sent)
+
+    except Exception as e:
+        logger.error("Re-engagement nudge failed: %s", e, exc_info=True)
+
+
+@register_task(
+    name=TASK_REENGAGEMENT,
+    description="Send re-engagement notifications to inactive users",
+    category="agent",
+    tags=["agent", "retention", "nudge"],
+)
+@task(name=TASK_REENGAGEMENT, bind=True, max_retries=2)
+def reengagement_nudge_task(self: Any):
+    """Run re-engagement nudge for inactive users."""
+    return run_async_in_celery(_reengagement_nudge_impl())
+
+
+# ---------------------------------------------------------------------------
 #  Celery Beat Schedule Registration
 # ---------------------------------------------------------------------------
 
@@ -495,6 +629,11 @@ def register_agent_beat_tasks():
         name="agent.learning_insight_generator.weekly",
         schedule=crontab(minute=0, hour=3, day_of_week=0),
         task=TASK_INSIGHT_GENERATOR,
+    )
+    register_periodic_task(
+        name="agent.reengagement_nudge.daily",
+        schedule=crontab(minute=0, hour=10),  # 10 AM daily
+        task=TASK_REENGAGEMENT,
     )
 
     logger.info("Registered agent beat tasks")

@@ -62,15 +62,24 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_default_exchange=settings.CELERY_TASK_DEFAULT_EXCHANGE,
         task_default_routing_key=settings.CELERY_TASK_DEFAULT_ROUTING_KEY,
         result_expires=settings.CELERY_RESULT_EXPIRES,
-        # Task routing
+        # Task routing — separate lightweight from AI-heavy tasks
+        # Pattern matching uses fnmatch (glob): * matches any characters
         task_routes={
-            "tasks.*": {"queue": "default"},
+            "agent.*": {"queue": "default"},
+            "push_notifications.*": {"queue": "default"},
+            "email_notifications.*": {"queue": "default"},
+            "spaced_repetition.*": {"queue": "default"},
+            "course.*": {"queue": "heavy"},
+            "schedule.*": {"queue": "heavy"},
+            "exam_prep.*": {"queue": "heavy"},
+            "resources.*": {"queue": "heavy"},
         },
         # Task time limits
-        task_time_limit=300,  # Hard time limit (5 minutes)
+        task_time_limit=300,  # Hard time limit (5 minutes) — override per-task for lightweight
         task_soft_time_limit=240,  # Soft time limit (4 minutes)
         # Worker settings
-        worker_max_tasks_per_child=200,  # Restart worker after N tasks (prevents memory/zombie leaks)
+        worker_max_tasks_per_child=50,  # Restart worker after 50 tasks (aggressive memory recycling)
+        worker_max_memory_per_child=512_000,  # Kill worker if it exceeds ~512MB RSS (kB)
         worker_disable_rate_limits=False,
         # Prisma spawns an engine subprocess; Celery's stdout redirection replaces
         # sys.stdout/sys.stderr with a LoggingProxy (no .fileno), which breaks

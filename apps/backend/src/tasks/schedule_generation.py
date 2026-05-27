@@ -39,10 +39,23 @@ def create_schedule_from_chat_task(  # type: ignore[misc]
     schedule_blocks: list[dict[str, Any]],
 ) -> dict[str, Any]:
     async def _run() -> dict[str, Any]:
+        from src.core.database import db
         from src.services.action_service import action_service
         from src.services.ws_event_bus import publish_ws_event
 
         await _ensure_db_connected()
+
+        # Idempotency: use the Celery task ID as a deduplication key.
+        # If this exact task was already processed (redelivery), skip.
+        task_id = self.request.id
+        if task_id:
+            from src.core.cache import cache
+
+            dedup_key = cache.make_key(["task_dedup", "schedule", task_id])
+            already_done = await cache.get(dedup_key)
+            if already_done:
+                logger.info("Schedule task %s already completed — skipping redelivery", task_id)
+                return {"status": "success", "results": [], "idempotent": True}
 
         total = max(1, len(schedule_blocks))
 
@@ -96,6 +109,10 @@ def create_schedule_from_chat_task(  # type: ignore[misc]
                 "results": results,
             },
         )
+
+        # Mark task as completed for idempotency (TTL: 1 hour)
+        if task_id:
+            await cache.set(dedup_key, "done", expire=3600)
 
         return {"status": "success", "results": results}
 

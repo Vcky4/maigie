@@ -523,8 +523,23 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=2 --queues=default --without-gossip --without-mingle --without-heartbeat
+                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
                   "
+
+              beat:
+                image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                pull_policy: never
+                container_name: maigie-preview-beat-${{ steps.preview.outputs.id }}
+                env_file:
+                  - .env
+                environment:
+                  PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                depends_on:
+                  redis:
+                    condition: service_healthy
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+                command: celery -A src.core.celery_app:celery_app beat --loglevel=info
 
             volumes:
               postgres_data_${{ steps.preview.outputs.id }}:
@@ -961,6 +976,7 @@ jobs:
                 restart: unless-stopped
                 volumes:
                   - redis_data:/data
+                command: redis-server --maxmemory 200mb --maxmemory-policy noeviction --save 60 1000
                 healthcheck:
                   test: ["CMD", "redis-cli", "ping"]
                   interval: 10s
@@ -980,7 +996,7 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
-                command: celery -A src.core.celery_app worker --loglevel=info
+                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=3 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
 
               celery-beat:
                 image: maigie-backend:latest
