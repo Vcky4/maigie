@@ -18,6 +18,11 @@ __pycache__/
 .coverage
 htmlcov/
 
+# OS artifacts
+Microsoft/
+.DS_Store
+Thumbs.db
+
 # Expo
 node_modules/
 .expo/

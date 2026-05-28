@@ -34,6 +34,7 @@ class ConnectionManager:
         heartbeat_interval: int = 30,
         heartbeat_timeout: int = 60,
         max_reconnect_attempts: int = 5,
+        max_connections: int = 500,
     ):
         """
         Initialize connection manager.
@@ -42,6 +43,7 @@ class ConnectionManager:
             heartbeat_interval: Seconds between heartbeat pings
             heartbeat_timeout: Seconds before considering connection dead
             max_reconnect_attempts: Maximum reconnection attempts before giving up
+            max_connections: Maximum concurrent WebSocket connections (prevents OOM)
         """
         # Active connections: {connection_id: WebSocket}
         self.active_connections: dict[str, WebSocket] = {}
@@ -59,6 +61,7 @@ class ConnectionManager:
         self.heartbeat_interval = heartbeat_interval
         self.heartbeat_timeout = heartbeat_timeout
         self.max_reconnect_attempts = max_reconnect_attempts
+        self.max_connections = max_connections
 
         # Background tasks
         self._heartbeat_task: asyncio.Task | None = None
@@ -74,7 +77,18 @@ class ConnectionManager:
 
         Returns:
             Connection ID
+
+        Raises:
+            WebSocketDisconnect: If max connections reached
         """
+        # Reject if at capacity to prevent OOM
+        if len(self.active_connections) >= self.max_connections:
+            logger.warning(
+                "WebSocket connection rejected: max_connections=%d reached", self.max_connections
+            )
+            await websocket.close(code=1013, reason="Server at capacity")
+            raise Exception("Max WebSocket connections reached")
+
         await websocket.accept()
 
         connection_id = str(uuid4())

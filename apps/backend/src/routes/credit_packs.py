@@ -28,6 +28,7 @@ from ..schemas.credit_packs import (
 )
 from ..services import credit_purchase_service
 from ..utils.exceptions import ResourceNotFoundError, ValidationError
+from ..utils.rate_limit import enforce_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,16 @@ async def initiate_purchase(
     Creates a one-time payment session with the user's configured payment
     provider (Stripe or Paystack). Returns a session URL to redirect the
     user to complete payment.
+
+    Rate limited to 5 requests per minute per user.
     """
+    # Enforce rate limit: 5 purchase initiations per minute per user
+    await enforce_rate_limit(
+        user_id=current_user.id,
+        endpoint="credit_pack_purchase",
+        max_requests=5,
+        window_seconds=60,
+    )
     try:
         result = await credit_purchase_service.initiate_purchase(
             user=current_user,

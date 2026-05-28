@@ -175,18 +175,20 @@ async def create_schedule_block_for_review(db: Prisma, review: Any) -> Any | Non
     if start_at.tzinfo is None:
         start_at = start_at.replace(tzinfo=UTC)
     end_at = start_at + timedelta(minutes=REVIEW_BLOCK_DURATION_MINUTES)
-    return await db.scheduleblock.create(
-        data={
-            "userId": review.userId,
-            "title": f"Review: {topic_title}",
-            "description": "Spaced repetition review (quiz and refresher)",
-            "startAt": start_at,
-            "endAt": end_at,
-            "topicId": review.topicId,
-            "courseId": course.id if course else None,
-            "reviewItemId": review.id,
-        },
-    )
+    data: dict[str, Any] = {
+        "user": {"connect": {"id": review.userId}},
+        "title": f"Review: {topic_title}",
+        "description": "Spaced repetition review (quiz and refresher)",
+        "startAt": start_at,
+        "endAt": end_at,
+        "reviewItem": {"connect": {"id": review.id}},
+    }
+    if review.topicId:
+        data["topic"] = {"connect": {"id": review.topicId}}
+    if course:
+        data["course"] = {"connect": {"id": course.id}}
+
+    return await db.scheduleblock.create(data=data)
 
 
 async def advance_review(
@@ -299,17 +301,20 @@ async def log_behaviour(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     """Log a schedule behaviour event for AI learning."""
-    return await db.schedulebehaviourlog.create(
-        data={
-            "userId": user_id,
-            "behaviourType": behaviour_type,
-            "entityType": entity_type,
-            "entityId": entity_id,
-            "scheduledAt": scheduled_at,
-            "actualAt": actual_at,
-            "metadata": metadata,
-        }
-    )
+    from prisma import Json
+
+    data: dict[str, Any] = {
+        "user": {"connect": {"id": user_id}},
+        "behaviourType": behaviour_type,
+        "entityType": entity_type,
+        "entityId": entity_id,
+        "scheduledAt": scheduled_at,
+        "actualAt": actual_at,
+    }
+    if metadata is not None:
+        data["metadata"] = Json(metadata)
+
+    return await db.schedulebehaviourlog.create(data=data)
 
 
 async def get_review_stats(db: Prisma, user_id: str) -> dict[str, Any]:

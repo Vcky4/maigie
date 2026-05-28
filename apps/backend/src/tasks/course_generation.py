@@ -104,6 +104,27 @@ def generate_course_from_chat_task(  # type: ignore[misc]
 
         await _ensure_db_connected()
 
+        # Idempotency check: if course already has modules, it was already generated.
+        # This prevents duplicate content on task redelivery (task_acks_late=True).
+        existing_modules = await db.module.count(where={"courseId": course_id})
+        if existing_modules > 0:
+            logger.info(
+                "Course %s already has %d modules — skipping duplicate generation",
+                course_id,
+                existing_modules,
+            )
+            await publish_ws_event(
+                user_id,
+                {
+                    "status": "success",
+                    "action": "create_course",
+                    "course_id": course_id,
+                    "courseId": course_id,
+                    "message": "Your course is ready!",
+                },
+            )
+            return {"status": "success", "course_id": course_id, "idempotent": True}
+
         # Started
         await publish_ws_event(
             user_id,

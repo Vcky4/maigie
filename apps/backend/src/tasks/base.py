@@ -79,13 +79,14 @@ def _cleanup_prisma_on_worker_shutdown(**kwargs: Any) -> None:
 
 
 class BaseTask(Task):
-    """Base task class with common error handling and logging.
+    """Base task class with common error handling, logging, and DLQ support.
 
     All tasks should inherit from this class or use the @task decorator
     which automatically applies this base class.
 
     Features:
     - Automatic error logging
+    - Dead Letter Queue: permanently failed tasks are stored in Redis for inspection
     - Consistent error handling
     - Task metadata tracking
     """
@@ -95,19 +96,14 @@ class BaseTask(Task):
     ) -> None:
         """Called when task fails.
 
-        Args:
-            exc: Exception that caused the failure
-            task_id: Task ID
-            args: Task positional arguments
-            kwargs: Task keyword arguments
-            einfo: Exception info
+        If retries are exhausted, stores the failed task in the Dead Letter Queue
+        (Redis list) for manual inspection and replay.
         """
         logger.error(
             f"Task {self.name} (ID: {task_id}) failed",
             extra={
                 "task_id": task_id,
                 "task_name": self.name,
-                # Avoid LogRecord collisions: "args" is reserved by logging.
                 "task_args": args,
                 "task_kwargs": kwargs,
                 "exception": str(exc),
@@ -115,7 +111,53 @@ class BaseTask(Task):
             },
             exc_info=True,
         )
+
+        # Store in DLQ if retries exhausted (final failure)
+        if self.request.retries >= (self.max_retries or 0):
+            try:
+                import json
+                from datetime import UTC, datetime
+
+                from ..core.cache import cache
+
+                dlq_entry = json.dumps(
+                    {
+                        "task_id": task_id,
+                        "task_name": self.name,
+                        "args": list(args) if args else [],
+                        "kwargs": dict(kwargs) if kwargs else {},
+                        "exception": str(exc),
+                        "exception_type": type(exc).__name__,
+                        "retries": self.request.retries,
+                        "failed_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+
+                # Use sync Redis push (cache may not have async context here)
+                # Store in a Redis list; capped at 500 entries to prevent unbounded growth
+                if cache._connected and cache.redis:
+                    import asyncio
+
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # We're in an async context — schedule it
+                        asyncio.ensure_future(self._store_dlq(dlq_entry))
+                    else:
+                        loop.run_until_complete(self._store_dlq(dlq_entry))
+            except Exception as dlq_err:
+                logger.debug("DLQ storage failed: %s", dlq_err)
+
         super().on_failure(exc, task_id, args, kwargs, einfo)
+
+    async def _store_dlq(self, entry: str) -> None:
+        """Store a failed task entry in the DLQ Redis list."""
+        from ..core.cache import cache
+
+        dlq_key = cache.make_key(["dlq", "failed_tasks"])
+        if cache.redis:
+            await cache.redis.lpush(dlq_key.encode("utf-8"), entry.encode("utf-8"))
+            # Cap at 500 entries
+            await cache.redis.ltrim(dlq_key.encode("utf-8"), 0, 499)
 
     def on_success(self, retval: Any, task_id: str, args: tuple, kwargs: dict[str, Any]) -> None:
         """Called when task succeeds.

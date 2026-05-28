@@ -1401,8 +1401,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             "tier": action_result.get("tier", "FREE"),
                             "is_daily_limit": action_result.get("is_daily_limit", False),
                             "show_referral_option": action_result.get("show_referral_option", True),
+                            "blocked": True,
+                            "purchaseDeepLink": PURCHASE_DEEP_LINK,
                         }
-                        await manager.send_personal_message(json.dumps(error_data), user.id)
+                        await manager.send_connection_json(error_data, connection_id)
                         continue
 
                     # Send success event for create actions
@@ -1731,7 +1733,19 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                 session.id,
                             )
                         else:
-                            await manager.send_personal_message(main_content, user.id)
+                            await manager.send_json(
+                                {
+                                    "type": "assistant_final",
+                                    "id": assistant_message.id,
+                                    "content": main_content,
+                                    "skillsUsed": skills_used if skills_used else None,
+                                    "sessionId": session.id,
+                                    "requestId": ai_request_id,
+                                    "replyToMessageId": ai_reply_target_id,
+                                    "replyToMessage": assistant_reply_preview,
+                                },
+                                user.id,
+                            )
                     # Send confirmation with ID
                     payload = {
                         "type": "message_saved",

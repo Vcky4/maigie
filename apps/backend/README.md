@@ -236,10 +236,10 @@ To verify that the Application Setup requirements are met:
 ```bash
 # Using Poetry
 cd apps/backend
-poetry run python verify_setup.py
+poetry run python scripts/debug/verify_setup.py
 
 # Or using system Python (if dependencies are installed)
-python verify_setup.py
+python scripts/debug/verify_setup.py
 ```
 
 To verify the Authentication Framework:
@@ -247,10 +247,10 @@ To verify the Authentication Framework:
 ```bash
 # Using Poetry
 cd apps/backend
-poetry run python verify_auth.py
+poetry run python scripts/debug/verify_auth.py
 
 # Or using system Python (if dependencies are installed)
-python verify_auth.py
+python scripts/debug/verify_auth.py
 ```
 
 Or run the tests:
@@ -328,9 +328,9 @@ poetry run pytest
 ### Tests
 
 - `tests/` - Test files
-- `verify_setup.py` - Application setup verification script
-- `verify_auth.py` - Authentication framework verification script
-- `verify_websocket.py` - WebSocket framework verification script (run `.venv\Scripts\python.exe verify_websocket.py`)
+- `scripts/debug/verify_setup.py` - Application setup verification script
+- `scripts/debug/verify_auth.py` - Authentication framework verification script
+- `scripts/debug/verify_websocket.py` - WebSocket framework verification script (run `.venv\Scripts\python.exe scripts/debug/verify_websocket.py`)
 
 ## Application Setup Status
 
@@ -355,10 +355,10 @@ Run the verification script:
 
 ```bash
 # Using virtual environment
-.venv\Scripts\python.exe verify_websocket.py
+.venv\Scripts\python.exe scripts/debug/verify_websocket.py
 
 # Or using Poetry
-poetry run python verify_websocket.py
+poetry run python scripts/debug/verify_websocket.py
 
 # Or using PowerShell script
 powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
@@ -413,7 +413,7 @@ Poetry automatically creates and manages a virtual environment for this project.
 - All commands should be run with `poetry run` prefix:
 
   ```bash
-  poetry run python verify_setup.py
+  poetry run python scripts/debug/verify_setup.py
   poetry run uvicorn src.main:app --reload
   poetry run pytest
   ```
@@ -425,7 +425,7 @@ Poetry automatically creates and manages a virtual environment for this project.
   .venv\Scripts\Activate.ps1
 
   # Then run commands directly
-  python verify_setup.py
+  python scripts/debug/verify_setup.py
   uvicorn src.main:app --reload
   ```
 
@@ -549,7 +549,7 @@ curl http://localhost:8000/api/v1/examples/info
 poetry run pytest tests/test_exception_handling.py -v
 
 # Run verification script
-poetry run python verify_exceptions.py
+poetry run python scripts/debug/verify_exceptions.py
 ```
 
 See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
@@ -559,12 +559,6 @@ See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
 - `REDIS_KEY_PREFIX` - Prefix for all cache keys (default: `maigie:`)
 - `REDIS_SOCKET_TIMEOUT` - Redis socket timeout in seconds (default: 5)
 - `REDIS_SOCKET_CONNECT_TIMEOUT` - Redis connection timeout in seconds (default: 5)
-- `CELERY_BROKER_URL` - Celery broker URL (auto-generated from REDIS_URL, uses DB 1)
-- `CELERY_RESULT_BACKEND` - Celery result backend URL (auto-generated from REDIS_URL, uses DB 2)
-- `CELERY_TASK_SERIALIZER` - Task serialization format (default: `json`)
-- `CELERY_RESULT_SERIALIZER` - Result serialization format (default: `json`)
-- `CELERY_TIMEZONE` - Timezone for scheduled tasks (default: `UTC`)
-- `CELERY_TASK_ALWAYS_EAGER` - Run tasks synchronously (default: `false`, set to `true` for testing)
 - `CELERY_BROKER_URL` - Celery broker URL (auto-generated from REDIS_URL, uses DB 1)
 - `CELERY_RESULT_BACKEND` - Celery result backend URL (auto-generated from REDIS_URL, uses DB 2)
 - `CELERY_TASK_SERIALIZER` - Task serialization format (default: `json`)

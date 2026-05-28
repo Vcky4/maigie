@@ -39,7 +39,7 @@ if [ ! -f .env ] && [ -f .env.example ]; then
   cp .env.example .env
 fi
 
-poetry run python3 verify_setup.py || true
+poetry run python3 scripts/debug/verify_setup.py || true
 
 echo "Setup complete. Start with:"
 echo "  poetry run uvicorn src.main:app --reload"

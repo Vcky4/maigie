@@ -27,34 +27,56 @@ logger = logging.getLogger(__name__)
 
 WS_EVENT_CHANNEL = "maigie:ws_events"
 
+# Per-worker-process reusable Redis client for publishing events.
+# Created lazily on first use, reused across all tasks in the same worker process.
+_worker_redis_client: redis.Redis | None = None
+
+
+async def _get_worker_redis() -> redis.Redis:
+    """Get or create a reusable Redis client for the current worker process.
+
+    Unlike the previous approach (new connection per publish), this reuses
+    a single connection across all tasks in the same prefork child process.
+    The client is bound to the current event loop.
+    """
+    global _worker_redis_client
+
+    if _worker_redis_client is not None:
+        try:
+            await _worker_redis_client.ping()
+            return _worker_redis_client
+        except Exception:
+            # Connection is dead — recreate
+            try:
+                await _worker_redis_client.close()
+            except Exception:
+                pass
+            _worker_redis_client = None
+
+    _worker_redis_client = redis.from_url(
+        get_redis_connection_url(),
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+    )
+    return _worker_redis_client
+
 
 async def publish_ws_event(user_id: str, payload: dict[str, Any]) -> None:
     """
     Publish a websocket event (type: event) to Redis.
 
     API instances will subscribe and forward to connected clients.
+    Uses a per-worker-process reusable Redis connection to avoid
+    connection churn (previously created/destroyed a connection per call).
     """
-    # IMPORTANT: Celery tasks frequently wrap async logic with `asyncio.run()`,
-    # which creates/closes an event loop per task invocation. A cached/global
-    # `redis.asyncio` client can become bound to a different loop and will then
-    # throw errors like:
-    # - "got Future attached to a different loop"
-    # - "Event loop is closed"
-    #
-    # To avoid cross-loop issues in worker processes, use a short-lived client.
-    redis_client = redis.from_url(
-        get_redis_connection_url(),
-        encoding="utf-8",
-        decode_responses=True,
-    )
     try:
+        client = await _get_worker_redis()
         message = {"userId": user_id, "message": {"type": "event", "payload": payload}}
-        await redis_client.publish(WS_EVENT_CHANNEL, json.dumps(message))
-    finally:
-        try:
-            await redis_client.close()
-        except Exception:
-            pass
+        await client.publish(WS_EVENT_CHANNEL, json.dumps(message))
+    except Exception as e:
+        logger.warning("publish_ws_event failed: %s", e)
 
 
 async def ws_event_forwarder(stop_event: asyncio.Event) -> None:
