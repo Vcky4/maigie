@@ -292,6 +292,33 @@ async def retake_note(
             content=cleaned_content, title=note.title, context=context
         )
 
+        # Emit AI usage scoped to the note's workspace (Personal or Circle).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                build_circle_usage_scope,
+                emit_ai_usage,
+            )
+
+            note_circle_id = getattr(note, "circleId", None)
+            if note_circle_id:
+                emit_scope = build_circle_usage_scope(note_circle_id)
+            else:
+                emit_scope = PERSONAL_USAGE_SCOPE
+            await emit_ai_usage(
+                user_id=current_user.id,
+                usage_scope=emit_scope,
+                circle_id=note_circle_id,
+                provider="gemini",
+                model=None,
+                feature="note_retake",
+                input_tokens=0,
+                output_tokens=0,
+                request_count=1,
+            )
+        except Exception:
+            pass
+
         # Strip any action blocks from the rewritten content (in case AI includes them)
         rewritten_content = re.sub(
             r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*",
@@ -366,6 +393,33 @@ async def add_summary_to_note(
 
         # Generate summary using AI
         summary = await llm_service.generate_summary(cleaned_content)
+
+        # Emit AI usage scoped to the note's workspace (Personal or Circle).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                build_circle_usage_scope,
+                emit_ai_usage,
+            )
+
+            note_circle_id = getattr(note, "circleId", None)
+            if note_circle_id:
+                emit_scope = build_circle_usage_scope(note_circle_id)
+            else:
+                emit_scope = PERSONAL_USAGE_SCOPE
+            await emit_ai_usage(
+                user_id=current_user.id,
+                usage_scope=emit_scope,
+                circle_id=note_circle_id,
+                provider="gemini",
+                model=None,
+                feature="note_summary",
+                input_tokens=0,
+                output_tokens=0,
+                request_count=1,
+            )
+        except Exception:
+            pass
 
         # Update the note with summary in the summary field
         updated_note = await note_service.update_note(

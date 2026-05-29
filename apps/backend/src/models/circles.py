@@ -16,6 +16,8 @@ class CircleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
     creditsLimit: int | None = Field(None, ge=0)
+    visibility: str | None = Field(None, description="PUBLIC or PRIVATE (default PRIVATE)")
+    category: str | None = Field(None, max_length=64)
 
 
 class CircleUpdate(BaseModel):

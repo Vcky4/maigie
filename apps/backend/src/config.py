@@ -157,16 +157,32 @@ class Settings(BaseSettings):
     # Maigie Plus (7-day trial)
     STRIPE_PRICE_ID_MONTHLY: str = ""
     STRIPE_PRICE_ID_YEARLY: str = ""
-    # Study Circle (3-day trial)
+    # Circle Plan (per-Circle subscription, 7-day trial on first purchase)
+    STRIPE_PRICE_ID_CIRCLE_PLAN_MONTHLY: str = ""
+    # Plus Seat add-on (per-seat, no trial)
+    STRIPE_PRICE_ID_PLUS_SEAT_ADD_ON_MONTHLY: str = ""
+    # DEPRECATED: Study Circle tier removed from active product catalog
+    # (Requirements 1.8, 17.9). Price IDs retained only so historical
+    # billing records and webhook lookups can continue to identify the
+    # source tier; the active catalog excludes them.
     STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY: str = ""
     STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY: str = ""
-    # Squad Plan (3-day trial)
+    # DEPRECATED: Squad tier removed from active product catalog
+    # (Requirements 1.6, 1.8, 17.9). Same retention rationale as above.
     STRIPE_PRICE_ID_SQUAD_MONTHLY: str = ""
     STRIPE_PRICE_ID_SQUAD_YEARLY: str = ""
     # Trial days per plan (used when creating checkout sessions)
     TRIAL_DAYS_MAIGIE_PLUS: int = 7
-    TRIAL_DAYS_STUDY_CIRCLE: int = 3
-    TRIAL_DAYS_SQUAD: int = 3
+    TRIAL_DAYS_CIRCLE_PLAN: int = 7
+    TRIAL_DAYS_STUDY_CIRCLE: int = 3  # retained for historical webhook handling
+    TRIAL_DAYS_SQUAD: int = 3  # retained for historical webhook handling
+    # Catalog prices (cents, USD). Source of truth for `GET /plans/catalog`.
+    # Per Requirement 1.3: Plus $4.99/mo or $39/yr, Circle Plan $14.99/mo,
+    # Plus Seat add-on $4.99/seat/mo.
+    PRICE_CENTS_PLUS_MONTHLY: int = 499
+    PRICE_CENTS_PLUS_YEARLY: int = 3900
+    PRICE_CENTS_CIRCLE_PLAN_MONTHLY: int = 1499
+    PRICE_CENTS_PLUS_SEAT_ADD_ON_MONTHLY: int = 499
     FRONTEND_URL: str = "http://localhost:4200"  # For redirect URLs
 
     # --- Paystack (Nigeria) ---
@@ -175,6 +191,11 @@ class Settings(BaseSettings):
     # Plan codes (create plans in Paystack Dashboard, amounts in NGN)
     PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY: str = ""
     PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY: str = ""
+    # Circle Plan / Plus Seat add-on
+    PAYSTACK_PLAN_CIRCLE_PLAN_MONTHLY: str = ""
+    PAYSTACK_PLAN_PLUS_SEAT_ADD_ON_MONTHLY: str = ""
+    # DEPRECATED: retained only for historical webhook lookups; excluded
+    # from the active product catalog (Requirements 1.8, 17.9).
     PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY: str = ""
     PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: str = ""
     PAYSTACK_PLAN_SQUAD_MONTHLY: str = ""
@@ -239,16 +260,13 @@ class Settings(BaseSettings):
 
     # Feature flags — enabled providers (comma-separated)
     LLM_ENABLED_PROVIDERS: str = "gemini,openai"
-    # Tier-based model allowlists (comma-separated provider:model pairs)
+    # Tier-based model allowlists (comma-separated provider:model pairs).
+    # Only ``free`` and ``plus`` exist after Circle Reimagining; Circle-scoped
+    # AI capabilities are derived from Seat_Tier and resolve to one of these
+    # two keys via FeatureFlagService.effective_tier_for_request.
     LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
         "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
-    )
-    LLM_TIER_ALLOWLIST_CIRCLE: str = (
-        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
-    )
-    LLM_TIER_ALLOWLIST_SQUAD: str = (
-        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
     )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---

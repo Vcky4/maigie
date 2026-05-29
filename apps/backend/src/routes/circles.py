@@ -1,4 +1,4 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 
 from src.dependencies import CurrentUser, db
 from src.models.circles import (
@@ -119,7 +119,13 @@ async def create_circle(
     data: CircleCreate,
     current_user: CurrentUser,
 ):
-    """Create a new study circle."""
+    """Create a new Circle. Any authenticated user can create a Circle."""
+    # Reject suspended users (Requirement 4.10)
+    if getattr(current_user, "suspended", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "ACCOUNT_SUSPENDED", "message": "Your account is suspended."},
+        )
     circle = await circle_service.create_circle(
         db,
         current_user.id,
@@ -171,6 +177,22 @@ async def delete_circle(
     """Delete a circle (owner only)."""
     await circle_service.delete_circle(db, circle_id, current_user.id)
     return None
+
+
+@router.post("/{circle_id}/visibility")
+async def set_visibility(
+    circle_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Change a Circle's visibility (OWNER or ADMIN only)."""
+    visibility = body.get("visibility")
+    if not visibility:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="visibility is required.",
+        )
+    return await circle_service.set_visibility(db, circle_id, current_user.id, visibility)
 
 
 @router.post("/{circle_id}/transfer", response_model=CircleDetailResponse)

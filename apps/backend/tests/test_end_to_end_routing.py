@@ -128,13 +128,20 @@ class MockNonRetriableAdapter(BaseProviderAdapter):
 
 @pytest.fixture
 def feature_flags():
-    """Feature flags with all providers enabled."""
+    """Feature flags with all providers enabled.
+
+    Only ``free`` and ``plus`` allowlist keys exist after Circle Reimagining
+    (Task 2.1); Circle-scoped requests resolve to one of these two via
+    Seat_Tier.
+    """
     return FeatureFlagService(
         enabled_providers="gemini,openai,anthropic",
         tier_allowlists={
             "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-            "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
-            "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+            "plus": (
+                "gemini:gemini-2.5-flash,openai:gpt-4o-mini,"
+                "openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+            ),
         },
     )
 

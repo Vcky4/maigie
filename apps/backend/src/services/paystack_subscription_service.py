@@ -21,29 +21,67 @@ from ..core.database import db
 from ..services.credit_service import reset_credits_for_period_start
 from ..services.email import send_subscription_success_email
 from ..services.referral_service import track_referral_subscription
+from ..utils.exceptions import DeprecatedPlanError
 
 logger = logging.getLogger(__name__)
 PAYSTACK_BASE = "https://api.paystack.co"
+# Active plan identifiers accepted at the checkout surface. Deprecated
+# ``study_circle_*`` and ``squad_*`` ids are rejected on creation per
+# Requirements 1.9 and 2.1.
 PLAN_IDS = (
     "maigie_plus_monthly",
     "maigie_plus_yearly",
-    "study_circle_monthly",
-    "study_circle_yearly",
-    "squad_monthly",
-    "squad_yearly",
+    "plus_monthly",
+    "plus_yearly",
+    "circle_plan_monthly",
+    "plus_seat_add_on_monthly",
 )
+
+DEPRECATED_PLAN_IDS = {
+    "study_circle_monthly": (
+        "STUDY_CIRCLE_PLAN_REMOVED",
+        "The Study Circle plan has been retired.",
+    ),
+    "study_circle_yearly": (
+        "STUDY_CIRCLE_PLAN_REMOVED",
+        "The Study Circle plan has been retired.",
+    ),
+    "squad_monthly": (
+        "SQUAD_PLAN_REMOVED",
+        "The Squad plan has been retired.",
+    ),
+    "squad_yearly": (
+        "SQUAD_PLAN_REMOVED",
+        "The Squad plan has been retired.",
+    ),
+}
+
+
+def _assert_plan_id_is_active(plan_id: str) -> None:
+    """Reject creation against retired plan ids.
+
+    Implements Requirements 1.9 and 2.1 for the Paystack surface.
+    """
+    if plan_id in DEPRECATED_PLAN_IDS:
+        code, message = DEPRECATED_PLAN_IDS[plan_id]
+        raise DeprecatedPlanError(code=code, message=message)
 
 
 def _get_plan_code(plan_id: str) -> str:
-    """Map plan_id to Paystack plan code."""
+    """Map plan_id to Paystack plan code.
+
+    Rejects deprecated tiers with ``DeprecatedPlanError`` (HTTP 410) per
+    Requirements 1.9 and 2.1.
+    """
+    _assert_plan_id_is_active(plan_id)
     settings = get_settings()
     mapping = {
         "maigie_plus_monthly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY,
         "maigie_plus_yearly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY,
-        "study_circle_monthly": settings.PAYSTACK_PLAN_STUDY_CIRCLE_MONTHLY,
-        "study_circle_yearly": settings.PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY,
-        "squad_monthly": settings.PAYSTACK_PLAN_SQUAD_MONTHLY,
-        "squad_yearly": settings.PAYSTACK_PLAN_SQUAD_YEARLY,
+        "plus_monthly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY,
+        "plus_yearly": settings.PAYSTACK_PLAN_MAIGIE_PLUS_YEARLY,
+        "circle_plan_monthly": settings.PAYSTACK_PLAN_CIRCLE_PLAN_MONTHLY,
+        "plus_seat_add_on_monthly": settings.PAYSTACK_PLAN_PLUS_SEAT_ADD_ON_MONTHLY,
     }
     code = mapping.get(plan_id)
     if not code:
@@ -52,7 +90,14 @@ def _get_plan_code(plan_id: str) -> str:
 
 
 def _plan_code_to_tier(plan_code: str) -> str:
-    """Map Paystack plan code to tier."""
+    """Map Paystack plan code to tier.
+
+    Deprecated ``STUDY_CIRCLE_*`` and ``SQUAD_*`` plan codes are still
+    mapped here so that webhook events for legacy subscriptions continue
+    to resolve their source tier (Requirement 2.8 retains historical
+    billing for ≥24 months). Active checkout flows reject creation
+    against these via ``_assert_plan_id_is_active``.
+    """
     settings = get_settings()
     if plan_code == settings.PAYSTACK_PLAN_MAIGIE_PLUS_MONTHLY:
         return "PREMIUM_MONTHLY"
@@ -69,7 +114,9 @@ def _plan_code_to_tier(plan_code: str) -> str:
     return "FREE"
 
 
-# Tier hierarchy for upgrade/downgrade comparison
+# Tier hierarchy for upgrade/downgrade comparison.
+# Deprecated tiers retain a slot only for legacy comparison logic that
+# reads existing user state; new creations cannot target them.
 _TIER_ORDER = {
     "FREE": 0,
     "PREMIUM_MONTHLY": 1,
@@ -237,15 +284,19 @@ async def initialize_paystack_subscription(
     is_upgrade = None
     if user.paystackSubscriptionCode:
         current_tier = str(user.tier) if user.tier else "FREE"
-        # Check if trying to subscribe to the same plan
-        new_tier = _plan_code_to_tier(plan_code)
-        current_tiers = {
+        # Check if trying to subscribe to the same plan.
+        # Map each active plan family to the storage tier values it covers.
+        plan_family_to_tiers = {
             "maigie_plus": ["PREMIUM_MONTHLY", "PREMIUM_YEARLY"],
-            "study_circle": ["STUDY_CIRCLE_MONTHLY", "STUDY_CIRCLE_YEARLY"],
-            "squad": ["SQUAD_MONTHLY", "SQUAD_YEARLY"],
+            "plus": ["PREMIUM_MONTHLY", "PREMIUM_YEARLY"],
+            # Circle Plan and the Plus Seat add-on are Circle-scoped products
+            # not surfaced as user-level tiers. We do not block re-purchase
+            # at this surface (Requirement 11.2 allows multiple add-ons), so
+            # leave their family unmapped — same-plan detection only applies
+            # to personal subscriptions.
         }
-        plan_base = plan_id.rsplit("_", 1)[0]  # e.g. "maigie_plus" from "maigie_plus_monthly"
-        if current_tier in current_tiers.get(plan_base, []):
+        plan_family = plan_id.rsplit("_", 1)[0]  # e.g. "plus" from "plus_monthly"
+        if current_tier in plan_family_to_tiers.get(plan_family, []):
             raise ValueError("User is already subscribed to this plan")
 
         is_upgrade = _is_upgrade(current_tier, plan_id)

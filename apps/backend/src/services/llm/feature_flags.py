@@ -11,21 +11,103 @@ Configuration format (environment variables):
     LLM_TIER_ALLOWLIST_FREE: comma-separated "provider:model" pairs
         e.g. "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: comma-separated "provider:model" pairs
-    LLM_TIER_ALLOWLIST_CIRCLE: comma-separated "provider:model" pairs
-    LLM_TIER_ALLOWLIST_SQUAD: comma-separated "provider:model" pairs
 
 Precedence order for access decisions:
     1. Global provider enable/disable (highest priority)
     2. Per-user override (grant or revoke)
     3. Tier allowlist (lowest priority)
+
+Effective-tier resolution per Usage_Scope (Circle Reimagining):
+    Personal_Tier and Seat_Tier are resolved to a single ``EffectiveTier``
+    value of ``"free"`` or ``"plus"`` via :py:meth:`effective_tier_for_request`.
+    Downstream tier gates (model allowlist, caps, upload limits) only see
+    these two outcomes; the legacy ``circle`` / ``squad`` branches are gone.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Effective tier and usage scope types
+# ---------------------------------------------------------------------------
+
+# Two-valued effective tier used by every downstream LLM gate. The legacy
+# "circle" and "squad" outcomes were removed by the Circle Reimagining
+# feature; Circle-scoped capabilities are derived from Seat_Tier instead.
+EffectiveTier = Literal["free", "plus"]
+
+# Scope under which an AI request is executed. ``"personal"`` resolves
+# against the User's Personal_Tier; ``"circle:{circle_id}"`` resolves
+# against the User's Seat_Tier in that Circle. The two scopes are
+# mutually isolated (Requirements 7.2, 7.3, 7.4).
+UsageScope = str  # "personal" | "circle:{circle_id}"
+
+PERSONAL_SCOPE: UsageScope = "personal"
+
+
+def circle_scope(circle_id: str) -> UsageScope:
+    """Build a Circle-scoped Usage_Scope value for a given Circle id."""
+    return f"circle:{circle_id}"
+
+
+def parse_scope(scope: UsageScope) -> tuple[str, str | None]:
+    """Split a Usage_Scope into ``(kind, circle_id)`` where kind is
+    ``"personal"`` or ``"circle"``.
+
+    Raises ValueError for malformed scope strings.
+    """
+    if scope == PERSONAL_SCOPE:
+        return ("personal", None)
+    if scope.startswith("circle:") and len(scope) > len("circle:"):
+        return ("circle", scope[len("circle:") :])
+    raise ValueError(f"Invalid usage scope: {scope!r}")
+
+
+# ---------------------------------------------------------------------------
+# Seat tier resolution (abstraction point for seat_service)
+# ---------------------------------------------------------------------------
+#
+# Until Task 3.1 ``seat_service`` lands, the effective-tier resolver reads
+# ``CircleMember.seatTier`` directly via Prisma. The lookup is funneled
+# through :py:func:`read_seat_tier_for_user` so the upcoming
+# ``seat_service.get_seat_tier`` can replace this helper without touching
+# any caller.
+#
+# Contract:
+#   - Returns the stored Seat_Tier enum value as a string
+#     (``"PLUS_SEAT"`` or ``"FREE_SEAT"``).
+#   - Non-members and lookup failures resolve to ``"FREE_SEAT"`` so the
+#     request is gated as Free without raising — authorization errors
+#     belong to the per-route membership check, not the tier resolver.
+
+
+async def read_seat_tier_for_user(user_id: str, circle_id: str) -> str:
+    """Return ``CircleMember.seatTier`` for ``(user_id, circle_id)``.
+
+    Direct Prisma read; Task 3.1 swaps this for ``seat_service.get_seat_tier``.
+    Returns ``"FREE_SEAT"`` for non-members or any lookup failure.
+    """
+    from src.core.database import db as prisma_db
+
+    try:
+        member = await prisma_db.circlemember.find_unique(
+            where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
+        )
+    except Exception:
+        logger.exception(
+            "Failed to read CircleMember.seatTier for user_id=%s circle_id=%s",
+            user_id,
+            circle_id,
+        )
+        return "FREE_SEAT"
+    if member is None or getattr(member, "seatTier", None) is None:
+        return "FREE_SEAT"
+    return str(member.seatTier)
 
 
 # ---------------------------------------------------------------------------
@@ -33,22 +115,28 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # Maps user tier enum values (as stored in the database) to the allowlist
-# config keys used in LLM_TIER_ALLOWLIST_* settings.
+# config keys used in LLM_TIER_ALLOWLIST_* settings. Only ``free`` and
+# ``plus`` outcomes exist in the reimagined ladder. Legacy STUDY_CIRCLE_*
+# and SQUAD_* enum values still appear in the database for historical
+# billing records, but they map to ``plus`` here so any pre-migration
+# user retains paid-tier capabilities until the migration runner converts
+# them.
 TIER_TO_ALLOWLIST_KEY: dict[str, str] = {
     "free": "free",
     "premium_monthly": "plus",
     "premium_yearly": "plus",
-    "study_circle_monthly": "circle",
-    "study_circle_yearly": "circle",
-    "squad_monthly": "squad",
-    "squad_yearly": "squad",
-    # Direct keys (already normalized) for backward compatibility
-    "plus": "plus",
-    "circle": "circle",
-    "squad": "squad",
     # Maigie Plus plan aliases (used in subscription routes)
+    "plus": "plus",
+    "plus_monthly": "plus",
+    "plus_yearly": "plus",
     "maigie_plus_monthly": "plus",
     "maigie_plus_yearly": "plus",
+    # Pre-migration legacy tiers map to ``plus`` so paid users keep
+    # paid-tier model access until the migration runs.
+    "study_circle_monthly": "plus",
+    "study_circle_yearly": "plus",
+    "squad_monthly": "plus",
+    "squad_yearly": "plus",
 }
 
 
@@ -104,7 +192,10 @@ class FeatureFlagService:
                 provider names (e.g. "gemini,openai").
             tier_allowlists: Mapping of tier name → comma-separated
                 "provider:model" pairs. Keys should be lowercase tier names
-                (e.g. "free", "plus", "circle", "squad").
+                (e.g. "free", "plus"). The legacy ``circle`` and ``squad``
+                allowlist keys were removed by Circle Reimagining; Circle
+                capabilities are now resolved per-Seat_Tier and map back
+                to ``free`` / ``plus``.
             store: Optional async database store for per-user overrides and
                 dynamic flag management. Pass None for env-only mode.
         """
@@ -148,7 +239,9 @@ class FeatureFlagService:
         Args:
             provider: Provider identifier.
             user_tier: User's subscription tier (e.g. "FREE",
-                "PREMIUM_MONTHLY", "plus", "circle", etc.).
+                "PREMIUM_MONTHLY", "plus"). Legacy STUDY_CIRCLE_* / SQUAD_*
+                values are accepted and resolved to ``plus`` for the
+                migration window via :py:data:`TIER_TO_ALLOWLIST_KEY`.
 
         Returns:
             List of model identifiers allowed for this provider+tier combo.
@@ -198,7 +291,9 @@ class FeatureFlagService:
             provider: Provider identifier.
             model: Model identifier.
             user_tier: User's subscription tier (e.g. "FREE",
-                "PREMIUM_MONTHLY", "plus", "circle", etc.).
+                "PREMIUM_MONTHLY", "plus"). Legacy STUDY_CIRCLE_* / SQUAD_*
+                values are accepted and resolved to ``plus`` for the
+                migration window via :py:data:`TIER_TO_ALLOWLIST_KEY`.
             user_id: User's unique identifier.
 
         Returns:
@@ -337,6 +432,98 @@ class FeatureFlagService:
                 available.append((provider, model))
 
         return sorted(available)
+
+    async def effective_tier_for_request(
+        self,
+        user_id: str,
+        scope: UsageScope,
+        *,
+        personal_tier: str | None = None,
+        seat_tier: str | None = None,
+    ) -> EffectiveTier:
+        """Resolve the effective tier for an AI request under a given scope.
+
+        For ``scope == "personal"``, returns ``"plus"`` if the user's
+        Personal_Tier maps to PLUS (any of PREMIUM_*, PLUS_*, STUDY_CIRCLE_*,
+        SQUAD_* — the legacy paid tiers retain paid capabilities until
+        migration runs), else ``"free"``.
+
+        For ``scope == "circle:{circle_id}"``, returns ``"plus"`` if the
+        user's Seat_Tier in that Circle is ``PLUS_SEAT``, else ``"free"``.
+        Independent of Personal_Tier (Requirements 7.2, 7.3, 7.4).
+
+        Pre-resolved values may be passed via ``personal_tier`` /
+        ``seat_tier`` to avoid redundant DB reads when the caller already
+        loaded them. Otherwise the resolver performs a direct Prisma read
+        against ``User.tier`` or ``CircleMember.seatTier`` via the shared
+        Prisma client.
+
+        Args:
+            user_id: The requesting User's id.
+            scope: Either ``"personal"`` or ``"circle:{circle_id}"``.
+            personal_tier: Optional pre-loaded ``User.tier`` string.
+            seat_tier: Optional pre-loaded ``CircleMember.seatTier`` string.
+
+        Returns:
+            ``"plus"`` if the user's effective tier under this scope is
+            paid, else ``"free"``.
+        """
+        kind, circle_id = parse_scope(scope)
+
+        if kind == "personal":
+            tier_value = personal_tier
+            if tier_value is None:
+                tier_value = await self._fetch_personal_tier(user_id)
+            return self._personal_tier_to_effective(tier_value)
+
+        # Circle scope
+        assert circle_id is not None  # parse_scope guarantees this
+        seat_value = seat_tier
+        if seat_value is None:
+            seat_value = await self._fetch_seat_tier(user_id, circle_id)
+        return "plus" if str(seat_value).upper() == "PLUS_SEAT" else "free"
+
+    @staticmethod
+    def _personal_tier_to_effective(tier_value: str | None) -> EffectiveTier:
+        """Map a stored Personal_Tier enum value to an EffectiveTier.
+
+        FREE → ``"free"``. Any non-FREE value (PREMIUM_*, PLUS_*,
+        STUDY_CIRCLE_*, SQUAD_*) → ``"plus"`` so that paid users retain
+        paid capabilities through the Circle Reimagining migration window.
+        """
+        if not tier_value:
+            return "free"
+        return "free" if str(tier_value).upper() == "FREE" else "plus"
+
+    @staticmethod
+    async def _fetch_personal_tier(user_id: str) -> str | None:
+        """Read User.tier directly via the shared Prisma client.
+
+        Returns ``None`` if the user is not found, which the caller maps
+        to ``"free"``.
+        """
+        from src.core.database import db as prisma_db
+
+        try:
+            user = await prisma_db.user.find_unique(where={"id": user_id})
+        except Exception:
+            logger.exception("Failed to read User.tier for user_id=%s", user_id)
+            return None
+        if user is None:
+            return None
+        return str(user.tier) if getattr(user, "tier", None) else None
+
+    @staticmethod
+    async def _fetch_seat_tier(user_id: str, circle_id: str) -> str:
+        """Resolve ``CircleMember.seatTier`` via ``seat_service``.
+
+        Delegates to :py:func:`seat_service.get_seat_tier` which reads
+        ``CircleMember.seatTier`` and returns ``"FREE_SEAT"`` for
+        non-members or lookup failures.
+        """
+        from src.services.seat_service import get_seat_tier
+
+        return await get_seat_tier(user_id, circle_id)
 
     async def reload(self) -> None:
         """Re-read configuration from environment and optionally from database.

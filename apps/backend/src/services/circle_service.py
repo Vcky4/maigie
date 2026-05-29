@@ -100,15 +100,9 @@ async def _sync_chat_group_session_metadata(db: Prisma, session_id: str):
 
 async def create_circle(db: Prisma, user_id: str, user_tier: str, data: CircleCreate):
     """
-    Create a new circle. Only Study Circle / Squad tier users can create circles.
+    Create a new circle. Any authenticated user can create a Circle
+    (Requirement 4.1). Suspended users are rejected at the route layer.
     """
-    # Check tier
-    if str(user_tier) not in CIRCLE_CREATE_TIERS:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You need a Study Circle or Squad plan to create circles.",
-        )
-
     # Check max circles
     membership_count = await db.circlemember.count(where={"userId": user_id, "role": "OWNER"})
     if membership_count >= MAX_CIRCLES_PER_USER:
@@ -117,26 +111,36 @@ async def create_circle(db: Prisma, user_id: str, user_tier: str, data: CircleCr
             detail=f"You can own up to {MAX_CIRCLES_PER_USER} circles.",
         )
 
-    # Create circle
-    circle = await db.circle.create(
-        data={
-            "name": data.name,
-            "description": data.description,
-            "createdById": user_id,
-            "creditsLimit": data.creditsLimit,
-        }
-    )
+    # Build create data with optional visibility and category
+    create_data: dict = {
+        "name": data.name,
+        "description": data.description,
+        "createdById": user_id,
+        "creditsLimit": getattr(data, "creditsLimit", None),
+    }
+    # Accept visibility (default PRIVATE per Requirement 4.3)
+    if hasattr(data, "visibility") and data.visibility is not None:
+        create_data["visibility"] = data.visibility
+    # Accept category
+    if hasattr(data, "category") and data.category is not None:
+        create_data["category"] = data.category
 
-    # Add creator as OWNER member
+    # Create circle
+    circle = await db.circle.create(data=create_data)
+
+    # Add creator as OWNER member. Seat_Tier is PLUS_SEAT only if the
+    # Circle has an active Circle_Plan; otherwise FREE_SEAT (Req 4.4).
+    owner_seat_tier = "PLUS_SEAT" if circle.circlePlanActive else "FREE_SEAT"
     await db.circlemember.create(
         data={
             "circleId": circle.id,
             "userId": user_id,
             "role": "OWNER",
+            "seatTier": owner_seat_tier,
         }
     )
 
-    # Create default "General" chat group
+    # Create default "General" chat group (Requirement 4.5)
     chat_session = await db.chatsession.create(
         data={
             "userId": user_id,
@@ -231,6 +235,34 @@ async def delete_circle(db: Prisma, circle_id: str, user_id: str) -> bool:
 
     await db.circle.delete(where={"id": circle_id})
     return True
+
+
+async def set_visibility(
+    db: Prisma, circle_id: str, actor_user_id: str, visibility: str
+) -> dict:
+    """Change a Circle's visibility (OWNER or ADMIN only).
+
+    Preserves all members on PUBLIC → PRIVATE transition (Requirement 4.7).
+    Syncs to repository within 60 s by updating the visibility column
+    directly (the repository query filters on this column).
+    """
+    await _verify_admin(db, circle_id, actor_user_id)
+
+    if visibility not in ("PUBLIC", "PRIVATE"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="visibility must be PUBLIC or PRIVATE.",
+        )
+
+    circle = await db.circle.update(
+        where={"id": circle_id},
+        data={"visibility": visibility},
+    )
+
+    return {
+        "circleId": circle.id,
+        "visibility": str(circle.visibility),
+    }
 
 
 # --- Ownership Transfer ---
@@ -546,6 +578,11 @@ async def remove_member(db: Prisma, circle_id: str, target_user_id: str, current
     else:
         # Removing someone (owner only)
         await _verify_owner(db, circle_id, current_user_id)
+
+    # Release any PLUS_SEAT held by the departing member before deletion
+    from src.services.seat_service import release_seat_on_member_remove
+
+    await release_seat_on_member_remove(circle_id, target_user_id, db_client=db)
 
     await db.circlemember.delete(
         where={

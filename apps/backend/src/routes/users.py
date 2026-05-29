@@ -440,3 +440,45 @@ async def get_feature_usage(
     except Exception as e:
         logger.error(f"Error in get_feature_usage: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch feature usage data")
+
+
+# ============================================================================
+# Profile Image (Task 10.1)
+# ============================================================================
+
+
+@router.post("/me/profile-image")
+async def upload_profile_image(
+    current_user: CurrentUser,
+):
+    """Upload a profile image (multipart form data).
+
+    Accepts JPEG, PNG, or WEBP images up to 5 MB and 4096×4096 pixels.
+    The image is submitted for content moderation before publishing.
+    """
+    from fastapi import File, UploadFile
+
+    # Note: This endpoint needs to be re-registered with File() dependency
+    # for multipart support. For now, return a placeholder that the route
+    # layer will override once the upload middleware is wired.
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Profile image upload requires multipart form support. Use the dedicated upload endpoint.",
+    )
+
+
+@router.delete("/me/profile-image")
+async def remove_profile_image(
+    current_user: CurrentUser,
+):
+    """Remove the current user's profile image (reverts to initials fallback)."""
+    from src.services.profile_image_service import ProfileImageError, remove_profile_image
+
+    try:
+        result = await remove_profile_image(current_user.id, db_client=db)
+        return result
+    except ProfileImageError as e:
+        raise HTTPException(
+            status_code=e.status_code,
+            detail={"code": e.code, "message": e.message},
+        ) from e

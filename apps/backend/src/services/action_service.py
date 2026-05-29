@@ -144,6 +144,39 @@ class ActionService:
                     user_message=outline_user_message,
                 )
 
+                # Emit AI usage scoped to Personal_Workspace or Circle_Workspace
+                # depending on whether the action originated from a Circle.
+                # Personal calls pass usage_scope='personal'; Circle calls
+                # pass usage_scope=f'circle:{circle_id}' (Requirements 7.5,
+                # 7.6, 12.2, 13.2, 13.3). Outline generation goes through
+                # ``llm_service`` (Gemini) directly, not the LLM router, so
+                # the emit is performed here at the call site.
+                try:
+                    from src.services.usage_tracking_service import (
+                        PERSONAL_USAGE_SCOPE,
+                        build_circle_usage_scope,
+                        emit_ai_usage,
+                    )
+
+                    if circle_id:
+                        emit_scope = build_circle_usage_scope(circle_id)
+                    else:
+                        emit_scope = PERSONAL_USAGE_SCOPE
+                    await emit_ai_usage(
+                        user_id=user_id,
+                        usage_scope=emit_scope,
+                        circle_id=circle_id,
+                        provider="gemini",
+                        model=None,
+                        feature="ai_course_generation",
+                        input_tokens=0,
+                        output_tokens=0,
+                        request_count=1,
+                    )
+                except Exception:
+                    # Telemetry failures must not break course generation.
+                    print("⚠️ Failed to emit AI usage for ai_course_generation")
+
                 if progress_callback:
                     await progress_callback(
                         40, "outline_ready", "Course outline ready. Creating course structure..."

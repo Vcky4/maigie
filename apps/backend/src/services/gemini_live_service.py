@@ -1053,6 +1053,42 @@ async def post_gemini_live_session(
 
             if to_consume > 0:
                 await consume_credits(user, to_consume, operation="gemini_live_voice")
+
+        # Emit a per-session AI usage record so Personal vs Circle quotas
+        # and analytics stay isolated (Requirements 7.5, 7.6, 12.2, 13.2,
+        # 13.3). Gemini Live sessions are currently Personal_Workspace
+        # only — they do not yet expose a circle context — so the scope
+        # is always ``"personal"`` here. When Circle voice sessions are
+        # introduced, callers should resolve the active Circle id and
+        # pass it through ``create_session`` and ``post_gemini_live_session``.
+        if user and billing_started:
+            try:
+                from src.config import get_settings
+                from src.services.usage_tracking_service import (
+                    PERSONAL_USAGE_SCOPE,
+                    emit_ai_usage,
+                )
+
+                live_model = (
+                    (get_settings().GEMINI_LIVE_MODEL or "").strip() or DEFAULT_LIVE_MODEL
+                )
+                await emit_ai_usage(
+                    user_id=user_id,
+                    usage_scope=PERSONAL_USAGE_SCOPE,
+                    circle_id=None,
+                    provider="gemini",
+                    model=live_model,
+                    feature="gemini_live_voice",
+                    input_tokens=0,
+                    output_tokens=0,
+                    request_count=1,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to emit gemini_live AI usage for user_id=%s session_id=%s",
+                    user_id,
+                    session_id,
+                )
     except SubscriptionLimitError as e:
         logger.warning(
             "Post-session credit recording skipped (limit reached): user_id=%s, session_id=%s, detail=%s",

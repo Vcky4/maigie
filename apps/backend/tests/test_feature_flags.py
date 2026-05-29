@@ -280,14 +280,20 @@ class TestTierEnforcement:
 
     @pytest.fixture
     def full_service(self):
-        """Service with all providers enabled and realistic tier allowlists."""
+        """Service with all providers enabled and realistic tier allowlists.
+
+        Only ``free`` and ``plus`` allowlist keys exist after the Circle
+        Reimagining feature; legacy STUDY_CIRCLE_* / SQUAD_* tier values
+        map to ``plus`` via :py:data:`TIER_TO_ALLOWLIST_KEY` for the
+        migration window.
+        """
         return FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
                 "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-                "plus": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini",
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
-                "squad": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": (
+                    "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
+                ),
             },
         )
 
@@ -347,45 +353,56 @@ class TestTierEnforcement:
             is False
         )
 
-    # --- Requirement 8.3: STUDY_CIRCLE/SQUAD allows all providers ---
+    # --- Requirement 8.3: Legacy STUDY_CIRCLE_*/SQUAD_* tiers map to plus
+    #     during the Circle Reimagining migration window.
 
-    def test_study_circle_allows_gemini(self, full_service):
-        """Req 8.3: STUDY_CIRCLE allows Gemini."""
+    def test_study_circle_monthly_resolves_to_plus(self, full_service):
+        """Legacy STUDY_CIRCLE_MONTHLY maps to ``plus`` allowlist."""
+        # plus allowlist contains gemini-2.5-flash and gpt-4o-mini
         assert (
             full_service.is_model_allowed(
                 "gemini", "gemini-2.5-flash", "study_circle_monthly", "user-1"
             )
             is True
         )
-
-    def test_study_circle_allows_openai(self, full_service):
-        """Req 8.3: STUDY_CIRCLE allows OpenAI."""
-        assert (
-            full_service.is_model_allowed("openai", "gpt-4o", "study_circle_monthly", "user-1")
-            is True
-        )
-
-    def test_study_circle_allows_anthropic(self, full_service):
-        """Req 8.3: STUDY_CIRCLE allows Anthropic."""
         assert (
             full_service.is_model_allowed(
-                "anthropic", "claude-sonnet-4-20250514", "study_circle_monthly", "user-1"
+                "openai", "gpt-4o-mini", "study_circle_monthly", "user-1"
+            )
+            is True
+        )
+        # Models outside plus allowlist remain denied
+        assert (
+            full_service.is_model_allowed("openai", "gpt-4o", "study_circle_monthly", "user-1")
+            is False
+        )
+
+    def test_study_circle_yearly_resolves_to_plus(self, full_service):
+        """Legacy STUDY_CIRCLE_YEARLY maps to ``plus`` allowlist."""
+        assert (
+            full_service.is_model_allowed(
+                "gemini", "gemini-2.5-flash", "study_circle_yearly", "user-1"
             )
             is True
         )
 
-    def test_squad_allows_all_providers(self, full_service):
-        """Req 8.3: SQUAD allows all providers."""
+    def test_squad_monthly_resolves_to_plus(self, full_service):
+        """Legacy SQUAD_MONTHLY maps to ``plus`` allowlist."""
         assert (
-            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "squad_monthly", "user-1")
+            full_service.is_model_allowed(
+                "gemini", "gemini-2.5-flash", "squad_monthly", "user-1"
+            )
             is True
         )
-        assert full_service.is_model_allowed("openai", "gpt-4o", "squad_monthly", "user-1") is True
+        assert (
+            full_service.is_model_allowed("openai", "gpt-4o-mini", "squad_monthly", "user-1")
+            is True
+        )
         assert (
             full_service.is_model_allowed(
                 "anthropic", "claude-sonnet-4-20250514", "squad_monthly", "user-1"
             )
-            is True
+            is False
         )
 
     # --- Requirement 8.4: Global disable overrides everything ---
@@ -407,13 +424,13 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",  # anthropic NOT enabled
             tier_allowlists={
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
             store=store,
         )
         await svc.reload()
         assert (
-            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "circle", "user-1")
+            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "plus", "user-1")
             is False
         )
 
@@ -467,14 +484,14 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini",  # anthropic disabled globally
             tier_allowlists={
-                "squad": "gemini:gemini-2.5-flash,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-2.5-flash,anthropic:claude-sonnet-4-20250514",
             },
             store=store,
         )
         await svc.reload()
         # Global disable wins over user grant
         assert (
-            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "squad", "user-1")
+            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "plus", "user-1")
             is False
         )
 
@@ -580,7 +597,6 @@ class TestGetAvailableModelsForUser:
             tier_allowlists={
                 "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
                 "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
         )
         models = svc.get_available_models_for_user("user-1", "free")
@@ -595,7 +611,6 @@ class TestGetAvailableModelsForUser:
             tier_allowlists={
                 "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
                 "plus": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini",
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
         )
         models = svc.get_available_models_for_user("user-1", "premium_monthly")
@@ -604,25 +619,27 @@ class TestGetAvailableModelsForUser:
         assert "openai" in providers
         assert "anthropic" not in providers
 
-    def test_circle_tier_returns_all_providers(self):
+    def test_legacy_study_circle_resolves_to_plus_allowlist(self):
+        """Legacy STUDY_CIRCLE_* tier values map to the ``plus`` allowlist."""
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
                 "free": "gemini:gemini-2.5-flash",
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
             },
         )
         models = svc.get_available_models_for_user("user-1", "study_circle_monthly")
         providers = {p for p, _ in models}
         assert "gemini" in providers
         assert "openai" in providers
-        assert "anthropic" in providers
+        # anthropic is not in the plus allowlist
+        assert "anthropic" not in providers
 
     def test_global_disable_excludes_provider(self):
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",  # anthropic NOT enabled
             tier_allowlists={
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
         )
         models = svc.get_available_models_for_user("user-1", "study_circle_monthly")
@@ -634,7 +651,7 @@ class TestGetAvailableModelsForUser:
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
                 "free": "gemini:gemini-2.5-flash",
-                "circle": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
         )
         svc.set_user_override("user-1", "openai", grant=True)
@@ -642,3 +659,128 @@ class TestGetAvailableModelsForUser:
         providers = {p for p, _ in models}
         # User has openai grant, so openai models from any tier should be available
         assert "openai" in providers
+
+
+# ---------------------------------------------------------------------------
+# Tests: effective_tier_for_request (Circle Reimagining: Requirements 7.2-7.4)
+# ---------------------------------------------------------------------------
+
+
+class TestEffectiveTierForRequest:
+    """Resolve effective tier (free | plus) per request scope.
+
+    Validates that Personal scope reads Personal_Tier and Circle scope reads
+    Seat_Tier, and that the two scopes are mutually isolated.
+    """
+
+    @pytest.fixture
+    def svc(self):
+        return FeatureFlagService(
+            enabled_providers="gemini",
+            tier_allowlists={
+                "free": "gemini:gemini-2.5-flash",
+                "plus": "gemini:gemini-2.5-flash",
+            },
+        )
+
+    # --- Personal scope ---
+
+    @pytest.mark.asyncio
+    async def test_personal_free_resolves_to_free(self, svc):
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="personal", personal_tier="FREE"
+        )
+        assert result == "free"
+
+    @pytest.mark.asyncio
+    async def test_personal_premium_monthly_resolves_to_plus(self, svc):
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="personal", personal_tier="PREMIUM_MONTHLY"
+        )
+        assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_personal_premium_yearly_resolves_to_plus(self, svc):
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="personal", personal_tier="PREMIUM_YEARLY"
+        )
+        assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_personal_legacy_study_circle_resolves_to_plus(self, svc):
+        """Pre-migration STUDY_CIRCLE_* users keep Plus capabilities."""
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="personal", personal_tier="STUDY_CIRCLE_MONTHLY"
+        )
+        assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_personal_legacy_squad_resolves_to_plus(self, svc):
+        """Pre-migration SQUAD_* users keep Plus capabilities."""
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="personal", personal_tier="SQUAD_YEARLY"
+        )
+        assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_personal_none_tier_resolves_to_free(self, svc):
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="personal", personal_tier=None
+        )
+        assert result == "free"
+
+    # --- Circle scope ---
+
+    @pytest.mark.asyncio
+    async def test_circle_plus_seat_resolves_to_plus(self, svc):
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="circle:c1", seat_tier="PLUS_SEAT"
+        )
+        assert result == "plus"
+
+    @pytest.mark.asyncio
+    async def test_circle_free_seat_resolves_to_free(self, svc):
+        result = await svc.effective_tier_for_request(
+            user_id="u1", scope="circle:c1", seat_tier="FREE_SEAT"
+        )
+        assert result == "free"
+
+    # --- Scope isolation: Personal_Tier does not leak into Circle scope ---
+
+    @pytest.mark.asyncio
+    async def test_personal_plus_user_with_free_seat_is_free_in_circle(self, svc):
+        """Req 7.3, 7.4: Personal_Tier is independent from Seat_Tier."""
+        result = await svc.effective_tier_for_request(
+            user_id="u1",
+            scope="circle:c1",
+            personal_tier="PREMIUM_MONTHLY",  # ignored under circle scope
+            seat_tier="FREE_SEAT",
+        )
+        assert result == "free"
+
+    @pytest.mark.asyncio
+    async def test_personal_free_user_with_plus_seat_is_plus_in_circle(self, svc):
+        """Req 7.3, 7.4: A FREE personal user with a PLUS_SEAT gets plus in Circle."""
+        result = await svc.effective_tier_for_request(
+            user_id="u1",
+            scope="circle:c1",
+            personal_tier="FREE",  # ignored under circle scope
+            seat_tier="PLUS_SEAT",
+        )
+        assert result == "plus"
+
+    # --- Scope parsing ---
+
+    @pytest.mark.asyncio
+    async def test_invalid_scope_raises(self, svc):
+        with pytest.raises(ValueError):
+            await svc.effective_tier_for_request(
+                user_id="u1", scope="bogus", personal_tier="FREE"
+            )
+
+    @pytest.mark.asyncio
+    async def test_circle_scope_without_id_raises(self, svc):
+        with pytest.raises(ValueError):
+            await svc.effective_tier_for_request(
+                user_id="u1", scope="circle:", seat_tier="FREE_SEAT"
+            )

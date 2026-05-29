@@ -39,8 +39,12 @@ from src.services.credit_service import (
     consume_credits,
     get_credit_usage,
 )
-from src.services.llm.adapter_registry import get_llm_router
+from src.services.llm.adapter_registry import get_feature_flag_service, get_llm_router
 from src.services.llm.errors import LLMProviderError
+from src.services.llm.feature_flags import (
+    PERSONAL_SCOPE,
+    circle_scope,
+)
 from src.services.llm_registry import LlmTask, default_model_for
 from src.services.llm_service import llm_service
 from src.services.rag_service import rag_service
@@ -392,9 +396,17 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                     user.id,
                                 )
 
-                            # Route greeting through the multi-provider LLM router
-                            greeting_tier = (
-                                str(user.tier) if getattr(user, "tier", None) else "FREE"
+                            # Route greeting through the multi-provider LLM router.
+                            # Resolve effective tier per the request's Usage_Scope:
+                            # greetings only fire on Personal sessions, so the
+                            # scope is always personal here.
+                            feature_flags = get_feature_flag_service()
+                            greeting_tier = await feature_flags.effective_tier_for_request(
+                                user_id=user.id,
+                                scope=PERSONAL_SCOPE,
+                                personal_tier=(
+                                    str(user.tier) if getattr(user, "tier", None) else None
+                                ),
                             )
                             greeting_preference = await _get_user_model_preference(
                                 db, user.id, capability="chat"
@@ -415,6 +427,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                 context=None,
                                 user_name=getattr(user, "name", None),
                                 stream_callback=stream_greeting,
+                                usage_scope=PERSONAL_SCOPE,
+                                circle_id=None,
                             )
 
                             clean_greeting = response_text.strip()
@@ -1237,8 +1251,27 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         await manager.send_json(payload, user.id)
 
                 try:
-                    # Determine user tier and model preference for routing
-                    user_tier = str(user.tier) if getattr(user, "tier", None) else "FREE"
+                    # Determine usage scope (personal vs circle) and resolve
+                    # the effective tier (free | plus) via the feature flag
+                    # service. For Circle sessions, tier comes from the
+                    # member's Seat_Tier in that Circle, not the user's
+                    # Personal_Tier (Requirements 7.2, 7.3, 7.4).
+                    feature_flags = get_feature_flag_service()
+                    if is_circle_session and circle_group is not None:
+                        request_scope = circle_scope(circle_group.circleId)
+                        user_tier = await feature_flags.effective_tier_for_request(
+                            user_id=user.id,
+                            scope=request_scope,
+                        )
+                    else:
+                        request_scope = PERSONAL_SCOPE
+                        user_tier = await feature_flags.effective_tier_for_request(
+                            user_id=user.id,
+                            scope=PERSONAL_SCOPE,
+                            personal_tier=(
+                                str(user.tier) if getattr(user, "tier", None) else None
+                            ),
+                        )
                     model_preference = await _get_user_model_preference(
                         db, user.id, capability="chat"
                     )
@@ -1262,6 +1295,12 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         image_url=file_urls_list[0] if file_urls_list else None,
                         progress_callback=send_progress,
                         stream_callback=stream_text,
+                        usage_scope=request_scope,
+                        circle_id=(
+                            circle_group.circleId
+                            if is_circle_session and circle_group is not None
+                            else None
+                        ),
                     )
                 except LLMProviderError as e:
                     logger.error(

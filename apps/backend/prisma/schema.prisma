@@ -6,9 +6,9 @@ datasource db {
 }
 
 generator client {
-  provider             = "prisma-client-py"
-  interface            = "asyncio"
-  recursive_type_depth = 5
+  provider                    = "prisma-client-py"
+  interface                   = "asyncio"
+  recursive_type_depth        = 5
   enable_experimental_decimal = true
 }
 
@@ -118,10 +118,53 @@ enum ResourceBankStatus {
   FLAGGED
 }
 
-enum ReportStatus {
+/// Status enum used by ResourceBankReport.
+/// Renamed from the prior `ReportStatus` to free that name for the moderation
+/// `Report` model introduced by the Circle Reimagining feature. Values are
+/// preserved so existing string usages (e.g. "REPORT_PENDING") continue to work.
+enum ResourceBankReportStatus {
   REPORT_PENDING
   REPORT_REVIEWED
   REPORT_DISMISSED
+}
+
+/// Moderation report status (Circle Reimagining: Reports against Circles,
+/// members, messages, resources, and profile images).
+enum ReportStatus {
+  PENDING
+  UPHELD
+  DISMISSED
+}
+
+enum ReportTargetType {
+  CIRCLE
+  MEMBER
+  MESSAGE
+  RESOURCE
+  PROFILE_IMAGE
+}
+
+enum SeatTier {
+  FREE_SEAT
+  PLUS_SEAT
+}
+
+enum CircleVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum UsageScopeType {
+  PERSONAL
+  CIRCLE
+}
+
+enum OwnershipTransferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CANCELLED
 }
 
 enum CircleRole {
@@ -163,18 +206,18 @@ enum LedgerLineKind {
 // ==========================================
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String? // Nullable for OAuth users
-  name         String?
-  provider     String? // "google", "email"
-  providerId   String?
-  tier         Tier     @default(FREE)
+  id             String          @id @default(uuid())
+  email          String          @unique
+  passwordHash   String? // Nullable for OAuth users
+  name           String?
+  provider       String? // "google", "email"
+  providerId     String?
+  tier           Tier            @default(FREE)
   role           UserRole        @default(USER)
   /// Set when role is ADMIN; null for normal users.
   adminStaffRole AdminStaffRole?
-  isActive     Boolean  @default(true)
-  isOnboarded  Boolean  @default(false)
+  isActive       Boolean         @default(true)
+  isOnboarded    Boolean         @default(false)
 
   verificationCode          String? // Stores the 6-digit OTP
   verificationCodeExpiresAt DateTime? // Stores when it expires
@@ -226,12 +269,18 @@ model User {
   referredByCode String? // Referral code of the user who referred this user (immutable once set)
 
   // Account deletion lifecycle (user-initiated delete with cooling-off window)
-  accountDeletionRequestedAt   DateTime?
-  accountDeletionScheduledFor  DateTime?
-  accountDeletionCancelToken   String?
+  accountDeletionRequestedAt      DateTime?
+  accountDeletionScheduledFor     DateTime?
+  accountDeletionCancelToken      String?
   accountDeletionReminder30SentAt DateTime?
   accountDeletionReminder7SentAt  DateTime?
   accountDeletionLastCancelledAt  DateTime?
+
+  // Profile image (Circle Reimagining)
+  profileImageUrl    String?
+  /// Moderation status of the most recently uploaded profile image:
+  /// PENDING_MODERATION | APPROVED | REJECTED
+  profileImageStatus String?
 
   // Limit reached email tracking (one email per period)
   limitReachedEmailLogs LimitReachedEmailLog[]
@@ -240,7 +289,7 @@ model User {
   preferences             UserPreferences?
   courses                 Course[]
   notes                   Note[]
-  editedNotes             Note[] @relation("NoteLastEditedBy")
+  editedNotes             Note[]                  @relation("NoteLastEditedBy")
   noteHistories           NoteHistory[]
   resources               Resource[]
   goals                   Goal[]
@@ -281,7 +330,7 @@ model User {
   ledgerLines LedgerLine[]
 
   // Exam Prep (Maigie Plus)
-  examPreps       ExamPrep[]
+  examPreps        ExamPrep[]
   examQuizSessions ExamQuizSession[]
 
   // Resource Bank
@@ -291,9 +340,20 @@ model User {
   resourceUploadRewardClaims ResourceUploadRewardClaim[]
 
   // Circle Relations
-  circleMembers CircleMember[]
-  circleStats   CircleMemberStat[]
+  circleMembers  CircleMember[]
+  circleStats    CircleMemberStat[]
   circleSessions CircleSession[]
+
+  // Circle Reimagining: per-(User, Circle) artifacts
+  circleJoinRequests           CircleJoinRequest[]
+  circleOwnershipTransfersFrom CircleOwnershipTransfer[] @relation("CircleOwnershipTransferFromUser")
+  circleOwnershipTransfersTo   CircleOwnershipTransfer[] @relation("CircleOwnershipTransferToUser")
+  circleSubscriptionsAsOwner   CircleSubscription[]      @relation("CircleSubscriptionOwner")
+  circleSeatAddonsPurchased    CircleSeatAddon[]         @relation("CircleSeatAddonPurchaser")
+  circleSeatAddonsAssigned     CircleSeatAddon[]         @relation("CircleSeatAddonAssignee")
+  reportsSubmitted             Report[]                  @relation("ReportReporter")
+  reportsDecided               Report[]                  @relation("ReportDecider")
+  aiUsageRecords               AiUsageRecord[]
 
   // Agentic AI Relations
   conversationSummaries ConversationSummary[]
@@ -484,7 +544,7 @@ model Course {
 }
 
 model CourseOutlineSatisfaction {
-  id       String @id @default(cuid())
+  id       String                        @id @default(cuid())
   userId   String
   courseId String
   kind     CourseOutlineSatisfactionKind
@@ -556,8 +616,8 @@ model ChatSession {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  title    String? // Auto-generated summary (e.g. "Biology Study Plan")
-  isActive Boolean @default(true) // False if archived/deleted
+  title        String? // Auto-generated summary (e.g. "Biology Study Plan")
+  isActive     Boolean @default(true) // False if archived/deleted
   isCircleRoom Boolean @default(false)
 
   // Session type: "general" (default), "onboarding"
@@ -675,9 +735,9 @@ model AIActionLog {
 model LlmCostRecord {
   id           String   @id @default(cuid())
   userId       String
-  userTier     String   // Tier at time of request
-  provider     String   // "gemini", "openai", "anthropic"
-  model        String   // Model ID used
+  userTier     String // Tier at time of request
+  provider     String // "gemini", "openai", "anthropic"
+  model        String // Model ID used
   inputTokens  Int
   outputTokens Int
   costUsd      Decimal  @db.Decimal(12, 6) // 6 decimal places
@@ -697,9 +757,9 @@ model ModelPreference {
   id         String   @id @default(cuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  capability String   // "chat", "vision", "structured_output", "embedding"
-  provider   String   // "gemini", "openai", "anthropic"
-  modelId    String   // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
+  capability String // "chat", "vision", "structured_output", "embedding"
+  provider   String // "gemini", "openai", "anthropic"
+  modelId    String // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -732,7 +792,7 @@ model Note {
 
   // Tracking ownership and changes
   lastEditedById String?
-  lastEditedBy   User? @relation("NoteLastEditedBy", fields: [lastEditedById], references: [id], onDelete: SetNull)
+  lastEditedBy   User?   @relation("NoteLastEditedBy", fields: [lastEditedById], references: [id], onDelete: SetNull)
 
   archived          Boolean @default(false)
   voiceRecordingUrl String?
@@ -768,7 +828,7 @@ model NoteHistory {
   note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content   String?  // Rich text content at this version
+  content   String? // Rich text content at this version
   createdAt DateTime @default(now())
 
   @@index([noteId])
@@ -1168,8 +1228,8 @@ model ExamQuizSession {
   topicId         String? // If mode is TOPIC_FOCUS, which topic
 
   // User tracking for individual progress in shared circles
-  userId          String?
-  user            User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   attempts ExamQuestionAttempt[]
 
@@ -1597,7 +1657,7 @@ model ResourceBankReport {
 
   reason      String
   description String?
-  status      ReportStatus @default(REPORT_PENDING)
+  status      ResourceBankReportStatus @default(REPORT_PENDING)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1682,8 +1742,8 @@ model LedgerLine {
   description String?
 
   /// Amount in `currency` (original).
-  amount    Decimal @db.Decimal(18, 4)
-  currency  String  @db.VarChar(3)
+  amount   Decimal @db.Decimal(18, 4)
+  currency String  @db.VarChar(3)
 
   /// Sterling equivalent for reporting (auto or manual).
   amountGbp Decimal @db.Decimal(18, 4)
@@ -1724,23 +1784,49 @@ model Circle {
   credits      Int  @default(0)
   creditsLimit Int?
 
+  // Circle Reimagining: visibility, branding, plan & seat snapshot, moderation
+  visibility                 CircleVisibility @default(PRIVATE)
+  category                   String?
+  bannerUrl                  String?
+  themeJson                  Json?
+  circlePlanActive           Boolean          @default(false)
+  circlePlanCurrentPeriodEnd DateTime?
+  seatPoolSize               Int              @default(0)
+  hiddenByModeration         Boolean          @default(false)
+  allowMemberExport          Boolean          @default(false)
+  featured                   Boolean          @default(false)
+  /// Discovery join behaviour: AUTO_JOIN | REQUEST_TO_JOIN
+  joinPolicy                 String           @default("AUTO_JOIN")
+  /// Idempotency marker for the one-time migration runner.
+  migrationMarker            String?
+
   // Relations
-  members    CircleMember[]
-  invites    CircleInvite[]
-  notes      Note[]
-  goals      Goal[]
-  courses    Course[]
-  chatGroups CircleChatGroup[]
-  resources  Resource[]
-  examPreps  ExamPrep[]
+  members       CircleMember[]
+  invites       CircleInvite[]
+  notes         Note[]
+  goals         Goal[]
+  courses       Course[]
+  chatGroups    CircleChatGroup[]
+  resources     Resource[]
+  examPreps     ExamPrep[]
   studySessions StudySession[]
-  memberStats CircleMemberStat[]
+  memberStats   CircleMemberStat[]
   groupSessions CircleSession[]
+
+  // Circle Reimagining relations
+  joinRequests       CircleJoinRequest[]
+  ownershipTransfers CircleOwnershipTransfer[]
+  subscription       CircleSubscription?
+  seatAddons         CircleSeatAddon[]
+  aiUsageRecords     AiUsageRecord[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([createdById])
+  @@index([visibility])
+  @@index([featured])
+  @@index([circlePlanActive])
 }
 
 model CircleMember {
@@ -1750,11 +1836,14 @@ model CircleMember {
   userId   String
   user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   role     CircleRole @default(MEMBER)
+  /// Per-(User, Circle) capability tier. Independent of the user's Personal_Tier.
+  seatTier SeatTier   @default(FREE_SEAT)
   joinedAt DateTime   @default(now())
 
   @@unique([circleId, userId])
   @@index([userId])
   @@index([circleId])
+  @@index([circleId, seatTier])
 }
 
 /// Up to 5 named chat groups within a circle
@@ -1800,10 +1889,10 @@ model CircleMemberStat {
   userId   String
   user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  contributionPoints Int @default(0)
-  coursesCompleted   Int @default(0)
-  notesAdded         Int @default(0)
-  resourcesShared    Int @default(0)
+  contributionPoints Int   @default(0)
+  coursesCompleted   Int   @default(0)
+  notesAdded         Int   @default(0)
+  resourcesShared    Int   @default(0)
   quizAverage        Float @default(0.0)
 
   createdAt DateTime @default(now())
@@ -1815,29 +1904,29 @@ model CircleMemberStat {
 }
 
 model CircleSession {
-  id          String   @id @default(cuid())
-  circleId    String
-  circle      Circle   @relation(fields: [circleId], references: [id], onDelete: Cascade)
-  
+  id       String @id @default(cuid())
+  circleId String
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
   title       String
   description String?
-  
+
   scheduledAt DateTime
-  duration    Int      @default(60) // minutes
+  duration    Int                 @default(60) // minutes
   status      CircleSessionStatus @default(SCHEDULED)
-  
+
   // Optional linkage to a specific chat group where the session takes place
   chatGroupId String?
   chatGroup   CircleChatGroup? @relation(fields: [chatGroupId], references: [id], onDelete: SetNull)
 
   // Optional linkage to a topic or goal
-  topicId     String?
-  topic       Topic?   @relation(fields: [topicId], references: [id], onDelete: SetNull)
-  goalId      String?
-  goal        Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
+  topicId String?
+  topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  goalId  String?
+  goal    Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
 
   createdById String
-  createdBy   User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1849,6 +1938,155 @@ model CircleSession {
   @@index([topicId])
   @@index([goalId])
   @@index([createdById])
+}
+
+// ==========================================
+//  CIRCLE REIMAGINING (visibility, seats, billing, moderation, usage)
+// ==========================================
+
+/// Pending join request raised by a user against a Public_Circle whose
+/// joinPolicy is REQUEST_TO_JOIN. Auto-join Circles never produce these.
+model CircleJoinRequest {
+  id        String    @id @default(cuid())
+  circleId  String
+  circle    Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// PENDING | APPROVED | DENIED | EXPIRED
+  status    String    @default("PENDING")
+  createdAt DateTime  @default(now())
+  decidedAt DateTime?
+
+  @@unique([circleId, userId])
+  @@index([circleId, status])
+}
+
+/// Owner-initiated ownership transfer with a 7-day acceptance window.
+model CircleOwnershipTransfer {
+  id         String                  @id @default(cuid())
+  circleId   String
+  circle     Circle                  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  fromUserId String
+  fromUser   User                    @relation("CircleOwnershipTransferFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId   String
+  toUser     User                    @relation("CircleOwnershipTransferToUser", fields: [toUserId], references: [id], onDelete: Cascade)
+  status     OwnershipTransferStatus @default(PENDING)
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime                @default(now())
+
+  @@index([circleId, status])
+  @@index([toUserId, status])
+}
+
+/// One Circle_Plan subscription per Circle. Source of truth for the Circle's
+/// plan-active state is the billing provider; this row is a cached snapshot.
+model CircleSubscription {
+  id                     String    @id @default(cuid())
+  circleId               String    @unique
+  circle                 Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  /// "STRIPE" | "PAYSTACK"
+  provider               String
+  providerSubscriptionId String
+  /// "ACTIVE" | "TRIALING" | "PAST_DUE" | "CANCELED"
+  status                 String
+  currentPeriodEnd       DateTime
+  trialEndsAt            DateTime?
+  cancelAtPeriodEnd      Boolean   @default(false)
+  /// Billing contact at creation time. Updated on ownership transfer.
+  ownerUserId            String
+  ownerUser              User      @relation("CircleSubscriptionOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+/// Plus_Seat_Add_On — one row per add-on seat. Independent of Circle_Plan.
+model CircleSeatAddon {
+  id                     String    @id @default(cuid())
+  circleId               String
+  circle                 Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  /// "STRIPE" | "PAYSTACK"
+  provider               String
+  providerSubscriptionId String
+  /// "ACTIVE" | "CANCELED_AT_PERIOD_END" | "CANCELED"
+  status                 String
+  currentPeriodEnd       DateTime
+  /// Currently-assigned member, or null when the seat is unassigned.
+  assignedToUserId       String?
+  assignedToUser         User?     @relation("CircleSeatAddonAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  /// Actor who purchased the add-on (Owner or Admin).
+  purchasedByUserId      String
+  purchasedByUser        User      @relation("CircleSeatAddonPurchaser", fields: [purchasedByUserId], references: [id], onDelete: Cascade)
+  purchasedAt            DateTime  @default(now())
+  canceledAt             DateTime?
+  assignedAt             DateTime?
+
+  @@index([circleId, status])
+  @@index([circleId, assignedAt])
+  @@index([assignedToUserId])
+  @@index([purchasedByUserId])
+}
+
+/// Per-AI-call usage record scoped to either the Personal_Workspace or a
+/// specific Circle_Workspace. Used for quota counters and per-member analytics.
+model AiUsageRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 'personal' or 'circle:{circle_id}'.
+  usageScope   String
+  /// Populated only when usageScope is 'circle:{circle_id}'.
+  circleId     String?
+  circle       Circle?  @relation(fields: [circleId], references: [id], onDelete: SetNull)
+  /// Provider-side identifiers and cost facts (kept generic; emitters fill them in).
+  provider     String?
+  model        String?
+  feature      String?
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  requestCount Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, usageScope])
+  @@index([circleId, userId])
+  @@index([userId, createdAt])
+  @@index([circleId, createdAt])
+}
+
+/// User-submitted moderation report against a Public_Circle, member, message,
+/// resource, or profile image.
+model Report {
+  id          String           @id @default(cuid())
+  reporterId  String
+  reporter    User             @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType  ReportTargetType
+  targetId    String
+  reasonCode  String
+  description String?
+  status      ReportStatus     @default(PENDING)
+  decidedById String?
+  decidedBy   User?            @relation("ReportDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([targetType, status])
+  @@index([reporterId, createdAt])
+  @@index([status])
+}
+
+/// One row per migration runner invocation. Per-entity idempotency markers
+/// live on `Circle.migrationMarker` (and equivalents on other migrated
+/// entities) so re-runs can skip completed entities.
+model MigrationRun {
+  id         String    @id @default(cuid())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  reportJson Json?
+  /// "RUNNING" | "COMPLETED" | "FAILED"
+  status     String    @default("RUNNING")
 }
 
 // ==========================================
@@ -1950,7 +2188,7 @@ model UserUpload {
 model CreditPack {
   id           String @id @default(cuid())
   name         String // e.g., "Starter Pack", "Value Pack", "Power Pack"
-  credits      Int    // Base credit amount
+  credits      Int // Base credit amount
   bonusCredits Int    @default(0) // Bonus credits included
 
   // Pricing (stored in smallest currency unit: cents for USD, kobo for NGN)
@@ -1979,13 +2217,13 @@ model CreditPurchaseTransaction {
   creditsGranted Int // Total credits added (base + bonus)
 
   // Payment details
-  amountPaid        Int    // Amount in smallest currency unit
+  amountPaid        Int // Amount in smallest currency unit
   currency          String // "USD", "NGN", etc.
   paymentProvider   String // "stripe" | "paystack"
   providerReference String @unique // Stripe payment_intent ID or Paystack reference
 
   // Session tracking
-  sessionId        String?   // Stripe checkout session ID or Paystack access code
+  sessionId        String? // Stripe checkout session ID or Paystack access code
   sessionExpiresAt DateTime? // When the payment session expires
 
   status      String    @default("pending") // "pending", "completed", "failed", "expired"
@@ -2018,7 +2256,7 @@ model DeviceToken {
 
   token    String         @unique // FCM registration token
   platform DevicePlatform
-  deviceId String?        // Optional device identifier for deduplication
+  deviceId String? // Optional device identifier for deduplication
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())

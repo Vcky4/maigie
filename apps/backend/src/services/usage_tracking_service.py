@@ -272,3 +272,293 @@ async def get_feature_usage(user: User, feature: str, db_client: Prisma | None =
         "period_end": period_end_str,
         "is_unlimited": limit is None,
     }
+
+
+# ---------------------------------------------------------------------------
+# AI Usage emission and scope-filtered queries (Circle Reimagining)
+# ---------------------------------------------------------------------------
+#
+# Every AI call MUST be persisted to ``AiUsageRecord`` with a Usage_Scope so
+# Personal_Workspace and Circle_Workspace usage are mutually isolated
+# (Requirements 7.5, 7.6, 12.2, 13.2, 13.3). The two scopes are stored as:
+#
+# * ``"personal"``               — user's Personal_Workspace usage
+# * ``"circle:{circle_id}"``     — usage scoped to one Circle_Workspace
+#
+# When ``usage_scope`` starts with ``"circle:"`` the ``circle_id`` column is
+# also populated so per-Circle analytics queries can use the dedicated index.
+
+PERSONAL_USAGE_SCOPE = "personal"
+
+
+def build_circle_usage_scope(circle_id: str) -> str:
+    """Build the canonical ``circle:{circle_id}`` Usage_Scope string."""
+    if not circle_id:
+        raise ValueError("circle_id is required for circle usage scope")
+    return f"circle:{circle_id}"
+
+
+def _validate_usage_scope(usage_scope: str, circle_id: str | None) -> None:
+    """Validate that ``usage_scope`` and ``circle_id`` are consistent.
+
+    Raises ``ValueError`` for any of:
+
+    * unknown scope kind
+    * ``circle:`` scope without a circle id
+    * ``circle:`` scope whose embedded id disagrees with ``circle_id``
+    * ``personal`` scope with a non-null ``circle_id``
+    """
+    if usage_scope == PERSONAL_USAGE_SCOPE:
+        if circle_id is not None:
+            raise ValueError(
+                "circle_id must be None when usage_scope is 'personal'"
+            )
+        return
+
+    if not usage_scope.startswith("circle:") or len(usage_scope) <= len("circle:"):
+        raise ValueError(
+            f"Invalid usage_scope: {usage_scope!r}; expected 'personal' or 'circle:{{id}}'"
+        )
+
+    embedded_id = usage_scope[len("circle:") :]
+    if not circle_id:
+        raise ValueError(
+            "circle_id is required when usage_scope is 'circle:{id}'"
+        )
+    if embedded_id != circle_id:
+        raise ValueError(
+            f"usage_scope circle id {embedded_id!r} does not match circle_id {circle_id!r}"
+        )
+
+
+async def emit_ai_usage(
+    *,
+    user_id: str,
+    usage_scope: str,
+    circle_id: str | None,
+    provider: str | None,
+    model: str | None,
+    feature: str | None,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    request_count: int = 1,
+    db_client: Prisma | None = None,
+) -> None:
+    """Persist a single ``AiUsageRecord`` row scoped to ``usage_scope``.
+
+    This is the canonical emit point used by every AI-call code path
+    (chat WS, Gemini Live, LLM router, etc.). Personal calls pass
+    ``usage_scope='personal'`` and ``circle_id=None``; Circle calls pass
+    ``usage_scope='circle:{circle_id}'`` and the matching ``circle_id``.
+
+    The function never raises — telemetry failures are logged but must not
+    break the AI request itself.
+    """
+    if db_client is None:
+        db_client = db
+
+    try:
+        _validate_usage_scope(usage_scope, circle_id)
+    except ValueError as exc:
+        logger.warning("emit_ai_usage rejected invalid scope: %s", exc)
+        return
+
+    if input_tokens < 0:
+        input_tokens = 0
+    if output_tokens < 0:
+        output_tokens = 0
+    if request_count < 1:
+        request_count = 1
+
+    try:
+        await db_client.aiusagerecord.create(
+            data={
+                "userId": user_id,
+                "usageScope": usage_scope,
+                "circleId": circle_id,
+                "provider": provider,
+                "model": model,
+                "feature": feature,
+                "inputTokens": int(input_tokens),
+                "outputTokens": int(output_tokens),
+                "requestCount": int(request_count),
+            }
+        )
+    except Exception:
+        # Telemetry failures must not break the request.
+        logger.exception(
+            "emit_ai_usage failed to persist record for user_id=%s scope=%s",
+            user_id,
+            usage_scope,
+        )
+
+
+async def get_personal_usage_summary(
+    user_id: str,
+    *,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    db_client: Prisma | None = None,
+) -> dict:
+    """Aggregate AI usage for a user's Personal_Workspace only.
+
+    Filters by ``usageScope = 'personal'`` so Circle_Workspace usage is
+    excluded (Requirement 13.2, 13.3). Returns request count, input
+    tokens, and output tokens.
+    """
+    if db_client is None:
+        db_client = db
+
+    where: dict = {"userId": user_id, "usageScope": PERSONAL_USAGE_SCOPE}
+    if since is not None or until is not None:
+        created_at: dict = {}
+        if since is not None:
+            created_at["gte"] = since
+        if until is not None:
+            created_at["lte"] = until
+        where["createdAt"] = created_at
+
+    records = await db_client.aiusagerecord.find_many(where=where)
+
+    total_requests = sum(getattr(r, "requestCount", 1) or 1 for r in records)
+    total_input = sum(getattr(r, "inputTokens", 0) or 0 for r in records)
+    total_output = sum(getattr(r, "outputTokens", 0) or 0 for r in records)
+
+    return {
+        "scope": PERSONAL_USAGE_SCOPE,
+        "user_id": user_id,
+        "request_count": total_requests,
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+    }
+
+
+async def get_circle_usage_summary(
+    circle_id: str,
+    *,
+    user_id: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    db_client: Prisma | None = None,
+) -> dict:
+    """Aggregate AI usage for a Circle_Workspace, optionally per member.
+
+    Filters by ``usageScope = 'circle:{circle_id}'`` so Personal_Workspace
+    usage and any other Circle's usage are excluded
+    (Requirements 7.5, 7.6, 12.2). When ``user_id`` is provided the result
+    is scoped to a single member of the Circle.
+    """
+    if db_client is None:
+        db_client = db
+
+    scope = build_circle_usage_scope(circle_id)
+    where: dict = {"usageScope": scope, "circleId": circle_id}
+    if user_id is not None:
+        where["userId"] = user_id
+    if since is not None or until is not None:
+        created_at: dict = {}
+        if since is not None:
+            created_at["gte"] = since
+        if until is not None:
+            created_at["lte"] = until
+        where["createdAt"] = created_at
+
+    records = await db_client.aiusagerecord.find_many(where=where)
+
+    total_requests = sum(getattr(r, "requestCount", 1) or 1 for r in records)
+    total_input = sum(getattr(r, "inputTokens", 0) or 0 for r in records)
+    total_output = sum(getattr(r, "outputTokens", 0) or 0 for r in records)
+
+    return {
+        "scope": scope,
+        "circle_id": circle_id,
+        "user_id": user_id,
+        "request_count": total_requests,
+        "input_tokens": total_input,
+        "output_tokens": total_output,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Per-member usage analytics (Task 11.1)
+# ---------------------------------------------------------------------------
+
+
+async def get_per_member_usage(
+    circle_id: str,
+    *,
+    window_days: int = 30,
+    detail_level: str = "basic",
+    db_client: Prisma | None = None,
+) -> list[dict]:
+    """Aggregate per-member AI usage for a Circle.
+
+    Args:
+        circle_id: The Circle to query.
+        window_days: Number of days to look back (default 30).
+        detail_level: ``"basic"`` (free Circles) returns only request_count
+            and active_days. ``"detailed"`` (plan Circles) adds token_count,
+            model breakdown, and feature breakdown.
+        db_client: Optional Prisma client.
+
+    Returns:
+        List of per-member usage dicts, one per member who has any usage.
+    """
+    if db_client is None:
+        db_client = db
+
+    from datetime import timedelta
+
+    since = datetime.now(UTC) - timedelta(days=window_days)
+    scope = build_circle_usage_scope(circle_id)
+
+    records = await db_client.aiusagerecord.find_many(
+        where={
+            "usageScope": scope,
+            "circleId": circle_id,
+            "createdAt": {"gte": since},
+        },
+    )
+
+    # Group by userId
+    from collections import defaultdict
+
+    by_user: dict[str, list] = defaultdict(list)
+    for r in records:
+        by_user[r.userId].append(r)
+
+    results = []
+    for user_id, user_records in by_user.items():
+        request_count = sum(getattr(r, "requestCount", 1) or 1 for r in user_records)
+        active_days = len({r.createdAt.date() for r in user_records})
+
+        entry: dict = {
+            "userId": user_id,
+            "requestCount": request_count,
+            "activeDays": active_days,
+        }
+
+        if detail_level == "detailed":
+            input_tokens = sum(getattr(r, "inputTokens", 0) or 0 for r in user_records)
+            output_tokens = sum(getattr(r, "outputTokens", 0) or 0 for r in user_records)
+
+            # Model breakdown
+            model_counts: dict[str, int] = defaultdict(int)
+            feature_counts: dict[str, int] = defaultdict(int)
+            for r in user_records:
+                model_key = f"{getattr(r, 'provider', 'unknown')}:{getattr(r, 'model', 'unknown')}"
+                model_counts[model_key] += getattr(r, "requestCount", 1) or 1
+                feature = getattr(r, "feature", "unknown") or "unknown"
+                feature_counts[feature] += getattr(r, "requestCount", 1) or 1
+
+            entry["inputTokens"] = input_tokens
+            entry["outputTokens"] = output_tokens
+            entry["tokenCount"] = input_tokens + output_tokens
+            entry["modelBreakdown"] = dict(model_counts)
+            entry["featureBreakdown"] = dict(feature_counts)
+
+        results.append(entry)
+
+    # Sort by request count descending
+    results.sort(key=lambda x: x["requestCount"], reverse=True)
+    return results
