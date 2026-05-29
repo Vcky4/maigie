@@ -91,9 +91,7 @@ async def cancel_seat_addon(
 ):
     """Cancel a Plus Seat add-on at period end (OWNER or ADMIN)."""
     try:
-        return await _cancel_seat_addon(
-            current_user.id, circle_id, addon_id, db_client=db
-        )
+        return await _cancel_seat_addon(current_user.id, circle_id, addon_id, db_client=db)
     except CircleBillingError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -114,7 +112,10 @@ async def billing_history(
     if member is None or str(member.role) not in ("OWNER", "ADMIN"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "SEAT_MANAGEMENT_FORBIDDEN", "message": "Only owner or admin can view billing history."},
+            detail={
+                "code": "SEAT_MANAGEMENT_FORBIDDEN",
+                "message": "Only owner or admin can view billing history.",
+            },
         )
 
     # Fetch subscription and add-on records
@@ -129,12 +130,20 @@ async def billing_history(
 
     return {
         "circleId": circle_id,
-        "subscription": {
-            "id": subscription.id,
-            "status": subscription.status,
-            "currentPeriodEnd": subscription.currentPeriodEnd.isoformat() if subscription.currentPeriodEnd else None,
-            "createdAt": subscription.createdAt.isoformat(),
-        } if subscription else None,
+        "subscription": (
+            {
+                "id": subscription.id,
+                "status": subscription.status,
+                "currentPeriodEnd": (
+                    subscription.currentPeriodEnd.isoformat()
+                    if subscription.currentPeriodEnd
+                    else None
+                ),
+                "createdAt": subscription.createdAt.isoformat(),
+            }
+            if subscription
+            else None
+        ),
         "addons": [
             {
                 "id": a.id,

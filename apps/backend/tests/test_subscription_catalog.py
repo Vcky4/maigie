@@ -51,9 +51,9 @@ class TestActivePlanCatalog:
         catalog = stripe_svc.get_active_plan_catalog()
         names = {entry.displayName.lower() for entry in catalog.products}
         for forbidden in ("squad", "study circle"):
-            assert not any(forbidden in name for name in names), (
-                f"deprecated tier '{forbidden}' must not appear in active catalog"
-            )
+            assert not any(
+                forbidden in name for name in names
+            ), f"deprecated tier '{forbidden}' must not appear in active catalog"
 
     def test_catalog_prices_match_requirement_1_3(self):
         cfg = get_settings()
@@ -62,12 +62,8 @@ class TestActivePlanCatalog:
         # Free is $0, Plus is $4.99/mo or $39/yr, Circle Plan is $14.99/mo,
         # Plus Seat add-on is $4.99/seat/mo.
         assert by_id[PlanCatalogProductId.FREE].priceCents == 0
-        assert (
-            by_id[PlanCatalogProductId.PLUS_MONTHLY].priceCents == cfg.PRICE_CENTS_PLUS_MONTHLY
-        )
-        assert (
-            by_id[PlanCatalogProductId.PLUS_YEARLY].priceCents == cfg.PRICE_CENTS_PLUS_YEARLY
-        )
+        assert by_id[PlanCatalogProductId.PLUS_MONTHLY].priceCents == cfg.PRICE_CENTS_PLUS_MONTHLY
+        assert by_id[PlanCatalogProductId.PLUS_YEARLY].priceCents == cfg.PRICE_CENTS_PLUS_YEARLY
         assert (
             by_id[PlanCatalogProductId.CIRCLE_PLAN_MONTHLY].priceCents
             == cfg.PRICE_CENTS_CIRCLE_PLAN_MONTHLY
@@ -202,7 +198,5 @@ class TestPlusTrialOnFirstPurchase:
         # The Circle Plan trial is owned by the Circle billing service
         # (Task 7.1); the personal checkout surface must return 0 here.
         user = _fake_user()
-        _, trial_days = stripe_svc.get_price_id_and_trial_days(
-            "circle_plan_monthly", user=user
-        )
+        _, trial_days = stripe_svc.get_price_id_and_trial_days("circle_plan_monthly", user=user)
         assert trial_days == 0

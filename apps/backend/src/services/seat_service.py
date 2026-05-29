@@ -224,8 +224,7 @@ async def assign_seat(
         raise SeatServiceError(
             code=INSUFFICIENT_SEATS,
             message=(
-                f"No available Plus seats. "
-                f"{assigned_count}/{pool_size} seats are assigned."
+                f"No available Plus seats. " f"{assigned_count}/{pool_size} seats are assigned."
             ),
             status_code=409,
         )

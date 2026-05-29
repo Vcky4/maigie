@@ -213,9 +213,7 @@ def gate(feature: str, state: CircleGateState) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def check_pinned_resource_limit(
-    state: CircleGateState, current_pinned_count: int
-) -> bool:
+def check_pinned_resource_limit(state: CircleGateState, current_pinned_count: int) -> bool:
     """Check if a new pinned resource can be added.
 
     Free Circles: ≤5 pinned resources. Plan Circles: unbounded.

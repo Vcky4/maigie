@@ -1268,9 +1268,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         user_tier = await feature_flags.effective_tier_for_request(
                             user_id=user.id,
                             scope=PERSONAL_SCOPE,
-                            personal_tier=(
-                                str(user.tier) if getattr(user, "tier", None) else None
-                            ),
+                            personal_tier=(str(user.tier) if getattr(user, "tier", None) else None),
                         )
                     model_preference = await _get_user_model_preference(
                         db, user.id, capability="chat"

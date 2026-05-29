@@ -52,9 +52,7 @@ class CircleBillingError(Exception):
 # ---------------------------------------------------------------------------
 
 
-async def _verify_billing_actor(
-    client: Prisma, circle_id: str, actor_user_id: str
-) -> Any:
+async def _verify_billing_actor(client: Prisma, circle_id: str, actor_user_id: str) -> Any:
     """Verify actor is OWNER or ADMIN. Returns the Circle row."""
     member = await client.circlemember.find_unique(
         where={"circleId_userId": {"circleId": circle_id, "userId": actor_user_id}}
@@ -453,9 +451,7 @@ async def handle_circle_billing_webhook(
     elif event_type == "invoice.payment_failed":
         # Dunning flow
         subscription_id = event_data.get("subscription")
-        logger.warning(
-            "Circle billing payment failed: subscription=%s", subscription_id
-        )
+        logger.warning("Circle billing payment failed: subscription=%s", subscription_id)
         # Mark as past_due
         if subscription_id:
             sub = await client.circlesubscription.find_first(

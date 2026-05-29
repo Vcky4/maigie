@@ -237,9 +237,7 @@ async def delete_circle(db: Prisma, circle_id: str, user_id: str) -> bool:
     return True
 
 
-async def set_visibility(
-    db: Prisma, circle_id: str, actor_user_id: str, visibility: str
-) -> dict:
+async def set_visibility(db: Prisma, circle_id: str, actor_user_id: str, visibility: str) -> dict:
     """Change a Circle's visibility (OWNER or ADMIN only).
 
     Preserves all members on PUBLIC → PRIVATE transition (Requirement 4.7).
@@ -637,7 +635,9 @@ async def create_chat_group(db: Prisma, circle_id: str, user_id: str, data: Circ
     try:
         gate(CircleFeature.CHAT_GROUP_CREATE, state)
     except CircleGateError as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+        raise HTTPException(
+            status_code=e.status_code, detail={"code": e.code, "message": e.message}
+        )
 
     # Create a backing ChatSession
     chat_session = await db.chatsession.create(
@@ -999,7 +999,9 @@ async def create_group_session(db: Prisma, circle_id: str, user_id: str, data: C
     try:
         gate(CircleFeature.GROUP_SESSION_START, state)
     except CircleGateError as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
+        raise HTTPException(
+            status_code=e.status_code, detail={"code": e.code, "message": e.message}
+        )
 
     chat_group = await db.circlechatgroup.find_unique(where={"id": data.chatGroupId})
     if not chat_group or chat_group.circleId != circle_id:

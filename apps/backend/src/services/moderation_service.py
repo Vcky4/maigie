@@ -314,9 +314,7 @@ async def ban_user_platform_wide(
     from src.services.seat_service import release_seat_on_member_remove
 
     # Find all Circle memberships
-    memberships = await client.circlemember.find_many(
-        where={"userId": target_user_id}
-    )
+    memberships = await client.circlemember.find_many(where={"userId": target_user_id})
 
     circles_removed_from: list[str] = []
     seats_released: int = 0

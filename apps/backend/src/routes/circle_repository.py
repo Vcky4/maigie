@@ -81,7 +81,10 @@ async def join_circle(
     if circle.hiddenByModeration:
         raise HTTPException(
             status_code=423,
-            detail={"code": "CIRCLE_HIDDEN_FOR_VIOLATION", "message": "This Circle is currently hidden due to a policy violation."},
+            detail={
+                "code": "CIRCLE_HIDDEN_FOR_VIOLATION",
+                "message": "This Circle is currently hidden due to a policy violation.",
+            },
         )
 
     # Check if already a member

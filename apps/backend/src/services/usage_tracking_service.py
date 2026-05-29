@@ -310,9 +310,7 @@ def _validate_usage_scope(usage_scope: str, circle_id: str | None) -> None:
     """
     if usage_scope == PERSONAL_USAGE_SCOPE:
         if circle_id is not None:
-            raise ValueError(
-                "circle_id must be None when usage_scope is 'personal'"
-            )
+            raise ValueError("circle_id must be None when usage_scope is 'personal'")
         return
 
     if not usage_scope.startswith("circle:") or len(usage_scope) <= len("circle:"):
@@ -322,9 +320,7 @@ def _validate_usage_scope(usage_scope: str, circle_id: str | None) -> None:
 
     embedded_id = usage_scope[len("circle:") :]
     if not circle_id:
-        raise ValueError(
-            "circle_id is required when usage_scope is 'circle:{id}'"
-        )
+        raise ValueError("circle_id is required when usage_scope is 'circle:{id}'")
     if embedded_id != circle_id:
         raise ValueError(
             f"usage_scope circle id {embedded_id!r} does not match circle_id {circle_id!r}"

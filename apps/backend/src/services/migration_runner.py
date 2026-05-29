@@ -94,9 +94,7 @@ async def run_migration(
         for user in squad_users:
             if not dry_run:
                 new_tier = (
-                    "PREMIUM_MONTHLY"
-                    if str(user.tier) == "SQUAD_MONTHLY"
-                    else "PREMIUM_YEARLY"
+                    "PREMIUM_MONTHLY" if str(user.tier) == "SQUAD_MONTHLY" else "PREMIUM_YEARLY"
                 )
                 await client.user.update(
                     where={"id": user.id},
@@ -142,9 +140,7 @@ async def run_migration(
             report["complimentaryCirclePlanGrants"] += 1
 
         # Step 4: Default all Circles to PRIVATE (skip already-migrated)
-        circles_to_migrate = await client.circle.find_many(
-            where={"migrationMarker": None}
-        )
+        circles_to_migrate = await client.circle.find_many(where={"migrationMarker": None})
         for circle in circles_to_migrate:
             if not dry_run:
                 await client.circle.update(
@@ -183,9 +179,7 @@ async def run_migration(
             )
 
         # Step 7: Flag Circles with no resolvable owner
-        all_circles = await client.circle.find_many(
-            include={"members": True}
-        )
+        all_circles = await client.circle.find_many(include={"members": True})
         for circle in all_circles:
             members = circle.members or []
             has_owner = any(str(m.role) == "OWNER" for m in members)

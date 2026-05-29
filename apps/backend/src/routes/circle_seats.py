@@ -52,9 +52,7 @@ async def assign(
 ):
     """Assign a PLUS_SEAT to a Circle member."""
     try:
-        return await assign_seat(
-            circle_id, body.target_user_id, current_user.id, db_client=db
-        )
+        return await assign_seat(circle_id, body.target_user_id, current_user.id, db_client=db)
     except SeatServiceError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -70,9 +68,7 @@ async def unassign(
 ):
     """Unassign a PLUS_SEAT from a Circle member (revert to FREE_SEAT)."""
     try:
-        return await unassign_seat(
-            circle_id, body.target_user_id, current_user.id, db_client=db
-        )
+        return await unassign_seat(circle_id, body.target_user_id, current_user.id, db_client=db)
     except SeatServiceError as e:
         raise HTTPException(
             status_code=e.status_code,
@@ -127,7 +123,10 @@ async def get_per_member_usage(
     if actor_member is None or str(actor_member.role) not in ("OWNER", "ADMIN"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "USAGE_VISIBILITY_FORBIDDEN", "message": "Only the Circle owner or an admin can view usage analytics."},
+            detail={
+                "code": "USAGE_VISIBILITY_FORBIDDEN",
+                "message": "Only the Circle owner or an admin can view usage analytics.",
+            },
         )
 
     # Determine detail level based on plan state

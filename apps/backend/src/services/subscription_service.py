@@ -124,8 +124,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             interval="MONTH",
             trialDays=cfg.TRIAL_DAYS_MAIGIE_PLUS,
             description=(
-                "Unlimited AI, advanced models, and larger uploads in your "
-                "personal workspace."
+                "Unlimited AI, advanced models, and larger uploads in your " "personal workspace."
             ),
         ),
         PlanCatalogEntry(
@@ -135,10 +134,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             priceCents=cfg.PRICE_CENTS_PLUS_YEARLY,
             interval="YEAR",
             trialDays=cfg.TRIAL_DAYS_MAIGIE_PLUS,
-            description=(
-                "Unlimited AI, advanced models, and larger uploads, billed "
-                "yearly."
-            ),
+            description=("Unlimited AI, advanced models, and larger uploads, billed " "yearly."),
         ),
         PlanCatalogEntry(
             productId=PlanCatalogProductId.CIRCLE_PLAN_MONTHLY,
@@ -148,8 +144,7 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
             interval="MONTH",
             trialDays=cfg.TRIAL_DAYS_CIRCLE_PLAN,
             description=(
-                "Per-Circle plan with 4 included Plus seats and premium "
-                "Circle features."
+                "Per-Circle plan with 4 included Plus seats and premium " "Circle features."
             ),
         ),
         PlanCatalogEntry(

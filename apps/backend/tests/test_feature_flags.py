@@ -291,9 +291,7 @@ class TestTierEnforcement:
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
                 "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-                "plus": (
-                    "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
-                ),
+                "plus": ("gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"),
             },
         )
 
@@ -366,9 +364,7 @@ class TestTierEnforcement:
             is True
         )
         assert (
-            full_service.is_model_allowed(
-                "openai", "gpt-4o-mini", "study_circle_monthly", "user-1"
-            )
+            full_service.is_model_allowed("openai", "gpt-4o-mini", "study_circle_monthly", "user-1")
             is True
         )
         # Models outside plus allowlist remain denied
@@ -389,9 +385,7 @@ class TestTierEnforcement:
     def test_squad_monthly_resolves_to_plus(self, full_service):
         """Legacy SQUAD_MONTHLY maps to ``plus`` allowlist."""
         assert (
-            full_service.is_model_allowed(
-                "gemini", "gemini-2.5-flash", "squad_monthly", "user-1"
-            )
+            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "squad_monthly", "user-1")
             is True
         )
         assert (
@@ -430,8 +424,7 @@ class TestTierEnforcement:
         )
         await svc.reload()
         assert (
-            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "plus", "user-1")
-            is False
+            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "plus", "user-1") is False
         )
 
     # --- Requirement 8.5: Per-user override grants access ---
@@ -491,8 +484,7 @@ class TestTierEnforcement:
         await svc.reload()
         # Global disable wins over user grant
         assert (
-            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "plus", "user-1")
-            is False
+            svc.is_model_allowed("anthropic", "claude-sonnet-4-20250514", "plus", "user-1") is False
         )
 
     @pytest.mark.asyncio
@@ -774,9 +766,7 @@ class TestEffectiveTierForRequest:
     @pytest.mark.asyncio
     async def test_invalid_scope_raises(self, svc):
         with pytest.raises(ValueError):
-            await svc.effective_tier_for_request(
-                user_id="u1", scope="bogus", personal_tier="FREE"
-            )
+            await svc.effective_tier_for_request(user_id="u1", scope="bogus", personal_tier="FREE")
 
     @pytest.mark.asyncio
     async def test_circle_scope_without_id_raises(self, svc):

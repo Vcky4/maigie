@@ -1069,9 +1069,7 @@ async def post_gemini_live_session(
                     emit_ai_usage,
                 )
 
-                live_model = (
-                    (get_settings().GEMINI_LIVE_MODEL or "").strip() or DEFAULT_LIVE_MODEL
-                )
+                live_model = (get_settings().GEMINI_LIVE_MODEL or "").strip() or DEFAULT_LIVE_MODEL
                 await emit_ai_usage(
                     user_id=user_id,
                     usage_scope=PERSONAL_USAGE_SCOPE,
