@@ -152,7 +152,8 @@ async def purchase_circle_plan(
             "currentPeriodEnd": period_end,
             "trialEndsAt": trial_end,
             "provider": "stripe" if stripe_customer_id else "paystack",
-            "externalSubscriptionId": "",  # Will be set by webhook
+            "providerSubscriptionId": "",  # Will be set by webhook
+            "ownerUserId": owner_member.userId,
         }
     )
 
@@ -298,11 +299,11 @@ async def purchase_seat_addon(
     addon = await client.circleseataddon.create(
         data={
             "circleId": circle_id,
-            "quantity": quantity,
             "status": "ACTIVE",
             "currentPeriodEnd": period_end,
             "provider": "stripe" if stripe_customer_id else "paystack",
-            "externalSubscriptionId": "",  # Will be set by webhook
+            "providerSubscriptionId": "",  # Will be set by webhook
+            "purchasedByUserId": actor_user_id,
         }
     )
 
@@ -415,7 +416,7 @@ async def handle_circle_billing_webhook(
         if subscription_id:
             # Find matching CircleSubscription or CircleSeatAddon
             sub = await client.circlesubscription.find_first(
-                where={"externalSubscriptionId": subscription_id}
+                where={"providerSubscriptionId": subscription_id}
             )
             if sub:
                 now = datetime.now(UTC)
@@ -434,7 +435,7 @@ async def handle_circle_billing_webhook(
                 return {"action": "renewed", "circleId": sub.circleId}
 
             addon = await client.circleseataddon.find_first(
-                where={"externalSubscriptionId": subscription_id}
+                where={"providerSubscriptionId": subscription_id}
             )
             if addon:
                 now = datetime.now(UTC)
@@ -455,7 +456,7 @@ async def handle_circle_billing_webhook(
         # Mark as past_due
         if subscription_id:
             sub = await client.circlesubscription.find_first(
-                where={"externalSubscriptionId": subscription_id}
+                where={"providerSubscriptionId": subscription_id}
             )
             if sub:
                 await client.circlesubscription.update(
@@ -469,7 +470,7 @@ async def handle_circle_billing_webhook(
         subscription_id = event_data.get("id") or event_data.get("subscription")
         if subscription_id:
             sub = await client.circlesubscription.find_first(
-                where={"externalSubscriptionId": subscription_id}
+                where={"providerSubscriptionId": subscription_id}
             )
             if sub:
                 from src.services.seat_service import deactivate_circle_plan_seats
@@ -482,7 +483,7 @@ async def handle_circle_billing_webhook(
                 return {"action": "deactivated", "circleId": sub.circleId}
 
             addon = await client.circleseataddon.find_first(
-                where={"externalSubscriptionId": subscription_id}
+                where={"providerSubscriptionId": subscription_id}
             )
             if addon:
                 await client.circleseataddon.update(

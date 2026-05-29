@@ -70,7 +70,7 @@ async def submit_report(
     one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
     recent_count = await client.report.count(
         where={
-            "reporterUserId": reporter_user_id,
+            "reporterId": reporter_user_id,
             "createdAt": {"gte": one_hour_ago},
         }
     )
@@ -93,7 +93,7 @@ async def submit_report(
     # Create report
     report = await client.report.create(
         data={
-            "reporterUserId": reporter_user_id,
+            "reporterId": reporter_user_id,
             "targetType": target_type,
             "targetId": target_id,
             "reasonCode": reason_code,
@@ -144,7 +144,7 @@ async def list_pending_reports(
         "items": [
             {
                 "id": r.id,
-                "reporterUserId": r.reporterUserId,
+                "reporterId": r.reporterId,
                 "targetType": r.targetType,
                 "targetId": r.targetId,
                 "reasonCode": r.reasonCode,
@@ -196,7 +196,7 @@ async def decide_report(
         where={"id": report_id},
         data={
             "status": decision,
-            "decidedByUserId": admin_user_id,
+            "decidedById": admin_user_id,
             "decidedAt": datetime.now(UTC),
         },
     )

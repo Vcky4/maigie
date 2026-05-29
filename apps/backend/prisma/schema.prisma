@@ -118,11 +118,8 @@ enum ResourceBankStatus {
   FLAGGED
 }
 
-/// Status enum used by ResourceBankReport.
-/// Renamed from the prior `ReportStatus` to free that name for the moderation
-/// `Report` model introduced by the Circle Reimagining feature. Values are
-/// preserved so existing string usages (e.g. "REPORT_PENDING") continue to work.
-enum ResourceBankReportStatus {
+/// Status enum used by ResourceBankReport (original name preserved for DB compatibility).
+enum ReportStatus {
   REPORT_PENDING
   REPORT_REVIEWED
   REPORT_DISMISSED
@@ -130,7 +127,7 @@ enum ResourceBankReportStatus {
 
 /// Moderation report status (Circle Reimagining: Reports against Circles,
 /// members, messages, resources, and profile images).
-enum ReportStatus {
+enum ModerationReportStatus {
   PENDING
   UPHELD
   DISMISSED
@@ -1657,7 +1654,7 @@ model ResourceBankReport {
 
   reason      String
   description String?
-  status      ResourceBankReportStatus @default(REPORT_PENDING)
+  status      ReportStatus @default(REPORT_PENDING)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2066,7 +2063,7 @@ model Report {
   targetId    String
   reasonCode  String
   description String?
-  status      ReportStatus     @default(PENDING)
+  status      ModerationReportStatus     @default(PENDING)
   decidedById String?
   decidedBy   User?            @relation("ReportDecider", fields: [decidedById], references: [id], onDelete: SetNull)
   decidedAt   DateTime?
