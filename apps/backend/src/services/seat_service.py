@@ -464,3 +464,182 @@ async def release_seat_on_member_remove(
         circle_id,
     )
     return True
+
+
+# ---------------------------------------------------------------------------
+# Seat pool reconciliation (Task 3.8)
+# ---------------------------------------------------------------------------
+
+# Number of PLUS_SEATs included in an active Circle Plan
+PLAN_INCLUDED_SEATS = 4
+
+
+async def reconcile_seat_pool_on_addon_change(
+    circle_id: str,
+    *,
+    db_client: Prisma | None = None,
+) -> dict[str, Any]:
+    """Recompute ``seatPoolSize`` and trim excess PLUS_SEATs if needed.
+
+    Called at plan/add-on period end or when an add-on is cancelled.
+
+    Logic:
+        1. Count active add-on seats (non-cancelled CircleSeatAddon rows)
+        2. If Circle has active plan, pool = PLAN_INCLUDED_SEATS + addon_count
+           else pool = addon_count
+        3. If assigned PLUS_SEATs > new pool, unassign the most recently
+           assigned seats (by joinedAt desc) and notify affected members
+        4. Update Circle.seatPoolSize
+
+    Returns a summary dict with the new pool size and any unassigned users.
+    """
+    client = db_client or default_db
+
+    circle = await client.circle.find_unique(where={"id": circle_id})
+    if circle is None:
+        raise SeatServiceError(
+            code="CIRCLE_NOT_FOUND",
+            message="Circle not found.",
+            status_code=404,
+        )
+
+    # Count active add-on seats
+    active_addons = await client.circleseataddon.count(
+        where={
+            "circleId": circle_id,
+            "status": {"in": ["ACTIVE", "TRIALING"]},
+        }
+    )
+
+    # Compute new pool size
+    plan_seats = PLAN_INCLUDED_SEATS if circle.circlePlanActive else 0
+    new_pool_size = plan_seats + active_addons
+
+    # Get currently assigned PLUS_SEATs ordered by joinedAt desc (most recent first)
+    assigned_members = await client.circlemember.find_many(
+        where={"circleId": circle_id, "seatTier": "PLUS_SEAT"},
+        order={"joinedAt": "desc"},
+    )
+    assigned_count = len(assigned_members)
+
+    unassigned_users: list[str] = []
+
+    # If assigned exceeds new pool, trim the most recently assigned
+    if assigned_count > new_pool_size:
+        excess = assigned_count - new_pool_size
+        members_to_unassign = assigned_members[:excess]
+
+        for member in members_to_unassign:
+            # Don't unassign the OWNER if they have a plan seat
+            if str(member.role) == "OWNER" and circle.circlePlanActive:
+                continue
+            await client.circlemember.update(
+                where={"circleId_userId": {"circleId": circle_id, "userId": member.userId}},
+                data={"seatTier": "FREE_SEAT"},
+            )
+            unassigned_users.append(member.userId)
+
+    # Update the Circle's seatPoolSize
+    await client.circle.update(
+        where={"id": circle_id},
+        data={"seatPoolSize": new_pool_size},
+    )
+
+    logger.info(
+        "reconcile_seat_pool: circle_id=%s new_pool=%d unassigned=%d",
+        circle_id,
+        new_pool_size,
+        len(unassigned_users),
+    )
+
+    return {
+        "circleId": circle_id,
+        "newSeatPoolSize": new_pool_size,
+        "previousAssignedCount": assigned_count,
+        "unassignedUsers": unassigned_users,
+    }
+
+
+async def activate_circle_plan_seats(
+    circle_id: str,
+    owner_user_id: str,
+    *,
+    db_client: Prisma | None = None,
+) -> dict[str, Any]:
+    """Set up seat pool when a Circle Plan activates.
+
+    On ``circlePlanActive`` transition to true:
+        - Ensure owner.seatTier == PLUS_SEAT (seat 1 auto-assigned)
+        - Set seatPoolSize to include the 4 plan seats + any existing add-ons
+
+    Called by circle_billing_service on plan activation.
+    """
+    client = db_client or default_db
+
+    # Ensure owner has PLUS_SEAT
+    owner_member = await client.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": owner_user_id}}
+    )
+    if owner_member and str(owner_member.seatTier) != "PLUS_SEAT":
+        await client.circlemember.update(
+            where={"circleId_userId": {"circleId": circle_id, "userId": owner_user_id}},
+            data={"seatTier": "PLUS_SEAT"},
+        )
+
+    # Count active add-ons
+    active_addons = await client.circleseataddon.count(
+        where={
+            "circleId": circle_id,
+            "status": {"in": ["ACTIVE", "TRIALING"]},
+        }
+    )
+
+    new_pool_size = PLAN_INCLUDED_SEATS + active_addons
+
+    # Update Circle
+    await client.circle.update(
+        where={"id": circle_id},
+        data={
+            "circlePlanActive": True,
+            "seatPoolSize": new_pool_size,
+        },
+    )
+
+    logger.info(
+        "activate_circle_plan_seats: circle_id=%s pool=%d owner=%s",
+        circle_id,
+        new_pool_size,
+        owner_user_id,
+    )
+
+    return {
+        "circleId": circle_id,
+        "seatPoolSize": new_pool_size,
+        "ownerSeatTier": "PLUS_SEAT",
+    }
+
+
+async def deactivate_circle_plan_seats(
+    circle_id: str,
+    *,
+    db_client: Prisma | None = None,
+) -> dict[str, Any]:
+    """Revert non-add-on PLUS_SEATs when a Circle Plan expires.
+
+    On plan cancel / dunning expiry at period end:
+        - Set circlePlanActive = false
+        - Recompute seatPoolSize (only add-on seats remain)
+        - Revert PLUS_SEATs that exceed the new pool to FREE_SEAT
+
+    Called by circle_billing_service at period end.
+    """
+    client = db_client or default_db
+
+    # Mark plan as inactive
+    await client.circle.update(
+        where={"id": circle_id},
+        data={"circlePlanActive": False},
+    )
+
+    # Reconcile will handle the rest
+    return await reconcile_seat_pool_on_addon_change(circle_id, db_client=client)

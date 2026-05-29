@@ -274,7 +274,11 @@ async def transfer_ownership(
     user_id: str,
     data: TransferOwnershipRequest,
 ):
-    """Transfer circle ownership to another member."""
+    """Transfer circle ownership to another member.
+
+    Any member can become the new owner (tier gate removed by Circle
+    Reimagining). The transfer is immediate for the basic case.
+    """
     await _verify_owner(db, circle_id, user_id)
 
     # Verify new owner is a member
@@ -292,18 +296,10 @@ async def transfer_ownership(
             detail="The new owner must be an existing member of the circle.",
         )
 
-    # Verify new owner has a circle-eligible tier
-    new_owner = await db.user.find_unique(where={"id": data.newOwnerUserId})
-    if not new_owner or str(new_owner.tier) not in CIRCLE_CREATE_TIERS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The new owner must have a Study Circle or Squad plan.",
-        )
-
-    # Transfer: demote current owner, promote new owner
+    # Transfer: demote current owner to ADMIN, promote new owner
     await db.circlemember.update(
         where={"circleId_userId": {"circleId": circle_id, "userId": user_id}},
-        data={"role": "MEMBER"},
+        data={"role": "ADMIN"},
     )
     await db.circlemember.update(
         where={
@@ -320,6 +316,19 @@ async def transfer_ownership(
         where={"id": circle_id},
         data={"createdById": data.newOwnerUserId},
     )
+
+    # If Circle has active plan, ensure new owner gets PLUS_SEAT
+    circle = await db.circle.find_unique(where={"id": circle_id})
+    if circle and circle.circlePlanActive:
+        await db.circlemember.update(
+            where={
+                "circleId_userId": {
+                    "circleId": circle_id,
+                    "userId": data.newOwnerUserId,
+                }
+            },
+            data={"seatTier": "PLUS_SEAT"},
+        )
 
     return await get_circle_detail(db, circle_id, user_id)
 
@@ -600,19 +609,35 @@ async def remove_member(db: Prisma, circle_id: str, target_user_id: str, current
 
 
 async def create_chat_group(db: Prisma, circle_id: str, user_id: str, data: CircleChatGroupCreate):
-    """Create a new chat group in a circle (owner only)."""
-    await _verify_owner(db, circle_id, user_id)
+    """Create a new chat group in a circle (owner/admin only, gated by plan)."""
+    await _verify_admin(db, circle_id, user_id)
 
-    # Check max groups
-    group_count = await db.circlechatgroup.count(where={"circleId": circle_id})
+    # Plan-aware gate check (Task 5.4 / 8.3)
+    from src.services.circle_gates import CircleFeature, CircleGateError, CircleGateState, gate
+
     circle = await db.circle.find_unique(where={"id": circle_id})
-    max_groups = circle.maxGroups if circle else MAX_GROUPS_PER_CIRCLE
+    group_count = await db.circlechatgroup.count(where={"circleId": circle_id})
 
-    if group_count >= max_groups:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"This circle can have at most {max_groups} chat groups.",
+    # Check if any active add-on exists
+    has_addon = False
+    try:
+        addon_count = await db.circleseataddon.count(
+            where={"circleId": circle_id, "status": {"in": ["ACTIVE", "TRIALING"]}}
         )
+        has_addon = addon_count > 0
+    except Exception:
+        pass
+
+    state = CircleGateState(
+        circle_plan_active=circle.circlePlanActive if circle else False,
+        has_any_active_addon=has_addon,
+        chat_group_count=group_count,
+    )
+
+    try:
+        gate(CircleFeature.CHAT_GROUP_CREATE, state)
+    except CircleGateError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
 
     # Create a backing ChatSession
     chat_session = await db.chatsession.create(
@@ -861,12 +886,120 @@ async def import_to_circle(db: Prisma, circle_id: str, user_id: str, data: Circl
     return imported_stats
 
 
+async def export_from_circle(
+    db: Prisma, circle_id: str, user_id: str, resource_type: str, resource_id: str
+):
+    """Export (copy) a Circle resource into the user's Personal_Workspace.
+
+    Gated by ``Circle.allowMemberExport`` — OWNER is always allowed.
+    The original resource remains in the Circle_Workspace.
+
+    Args:
+        resource_type: One of "note", "course", "goal", "resource"
+        resource_id: ID of the resource to export
+
+    Returns:
+        The newly created personal copy.
+    """
+    member = await _verify_membership(db, circle_id, user_id)
+
+    # Check export permission
+    circle = await db.circle.find_unique(where={"id": circle_id})
+    if circle is None:
+        raise HTTPException(status_code=404, detail="Circle not found.")
+
+    is_owner = str(member.role) == "OWNER"
+    if not is_owner and not circle.allowMemberExport:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Member export is not allowed for this Circle.",
+        )
+
+    if resource_type == "note":
+        original = await db.note.find_unique(where={"id": resource_id})
+        if not original or original.circleId != circle_id:
+            raise HTTPException(status_code=404, detail="Note not found in this Circle.")
+        copy = await db.note.create(
+            data={
+                "title": original.title,
+                "content": original.content,
+                "userId": user_id,
+                "circleId": None,  # Personal workspace
+                "summary": original.summary,
+            }
+        )
+        return {"type": "note", "id": copy.id, "title": copy.title}
+
+    elif resource_type == "course":
+        original = await db.course.find_unique(where={"id": resource_id})
+        if not original or original.circleId != circle_id:
+            raise HTTPException(status_code=404, detail="Course not found in this Circle.")
+        copy = await db.course.create(
+            data={
+                "title": original.title,
+                "description": original.description,
+                "userId": user_id,
+                "circleId": None,
+                "difficulty": original.difficulty,
+                "isAIGenerated": original.isAIGenerated,
+            }
+        )
+        return {"type": "course", "id": copy.id, "title": copy.title}
+
+    elif resource_type == "goal":
+        original = await db.goal.find_unique(where={"id": resource_id})
+        if not original or original.circleId != circle_id:
+            raise HTTPException(status_code=404, detail="Goal not found in this Circle.")
+        copy = await db.goal.create(
+            data={
+                "title": original.title,
+                "description": original.description,
+                "userId": user_id,
+                "circleId": None,
+                "targetDate": original.targetDate,
+            }
+        )
+        return {"type": "goal", "id": copy.id, "title": copy.title}
+
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported resource type: {resource_type}",
+        )
+
+
 # --- Group Sessions ---
 
 
 async def create_group_session(db: Prisma, circle_id: str, user_id: str, data: CircleSessionCreate):
-    """Create a new scheduled group session."""
+    """Create a new scheduled group session (gated by plan)."""
     await _verify_admin(db, circle_id, user_id)
+
+    # Plan-aware gate check (Task 8.3)
+    from src.services.circle_gates import CircleFeature, CircleGateError, CircleGateState, gate
+
+    circle = await db.circle.find_unique(where={"id": circle_id})
+    session_count = await db.circlesession.count(where={"circleId": circle_id})
+
+    has_addon = False
+    try:
+        addon_count = await db.circleseataddon.count(
+            where={"circleId": circle_id, "status": {"in": ["ACTIVE", "TRIALING"]}}
+        )
+        has_addon = addon_count > 0
+    except Exception:
+        pass
+
+    state = CircleGateState(
+        circle_plan_active=circle.circlePlanActive if circle else False,
+        has_any_active_addon=has_addon,
+        group_session_count=session_count,
+    )
+
+    try:
+        gate(CircleFeature.GROUP_SESSION_START, state)
+    except CircleGateError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.code, "message": e.message})
 
     chat_group = await db.circlechatgroup.find_unique(where={"id": data.chatGroupId})
     if not chat_group or chat_group.circleId != circle_id:

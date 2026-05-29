@@ -494,6 +494,11 @@ def create_app() -> FastAPI:
 
     app.include_router(circle_repository_router)
 
+    # Reports and moderation
+    from .routes.reports import router as reports_router
+
+    app.include_router(reports_router)
+
     # Device token registration (push notifications)
     app.include_router(device_tokens_router)
 

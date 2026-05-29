@@ -519,3 +519,25 @@ async def import_to_circle(
         "success": True,
         "imported": imported,
     }
+
+
+@router.post("/{circle_id}/export")
+async def export_from_circle(
+    circle_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Export (copy) a Circle resource into the user's Personal_Workspace.
+
+    Gated by Circle.allowMemberExport — OWNER is always allowed.
+    """
+    resource_type = body.get("type")
+    resource_id = body.get("id")
+    if not resource_type or not resource_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'type' and 'id' are required.",
+        )
+    return await circle_service.export_from_circle(
+        db, circle_id, current_user.id, resource_type, resource_id
+    )

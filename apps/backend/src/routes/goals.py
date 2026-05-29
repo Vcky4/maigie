@@ -44,12 +44,19 @@ async def list_goals(
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
     sortBy: str = Query("createdAt", pattern="^(createdAt|updatedAt|title|targetDate)$"),
     sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
+    circleId: str | None = Query(None, description="Filter by Circle workspace (null = personal)"),
 ):
-    """List user's goals with pagination."""
+    """List user's goals with pagination and workspace scoping."""
     try:
         where_clause = {"userId": current_user.id}
         if status_filter:
             where_clause["status"] = status_filter
+
+        # Workspace scoping (Task 8.1)
+        if circleId:
+            where_clause["circleId"] = circleId
+        else:
+            where_clause["circleId"] = None
 
         # Calculate skip
         skip = (page - 1) * pageSize

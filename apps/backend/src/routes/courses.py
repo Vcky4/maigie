@@ -169,14 +169,24 @@ async def list_courses(
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
     sortBy: str = Query("createdAt", pattern="^(createdAt|updatedAt|title)$"),
     sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
+    circleId: str | None = Query(None, description="Filter by Circle workspace (null = personal)"),
 ):
     """
     List all courses for the authenticated user.
+    When circleId is provided, returns courses in that Circle workspace.
+    When circleId is omitted, returns personal courses (circleId IS NULL).
     """
     user_id = current_user.id
 
-    # Build where clause
+    # Build where clause with workspace scoping (Task 8.1)
     where: dict[str, Any] = {"userId": user_id}
+
+    if circleId:
+        # Circle workspace: show courses in this circle
+        where["circleId"] = circleId
+    else:
+        # Personal workspace: only courses not in any circle
+        where["circleId"] = None
 
     if archived is not None:
         where["archived"] = archived
