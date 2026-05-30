@@ -463,6 +463,12 @@ def create_app() -> FastAPI:
         tags=["Knowledge Base"],
     )
 
+    # Circle repository (public discovery) — must be registered BEFORE
+    # the circles router so /circles/repository doesn't match /{circle_id}
+    from .routes.circle_repository import router as circle_repository_router
+
+    app.include_router(circle_repository_router)
+
     # Circle (study group) routes
     app.include_router(circles_router, prefix=f"{settings.API_V1_STR}")
 
@@ -488,11 +494,6 @@ def create_app() -> FastAPI:
     # Circle billing and seat management
     app.include_router(circle_billing_router)
     app.include_router(circle_seats_router)
-
-    # Circle repository (public discovery)
-    from .routes.circle_repository import router as circle_repository_router
-
-    app.include_router(circle_repository_router)
 
     # Reports and moderation
     from .routes.reports import router as reports_router
