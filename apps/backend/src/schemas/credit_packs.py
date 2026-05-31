@@ -56,6 +56,7 @@ class PurchaseTransactionResponse(BaseModel):
     """Response model for a single purchase transaction."""
 
     id: str
+    creditPackId: str | None = None
     creditPackName: str
     creditsGranted: int
     amountPaid: int
