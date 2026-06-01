@@ -391,6 +391,15 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
 
         expires_at = datetime.now(UTC) + timedelta(days=INVITE_EXPIRY_DAYS)
 
+        # Determine role and seat tier from invite data (default MEMBER / FREE_SEAT)
+        invite_role = getattr(data, "role", None) or "MEMBER"
+        invite_seat_tier = getattr(data, "seat_tier", None) or "FREE_SEAT"
+        # Validate role — only OWNER can assign ADMIN/TUTOR
+        if invite_role not in ("MEMBER", "ADMIN", "TUTOR"):
+            invite_role = "MEMBER"
+        if invite_seat_tier not in ("FREE_SEAT", "PLUS_SEAT"):
+            invite_seat_tier = "FREE_SEAT"
+
         if existing:
             # Update existing invite (e.g., re-invite after decline/expire)
             invite = await db.circleinvite.update(
@@ -400,6 +409,8 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
                     "expiresAt": expires_at,
                     "inviterId": user_id,
                     "inviteeId": invitee_user.id if invitee_user else None,
+                    "role": invite_role,
+                    "seatTier": invite_seat_tier,
                 },
             )
         else:
@@ -410,6 +421,8 @@ async def invite_members(db: Prisma, circle_id: str, user_id: str, data: CircleI
                     "inviteeEmail": str(email),
                     "inviteeId": invitee_user.id if invitee_user else None,
                     "expiresAt": expires_at,
+                    "role": invite_role,
+                    "seatTier": invite_seat_tier,
                 }
             )
 
@@ -526,12 +539,15 @@ async def accept_invite(db: Prisma, circle_id: str, invite_id: str, user_id: str
                 detail=f"You can belong to a maximum of {MAX_CIRCLES_PER_USER} circles. Please leave another circle first.",
             )
 
-        # Add user as member
+        # Add user as member with the role and seat tier specified in the invite
+        invite_role = getattr(invite, "role", "MEMBER") or "MEMBER"
+        invite_seat_tier = getattr(invite, "seatTier", "FREE_SEAT") or "FREE_SEAT"
         await db.circlemember.create(
             data={
                 "circleId": circle_id,
                 "userId": user_id,
-                "role": "MEMBER",
+                "role": invite_role,
+                "seatTier": invite_seat_tier,
             }
         )
 
@@ -601,6 +617,60 @@ async def remove_member(db: Prisma, circle_id: str, target_user_id: str, current
     )
 
     return True
+
+
+async def update_member_role(
+    db: Prisma, circle_id: str, target_user_id: str, new_role: str, current_user_id: str
+):
+    """Change a member's role. Only OWNER or ADMIN can do this. Cannot change OWNER."""
+    # Verify the caller is OWNER or ADMIN
+    await _verify_admin(db, circle_id, current_user_id)
+
+    # Cannot change your own role
+    if target_user_id == current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot change your own role.",
+        )
+
+    # Get the target member
+    target_member = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": target_user_id}}
+    )
+    if not target_member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found in this circle.",
+        )
+
+    # Cannot change the OWNER's role
+    if target_member.role == "OWNER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot change the owner's role. Use ownership transfer instead.",
+        )
+
+    # Only OWNER can promote to ADMIN
+    if new_role == "ADMIN":
+        caller = await db.circlemember.find_unique(
+            where={"circleId_userId": {"circleId": circle_id, "userId": current_user_id}}
+        )
+        if caller and caller.role != "OWNER":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the circle owner can promote members to ADMIN.",
+            )
+
+    updated = await db.circlemember.update(
+        where={"circleId_userId": {"circleId": circle_id, "userId": target_user_id}},
+        data={"role": new_role},
+    )
+
+    return {
+        "userId": target_user_id,
+        "role": updated.role,
+        "message": f"Role updated to {new_role}.",
+    }
 
 
 # --- Chat Groups ---

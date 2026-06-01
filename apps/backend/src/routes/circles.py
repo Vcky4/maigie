@@ -291,6 +291,23 @@ async def remove_member(
     return None
 
 
+@router.patch("/{circle_id}/members/{user_id}/role")
+async def update_member_role(
+    circle_id: str,
+    user_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Change a member's role (OWNER or ADMIN only). Cannot change OWNER role."""
+    role = body.get("role")
+    if not role or role not in ("MEMBER", "TUTOR", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role must be one of: MEMBER, TUTOR, ADMIN",
+        )
+    return await circle_service.update_member_role(db, circle_id, user_id, role, current_user.id)
+
+
 # ==========================================
 # Chat Groups
 # ==========================================

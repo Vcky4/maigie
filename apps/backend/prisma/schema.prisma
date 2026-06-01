@@ -1870,6 +1870,10 @@ model CircleInvite {
   inviteeEmail String // Email of the person invited
   inviteeId    String? // User ID if they're already on the platform
   status       CircleInviteStatus @default(PENDING)
+  /// Role to assign when invite is accepted (default MEMBER)
+  role         CircleRole         @default(MEMBER)
+  /// Seat tier to assign when invite is accepted (default FREE_SEAT)
+  seatTier     SeatTier           @default(FREE_SEAT)
   expiresAt    DateTime
   createdAt    DateTime           @default(now())
 
