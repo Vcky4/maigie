@@ -232,3 +232,40 @@ class ValidationError(MaigieError):
             code="VALIDATION_ERROR",
             detail=detail,
         )
+
+
+class DeprecatedPlanError(MaigieError):
+    """
+    Raised when a request references a subscription plan that has been
+    removed from the active product catalog.
+
+    Used for the deprecated SQUAD_* and STUDY_CIRCLE_* tiers under the
+    Circle Reimagining migration. Per Requirements 1.9 and 2.1, these
+    creation requests must be rejected with HTTP 410 Gone and a stable
+    application error code.
+
+    HTTP Status: 410 Gone
+    Error Code: caller-supplied (e.g. ``SQUAD_PLAN_REMOVED`` /
+    ``STUDY_CIRCLE_PLAN_REMOVED``).
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        detail: str | None = None,
+    ):
+        """
+        Initialize a deprecated plan error.
+
+        Args:
+            code: Application-specific error code identifying the removed plan.
+            message: User-friendly error message.
+            detail: Optional internal details for debugging.
+        """
+        super().__init__(
+            message=message,
+            status_code=status.HTTP_410_GONE,
+            code=code,
+            detail=detail,
+        )

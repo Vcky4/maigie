@@ -1,4 +1,4 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, HTTPException, status
 
 from src.dependencies import CurrentUser, db
 from src.models.circles import (
@@ -119,7 +119,13 @@ async def create_circle(
     data: CircleCreate,
     current_user: CurrentUser,
 ):
-    """Create a new study circle."""
+    """Create a new Circle. Any authenticated user can create a Circle."""
+    # Reject suspended users (Requirement 4.10)
+    if getattr(current_user, "suspended", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "ACCOUNT_SUSPENDED", "message": "Your account is suspended."},
+        )
     circle = await circle_service.create_circle(
         db,
         current_user.id,
@@ -171,6 +177,22 @@ async def delete_circle(
     """Delete a circle (owner only)."""
     await circle_service.delete_circle(db, circle_id, current_user.id)
     return None
+
+
+@router.post("/{circle_id}/visibility")
+async def set_visibility(
+    circle_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Change a Circle's visibility (OWNER or ADMIN only)."""
+    visibility = body.get("visibility")
+    if not visibility:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="visibility is required.",
+        )
+    return await circle_service.set_visibility(db, circle_id, current_user.id, visibility)
 
 
 @router.post("/{circle_id}/transfer", response_model=CircleDetailResponse)
@@ -267,6 +289,23 @@ async def remove_member(
     """Remove a member from a circle (owner), or leave a circle (self)."""
     await circle_service.remove_member(db, circle_id, user_id, current_user.id)
     return None
+
+
+@router.patch("/{circle_id}/members/{user_id}/role")
+async def update_member_role(
+    circle_id: str,
+    user_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Change a member's role (OWNER or ADMIN only). Cannot change OWNER role."""
+    role = body.get("role")
+    if not role or role not in ("MEMBER", "TUTOR", "ADMIN"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="role must be one of: MEMBER, TUTOR, ADMIN",
+        )
+    return await circle_service.update_member_role(db, circle_id, user_id, role, current_user.id)
 
 
 # ==========================================
@@ -497,3 +536,25 @@ async def import_to_circle(
         "success": True,
         "imported": imported,
     }
+
+
+@router.post("/{circle_id}/export")
+async def export_from_circle(
+    circle_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Export (copy) a Circle resource into the user's Personal_Workspace.
+
+    Gated by Circle.allowMemberExport — OWNER is always allowed.
+    """
+    resource_type = body.get("type")
+    resource_id = body.get("id")
+    if not resource_type or not resource_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'type' and 'id' are required.",
+        )
+    return await circle_service.export_from_circle(
+        db, circle_id, current_user.id, resource_type, resource_id
+    )

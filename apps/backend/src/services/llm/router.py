@@ -119,6 +119,8 @@ class LLMRouter:
         image_url: str | None = None,
         progress_callback: Any = None,
         stream_callback: Any = None,
+        usage_scope: str = "personal",
+        circle_id: str | None = None,
     ) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
         """Route a request through the selection pipeline.
 
@@ -269,6 +271,32 @@ class LLMRouter:
                         LLM_COST_USD.labels(
                             provider=provider, model=model, user_tier=user_tier
                         ).inc(cost)
+
+                # Emit a per-(user, scope) AI usage record so Personal vs
+                # Circle quotas and analytics stay isolated (Requirements
+                # 7.5, 7.6, 12.2, 13.2, 13.3). Telemetry must never break
+                # the request.
+                try:
+                    from src.services.usage_tracking_service import emit_ai_usage
+
+                    await emit_ai_usage(
+                        user_id=user_id,
+                        usage_scope=usage_scope,
+                        circle_id=circle_id,
+                        provider=provider,
+                        model=model,
+                        feature=task.value,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        request_count=1,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to emit AI usage for %s:%s scope=%s",
+                        provider,
+                        model,
+                        usage_scope,
+                    )
 
                 return result
 

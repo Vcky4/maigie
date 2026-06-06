@@ -815,6 +815,28 @@ Format as JSON array:
                 ]
             else:
                 recommendations = []
+
+            # Emit AI usage scoped to Personal_Workspace (analytics
+            # recommendations are always personal context).
+            try:
+                from src.services.usage_tracking_service import (
+                    PERSONAL_USAGE_SCOPE,
+                    emit_ai_usage,
+                )
+
+                await emit_ai_usage(
+                    user_id=user_id,
+                    usage_scope=PERSONAL_USAGE_SCOPE,
+                    circle_id=None,
+                    provider="gemini",
+                    model=None,
+                    feature="analytics_recommendations",
+                    input_tokens=0,
+                    output_tokens=0,
+                    request_count=1,
+                )
+            except Exception:
+                pass
         except Exception:
             recommendations = []
 
@@ -1485,6 +1507,28 @@ Format as a JSON array of strings, each string being one insight/recommendation.
                 for line in insights_response.split("\n")
                 if line.strip() and not line.strip().startswith("#")
             ][:5]
+
+        # Emit AI usage scoped to Personal_Workspace (weekly report
+        # insights are always personal context).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                emit_ai_usage,
+            )
+
+            await emit_ai_usage(
+                user_id=user_id,
+                usage_scope=PERSONAL_USAGE_SCOPE,
+                circle_id=None,
+                provider="gemini",
+                model=None,
+                feature="weekly_report_insights",
+                input_tokens=0,
+                output_tokens=0,
+                request_count=1,
+            )
+        except Exception:
+            pass
     except Exception:
         insights = [
             "Keep up the great work!",
@@ -1596,6 +1640,28 @@ Format as a JSON array of strings."""
                 for line in insights_response.split("\n")
                 if line.strip() and not line.strip().startswith("#")
             ][:5]
+
+        # Emit AI usage scoped to Personal_Workspace (monthly report
+        # insights are always personal context).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                emit_ai_usage,
+            )
+
+            await emit_ai_usage(
+                user_id=user_id,
+                usage_scope=PERSONAL_USAGE_SCOPE,
+                circle_id=None,
+                provider="gemini",
+                model=None,
+                feature="monthly_report_insights",
+                input_tokens=0,
+                output_tokens=0,
+                request_count=1,
+            )
+        except Exception:
+            pass
     except Exception:
         insights = [
             "Excellent progress this month!",

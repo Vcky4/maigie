@@ -16,6 +16,8 @@ class CircleCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
     creditsLimit: int | None = Field(None, ge=0)
+    visibility: str | None = Field(None, description="PUBLIC or PRIVATE (default PRIVATE)")
+    category: str | None = Field(None, max_length=64)
 
 
 class CircleUpdate(BaseModel):
@@ -43,6 +45,12 @@ class CircleInviteCreate(BaseModel):
     """Schema for inviting member(s) to a circle."""
 
     emails: list[EmailStr] = Field(..., min_length=1, max_length=5)
+    role: str | None = Field(
+        None, description="Role to assign on accept: MEMBER, TUTOR, or ADMIN (default MEMBER)"
+    )
+    seat_tier: str | None = Field(
+        None, description="Seat tier to assign: FREE_SEAT or PLUS_SEAT (default FREE_SEAT)"
+    )
 
 
 class TransferOwnershipRequest(BaseModel):

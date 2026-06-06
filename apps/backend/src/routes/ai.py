@@ -81,6 +81,7 @@ async def demo_chat(request: DemoChatRequest):
         response_text, _ = await llm_service.get_chat_response(
             history=request.history, user_message=request.message, context=context
         )
+        # Demo chat is unauthenticated — no usage tracking needed.
         return {"response": response_text}
     except Exception as e:
         return {
@@ -138,6 +139,28 @@ async def chat(request: ChatRequest, current_user: CurrentUser):
             user_name=current_user.name,
         )
 
+        # Emit AI usage scoped to Personal_Workspace (REST chat is always
+        # personal; Circle chat goes through the WebSocket path).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                emit_ai_usage,
+            )
+
+            await emit_ai_usage(
+                user_id=current_user.id,
+                usage_scope=PERSONAL_USAGE_SCOPE,
+                circle_id=None,
+                provider="gemini",
+                model=None,
+                feature="rest_chat",
+                input_tokens=usage_info.get("input_tokens", 0) if usage_info else 0,
+                output_tokens=usage_info.get("output_tokens", 0) if usage_info else 0,
+                request_count=1,
+            )
+        except Exception:
+            pass
+
         return {
             "response": response_text,
             "actions": executed_actions,
@@ -178,6 +201,28 @@ async def summarize(request: SummarizeRequest, current_user: CurrentUser):
             user_message=prompt,
             context={"pageContext": "Content Summarization"},
         )
+
+        # Emit AI usage scoped to Personal_Workspace (summarize is always
+        # personal context).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                emit_ai_usage,
+            )
+
+            await emit_ai_usage(
+                user_id=current_user.id,
+                usage_scope=PERSONAL_USAGE_SCOPE,
+                circle_id=None,
+                provider="gemini",
+                model=None,
+                feature="content_summarization",
+                input_tokens=usage_info.get("input_tokens", 0) if usage_info else 0,
+                output_tokens=usage_info.get("output_tokens", 0) if usage_info else 0,
+                request_count=1,
+            )
+        except Exception:
+            pass
 
         return {
             "summary": response_text,
@@ -232,6 +277,28 @@ async def process(request: ProcessRequest, current_user: CurrentUser):
             user_id=current_user.id,
             user_name=current_user.name,
         )
+
+        # Emit AI usage scoped to Personal_Workspace (process endpoint is
+        # always personal context).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                emit_ai_usage,
+            )
+
+            await emit_ai_usage(
+                user_id=current_user.id,
+                usage_scope=PERSONAL_USAGE_SCOPE,
+                circle_id=None,
+                provider="gemini",
+                model=None,
+                feature="ai_process",
+                input_tokens=usage_info.get("input_tokens", 0) if usage_info else 0,
+                output_tokens=usage_info.get("output_tokens", 0) if usage_info else 0,
+                request_count=1,
+            )
+        except Exception:
+            pass
 
         # Evaluate actions using reflection service
         evaluations = []

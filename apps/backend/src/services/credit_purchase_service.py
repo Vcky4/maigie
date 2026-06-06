@@ -415,6 +415,7 @@ async def get_purchase_history(
         items.append(
             {
                 "id": txn.id,
+                "creditPackId": txn.creditPackId,
                 "creditPackName": pack_name,
                 "creditsGranted": txn.creditsGranted,
                 "amountPaid": txn.amountPaid,

@@ -145,6 +145,34 @@ def generate_course_from_chat_task(  # type: ignore[misc]
             user_message=user_message,
         )
 
+        # Emit AI usage scoped to the course's workspace (Personal or Circle).
+        try:
+            from src.services.usage_tracking_service import (
+                PERSONAL_USAGE_SCOPE,
+                build_circle_usage_scope,
+                emit_ai_usage,
+            )
+
+            course_row = await db.course.find_unique(where={"id": course_id})
+            course_circle_id = getattr(course_row, "circleId", None) if course_row else None
+            if course_circle_id:
+                emit_scope = build_circle_usage_scope(course_circle_id)
+            else:
+                emit_scope = PERSONAL_USAGE_SCOPE
+            await emit_ai_usage(
+                user_id=user_id,
+                usage_scope=emit_scope,
+                circle_id=course_circle_id,
+                provider="gemini",
+                model=None,
+                feature="ai_course_generation",
+                input_tokens=0,
+                output_tokens=0,
+                request_count=1,
+            )
+        except Exception:
+            pass
+
         await publish_ws_event(
             user_id,
             {

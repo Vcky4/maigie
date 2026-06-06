@@ -183,11 +183,14 @@ def _build_feature_flag_service() -> FeatureFlagService:
 
     settings = get_settings()
 
+    # Only ``free`` and ``plus`` allowlist keys exist after the Circle
+    # Reimagining feature; legacy ``circle`` and ``squad`` allowlists were
+    # removed. Per-Circle capabilities are derived from Seat_Tier via
+    # ``FeatureFlagService.effective_tier_for_request``, which resolves
+    # to one of these two keys.
     tier_allowlists = {
         "free": settings.LLM_TIER_ALLOWLIST_FREE,
         "plus": settings.LLM_TIER_ALLOWLIST_PLUS,
-        "circle": settings.LLM_TIER_ALLOWLIST_CIRCLE,
-        "squad": settings.LLM_TIER_ALLOWLIST_SQUAD,
     }
 
     _feature_flag_service_instance = FeatureFlagService(

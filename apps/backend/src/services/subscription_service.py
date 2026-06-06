@@ -22,9 +22,16 @@ from prisma.models import User
 
 from ..config import Settings, get_settings
 from ..core.database import db
+from ..schemas.subscription import (
+    PlanCatalogEntry,
+    PlanCatalogProductId,
+    PlanCatalogResponse,
+    PlanCatalogScope,
+)
 from ..services.credit_service import reset_credits_for_period_start
 from ..services.email import send_subscription_success_email
 from ..services.referral_service import track_referral_subscription
+from ..utils.exceptions import DeprecatedPlanError
 
 logger = logging.getLogger(__name__)
 
@@ -32,47 +39,194 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-# Plan identifiers for checkout (plan_interval format)
+# Plan identifiers accepted at the active checkout surface.
+# Per Requirements 1.1, 1.6, 1.8, 1.10 and 17.9, the catalog only exposes
+# the new tier set. ``maigie_plus_*`` are kept under the existing slugs to
+# avoid client churn; ``plus_monthly`` / ``plus_yearly`` are the new
+# user-facing aliases that map to the same Stripe prices.
 PLAN_IDS = (
     "maigie_plus_monthly",
     "maigie_plus_yearly",
-    "study_circle_monthly",
-    "study_circle_yearly",
-    "squad_monthly",
-    "squad_yearly",
+    "plus_monthly",
+    "plus_yearly",
+    "circle_plan_monthly",
+    "plus_seat_add_on_monthly",
 )
 
+# Plan identifiers that have been removed from the active catalog.
+# Creation requests referencing these are rejected with HTTP 410 per
+# Requirements 1.9 and 2.1.
+DEPRECATED_PLAN_IDS = {
+    "study_circle_monthly": (
+        "STUDY_CIRCLE_PLAN_REMOVED",
+        "The Study Circle plan has been retired. Please subscribe to "
+        "Maigie Plus and, if you own a Circle, upgrade it with the new "
+        "Circle Plan.",
+    ),
+    "study_circle_yearly": (
+        "STUDY_CIRCLE_PLAN_REMOVED",
+        "The Study Circle plan has been retired. Please subscribe to "
+        "Maigie Plus and, if you own a Circle, upgrade it with the new "
+        "Circle Plan.",
+    ),
+    "squad_monthly": (
+        "SQUAD_PLAN_REMOVED",
+        "The Squad plan has been retired. Please subscribe to Maigie "
+        "Plus or use the new Circle Plan.",
+    ),
+    "squad_yearly": (
+        "SQUAD_PLAN_REMOVED",
+        "The Squad plan has been retired. Please subscribe to Maigie "
+        "Plus or use the new Circle Plan.",
+    ),
+}
 
-def get_price_id_and_trial_days(plan_id: str) -> tuple[str, int]:
+
+def _is_first_plus_purchase(user: User) -> bool:
+    """Return True when this user has never had a Maigie Plus subscription.
+
+    Used to decide whether to grant the 7-day Maigie Plus trial per
+    Requirement 1.12. A user is treated as a first-time Plus subscriber
+    when their stored ``Tier`` is ``FREE`` and they have no record of a
+    paid plan in either provider.
+    """
+    if str(user.tier or "FREE") != "FREE":
+        return False
+    return not (user.stripeSubscriptionId or user.paystackSubscriptionCode)
+
+
+def get_active_plan_catalog() -> PlanCatalogResponse:
+    """Return the active product catalog.
+
+    Per Requirement 1.10 the catalog contains exactly five entries:
+    ``FREE``, ``PLUS_MONTHLY``, ``PLUS_YEARLY``, ``CIRCLE_PLAN_MONTHLY``,
+    and ``PLUS_SEAT_ADD_ON_MONTHLY``. Deprecated ``STUDY_CIRCLE_*`` and
+    ``SQUAD_*`` products are excluded (Requirements 1.6, 1.8, 17.9).
+
+    Prices are sourced from ``Settings`` (cents, USD) so the catalog
+    stays consistent with the marketing copy in Requirement 1.3.
+    """
+    cfg = get_settings()
+    products = [
+        PlanCatalogEntry(
+            productId=PlanCatalogProductId.FREE,
+            displayName="Free",
+            scope=PlanCatalogScope.PERSONAL,
+            priceCents=0,
+            interval="NONE",
+            description="Free personal tier with limited AI access.",
+        ),
+        PlanCatalogEntry(
+            productId=PlanCatalogProductId.PLUS_MONTHLY,
+            displayName="Maigie Plus (Monthly)",
+            scope=PlanCatalogScope.PERSONAL,
+            priceCents=cfg.PRICE_CENTS_PLUS_MONTHLY,
+            interval="MONTH",
+            trialDays=cfg.TRIAL_DAYS_MAIGIE_PLUS,
+            description=(
+                "Unlimited AI, advanced models, and larger uploads in your " "personal workspace."
+            ),
+        ),
+        PlanCatalogEntry(
+            productId=PlanCatalogProductId.PLUS_YEARLY,
+            displayName="Maigie Plus (Yearly)",
+            scope=PlanCatalogScope.PERSONAL,
+            priceCents=cfg.PRICE_CENTS_PLUS_YEARLY,
+            interval="YEAR",
+            trialDays=cfg.TRIAL_DAYS_MAIGIE_PLUS,
+            description=("Unlimited AI, advanced models, and larger uploads, billed " "yearly."),
+        ),
+        PlanCatalogEntry(
+            productId=PlanCatalogProductId.CIRCLE_PLAN_MONTHLY,
+            displayName="Circle Plan",
+            scope=PlanCatalogScope.CIRCLE,
+            priceCents=cfg.PRICE_CENTS_CIRCLE_PLAN_MONTHLY,
+            interval="MONTH",
+            trialDays=cfg.TRIAL_DAYS_CIRCLE_PLAN,
+            description=(
+                "Per-Circle plan with 4 included Plus seats and premium " "Circle features."
+            ),
+        ),
+        PlanCatalogEntry(
+            productId=PlanCatalogProductId.PLUS_SEAT_ADD_ON_MONTHLY,
+            displayName="Plus Seat Add-on",
+            scope=PlanCatalogScope.ADD_ON,
+            priceCents=cfg.PRICE_CENTS_PLUS_SEAT_ADD_ON_MONTHLY,
+            interval="MONTH",
+            description=(
+                "Adds one Plus seat to a Circle. Owners and admins can "
+                "assign and reassign seats freely."
+            ),
+        ),
+    ]
+    return PlanCatalogResponse(products=products)
+
+
+def assert_plan_id_is_active(plan_id: str) -> None:
+    """Reject creation requests for deprecated plan ids.
+
+    Implements Requirements 1.9 and 2.1: any subscription creation
+    request whose plan id maps to ``STUDY_CIRCLE_*`` or ``SQUAD_*`` must
+    fail with HTTP 410 and the corresponding ``*_PLAN_REMOVED`` code.
+    """
+    if plan_id in DEPRECATED_PLAN_IDS:
+        code, message = DEPRECATED_PLAN_IDS[plan_id]
+        raise DeprecatedPlanError(code=code, message=message)
+
+
+def get_price_id_and_trial_days(plan_id: str, *, user: User | None = None) -> tuple[str, int]:
     """
     Get Stripe price ID and trial days for a plan.
 
+    Rejects deprecated plan ids (``study_circle_*`` / ``squad_*``) with
+    ``DeprecatedPlanError`` per Requirements 1.9 and 2.1. Per Requirement
+    1.12, the 7-day Maigie Plus trial is granted only on a user's first
+    PLUS purchase; pass ``user`` to enforce this. When ``user`` is
+    omitted (existing call sites that handle trial logic separately) the
+    full configured trial length is returned.
+
     Args:
-        plan_id: Plan identifier (e.g. maigie_plus_monthly, study_circle_yearly)
+        plan_id: Active plan identifier.
+        user: Optional purchasing user, used to suppress repeat trials.
 
     Returns:
         (price_id, trial_days)
 
     Raises:
-        ValueError: If plan_id is invalid
+        DeprecatedPlanError: If plan_id refers to a removed tier.
+        ValueError: If plan_id is otherwise invalid.
     """
-    if plan_id == "maigie_plus_monthly":
-        return settings.STRIPE_PRICE_ID_MONTHLY, settings.TRIAL_DAYS_MAIGIE_PLUS
-    if plan_id == "maigie_plus_yearly":
-        return settings.STRIPE_PRICE_ID_YEARLY, settings.TRIAL_DAYS_MAIGIE_PLUS
-    if plan_id == "study_circle_monthly":
-        return settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY, settings.TRIAL_DAYS_STUDY_CIRCLE
-    if plan_id == "study_circle_yearly":
-        return settings.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY, settings.TRIAL_DAYS_STUDY_CIRCLE
-    if plan_id == "squad_monthly":
-        return settings.STRIPE_PRICE_ID_SQUAD_MONTHLY, settings.TRIAL_DAYS_SQUAD
-    if plan_id == "squad_yearly":
-        return settings.STRIPE_PRICE_ID_SQUAD_YEARLY, settings.TRIAL_DAYS_SQUAD
+    assert_plan_id_is_active(plan_id)
+
+    plus_trial = settings.TRIAL_DAYS_MAIGIE_PLUS
+    if user is not None and not _is_first_plus_purchase(user):
+        plus_trial = 0
+
+    if plan_id in ("maigie_plus_monthly", "plus_monthly"):
+        return settings.STRIPE_PRICE_ID_MONTHLY, plus_trial
+    if plan_id in ("maigie_plus_yearly", "plus_yearly"):
+        return settings.STRIPE_PRICE_ID_YEARLY, plus_trial
+    if plan_id == "circle_plan_monthly":
+        # The Circle Plan trial is owned by the Circle billing service.
+        # Personal-checkout surface should not honor it; return 0 here.
+        return settings.STRIPE_PRICE_ID_CIRCLE_PLAN_MONTHLY, 0
+    if plan_id == "plus_seat_add_on_monthly":
+        return settings.STRIPE_PRICE_ID_PLUS_SEAT_ADD_ON_MONTHLY, 0
     raise ValueError(f"Invalid plan_id: {plan_id}. " f"Must be one of: {', '.join(PLAN_IDS)}")
 
 
 def _price_id_to_tier(price_id: str) -> str:
-    """Map Stripe price ID to tier enum value."""
+    """Map Stripe price ID to tier enum value.
+
+    The active tiers are ``PREMIUM_MONTHLY`` / ``PREMIUM_YEARLY`` (the
+    storage representation of the user-facing ``PLUS_*`` aliases).
+    Deprecated ``STUDY_CIRCLE_*`` and ``SQUAD_*`` price IDs are still
+    mapped here so historical billing records and webhook events for
+    legacy subscriptions continue to resolve their source tier
+    (Requirement 2.8 retains historical billing for ≥24 months); the
+    active checkout surface rejects creation against them via
+    ``assert_plan_id_is_active`` and ``_assert_price_id_is_active``.
+    """
     if price_id == settings.STRIPE_PRICE_ID_MONTHLY:
         return "PREMIUM_MONTHLY"
     if price_id == settings.STRIPE_PRICE_ID_YEARLY:
@@ -86,6 +240,35 @@ def _price_id_to_tier(price_id: str) -> str:
     if price_id == settings.STRIPE_PRICE_ID_SQUAD_YEARLY:
         return "SQUAD_YEARLY"
     return "FREE"
+
+
+def _assert_price_id_is_active(price_id: str) -> None:
+    """Reject creation requests against a deprecated Stripe price ID.
+
+    Per Requirements 1.9 and 2.1 (and the Property 2 contract in
+    design.md), any subscription creation that targets a
+    ``STUDY_CIRCLE_*`` or ``SQUAD_*`` price must fail with HTTP 410.
+    """
+    if price_id and price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_MONTHLY:
+        raise DeprecatedPlanError(
+            code="STUDY_CIRCLE_PLAN_REMOVED",
+            message="The Study Circle plan has been retired.",
+        )
+    if price_id and price_id == settings.STRIPE_PRICE_ID_STUDY_CIRCLE_YEARLY:
+        raise DeprecatedPlanError(
+            code="STUDY_CIRCLE_PLAN_REMOVED",
+            message="The Study Circle plan has been retired.",
+        )
+    if price_id and price_id == settings.STRIPE_PRICE_ID_SQUAD_MONTHLY:
+        raise DeprecatedPlanError(
+            code="SQUAD_PLAN_REMOVED",
+            message="The Squad plan has been retired.",
+        )
+    if price_id and price_id == settings.STRIPE_PRICE_ID_SQUAD_YEARLY:
+        raise DeprecatedPlanError(
+            code="SQUAD_PLAN_REMOVED",
+            message="The Squad plan has been retired.",
+        )
 
 
 async def get_or_create_stripe_customer(user: User) -> str:
@@ -159,6 +342,10 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
     """
     if not user.stripeSubscriptionId:
         raise ValueError("User does not have an active subscription")
+
+    # Reject modification target tiers that have been retired
+    # (Requirements 1.9, 2.1).
+    _assert_price_id_is_active(new_price_id)
 
     # Retrieve current subscription
     subscription = stripe.Subscription.retrieve(
@@ -336,6 +523,9 @@ async def create_checkout_session(
     Returns:
         Checkout session object or modification result
     """
+    # Reject creation against retired tiers (Requirements 1.9, 2.1).
+    _assert_price_id_is_active(price_id)
+
     customer_id = await get_or_create_stripe_customer(user)
 
     # Check if user already has an active subscription

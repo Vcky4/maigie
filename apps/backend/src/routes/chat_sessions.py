@@ -492,6 +492,29 @@ async def ensure_studio_topic_opener(
             logger.warning("studio-topic-opener LLM failed: %s", e, exc_info=True)
             opener_body = None
 
+        # Emit AI usage scoped to Personal_Workspace (studio topic openers
+        # are always personal; isCircleRoom=False is enforced above).
+        if opener_body:
+            try:
+                from src.services.usage_tracking_service import (
+                    PERSONAL_USAGE_SCOPE,
+                    emit_ai_usage,
+                )
+
+                await emit_ai_usage(
+                    user_id=current_user.id,
+                    usage_scope=PERSONAL_USAGE_SCOPE,
+                    circle_id=None,
+                    provider="gemini",
+                    model=None,
+                    feature="studio_topic_opener",
+                    input_tokens=int(usage_info.get("input_tokens") or 0),
+                    output_tokens=int(usage_info.get("output_tokens") or 0),
+                    request_count=1,
+                )
+            except Exception:
+                pass
+
     text = (opener_body or "").strip()
     if not text:
         text = _static_studio_topic_opener(

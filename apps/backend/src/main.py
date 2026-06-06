@@ -81,6 +81,9 @@ from .routes.waitlist import router as waitlist_router
 from .routes.device_tokens import router as device_tokens_router
 from .routes.model_selection import router as model_selection_router
 from .routes.credit_packs import router as credit_packs_router
+from .routes.plans import router as plans_router
+from .routes.circle_billing import router as circle_billing_router
+from .routes.circle_seats import router as circle_seats_router
 from .routes.websockets import router as websockets_router
 from .services.ws_event_bus import ws_event_forwarder
 from .utils.dependencies import (
@@ -460,6 +463,12 @@ def create_app() -> FastAPI:
         tags=["Knowledge Base"],
     )
 
+    # Circle repository (public discovery) — must be registered BEFORE
+    # the circles router so /circles/repository doesn't match /{circle_id}
+    from .routes.circle_repository import router as circle_repository_router
+
+    app.include_router(circle_repository_router)
+
     # Circle (study group) routes
     app.include_router(circles_router, prefix=f"{settings.API_V1_STR}")
 
@@ -478,6 +487,18 @@ def create_app() -> FastAPI:
 
     # Credit packs (purchase system)
     app.include_router(credit_packs_router, prefix=f"{settings.API_V1_STR}")
+
+    # Plans catalog (public)
+    app.include_router(plans_router)
+
+    # Circle billing and seat management
+    app.include_router(circle_billing_router)
+    app.include_router(circle_seats_router)
+
+    # Reports and moderation
+    from .routes.reports import router as reports_router
+
+    app.include_router(reports_router)
 
     # Device token registration (push notifications)
     app.include_router(device_tokens_router)

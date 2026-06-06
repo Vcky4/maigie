@@ -115,6 +115,29 @@ async def tutor_ask(
         user_message=request.user_message,
         context=context,
     )
+
+    # Emit AI usage scoped to Personal_Workspace (tutor ask is always
+    # personal context; Circle voice sessions go through Gemini Live).
+    try:
+        from src.services.usage_tracking_service import (
+            PERSONAL_USAGE_SCOPE,
+            emit_ai_usage,
+        )
+
+        await emit_ai_usage(
+            user_id=current_user.id,
+            usage_scope=PERSONAL_USAGE_SCOPE,
+            circle_id=None,
+            provider="gemini",
+            model=None,
+            feature="tutor_ask",
+            input_tokens=0,
+            output_tokens=0,
+            request_count=1,
+        )
+    except Exception:
+        pass
+
     return TutorAskResponse(response=response_text or "")
 
 

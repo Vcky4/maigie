@@ -40,13 +40,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["subscriptions"])
 
 # Valid plan IDs for checkout
+# Per Requirements 1.1, 1.6, 1.10 and 17.9, deprecated ``study_circle_*``
+# and ``squad_*`` ids are no longer accepted at the checkout surface.
+# ``plus_*`` are the new user-facing aliases; ``maigie_plus_*`` remain as
+# backward-compatible synonyms for existing clients.
 PlanId = Literal[
     "maigie_plus_monthly",
     "maigie_plus_yearly",
-    "study_circle_monthly",
-    "study_circle_yearly",
-    "squad_monthly",
-    "squad_yearly",
+    "plus_monthly",
+    "plus_yearly",
+    "circle_plan_monthly",
+    "plus_seat_add_on_monthly",
 ]
 
 
@@ -55,7 +59,11 @@ class CheckoutSessionRequest(BaseModel):
 
     plan_id: PlanId = Field(
         ...,
-        description="Plan identifier (e.g. maigie_plus_monthly, squad_yearly)",
+        description=(
+            "Plan identifier (e.g. plus_monthly, plus_yearly, "
+            "circle_plan_monthly, plus_seat_add_on_monthly). "
+            "``maigie_plus_*`` are backward-compatible synonyms."
+        ),
     )
 
 
@@ -93,8 +101,9 @@ async def create_subscription_checkout(
     """
     Create a Stripe checkout session for subscription.
 
-    Plans: Maigie Plus (7-day trial), Study Circle (3-day trial), Squad Plan (3-day trial).
-    Each plan has monthly and yearly options.
+    Plans: Maigie Plus (7-day trial on first purchase), Circle Plan, and the
+    Plus Seat add-on. The retired Study Circle and Squad plans are no
+    longer accepted (Requirements 1.6, 1.8, 1.9, 1.10, 17.9).
 
     Args:
         request: Checkout session request with plan_id
@@ -106,7 +115,7 @@ async def create_subscription_checkout(
         Checkout session with URL
     """
     try:
-        price_id, trial_days = get_price_id_and_trial_days(request.plan_id)
+        price_id, trial_days = get_price_id_and_trial_days(request.plan_id, user=current_user)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
