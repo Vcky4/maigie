@@ -136,20 +136,29 @@ async def regenerate_user_schedule(user_id: str) -> None:
             pass  # Non-critical
 
         # 5. Build LLM prompt
-        course_info = "\n".join(
-            f"- {c.title} (progress: {c.completedTopics or 0}/{c.totalTopics or 0} topics)"
-            for c in courses
-        ) or "No active courses."
+        course_info = (
+            "\n".join(
+                f"- {c.title} (progress: {c.completedTopics or 0}/{c.totalTopics or 0} topics)"
+                for c in courses
+            )
+            or "No active courses."
+        )
 
-        goal_info = "\n".join(
-            f"- {g.title} (deadline: {g.deadline.strftime('%Y-%m-%d') if g.deadline else 'none'})"
-            for g in goals
-        ) or "No active goals."
+        goal_info = (
+            "\n".join(
+                f"- {g.title} (deadline: {g.deadline.strftime('%Y-%m-%d') if g.deadline else 'none'})"
+                for g in goals
+            )
+            or "No active goals."
+        )
 
-        busy_slots = "\n".join(
-            f"- {e.title}: {e.startAt.strftime('%Y-%m-%d %H:%M')} to {e.endAt.strftime('%H:%M')}"
-            for e in existing_events
-        ) or "No existing commitments."
+        busy_slots = (
+            "\n".join(
+                f"- {e.title}: {e.startAt.strftime('%Y-%m-%d %H:%M')} to {e.endAt.strftime('%H:%M')}"
+                for e in existing_events
+            )
+            or "No existing commitments."
+        )
 
         today_str = now.strftime("%Y-%m-%d")
         prompt = f"""Generate an optimized study schedule for the next {PLAN_DAYS_AHEAD} days starting from {today_str}.
