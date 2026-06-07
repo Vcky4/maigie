@@ -138,10 +138,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
 
         # 5. Build LLM prompt
         course_info = (
-            "\n".join(
-                f"- {c.title} (progress: {int(c.progress or 0)}%)"
-                for c in courses
-            )
+            "\n".join(f"- {c.title} (progress: {int(c.progress or 0)}%)" for c in courses)
             or "No active courses."
         )
 
