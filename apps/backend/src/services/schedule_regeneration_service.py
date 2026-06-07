@@ -12,7 +12,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from src.core.database import db
-from src.services.llm import route_request
+from src.config import get_settings
+from src.services.llm import new_gemini_client
 from src.services.skills.handlers import handle_create_schedule
 
 logger = logging.getLogger(__name__)
@@ -196,17 +197,43 @@ Return a JSON array of objects with these fields:
 
 Return ONLY the JSON array, no other text."""
 
-        # 6. Call LLM
+        # 6. Call LLM (try Gemini, fall back to OpenAI)
+        settings = get_settings()
         response_text = ""
-        async for chunk in route_request(
-            messages=[{"role": "user", "content": prompt}],
-            user_id=user_id,
-            stream=False,
-        ):
-            if hasattr(chunk, "content") and chunk.content:
-                response_text += chunk.content
-            elif isinstance(chunk, str):
-                response_text += chunk
+
+        # Try Gemini first
+        try:
+            client = new_gemini_client(settings.GEMINI_API_KEY)
+            model_name = "gemini-2.0-flash"
+            if settings.GEMINI_SCHEDULE_AI_MODELS:
+                model_name = settings.GEMINI_SCHEDULE_AI_MODELS.split(",")[0].strip()
+
+            response = await client.aio.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            response_text = response.text or ""
+        except Exception as gemini_err:
+            logger.warning(f"Gemini failed for schedule regen, trying OpenAI: {gemini_err}")
+
+            # Fall back to OpenAI
+            if settings.OPENAI_API_KEY:
+                try:
+                    import openai
+
+                    openai_client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+                    completion = await openai_client.chat.completions.create(
+                        model=settings.OPENAI_DEFAULT_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7,
+                    )
+                    response_text = completion.choices[0].message.content or ""
+                except Exception as openai_err:
+                    logger.error(f"OpenAI also failed for schedule regen: {openai_err}")
+                    return
+            else:
+                logger.error("No fallback LLM available for schedule regen")
+                return
 
         # 7. Parse response and create blocks
         cleaned = response_text.strip()
