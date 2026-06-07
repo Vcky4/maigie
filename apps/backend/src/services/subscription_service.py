@@ -535,60 +535,100 @@ async def create_checkout_session(
             f"User {user.id} has subscription ID {user.stripeSubscriptionId} in database, "
             f"attempting to modify instead of creating new checkout"
         )
-        # User has existing subscription - modify it instead
+
+        # First check if the subscription is actually active/trialing on Stripe
         try:
-            result = await modify_existing_subscription(user, price_id)
-            logger.info(
-                f"Successfully modified subscription for user {user.id}: "
-                f"upgrade={result['is_upgrade']}, subscription_id={result['subscription_id']}"
+            existing_sub = stripe.Subscription.retrieve(user.stripeSubscriptionId)
+            existing_status = (
+                existing_sub.status
+                if hasattr(existing_sub, "status")
+                else existing_sub.get("status")
             )
-            # Return a dict that looks like a checkout session for compatibility
-            # The frontend will handle this differently
-            return {
-                "session_id": result["subscription_id"],
-                "url": None,  # No redirect needed, subscription already modified
-                "modified": True,
-                "is_upgrade": result["is_upgrade"],
-                "current_period_end": result["current_period_end"].isoformat(),
-            }
-        except ValueError as e:
-            if "already subscribed to this plan" in str(e).lower():
-                # User already has this plan — sync tier from Stripe and return success
+
+            if existing_status in ("canceled", "incomplete_expired"):
+                # Subscription is fully ended — clear it and create a fresh checkout
                 logger.info(
-                    f"User {user.id} already subscribed to requested plan. "
-                    "Syncing subscription data from Stripe."
+                    f"User {user.id} has a {existing_status} subscription "
+                    f"{user.stripeSubscriptionId}. Clearing stale reference."
                 )
-                updated_user = await update_user_subscription_from_stripe(user.stripeSubscriptionId)
-                if updated_user:
-                    user = updated_user
-                return {
-                    "session_id": user.stripeSubscriptionId,
-                    "url": None,
-                    "modified": False,
-                    "is_upgrade": False,
-                    "current_period_end": (
-                        user.subscriptionCurrentPeriodEnd.isoformat()
-                        if user.subscriptionCurrentPeriodEnd
-                        else None
-                    ),
-                }
-            # For other validation errors, raise as before
-            logger.warning(f"Cannot modify subscription for user {user.id}: {e}")
-            raise
+                await db.user.update(
+                    where={"id": user.id},
+                    data={
+                        "stripeSubscriptionId": None,
+                        "stripeSubscriptionStatus": None,
+                        "stripePriceId": None,
+                        "tier": "FREE",
+                        "subscriptionCurrentPeriodStart": None,
+                        "subscriptionCurrentPeriodEnd": None,
+                    },
+                )
+                user.stripeSubscriptionId = None
+                # Fall through to create new checkout below
+            else:
+                # Subscription exists and is modifiable — try to modify
+                try:
+                    result = await modify_existing_subscription(user, price_id)
+                    logger.info(
+                        f"Successfully modified subscription for user {user.id}: "
+                        f"upgrade={result['is_upgrade']}, subscription_id={result['subscription_id']}"
+                    )
+                    return {
+                        "session_id": result["subscription_id"],
+                        "url": None,
+                        "modified": True,
+                        "is_upgrade": result["is_upgrade"],
+                        "current_period_end": result["current_period_end"].isoformat(),
+                    }
+                except ValueError as e:
+                    if "already subscribed to this plan" in str(e).lower():
+                        logger.info(
+                            f"User {user.id} already subscribed to requested plan. "
+                            "Syncing subscription data from Stripe."
+                        )
+                        updated_user = await update_user_subscription_from_stripe(
+                            user.stripeSubscriptionId
+                        )
+                        if updated_user:
+                            user = updated_user
+                        return {
+                            "session_id": user.stripeSubscriptionId,
+                            "url": None,
+                            "modified": False,
+                            "is_upgrade": False,
+                            "current_period_end": (
+                                user.subscriptionCurrentPeriodEnd.isoformat()
+                                if user.subscriptionCurrentPeriodEnd
+                                else None
+                            ),
+                        }
+                    logger.warning(f"Cannot modify subscription for user {user.id}: {e}")
+                    raise
+                except stripe.error.StripeError as e:
+                    logger.error(
+                        f"Stripe error modifying subscription for user {user.id}: {e}",
+                        exc_info=True,
+                    )
+                    raise ValueError(f"Failed to modify subscription: {str(e)}")
+                except Exception as e:
+                    logger.error(
+                        f"Unexpected error modifying subscription for user {user.id}: {e}",
+                        exc_info=True,
+                    )
+                    raise ValueError(f"Failed to modify subscription: {str(e)}")
         except stripe.error.StripeError as e:
-            # Stripe-specific errors should be raised, not silently ignored
-            logger.error(
-                f"Stripe error modifying subscription for user {user.id}: {e}",
-                exc_info=True,
+            # Can't retrieve subscription — clear stale reference
+            logger.warning(
+                f"Could not retrieve subscription {user.stripeSubscriptionId} for user {user.id}: {e}. "
+                "Clearing stale reference."
             )
-            raise ValueError(f"Failed to modify subscription: {str(e)}")
-        except Exception as e:
-            # Other unexpected errors - log and raise instead of silently falling through
-            logger.error(
-                f"Unexpected error modifying subscription for user {user.id}: {e}",
-                exc_info=True,
+            await db.user.update(
+                where={"id": user.id},
+                data={
+                    "stripeSubscriptionId": None,
+                    "stripeSubscriptionStatus": None,
+                },
             )
-            raise ValueError(f"Failed to modify subscription: {str(e)}")
+            user.stripeSubscriptionId = None
     else:
         # Also check Stripe directly in case database is out of sync
         try:
@@ -856,6 +896,14 @@ async def update_user_subscription_from_stripe(
             price_id = None
 
         tier = _price_id_to_tier(price_id) if price_id else "FREE"
+
+        # If subscription is fully canceled or incomplete_expired, tier should be FREE
+        # regardless of what price was attached
+        sub_status_raw = (
+            subscription.status if hasattr(subscription, "status") else subscription.get("status")
+        )
+        if sub_status_raw in ("canceled", "incomplete_expired"):
+            tier = "FREE"
 
         # Get subscription ID and status (handle both object and dict)
         sub_id = subscription.id if hasattr(subscription, "id") else subscription.get("id")
