@@ -531,6 +531,34 @@ async def handle_create_schedule(
     return result
 
 
+async def handle_regenerate_schedule(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle regenerate_schedule tool call — regenerates the user's study plan."""
+    import asyncio
+
+    from src.services.schedule_regeneration_service import regenerate_user_schedule
+
+    # Run regeneration (await it so the AI can report the result)
+    try:
+        await regenerate_user_schedule(user_id)
+        return {
+            "status": "success",
+            "message": (
+                "Schedule regenerated successfully. New study blocks have been created "
+                "for the next 2 weeks based on your active courses and goals."
+            ),
+        }
+    except Exception as e:
+        logger.error(f"Regenerate schedule failed for user {user_id}: {e}")
+        return {
+            "status": "error",
+            "message": f"Failed to regenerate schedule: {str(e)}",
+        }
+
+
 async def handle_check_schedule_conflicts(
     args: dict[str, Any],
     user_id: str,
