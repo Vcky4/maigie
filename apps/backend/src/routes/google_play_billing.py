@@ -13,6 +13,7 @@ from ..dependencies import CurrentUser
 from ..services.google_play_billing_service import (
     handle_rtdn_notification,
     verify_subscription,
+    verify_product_purchase,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,56 @@ async def verify_google_play_purchase(
         )
     except Exception as e:
         logger.error(f"Unexpected error verifying purchase: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify purchase",
+        )
+
+
+class VerifyProductPurchaseRequest(BaseModel):
+    """Request to verify a Google Play in-app product (one-time) purchase."""
+
+    productId: str  # e.g. "credit_pack_starter"
+    purchaseToken: str
+
+
+class VerifyProductPurchaseResponse(BaseModel):
+    """Response after verifying a one-time product purchase."""
+
+    verified: bool
+    creditsGranted: int
+    newBalance: int
+
+
+@router.post("/verify-product", response_model=VerifyProductPurchaseResponse)
+async def verify_google_play_product_purchase(
+    request: VerifyProductPurchaseRequest,
+    current_user: CurrentUser,
+):
+    """
+    Verify a Google Play in-app product purchase (credit packs).
+
+    Called by the mobile app after a successful one-time purchase to validate
+    the purchase with Google's servers, grant credits, and consume the product.
+    """
+    try:
+        result = await verify_product_purchase(
+            user_id=current_user.id,
+            product_id=request.productId,
+            purchase_token=request.purchaseToken,
+        )
+        return VerifyProductPurchaseResponse(
+            verified=result["verified"],
+            creditsGranted=result["creditsGranted"],
+            newBalance=result["newBalance"],
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error verifying product purchase: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to verify purchase",

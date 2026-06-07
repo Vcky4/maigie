@@ -211,6 +211,10 @@ class Settings(BaseSettings):
     # Product IDs configured in Google Play Console (must match exactly)
     GOOGLE_PLAY_SKU_PLUS_MONTHLY: str = "maigie_plus_monthly"
     GOOGLE_PLAY_SKU_PLUS_YEARLY: str = "maigie_plus_yearly"
+    # Credit pack product IDs (in-app products, consumable)
+    GOOGLE_PLAY_SKU_CREDIT_STARTER: str = "credit_pack_starter"
+    GOOGLE_PLAY_SKU_CREDIT_VALUE: str = "credit_pack_value"
+    GOOGLE_PLAY_SKU_CREDIT_POWER: str = "credit_pack_power"
 
     # --- BunnyCDN Storage ---
     BUNNY_CDN_API_KEY: str | None = None

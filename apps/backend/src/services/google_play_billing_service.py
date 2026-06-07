@@ -30,9 +30,7 @@ def _get_android_publisher_service():
 
     if settings.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:
         info = json.loads(settings.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON)
-        credentials = service_account.Credentials.from_service_account_info(
-            info, scopes=SCOPES
-        )
+        credentials = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     elif settings.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE:
         credentials = service_account.Credentials.from_service_account_file(
             settings.GOOGLE_PLAY_SERVICE_ACCOUNT_FILE, scopes=SCOPES
@@ -157,6 +155,125 @@ async def verify_subscription(
     }
 
 
+def _sku_to_credits(product_id: str) -> int:
+    """Map a Google Play credit pack product ID to the number of credits to grant.
+
+    These must match the credit pack definitions in the database. The mapping
+    here is a fallback — ideally credits should come from the CreditPack table.
+    """
+    settings = get_settings()
+    CREDIT_PACK_MAP = {
+        settings.GOOGLE_PLAY_SKU_CREDIT_STARTER: 50_000,
+        settings.GOOGLE_PLAY_SKU_CREDIT_VALUE: 165_000,
+        settings.GOOGLE_PLAY_SKU_CREDIT_POWER: 575_000,
+    }
+    return CREDIT_PACK_MAP.get(product_id, 0)
+
+
+async def verify_product_purchase(
+    user_id: str,
+    product_id: str,
+    purchase_token: str,
+) -> dict:
+    """
+    Verify a Google Play in-app product (one-time) purchase and grant credits.
+
+    Args:
+        user_id: Internal user ID
+        product_id: Google Play product ID (e.g. "credit_pack_starter")
+        purchase_token: The purchase token from the client
+
+    Returns:
+        Dict with verification result and credits granted
+
+    Raises:
+        ValueError: If the purchase is invalid or already consumed
+    """
+    settings = get_settings()
+    package_name = settings.GOOGLE_PLAY_PACKAGE_NAME
+
+    # Check if this token was already consumed (idempotency)
+    existing = await db.creditpurchasetransaction.find_first(
+        where={"providerReference": purchase_token, "status": "COMPLETED"}
+    )
+    if existing:
+        raise ValueError("This purchase has already been fulfilled")
+
+    try:
+        service = _get_android_publisher_service()
+        result = (
+            service.purchases()
+            .products()
+            .get(
+                packageName=package_name,
+                productId=product_id,
+                token=purchase_token,
+            )
+            .execute()
+        )
+    except Exception as e:
+        logger.error(
+            f"Google Play product verification failed for user {user_id}: {e}",
+            exc_info=True,
+        )
+        raise ValueError(f"Failed to verify purchase with Google Play: {e}")
+
+    # purchaseState: 0 = purchased, 1 = canceled, 2 = pending
+    purchase_state = result.get("purchaseState", -1)
+    if purchase_state != 0:
+        raise ValueError(f"Purchase is not in completed state (state={purchase_state})")
+
+    # Determine credits to grant
+    credits_to_grant = _sku_to_credits(product_id)
+    if credits_to_grant <= 0:
+        raise ValueError(f"Unknown credit pack product: {product_id}")
+
+    # Consume the product so it can be purchased again
+    try:
+        service.purchases().products().consume(
+            packageName=package_name,
+            productId=product_id,
+            token=purchase_token,
+            body={},
+        ).execute()
+        logger.info(f"Consumed product {product_id} for user {user_id}")
+    except Exception as e:
+        logger.warning(f"Failed to consume product (may already be consumed): {e}")
+
+    # Grant credits to user
+    updated_user = await db.user.update(
+        where={"id": user_id},
+        data={
+            "purchasedCreditsBalance": {"increment": credits_to_grant},
+        },
+    )
+
+    # Record the transaction
+    await db.creditpurchasetransaction.create(
+        data={
+            "userId": user_id,
+            "creditsGranted": credits_to_grant,
+            "amountPaid": 0,  # Actual price is managed by Google Play
+            "currency": "USD",
+            "status": "COMPLETED",
+            "providerReference": purchase_token,
+            "completedAt": datetime.now(timezone.utc),
+        }
+    )
+
+    new_balance = updated_user.purchasedCreditsBalance if updated_user else 0
+    logger.info(
+        f"User {user_id} purchased {credits_to_grant} credits via Google Play "
+        f"(product={product_id}), new balance={new_balance}"
+    )
+
+    return {
+        "verified": True,
+        "creditsGranted": credits_to_grant,
+        "newBalance": new_balance,
+    }
+
+
 async def handle_rtdn_notification(message_data: dict) -> None:
     """
     Process a Real-Time Developer Notification from Google Play.
@@ -176,18 +293,14 @@ async def handle_rtdn_notification(message_data: dict) -> None:
     purchase_token = subscription_notification.get("purchaseToken")
     subscription_id = subscription_notification.get("subscriptionId")
 
-    logger.info(
-        f"RTDN: type={notification_type}, subscription={subscription_id}"
-    )
+    logger.info(f"RTDN: type={notification_type}, subscription={subscription_id}")
 
     if not purchase_token:
         logger.warning("RTDN missing purchaseToken, cannot process")
         return
 
     # Find the user with this purchase token
-    user = await db.user.find_first(
-        where={"googlePlayPurchaseToken": purchase_token}
-    )
+    user = await db.user.find_first(where={"googlePlayPurchaseToken": purchase_token})
 
     if not user:
         logger.warning(
