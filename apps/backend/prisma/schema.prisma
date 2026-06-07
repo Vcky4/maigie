@@ -232,7 +232,11 @@ model User {
   // Paystack subscription fields (Nigeria)
   paystackCustomerCode     String? @unique
   paystackSubscriptionCode String? @unique
-  paymentProvider          String? // "stripe" | "paystack"
+  paymentProvider          String? // "stripe" | "paystack" | "google_play"
+
+  // Google Play Billing fields (Android)
+  googlePlayPurchaseToken String? @unique
+  googlePlayProductId     String? // e.g. "maigie_plus_monthly"
 
   // Credit tracking for subscription limits
   creditsUsed        Int       @default(0) // Credits consumed in current period
