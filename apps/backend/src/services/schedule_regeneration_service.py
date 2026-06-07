@@ -53,7 +53,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
 
         # 2. Gather context
         courses = await db.course.find_many(
-            where={"userId": user_id, "status": "ACTIVE"},
+            where={"userId": user_id, "archived": False},
             take=20,
             order={"updatedAt": "desc"},
         )
@@ -61,7 +61,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
         goals = await db.goal.find_many(
             where={"userId": user_id, "status": "ACTIVE"},
             take=10,
-            order={"deadline": "asc"},
+            order={"targetDate": "asc"},
         )
 
         # Existing events that we must not overlap
@@ -139,7 +139,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
         # 5. Build LLM prompt
         course_info = (
             "\n".join(
-                f"- {c.title} (progress: {c.completedTopics or 0}/{c.totalTopics or 0} topics)"
+                f"- {c.title} (progress: {int(c.progress or 0)}%)"
                 for c in courses
             )
             or "No active courses."
@@ -147,7 +147,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
 
         goal_info = (
             "\n".join(
-                f"- {g.title} (deadline: {g.deadline.strftime('%Y-%m-%d') if g.deadline else 'none'})"
+                f"- {g.title} (deadline: {g.targetDate.strftime('%Y-%m-%d') if g.targetDate else 'none'})"
                 for g in goals
             )
             or "No active goals."
