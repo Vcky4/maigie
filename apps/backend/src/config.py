@@ -208,9 +208,11 @@ class Settings(BaseSettings):
     GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: str = ""  # Path to service account JSON file
     # Package name of the Android app
     GOOGLE_PLAY_PACKAGE_NAME: str = "com.maigie"
-    # Product IDs configured in Google Play Console (must match exactly)
-    GOOGLE_PLAY_SKU_PLUS_MONTHLY: str = "maigie_plus_monthly"
-    GOOGLE_PLAY_SKU_PLUS_YEARLY: str = "maigie_plus_yearly"
+    # Subscription product ID (single subscription with multiple base plans)
+    GOOGLE_PLAY_SUBSCRIPTION_ID: str = "maigie_plus"
+    # Base plan IDs within the subscription
+    GOOGLE_PLAY_BASE_PLAN_MONTHLY: str = "plus-monthly"
+    GOOGLE_PLAY_BASE_PLAN_YEARLY: str = "plus-yearly"
     # Credit pack product IDs (in-app products, consumable)
     GOOGLE_PLAY_SKU_CREDIT_STARTER: str = "credit_pack_starter"
     GOOGLE_PLAY_SKU_CREDIT_VALUE: str = "credit_pack_value"

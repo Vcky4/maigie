@@ -47,9 +47,20 @@ def _get_android_publisher_service():
 def _sku_to_tier(product_id: str) -> str:
     """Map a Google Play product ID (SKU) to the internal tier enum."""
     settings = get_settings()
-    if product_id == settings.GOOGLE_PLAY_SKU_PLUS_MONTHLY:
+    # For subscriptions, the product_id is always the subscription ID (maigie_plus)
+    # We determine the tier from the basePlanId passed separately
+    if product_id == settings.GOOGLE_PLAY_SUBSCRIPTION_ID:
+        # Default to monthly — the caller should use _base_plan_to_tier instead
         return "PREMIUM_MONTHLY"
-    if product_id == settings.GOOGLE_PLAY_SKU_PLUS_YEARLY:
+    return "FREE"
+
+
+def _base_plan_to_tier(base_plan_id: str) -> str:
+    """Map a Google Play base plan ID to the internal tier enum."""
+    settings = get_settings()
+    if base_plan_id == settings.GOOGLE_PLAY_BASE_PLAN_MONTHLY:
+        return "PREMIUM_MONTHLY"
+    if base_plan_id == settings.GOOGLE_PLAY_BASE_PLAN_YEARLY:
         return "PREMIUM_YEARLY"
     return "FREE"
 
@@ -58,14 +69,16 @@ async def verify_subscription(
     user_id: str,
     product_id: str,
     purchase_token: str,
+    base_plan_id: str = "",
 ) -> dict:
     """
     Verify a Google Play subscription purchase token and update the user's tier.
 
     Args:
         user_id: Internal user ID
-        product_id: Google Play product/SKU ID (e.g. "maigie_plus_monthly")
+        product_id: Google Play subscription ID (e.g. "maigie_plus")
         purchase_token: The purchase token from the client
+        base_plan_id: The base plan ID (e.g. "plus-monthly" or "plus-yearly")
 
     Returns:
         Dict with verification result and updated tier info
@@ -106,10 +119,18 @@ async def verify_subscription(
     if expiry_dt < now:
         raise ValueError("Subscription has expired")
 
-    # Map to tier
-    new_tier = _sku_to_tier(product_id)
+    # Determine tier from base plan ID if provided, otherwise infer from billing period
+    if base_plan_id:
+        new_tier = _base_plan_to_tier(base_plan_id)
+    else:
+        # Fallback: infer from the price/period in the response
+        # If expiryTime - startTime > 60 days, it's yearly
+        start_time_millis = int(result.get("startTimeMillis", 0))
+        duration_days = (expiry_time_millis - start_time_millis) / (1000 * 60 * 60 * 24)
+        new_tier = "PREMIUM_YEARLY" if duration_days > 60 else "PREMIUM_MONTHLY"
+
     if new_tier == "FREE":
-        raise ValueError(f"Unknown product ID: {product_id}")
+        raise ValueError(f"Unknown base plan: {base_plan_id}")
 
     # Acknowledge the subscription if not already acknowledged
     if not result.get("acknowledgementState"):
@@ -134,15 +155,16 @@ async def verify_subscription(
         data={
             "tier": new_tier,
             "googlePlayPurchaseToken": purchase_token,
-            "googlePlayProductId": product_id,
+            "googlePlayProductId": f"{product_id}:{base_plan_id}",
             "subscriptionCurrentPeriodStart": start_dt,
             "subscriptionCurrentPeriodEnd": expiry_dt,
+            "paymentProvider": "google_play",
         },
     )
 
     logger.info(
         f"User {user_id} verified Google Play subscription: "
-        f"product={product_id}, tier={new_tier}, expires={expiry_dt.isoformat()}"
+        f"product={product_id}, basePlan={base_plan_id}, tier={new_tier}, expires={expiry_dt.isoformat()}"
     )
 
     return {

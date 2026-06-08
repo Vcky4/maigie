@@ -24,8 +24,9 @@ router = APIRouter(prefix="/subscriptions/google-play", tags=["google-play-billi
 class VerifyPurchaseRequest(BaseModel):
     """Request to verify a Google Play subscription purchase."""
 
-    productId: str  # e.g. "maigie_plus_monthly"
+    productId: str  # e.g. "maigie_plus"
     purchaseToken: str
+    basePlanId: str = ""  # e.g. "plus-monthly" or "plus-yearly"
 
 
 class VerifyPurchaseResponse(BaseModel):
@@ -54,6 +55,7 @@ async def verify_google_play_purchase(
             user_id=current_user.id,
             product_id=request.productId,
             purchase_token=request.purchaseToken,
+            base_plan_id=request.basePlanId,
         )
         return VerifyPurchaseResponse(
             verified=result["verified"],
