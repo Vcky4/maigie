@@ -369,6 +369,13 @@ model User {
   // Knowledge Base (user uploads indexed for RAG context)
   userUploads UserUpload[]
 
+  // Circle Knowledge Base Relations
+  circleCurriculaCreated       CircleCurriculum[]         @relation("CircleCurriculumCreator")
+  circleMaterialsUploaded      CircleMaterial[]            @relation("CircleMaterialUploader")
+  circleKnowledgeLinksCreated  CircleKnowledgeLink[]       @relation("CircleKnowledgeLinkCreator")
+  circleCurriculumProgress     CircleCurriculumProgress[]  @relation("CircleCurriculumProgressUser")
+  circleSectionProgress        CircleSectionProgress[]     @relation("CircleSectionProgressUser")
+
   // Model Preferences (multi-model support)
   modelPreferences ModelPreference[]
 
@@ -1814,6 +1821,10 @@ model Circle {
   memberStats   CircleMemberStat[]
   groupSessions CircleSession[]
 
+  // Knowledge Base relations
+  curricula     CircleCurriculum[]
+  materials     CircleMaterial[]
+
   // Circle Reimagining relations
   joinRequests       CircleJoinRequest[]
   ownershipTransfers CircleOwnershipTransfer[]
@@ -1858,7 +1869,8 @@ model CircleChatGroup {
   chatSessionId String?      @unique
   chatSession   ChatSession? @relation(fields: [chatSessionId], references: [id], onDelete: SetNull)
 
-  groupSessions CircleSession[]
+  groupSessions  CircleSession[]
+  knowledgeLinks CircleKnowledgeLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1932,6 +1944,8 @@ model CircleSession {
 
   createdById String
   createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  knowledgeLinks CircleKnowledgeLink[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2270,4 +2284,198 @@ model DeviceToken {
   @@index([userId])
   @@index([token])
   @@index([userId, isActive])
+}
+
+// ==========================================
+//  CIRCLE KNOWLEDGE BASE
+// ==========================================
+
+/// A structured learning path (curriculum) within a circle's knowledge base.
+model CircleCurriculum {
+  id          String  @id @default(cuid())
+  circleId    String
+  circle      Circle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  coverUrl    String?
+  status      CircleCurriculumStatus @default(DRAFT)
+  order       Float   @default(0)
+
+  createdById String
+  createdBy   User    @relation("CircleCurriculumCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  sections       CircleCurriculumSection[]
+  knowledgeLinks CircleKnowledgeLink[]
+  memberProgress CircleCurriculumProgress[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([circleId])
+  @@index([circleId, status])
+  @@index([createdById])
+}
+
+/// A section within a curriculum containing learning objectives and linked materials.
+model CircleCurriculumSection {
+  id            String  @id @default(cuid())
+  curriculumId  String
+  curriculum    CircleCurriculum @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+
+  title            String
+  description      String?
+  objectives       Json?    // String array of learning objectives
+  estimatedMinutes Int      @default(30)
+  order            Float    @default(0)
+
+  materials      CircleSectionMaterial[]
+  knowledgeLinks CircleKnowledgeLink[]
+  memberProgress CircleSectionProgress[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([curriculumId])
+}
+
+/// A material (document, link, video, etc.) in the circle knowledge base.
+model CircleMaterial {
+  id          String  @id @default(cuid())
+  circleId    String
+  circle      Circle  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+  type        CircleMaterialType
+
+  // For uploaded files
+  fileUrl     String?
+  fileSize    Int?       // bytes
+  mimeType    String?
+
+  // For links
+  externalUrl String?
+
+  // For indexed content (extracted text from PDFs/docs for AI context)
+  indexedContent String?
+  isIndexed      Boolean @default(false)
+
+  // Organization
+  folder      String?    // optional folder/category path
+
+  // Tracking
+  accessCount Int      @default(0)
+
+  uploadedById String
+  uploadedBy   User   @relation("CircleMaterialUploader", fields: [uploadedById], references: [id], onDelete: Cascade)
+
+  sectionLinks   CircleSectionMaterial[]
+  knowledgeLinks CircleKnowledgeLink[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([circleId])
+  @@index([circleId, type])
+  @@index([circleId, folder])
+  @@index([uploadedById])
+}
+
+/// Join table linking materials to curriculum sections.
+model CircleSectionMaterial {
+  id          String @id @default(cuid())
+  sectionId   String
+  section     CircleCurriculumSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  materialId  String
+  material    CircleMaterial @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  order       Float  @default(0)
+
+  @@unique([sectionId, materialId])
+  @@index([sectionId])
+  @@index([materialId])
+}
+
+/// Links knowledge base items to chat groups or sessions for AI context injection.
+model CircleKnowledgeLink {
+  id          String @id @default(cuid())
+  circleId    String
+
+  // Source: curriculum, section, or material
+  curriculumId String?
+  curriculum   CircleCurriculum? @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+  sectionId    String?
+  section      CircleCurriculumSection? @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  materialId   String?
+  material     CircleMaterial? @relation(fields: [materialId], references: [id], onDelete: Cascade)
+
+  // Target: chat group or session
+  chatGroupId  String?
+  chatGroup    CircleChatGroup? @relation(fields: [chatGroupId], references: [id], onDelete: Cascade)
+  sessionId    String?
+  session      CircleSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  createdById  String
+  createdBy    User @relation("CircleKnowledgeLinkCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime @default(now())
+
+  @@index([circleId])
+  @@index([chatGroupId])
+  @@index([sessionId])
+  @@index([curriculumId])
+  @@index([materialId])
+}
+
+/// Per-member curriculum progress tracking.
+model CircleCurriculumProgress {
+  id            String @id @default(cuid())
+  curriculumId  String
+  curriculum    CircleCurriculum @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User @relation("CircleCurriculumProgressUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  completedSections Int    @default(0)
+  totalSections     Int    @default(0)
+  percentage        Float  @default(0.0)
+  completedAt       DateTime?
+
+  startedAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([curriculumId, userId])
+  @@index([userId])
+  @@index([curriculumId])
+}
+
+/// Per-member section completion tracking.
+model CircleSectionProgress {
+  id          String @id @default(cuid())
+  sectionId   String
+  section     CircleCurriculumSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User @relation("CircleSectionProgressUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  completed   Boolean  @default(false)
+  completedAt DateTime?
+
+  createdAt   DateTime @default(now())
+
+  @@unique([sectionId, userId])
+  @@index([userId])
+  @@index([sectionId])
+}
+
+enum CircleCurriculumStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CircleMaterialType {
+  DOCUMENT
+  LINK
+  VIDEO
+  AUDIO
+  IMAGE
 }
