@@ -65,6 +65,12 @@ async def list_curricula(circle_id: str, current_user: CurrentUser):
         }
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception as e:
+        logger.error("Error listing curricula for circle %s: %s", circle_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch curricula. The knowledge base may not be set up yet.",
+        )
 
 
 @router.post("/curricula", status_code=status.HTTP_201_CREATED)

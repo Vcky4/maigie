@@ -55,7 +55,7 @@ async def list_curricula(db_client: Prisma, circle_id: str, user_id: str) -> lis
     curricula = await db_client.circlecurriculum.find_many(
         where=where,
         order={"order": "asc"},
-        include={"sections": {"include": {"_count": True}}},
+        include={"sections": True},
     )
     return curricula
 
