@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 
 from src.dependencies import CurrentUser, db
 from src.models.circle_knowledge_base import (
@@ -93,6 +93,36 @@ async def create_curriculum(circle_id: str, body: CurriculumCreate, current_user
         }
     except PermissionError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+
+
+@router.post("/curricula/generate", status_code=status.HTTP_201_CREATED)
+async def generate_curriculum_from_document(
+    circle_id: str,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    title: str = Query(None, description="Optional title override"),
+):
+    """Upload a document and use AI to generate a curriculum outline from its content.
+
+    Supports PDF, DOCX, and text files. The AI will extract structure and create
+    a curriculum with sections based on the document content.
+    Consumes circle credits.
+    """
+    try:
+        result = await kb_service.generate_curriculum_from_document(
+            db, circle_id, current_user.id, file, title_override=title
+        )
+        return result
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error("Error generating curriculum from document: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate curriculum from document.",
+        )
 
 
 @router.get("/curricula/{curriculum_id}")

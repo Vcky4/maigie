@@ -618,6 +618,178 @@ async def search_knowledge_base(
     return {"curricula": curricula, "materials": materials}
 
 
+# --- AI Generation ---
+
+
+async def generate_curriculum_from_document(
+    db_client: Prisma,
+    circle_id: str,
+    user_id: str,
+    file,
+    title_override: str | None = None,
+) -> dict:
+    """
+    Upload a document and use AI to generate a curriculum outline from its content.
+
+    Extracts text from the uploaded file, sends to LLM to generate a structured
+    curriculum outline, then persists the curriculum and sections.
+    """
+    role = await _get_member_role(db_client, circle_id, user_id)
+    if not _can_create(role):
+        raise PermissionError("Insufficient permissions to create curriculum.")
+
+    # Read file content
+    content = await file.read()
+    filename = file.filename or "document"
+    content_type = file.content_type or ""
+
+    # Extract text based on file type
+    text = ""
+    if "pdf" in content_type or filename.lower().endswith(".pdf"):
+        try:
+            import fitz  # PyMuPDF
+
+            doc = fitz.open(stream=content, filetype="pdf")
+            text = "\n".join(page.get_text() for page in doc)
+            doc.close()
+        except ImportError:
+            # Fallback: decode as text
+            text = content.decode("utf-8", errors="ignore")
+    elif "text" in content_type or filename.lower().endswith(".txt"):
+        text = content.decode("utf-8", errors="ignore")
+    else:
+        # Try decoding as text for docx, etc.
+        text = content.decode("utf-8", errors="ignore")
+
+    if not text.strip():
+        raise ValueError("Could not extract text from the uploaded document.")
+
+    # Truncate to avoid token limits (keep first ~8000 chars)
+    text = text[:8000]
+
+    # Generate outline via LLM
+    import json
+    import re
+
+    from src.services.llm_service import llm_service
+    from src.services.llm_registry import LlmTask, default_model_for
+
+    prompt = f"""Analyze the following document content and generate a structured curriculum outline.
+
+Document content:
+---
+{text}
+---
+
+Generate a curriculum outline based on this content. Return ONLY valid JSON (no markdown, no code fences).
+
+Output JSON schema:
+{{
+  "title": "string (concise course/curriculum title)",
+  "description": "string (1-2 sentence summary)",
+  "sections": [
+    {{
+      "title": "string (section title)",
+      "description": "string (brief section description)",
+      "objectives": ["string (learning objective 1)", "string (learning objective 2)"],
+      "estimatedMinutes": number (estimated time to complete)
+    }}
+  ]
+}}
+
+Rules:
+- Create 4-8 logical sections based on the document structure.
+- Each section should have 2-4 learning objectives.
+- Estimate realistic time (15-60 minutes per section).
+- Titles should be clear and actionable.
+
+JSON:"""
+
+    from google import genai
+    from google.genai import types as _types
+
+    from src.config import get_settings
+
+    settings = get_settings()
+
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    response = await client.aio.models.generate_content(
+        model=default_model_for(LlmTask.COURSE_OUTLINE),
+        contents=prompt,
+        config=_types.GenerateContentConfig(
+            max_output_tokens=1500,
+            temperature=0.2,
+        ),
+    )
+    response_text = (response.text or "").strip()
+
+    # Parse JSON from response
+    json_match = re.search(r"\{.*\}", response_text, re.DOTALL)
+    if not json_match:
+        raise ValueError("AI failed to generate a valid curriculum outline.")
+
+    try:
+        outline = json.loads(json_match.group())
+    except json.JSONDecodeError:
+        raise ValueError("AI response was not valid JSON.")
+
+    # Create the curriculum
+    title = title_override or outline.get("title", filename)
+    description = outline.get("description", "")
+
+    curriculum = await db_client.circlecurriculum.create(
+        data={
+            "circleId": circle_id,
+            "createdById": user_id,
+            "title": title,
+            "description": description,
+            "status": "DRAFT",
+        }
+    )
+
+    # Create sections
+    sections_data = outline.get("sections", [])
+    created_sections = []
+    for i, section_data in enumerate(sections_data):
+        section = await db_client.circlecurriculumsection.create(
+            data={
+                "curriculumId": curriculum.id,
+                "title": section_data.get("title", f"Section {i + 1}"),
+                "description": section_data.get("description"),
+                "objectives": section_data.get("objectives"),
+                "estimatedMinutes": section_data.get("estimatedMinutes", 30),
+                "order": float(i),
+            }
+        )
+        created_sections.append(
+            {
+                "id": section.id,
+                "title": section.title,
+                "description": section.description,
+                "objectives": section.objectives,
+                "estimatedMinutes": section.estimatedMinutes,
+                "order": section.order,
+            }
+        )
+
+    logger.info(
+        "Generated curriculum %s with %d sections from document in circle %s",
+        curriculum.id,
+        len(created_sections),
+        circle_id,
+    )
+
+    return {
+        "id": curriculum.id,
+        "circleId": curriculum.circleId,
+        "title": curriculum.title,
+        "description": curriculum.description,
+        "status": str(curriculum.status),
+        "sections": created_sections,
+        "createdAt": curriculum.createdAt.isoformat(),
+    }
+
+
 # --- Internal Helpers ---
 
 
