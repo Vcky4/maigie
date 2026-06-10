@@ -99,18 +99,29 @@ async def create_curriculum(circle_id: str, body: CurriculumCreate, current_user
 async def generate_curriculum_from_document(
     circle_id: str,
     current_user: CurrentUser,
-    file: UploadFile = File(...),
-    title: str = Query(None, description="Optional title override"),
+    file: UploadFile | None = File(None),
+    title: str | None = Query(None, description="Optional title override"),
+    description: str | None = Query(
+        None, description="Text description to generate outline from (alternative to file)"
+    ),
 ):
-    """Upload a document and use AI to generate a curriculum outline from its content.
+    """Generate a curriculum outline using AI.
 
-    Supports PDF, DOCX, and text files. The AI will extract structure and create
-    a curriculum with sections based on the document content.
-    Consumes circle credits.
+    Accepts either:
+    - A file upload (PDF, image of syllabus, doc, text file)
+    - A text description via the `description` query parameter
+
+    The AI analyzes the input and creates a structured curriculum with sections.
+    For images, uses Gemini's vision capability to read the content.
     """
     try:
         result = await kb_service.generate_curriculum_from_document(
-            db, circle_id, current_user.id, file, title_override=title
+            db,
+            circle_id,
+            current_user.id,
+            file=file,
+            text_input=description,
+            title_override=title,
         )
         return result
     except PermissionError as e:
@@ -118,10 +129,10 @@ async def generate_curriculum_from_document(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error("Error generating curriculum from document: %s", e)
+        logger.error("Error generating curriculum: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate curriculum from document.",
+            detail="Failed to generate outline. Please try again.",
         )
 
 

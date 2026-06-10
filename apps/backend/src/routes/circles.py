@@ -60,6 +60,8 @@ def _circle_detail_to_response(circle, user_id: str) -> CircleDetailResponse:
                 name=g.name,
                 circleId=g.circleId,
                 chatSessionId=g.chatSessionId,
+                visibility=getattr(g, "visibility", "PUBLIC"),
+                description=getattr(g, "description", None),
                 createdAt=g.createdAt,
                 updatedAt=g.updatedAt,
             )
@@ -330,6 +332,8 @@ async def create_chat_group(
         name=group.name,
         circleId=group.circleId,
         chatSessionId=group.chatSessionId,
+        visibility=getattr(group, "visibility", "PUBLIC"),
+        description=getattr(group, "description", None),
         createdAt=group.createdAt,
         updatedAt=group.updatedAt,
     )
@@ -348,6 +352,8 @@ async def list_chat_groups(
             name=group.name,
             circleId=group.circleId,
             chatSessionId=group.chatSessionId,
+            visibility=getattr(group, "visibility", "PUBLIC"),
+            description=getattr(group, "description", None),
             createdAt=group.createdAt,
             updatedAt=group.updatedAt,
         )
@@ -370,6 +376,8 @@ async def update_chat_group(
         name=group.name,
         circleId=group.circleId,
         chatSessionId=group.chatSessionId,
+        visibility=getattr(group, "visibility", "PUBLIC"),
+        description=getattr(group, "description", None),
         createdAt=group.createdAt,
         updatedAt=group.updatedAt,
     )

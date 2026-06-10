@@ -33,12 +33,17 @@ class CircleChatGroupCreate(BaseModel):
     """Schema for creating a chat group within a circle."""
 
     name: str = Field(..., min_length=1, max_length=100)
+    visibility: str = Field(default="PUBLIC", description="PUBLIC or PRIVATE")
+    description: str | None = Field(None, max_length=500)
+    memberIds: list[str] | None = None  # For PRIVATE groups: initial member user IDs
 
 
 class CircleChatGroupUpdate(BaseModel):
-    """Schema for renaming a chat group."""
+    """Schema for renaming/updating a chat group."""
 
-    name: str = Field(..., min_length=1, max_length=100)
+    name: str | None = Field(None, min_length=1, max_length=100)
+    visibility: str | None = Field(None, description="PUBLIC or PRIVATE")
+    description: str | None = Field(None, max_length=500)
 
 
 class CircleInviteCreate(BaseModel):
@@ -82,6 +87,8 @@ class CircleChatGroupResponse(BaseModel):
     name: str
     circleId: str
     chatSessionId: str | None = None
+    visibility: str = "PUBLIC"
+    description: str | None = None
     createdAt: datetime
     updatedAt: datetime
 

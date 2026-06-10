@@ -344,6 +344,7 @@ model User {
   circleMembers  CircleMember[]
   circleStats    CircleMemberStat[]
   circleSessions CircleSession[]
+  circleChatGroupMembers CircleChatGroupMember[]
 
   // Circle Reimagining: per-(User, Circle) artifacts
   circleJoinRequests           CircleJoinRequest[]
@@ -1869,13 +1870,33 @@ model CircleChatGroup {
   chatSessionId String?      @unique
   chatSession   ChatSession? @relation(fields: [chatSessionId], references: [id], onDelete: SetNull)
 
+  // Group permissions
+  visibility  String  @default("PUBLIC")  // PUBLIC (all circle members) or PRIVATE (only assigned members)
+  description String?
+
   groupSessions  CircleSession[]
   knowledgeLinks CircleKnowledgeLink[]
+  members        CircleChatGroupMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([circleId])
+}
+
+/// Members assigned to a private chat group within a circle.
+/// Only used when CircleChatGroup.visibility = "PRIVATE".
+model CircleChatGroupMember {
+  id          String @id @default(cuid())
+  chatGroupId String
+  chatGroup   CircleChatGroup @relation(fields: [chatGroupId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt    DateTime @default(now())
+
+  @@unique([chatGroupId, userId])
+  @@index([chatGroupId])
+  @@index([userId])
 }
 
 model CircleInvite {

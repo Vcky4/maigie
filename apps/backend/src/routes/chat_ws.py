@@ -1097,6 +1097,22 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             "pageContext"
                         ] += " When replyContext is present, respond to that specific room message."
 
+                    # Inject knowledge base context for this chat group
+                    try:
+                        from src.services.circle_kb_context_service import (
+                            get_knowledge_context_for_chat_group,
+                        )
+
+                        kb_context = await get_knowledge_context_for_chat_group(
+                            db, circle_group.circleId, circle_group.id
+                        )
+                        if kb_context:
+                            enriched_context["knowledgeBaseContext"] = kb_context
+                    except Exception as kb_err:
+                        logger.warning(
+                            "Failed to load KB context for group %s: %s", circle_group.id, kb_err
+                        )
+
                 # 5.6. Perform Semantic Search (RAG) to find relevant items
                 # This helps the LLM know about items the user might be referring to
                 # Skip RAG for short/simple messages to improve response time

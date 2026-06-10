@@ -92,6 +92,9 @@ def build_enhanced_chat_user_message(
             if context.get("memberCount"):
                 context_parts.append(f"Circle Members: {context['memberCount']}")
 
+        if context.get("knowledgeBaseContext"):
+            context_parts.append(f"\n{context['knowledgeBaseContext']}")
+
         if context.get("replyContext"):
             reply_context = context["replyContext"]
             reply_content = (reply_context.get("content") or "").strip()
