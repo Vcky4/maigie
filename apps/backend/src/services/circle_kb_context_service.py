@@ -1,9 +1,8 @@
 """
-Circle Knowledge Base Context Service.
+Circle Course Context Service.
 
-Retrieves linked knowledge base materials for a chat group and formats them
-for injection into the AI prompt. This is the bridge between the knowledge base
-and the chat system.
+Retrieves courses linked to a chat group and formats their content
+(modules, topics, resources) for injection into the AI prompt.
 """
 
 import logging
@@ -17,17 +16,24 @@ async def get_knowledge_context_for_chat_group(
     db_client: Prisma, circle_id: str, chat_group_id: str
 ) -> str | None:
     """
-    Fetch all knowledge base items linked to a chat group and format them
+    Fetch all courses linked to a chat group and format their content
     as context text for the AI prompt.
 
-    Returns None if no knowledge links exist for this group.
+    Returns None if no courses are linked to this group.
     """
-    links = await db_client.circleknowledgelink.find_many(
+    links = await db_client.circlegroupcourselink.find_many(
         where={"circleId": circle_id, "chatGroupId": chat_group_id},
         include={
-            "curriculum": {"include": {"sections": True}},
-            "section": True,
-            "material": True,
+            "course": {
+                "include": {
+                    "modules": {
+                        "include": {"topics": True},
+                        "order_by": {"order": "asc"},
+                    },
+                    "resources": True,
+                    "notes": True,
+                }
+            }
         },
     )
 
@@ -35,77 +41,56 @@ async def get_knowledge_context_for_chat_group(
         return None
 
     context_parts: list[str] = []
-    context_parts.append("=== CIRCLE KNOWLEDGE BASE (use this as your teaching reference) ===")
+    context_parts.append("=== COURSE MATERIALS (use as your teaching reference) ===")
 
     for link in links:
-        if link.curriculum:
-            curriculum = link.curriculum
-            context_parts.append(f"\n--- Curriculum: {curriculum.title} ---")
-            if curriculum.description:
-                context_parts.append(f"Description: {curriculum.description}")
-            for section in curriculum.sections or []:
-                context_parts.append(f"  Section: {section.title}")
-                if section.description:
-                    context_parts.append(f"    {section.description}")
-                if section.objectives:
-                    objectives = section.objectives if isinstance(section.objectives, list) else []
-                    for obj in objectives:
-                        context_parts.append(f"    - Objective: {obj}")
+        course = link.course
+        if not course:
+            continue
 
-        elif link.section:
-            section = link.section
-            context_parts.append(f"\n--- Section: {section.title} ---")
-            if section.description:
-                context_parts.append(f"  {section.description}")
-            if section.objectives:
-                objectives = section.objectives if isinstance(section.objectives, list) else []
-                for obj in objectives:
-                    context_parts.append(f"  - Objective: {obj}")
+        context_parts.append(f"\n--- Course: {course.title} ---")
+        if course.description:
+            context_parts.append(f"Description: {course.description}")
+        context_parts.append(f"Difficulty: {course.difficulty}")
 
-        elif link.material:
-            material = link.material
-            context_parts.append(f"\n--- Material: {material.title} ({material.type}) ---")
-            if material.description:
-                context_parts.append(f"  {material.description}")
-            if material.indexedContent:
-                # Truncate to avoid overflowing context window
-                content = material.indexedContent[:3000]
-                if len(material.indexedContent) > 3000:
-                    content += "\n  [... content truncated]"
-                context_parts.append(f"  Content:\n  {content}")
-            elif material.externalUrl:
-                context_parts.append(f"  URL: {material.externalUrl}")
+        for module in course.modules or []:
+            context_parts.append(f"\n  Module: {module.title}")
+            if module.description:
+                context_parts.append(f"    {module.description}")
 
-    context_parts.append("\n=== END KNOWLEDGE BASE ===")
+            for topic in module.topics or []:
+                context_parts.append(f"    Topic: {topic.title}")
+                if topic.content:
+                    # Truncate long topic content
+                    content = topic.content[:800]
+                    if len(topic.content) > 800:
+                        content += "..."
+                    context_parts.append(f"      {content}")
+
+        # Include linked resources
+        if course.resources:
+            context_parts.append("\n  Resources:")
+            for res in course.resources[:10]:  # Cap at 10
+                context_parts.append(f"    - {res.title} ({res.type}): {res.url}")
+                if res.description:
+                    context_parts.append(f"      {res.description[:200]}")
+
+        # Include linked notes (summaries)
+        if course.notes:
+            context_parts.append("\n  Notes:")
+            for note in course.notes[:5]:  # Cap at 5
+                context_parts.append(f"    - {note.title}")
+                if note.summary:
+                    context_parts.append(f"      Summary: {note.summary[:300]}")
+
+    context_parts.append("\n=== END COURSE MATERIALS ===")
     context_parts.append(
-        "Use the above knowledge base materials as your primary reference when answering questions. "
-        "Guide students through the curriculum. If a question is outside the linked materials, "
+        "Use the above course materials as your primary reference when answering questions. "
+        "Guide students through the modules and topics. If a question is outside the linked courses, "
         "let them know and still try to help based on your general knowledge."
     )
 
     return "\n".join(context_parts)
-
-
-async def get_knowledge_context_for_session(
-    db_client: Prisma, circle_id: str, session_id: str
-) -> str | None:
-    """
-    Fetch knowledge base items linked to a session and format for AI context.
-    """
-    links = await db_client.circleknowledgelink.find_many(
-        where={"circleId": circle_id, "sessionId": session_id},
-        include={
-            "curriculum": {"include": {"sections": True}},
-            "section": True,
-            "material": True,
-        },
-    )
-
-    if not links:
-        return None
-
-    # Same formatting as chat group context
-    return await get_knowledge_context_for_chat_group.__wrapped__(links) if False else None
 
 
 async def check_group_access(
@@ -121,7 +106,6 @@ async def check_group_access(
     if not group:
         return False
 
-    # Check circle membership and role
     member = await db_client.circlemember.find_unique(
         where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
     )
