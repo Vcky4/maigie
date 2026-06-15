@@ -395,6 +395,108 @@ async def delete_chat_group(
 
 
 # ==========================================
+# Group Members (for private groups)
+# ==========================================
+
+
+@router.post("/{circle_id}/groups/{group_id}/members")
+async def add_group_member(
+    circle_id: str,
+    group_id: str,
+    body: dict,
+    current_user: CurrentUser,
+):
+    """Add a member to a private group (admin only)."""
+    member = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": current_user.id}}
+    )
+    if not member or str(member.role) not in ("OWNER", "ADMIN"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+
+    user_id = body.get("userId")
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="userId is required.")
+
+    # Verify user is a circle member
+    target_member = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": user_id}}
+    )
+    if not target_member:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User is not a circle member."
+        )
+
+    # Add to group
+    existing = await db.circlechatgroupmember.find_first(
+        where={"chatGroupId": group_id, "userId": user_id}
+    )
+    if existing:
+        return {"status": "already_member"}
+
+    await db.circlechatgroupmember.create(data={"chatGroupId": group_id, "userId": user_id})
+    return {"status": "added", "userId": user_id}
+
+
+@router.delete("/{circle_id}/groups/{group_id}/members/{user_id}")
+async def remove_group_member(
+    circle_id: str,
+    group_id: str,
+    user_id: str,
+    current_user: CurrentUser,
+):
+    """Remove a member from a private group (admin only)."""
+    member = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": current_user.id}}
+    )
+    if not member or str(member.role) not in ("OWNER", "ADMIN"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required.")
+
+    existing = await db.circlechatgroupmember.find_first(
+        where={"chatGroupId": group_id, "userId": user_id}
+    )
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User is not in this group."
+        )
+
+    await db.circlechatgroupmember.delete(where={"id": existing.id})
+    return {"status": "removed", "userId": user_id}
+
+
+@router.get("/{circle_id}/groups/{group_id}/members")
+async def list_group_members(
+    circle_id: str,
+    group_id: str,
+    current_user: CurrentUser,
+):
+    """List members of a group."""
+    # Verify circle membership
+    member = await db.circlemember.find_unique(
+        where={"circleId_userId": {"circleId": circle_id, "userId": current_user.id}}
+    )
+    if not member:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a circle member.")
+
+    group_members = await db.circlechatgroupmember.find_many(
+        where={"chatGroupId": group_id},
+        include={"user": True},
+    )
+
+    return {
+        "members": [
+            {
+                "id": gm.id,
+                "userId": gm.userId,
+                "name": gm.user.name if gm.user else None,
+                "email": gm.user.email if gm.user else None,
+                "joinedAt": gm.joinedAt.isoformat(),
+            }
+            for gm in group_members
+        ]
+    }
+
+
+# ==========================================
 # Sessions
 # ==========================================
 
