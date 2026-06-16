@@ -177,6 +177,10 @@ async def get_circle_detail(db: Prisma, circle_id: str, user_id: str):
             "chatGroups": {
                 "order_by": {"createdAt": "asc"},
             },
+            "courses": {
+                "where": {"archived": False},
+                "order_by": {"createdAt": "desc"},
+            },
             "invites": {
                 "where": {"status": "PENDING"},
                 "order_by": {"createdAt": "desc"},

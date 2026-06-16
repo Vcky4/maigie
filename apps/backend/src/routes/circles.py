@@ -80,6 +80,17 @@ def _circle_detail_to_response(circle, user_id: str) -> CircleDetailResponse:
             )
             for i in getattr(circle, "invites", [])
         ],
+        courses=[
+            {
+                "id": c.id,
+                "title": c.title,
+                "description": c.description,
+                "difficulty": str(c.difficulty),
+                "progress": c.progress,
+                "createdAt": c.createdAt.isoformat(),
+            }
+            for c in getattr(circle, "courses", [])
+        ],
         credits=getattr(circle, "credits", 0),
         creditsLimit=getattr(circle, "creditsLimit", None),
         createdAt=circle.createdAt,

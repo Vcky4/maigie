@@ -143,6 +143,7 @@ class CircleDetailResponse(BaseModel):
     maxGroups: int
     members: list[CircleMemberResponse]
     chatGroups: list[CircleChatGroupResponse]
+    courses: list[dict] = []
     role: str | None = None  # Current user's role in this circle
     credits: int | None = None
     creditsLimit: int | None = None
