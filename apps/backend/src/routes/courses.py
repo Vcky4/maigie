@@ -411,16 +411,18 @@ async def create_course(
             )
 
     # Create the course
-    course = await db.course.create(
-        data={
-            "userId": user_id,
-            "title": course_data.title,
-            "description": course_data.description,
-            "difficulty": course_data.difficulty,
-            "targetDate": course_data.targetDate,
-            "isAIGenerated": course_data.isAIGenerated,
-        }
-    )
+    create_data: dict = {
+        "userId": user_id,
+        "title": course_data.title,
+        "description": course_data.description,
+        "difficulty": course_data.difficulty,
+        "targetDate": course_data.targetDate,
+        "isAIGenerated": course_data.isAIGenerated,
+    }
+    if course_data.circleId:
+        create_data["circleId"] = course_data.circleId
+
+    course = await db.course.create(data=create_data)
 
     # Return course with empty modules
     return CourseResponse(

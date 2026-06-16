@@ -58,6 +58,7 @@ class CourseBase(BaseModel):
 
 class CourseCreate(CourseBase):
     modules: list[ModuleCreate] = []
+    circleId: str | None = None
 
 
 class CourseUpdate(BaseModel):
