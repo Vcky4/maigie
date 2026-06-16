@@ -66,6 +66,7 @@ class CourseUpdate(BaseModel):
     difficulty: str | None = None
     targetDate: datetime | None = None
     archived: bool | None = None
+    circleId: str | None = None
 
 
 class CourseResponse(CourseBase):

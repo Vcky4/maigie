@@ -721,6 +721,8 @@ async def update_course(
         update_data["targetDate"] = course_data.targetDate
     if course_data.archived is not None:
         update_data["archived"] = course_data.archived
+    if course_data.circleId is not None:
+        update_data["circleId"] = course_data.circleId
 
     # Update course
     await db.course.update(where={"id": course_id}, data=update_data)
