@@ -143,7 +143,14 @@ async def get_dashboard_stats(
         at_risk_users = await get_users_at_risk(limit=10)
     except Exception as retention_err:
         logger.warning("Failed to compute retention summary: %s", retention_err)
-        retention_summary = {"dau": 0, "wau": 0, "mau": 0, "wauChange": 0, "dauMauRatio": 0, "atRiskCount": 0}
+        retention_summary = {
+            "dau": 0,
+            "wau": 0,
+            "mau": 0,
+            "wauChange": 0,
+            "dauMauRatio": 0,
+            "atRiskCount": 0,
+        }
         at_risk_users = []
 
     return {
