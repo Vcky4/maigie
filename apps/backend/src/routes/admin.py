@@ -132,6 +132,20 @@ async def get_dashboard_stats(
     # Assuming $10/month for monthly and $100/year for yearly
     estimated_mrr = (premium_monthly_users * 10) + (premium_yearly_users * 100 / 12)
 
+    # Retention summary (quick numbers for dashboard)
+    try:
+        from ..services.retention_analytics_service import (
+            compute_weekly_retention_summary,
+            get_users_at_risk,
+        )
+
+        retention_summary = await compute_weekly_retention_summary()
+        at_risk_users = await get_users_at_risk(limit=10)
+    except Exception as retention_err:
+        logger.warning("Failed to compute retention summary: %s", retention_err)
+        retention_summary = {"dau": 0, "wau": 0, "mau": 0, "wauChange": 0, "dauMauRatio": 0, "atRiskCount": 0}
+        at_risk_users = []
+
     return {
         "users": {
             "total": total_users,
@@ -177,6 +191,8 @@ async def get_dashboard_stats(
             "jobsPublished": job_postings_published,
             "jobsUnpublished": job_postings_unpublished,
         },
+        "retention": retention_summary,
+        "atRiskUsers": at_risk_users,
     }
 
 
@@ -2173,62 +2189,64 @@ async def get_retention_analytics(
     db: DBDep,
 ):
     """
-    Get user retention metrics (DAU, MAU, retention cohorts).
+    Get comprehensive user retention metrics.
+
+    Includes real cohort analysis (Day-1/7/30 retention), feature adoption rates,
+    time-to-first-value, nudge effectiveness, and weekly summary.
 
     Only accessible by admin users.
     """
-    now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    thirty_days_ago = now - timedelta(days=30)
-
-    # Daily Active Users (DAU) - users who had activity today
-    dau = await db.user.count(
-        where={
-            "isActive": True,
-            "updatedAt": {"gte": today_start},
-        }
+    from ..services.retention_analytics_service import (
+        compute_feature_adoption,
+        compute_nudge_effectiveness,
+        compute_retention_cohorts,
+        compute_time_to_first_value,
+        compute_weekly_retention_summary,
     )
 
-    # Monthly Active Users (MAU) - users active in last 30 days
-    mau = await db.user.count(
-        where={
-            "isActive": True,
-            "updatedAt": {"gte": thirty_days_ago},
-        }
-    )
-
-    # Calculate retention cohorts (simplified)
-    # Get users who signed up in each month
-    all_users = await db.user.find_many(
-        where={"role": "USER", "isActive": True}, order={"createdAt": "asc"}
-    )
-
-    cohorts = {}
-    for user in all_users:
-        signup_month = user.createdAt.strftime("%Y-%m")
-        if signup_month not in cohorts:
-            cohorts[signup_month] = {"signups": 0, "active": 0}
-        cohorts[signup_month]["signups"] += 1
-
-        # Check if user was active in last 30 days
-        if user.updatedAt >= thirty_days_ago:
-            cohorts[signup_month]["active"] += 1
-
-    # Calculate retention rates
-    cohort_retention = {}
-    for month, data in cohorts.items():
-        retention_rate = (data["active"] / data["signups"] * 100) if data["signups"] > 0 else 0.0
-        cohort_retention[month] = {
-            "signups": data["signups"],
-            "active": data["active"],
-            "retentionRate": round(retention_rate, 2),
-        }
+    # Run all computations
+    cohorts = await compute_retention_cohorts(months=6)
+    feature_adoption = await compute_feature_adoption()
+    time_to_value = await compute_time_to_first_value()
+    nudge_effectiveness = await compute_nudge_effectiveness()
+    weekly_summary = await compute_weekly_retention_summary()
 
     return {
-        "dau": dau,
-        "mau": mau,
-        "dauMauRatio": round((dau / mau * 100) if mau > 0 else 0.0, 2),
-        "cohortRetention": cohort_retention,
+        "summary": weekly_summary,
+        "cohorts": cohorts,
+        "featureAdoption": feature_adoption,
+        "timeToFirstValue": time_to_value,
+        "nudgeEffectiveness": nudge_effectiveness,
+    }
+
+
+@router.get("/analytics/users-at-risk", response_model=dict)
+async def get_users_at_risk_endpoint(
+    admin_user: SuperAdminUser,
+    db: DBDep,
+    limit: int = Query(30, ge=1, le=100, description="Maximum users to return"),
+):
+    """
+    Get users at risk of churning.
+
+    Returns users who were active but haven't engaged in 3-14 days,
+    prioritized by tier and engagement history.
+
+    Only accessible by admin users.
+    """
+    from ..services.retention_analytics_service import get_users_at_risk
+
+    users = await get_users_at_risk(limit=limit)
+
+    # Count by risk level
+    risk_counts = {"high": 0, "medium": 0, "low": 0}
+    for u in users:
+        risk_counts[u["riskLevel"]] = risk_counts.get(u["riskLevel"], 0) + 1
+
+    return {
+        "users": users,
+        "total": len(users),
+        "riskCounts": risk_counts,
     }
 
 

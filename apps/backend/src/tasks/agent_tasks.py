@@ -506,7 +506,7 @@ async def _reengagement_nudge_impl():
             },
             include={
                 "reviewItems": {
-                    "where": {"nextReviewDate": {"lte": now}},
+                    "where": {"nextReviewAt": {"lte": now}},
                     "take": 1,
                 },
                 "goals": {
