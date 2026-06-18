@@ -84,6 +84,9 @@ from .routes.credit_packs import router as credit_packs_router
 from .routes.plans import router as plans_router
 from .routes.circle_billing import router as circle_billing_router
 from .routes.circle_seats import router as circle_seats_router
+from .routes.circle_knowledge_base import router as circle_course_links_router
+from .routes.circle_course_progress import router as circle_course_progress_router
+from .routes.google_play_billing import router as google_play_billing_router
 from .routes.websockets import router as websockets_router
 from .services.ws_event_bus import ws_event_forwarder
 from .utils.dependencies import (
@@ -425,6 +428,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
     app.include_router(users_router, prefix=f"{settings.API_V1_STR}/users")
     app.include_router(subscriptions_router, prefix=f"{settings.API_V1_STR}/subscriptions")
+    app.include_router(google_play_billing_router, prefix=f"{settings.API_V1_STR}")
     app.include_router(referrals_router, prefix=f"{settings.API_V1_STR}/referrals")
     app.include_router(ads_router, prefix=f"{settings.API_V1_STR}/ads")
 
@@ -494,6 +498,8 @@ def create_app() -> FastAPI:
     # Circle billing and seat management
     app.include_router(circle_billing_router)
     app.include_router(circle_seats_router)
+    app.include_router(circle_course_links_router)
+    app.include_router(circle_course_progress_router)
 
     # Reports and moderation
     from .routes.reports import router as reports_router

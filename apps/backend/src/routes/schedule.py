@@ -836,3 +836,24 @@ async def check_google_calendar_freebusy(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to check free/busy information",
         )
+
+
+@router.post("/regenerate", status_code=status.HTTP_202_ACCEPTED)
+async def regenerate_schedule(current_user: CurrentUser):
+    """
+    Regenerate the user's study schedule.
+
+    Deletes future AI-generated blocks and creates a new optimized schedule
+    based on the user's active courses, goals, and review items.
+    Returns immediately with a 202 and processes in the background.
+    """
+    import asyncio
+    from src.services.schedule_regeneration_service import regenerate_user_schedule
+
+    # Fire and forget — run regeneration in background
+    asyncio.ensure_future(regenerate_user_schedule(current_user.id))
+
+    return {
+        "status": "accepted",
+        "message": "Schedule regeneration started. New blocks will appear shortly.",
+    }

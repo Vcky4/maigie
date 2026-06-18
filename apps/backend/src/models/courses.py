@@ -151,6 +151,7 @@ class CourseUpdate(BaseModel):
     difficulty: DifficultyLevel | None = None
     targetDate: datetime | None = None
     archived: bool | None = None
+    circleId: str | None = None
 
 
 class CourseResponse(BaseModel):

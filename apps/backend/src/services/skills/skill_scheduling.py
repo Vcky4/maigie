@@ -28,6 +28,10 @@ SKILL = Skill(
         "tomorrow",
         "today",
         "week",
+        "regenerate",
+        "redo",
+        "rebuild",
+        "reset schedule",
     ],
     always_active=True,
     tools=[
@@ -128,6 +132,19 @@ SKILL = Skill(
                 "required": ["title", "start_at", "end_at"],
             },
         ),
+        ToolDefinition(
+            name="regenerate_schedule",
+            description=(
+                "Regenerate the user's entire study schedule. Use this when the user asks to "
+                "regenerate, redo, rebuild, or reset their study schedule/plan. This deletes "
+                "future AI-generated blocks and creates a new optimized schedule based on "
+                "their active courses, goals, and review items for the next 2 weeks."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {},
+            },
+        ),
     ],
 )
 
@@ -138,6 +155,7 @@ def register(registry: SkillRegistry) -> None:
         handle_check_schedule_conflicts,
         handle_create_schedule,
         handle_get_user_schedule,
+        handle_regenerate_schedule,
     )
 
     registry.register_skill(
@@ -146,5 +164,6 @@ def register(registry: SkillRegistry) -> None:
             "get_user_schedule": handle_get_user_schedule,
             "check_schedule_conflicts": handle_check_schedule_conflicts,
             "create_schedule": handle_create_schedule,
+            "regenerate_schedule": handle_regenerate_schedule,
         },
     )

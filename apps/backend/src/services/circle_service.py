@@ -177,6 +177,10 @@ async def get_circle_detail(db: Prisma, circle_id: str, user_id: str):
             "chatGroups": {
                 "order_by": {"createdAt": "asc"},
             },
+            "courses": {
+                "where": {"archived": False},
+                "order_by": {"createdAt": "desc"},
+            },
             "invites": {
                 "where": {"status": "PENDING"},
                 "order_by": {"createdAt": "desc"},
@@ -801,8 +805,8 @@ async def update_chat_group(
     user_id: str,
     data: CircleChatGroupUpdate,
 ):
-    """Rename a chat group (owner only)."""
-    await _verify_owner(db, circle_id, user_id)
+    """Update a chat group (owner/admin only)."""
+    await _verify_admin(db, circle_id, user_id)
 
     group = await db.circlechatgroup.find_unique(where={"id": group_id})
     if not group or group.circleId != circle_id:
@@ -811,9 +815,20 @@ async def update_chat_group(
             detail="Chat group not found.",
         )
 
+    update_data: dict = {}
+    if data.name is not None:
+        update_data["name"] = data.name
+    if data.visibility is not None:
+        update_data["visibility"] = data.visibility
+    if data.description is not None:
+        update_data["description"] = data.description
+
+    if not update_data:
+        return group
+
     updated = await db.circlechatgroup.update(
         where={"id": group_id},
-        data={"name": data.name},
+        data=update_data,
     )
 
     return updated

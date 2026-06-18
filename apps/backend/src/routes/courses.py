@@ -411,16 +411,18 @@ async def create_course(
             )
 
     # Create the course
-    course = await db.course.create(
-        data={
-            "userId": user_id,
-            "title": course_data.title,
-            "description": course_data.description,
-            "difficulty": course_data.difficulty,
-            "targetDate": course_data.targetDate,
-            "isAIGenerated": course_data.isAIGenerated,
-        }
-    )
+    create_data: dict = {
+        "userId": user_id,
+        "title": course_data.title,
+        "description": course_data.description,
+        "difficulty": course_data.difficulty,
+        "targetDate": course_data.targetDate,
+        "isAIGenerated": course_data.isAIGenerated,
+    }
+    if course_data.circleId:
+        create_data["circleId"] = course_data.circleId
+
+    course = await db.course.create(data=create_data)
 
     # Return course with empty modules
     return CourseResponse(
@@ -721,6 +723,8 @@ async def update_course(
         update_data["targetDate"] = course_data.targetDate
     if course_data.archived is not None:
         update_data["archived"] = course_data.archived
+    if course_data.circleId is not None:
+        update_data["circleId"] = course_data.circleId
 
     # Update course
     await db.course.update(where={"id": course_id}, data=update_data)
@@ -1023,6 +1027,128 @@ async def toggle_topic_completion(
     await ensure_review_item_for_completed_topic(db, user_id, topic_id)
 
     return TopicResponse.model_validate(updated_topic, from_attributes=True)
+
+
+# ============================================================================
+# Topic AI Content Generation
+# ============================================================================
+
+
+class TopicGenerateRequest(BaseModel):
+    """Request body for generating AI content about a topic."""
+
+    type: str  # 'explain' | 'quiz' | 'summary' | 'flashcards'
+
+
+@router.post(
+    "/{course_id}/modules/{module_id}/topics/{topic_id}/generate",
+    response_model=dict,
+)
+async def generate_topic_content(
+    course_id: str,
+    module_id: str,
+    topic_id: str,
+    body: TopicGenerateRequest,
+    current_user: CurrentUser,
+    db: Annotated[PrismaClient, Depends(get_db_client)],
+):
+    """
+    Generate AI learning content for a topic.
+    Supports: explain, quiz, summary, flashcards.
+    Returns the generated markdown content directly.
+    """
+    from src.services.llm_service import llm_service
+    from src.services.llm.gemini_sdk import types as _types, new_gemini_client
+    from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+
+    user_id = current_user.id
+
+    # Check ownership
+    topic, module, course = await check_topic_ownership(db, topic_id, user_id)
+
+    if topic.moduleId != module_id or module.courseId != course_id:
+        raise ValidationError("Topic does not belong to the specified module/course")
+
+    gen_type = body.type
+    if gen_type not in ("explain", "quiz", "summary", "flashcards"):
+        raise ValidationError(
+            "Invalid generation type. Must be one of: explain, quiz, summary, flashcards"
+        )
+
+    topic_title = topic.title
+    topic_content = topic.content or ""
+
+    # Build prompts based on type
+    prompts = {
+        "explain": f"""Explain the topic "{topic_title}" in a clear, engaging way suitable for a student.
+Use examples and analogies where helpful. Format as well-structured markdown.
+{f"Here is existing context about this topic: {topic_content[:2000]}" if topic_content else ""}
+
+Provide ONLY the explanation content. No introductory phrases.""",
+        "quiz": f"""Create a short interactive quiz (4-5 questions) about "{topic_title}".
+Format as markdown. Each question should have multiple choice options (A, B, C, D).
+At the end, include an "Answers" section with correct answers and brief explanations.
+{f"Base questions on this content: {topic_content[:2000]}" if topic_content else ""}
+
+Provide ONLY the quiz content. No introductory phrases.""",
+        "summary": f"""Provide a concise summary of "{topic_title}" with key points, important definitions, and main takeaways.
+Format as bullet points with clear headings. Keep it scannable.
+{f"Summarize from this content: {topic_content[:2000]}" if topic_content else ""}
+
+Provide ONLY the summary content. No introductory phrases.""",
+        "flashcards": f"""Create 5-7 flashcard-style Q&A pairs about "{topic_title}".
+Format each as:
+
+**Q:** [question]
+
+**A:** [answer]
+
+---
+
+Keep answers concise but complete.
+{f"Base cards on this content: {topic_content[:2000]}" if topic_content else ""}
+
+Provide ONLY the flashcards. No introductory phrases.""",
+    }
+
+    try:
+        client = new_gemini_client(gemini_api_key() or None)
+        response = await client.aio.models.generate_content(
+            model=default_model_for(LlmTask.CHAT_DEFAULT),
+            contents=prompts[gen_type],
+            config=_types.GenerateContentConfig(
+                max_output_tokens=2048,
+                temperature=0.7,
+                safety_settings=[
+                    _types.SafetySetting(
+                        category="HARM_CATEGORY_HARASSMENT",
+                        threshold="BLOCK_MEDIUM_AND_ABOVE",
+                    ),
+                    _types.SafetySetting(
+                        category="HARM_CATEGORY_HATE_SPEECH",
+                        threshold="BLOCK_MEDIUM_AND_ABOVE",
+                    ),
+                ],
+            ),
+        )
+
+        content = (response.text or "").strip()
+        if not content:
+            raise HTTPException(status_code=500, detail="AI returned empty content")
+
+        return {
+            "type": gen_type,
+            "topicId": topic_id,
+            "content": content,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).error(f"Topic content generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate content")
 
 
 # ============================================================================

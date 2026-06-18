@@ -200,6 +200,24 @@ class Settings(BaseSettings):
     PAYSTACK_PLAN_STUDY_CIRCLE_YEARLY: str = ""
     PAYSTACK_PLAN_SQUAD_MONTHLY: str = ""
     PAYSTACK_PLAN_SQUAD_YEARLY: str = ""
+
+    # --- Google Play Billing ---
+    # Service account JSON for verifying purchases via Google Play Developer API.
+    # Either provide a file path or the raw JSON string (for containerized environments).
+    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: str = ""  # Raw JSON string (preferred in production)
+    GOOGLE_PLAY_SERVICE_ACCOUNT_FILE: str = ""  # Path to service account JSON file
+    # Package name of the Android app
+    GOOGLE_PLAY_PACKAGE_NAME: str = "com.maigie"
+    # Subscription product ID (single subscription with multiple base plans)
+    GOOGLE_PLAY_SUBSCRIPTION_ID: str = "maigie_plus"
+    # Base plan IDs within the subscription
+    GOOGLE_PLAY_BASE_PLAN_MONTHLY: str = "plus-monthly"
+    GOOGLE_PLAY_BASE_PLAN_YEARLY: str = "plus-yearly"
+    # Credit pack product IDs (in-app products, consumable)
+    GOOGLE_PLAY_SKU_CREDIT_STARTER: str = "credit_pack_starter"
+    GOOGLE_PLAY_SKU_CREDIT_VALUE: str = "credit_pack_value"
+    GOOGLE_PLAY_SKU_CREDIT_POWER: str = "credit_pack_power"
+
     # --- BunnyCDN Storage ---
     BUNNY_CDN_API_KEY: str | None = None
     BUNNY_STORAGE_ZONE: str | None = None
