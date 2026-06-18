@@ -85,6 +85,7 @@ from .routes.plans import router as plans_router
 from .routes.circle_billing import router as circle_billing_router
 from .routes.circle_seats import router as circle_seats_router
 from .routes.circle_knowledge_base import router as circle_course_links_router
+from .routes.circle_course_progress import router as circle_course_progress_router
 from .routes.google_play_billing import router as google_play_billing_router
 from .routes.websockets import router as websockets_router
 from .services.ws_event_bus import ws_event_forwarder
@@ -498,6 +499,7 @@ def create_app() -> FastAPI:
     app.include_router(circle_billing_router)
     app.include_router(circle_seats_router)
     app.include_router(circle_course_links_router)
+    app.include_router(circle_course_progress_router)
 
     # Reports and moderation
     from .routes.reports import router as reports_router

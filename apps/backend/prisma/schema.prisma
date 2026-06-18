@@ -379,6 +379,9 @@ model User {
   // Push Notification Device Tokens (FCM)
   deviceTokens DeviceToken[]
 
+  // Per-user topic progress (for shared Circle courses)
+  topicProgress UserTopicProgress[]
+
   // Gamification
   // points Int @default(0) // Note: using dynamic calculation for now
 
@@ -605,12 +608,39 @@ model Topic {
   reviewItems   ReviewItem[] // Spaced repetition: one review schedule per completed topic
   groupSessions CircleSession[] // Group sessions linked to this topic
 
+  // Per-user progress tracking (used for Circle courses where multiple users share the same topic)
+  userProgress UserTopicProgress[]
+
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
   chatSessions ChatSession[]
 
   @@index([moduleId])
   @@index([moduleId, order])
+}
+
+// Per-user progress for shared Circle courses.
+// For personal courses, Topic.completed is still used (backward compat).
+// For Circle courses, this table is the source of truth for each member's progress.
+model UserTopicProgress {
+  id      String @id @default(cuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId String
+  topic   Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  completed   Boolean  @default(false)
+  completedAt DateTime?
+  // Time spent studying this topic (minutes)
+  minutesSpent Float   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, topicId])
+  @@index([userId])
+  @@index([topicId])
+  @@index([userId, completed])
 }
 
 // ==========================================
@@ -628,6 +658,14 @@ model ChatSession {
 
   // Session type: "general" (default), "onboarding"
   sessionType String @default("general")
+
+  // Circle context: if set, this is a chat within a circle workspace
+  // Combined with isCircleRoom:
+  //   isCircleRoom=true  + circleId → Group chat room (shared)
+  //   isCircleRoom=false + circleId → Individual AI chat within circle (paid seat, private)
+  //   isCircleRoom=false + circleId=null → Personal chat (no circle context)
+  circleId String?
+  circle   Circle? @relation(fields: [circleId], references: [id], onDelete: SetNull)
 
   // Resource linkage (New: for per-page history persistence)
   courseId String?
@@ -661,6 +699,9 @@ model ChatSession {
   @@index([updatedAt]) // Useful for sorting "Recent Chats"
   @@index([isCircleRoom])
   @@index([sessionType])
+  @@index([circleId])
+  @@index([userId, circleId, courseId])
+  @@index([userId, circleId, topicId])
 }
 
 model ChatMessage {
@@ -1825,6 +1866,9 @@ model Circle {
   subscription       CircleSubscription?
   seatAddons         CircleSeatAddon[]
   aiUsageRecords     AiUsageRecord[]
+
+  // Individual AI chat sessions within this circle (per paid-seat member)
+  chatSessions ChatSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
