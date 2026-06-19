@@ -11,7 +11,6 @@ lifetime. Only providers listed in ``LLM_ENABLED_PROVIDERS`` are instantiated.
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from typing import Any
 
 from src.config import get_settings
@@ -51,15 +50,34 @@ def _parse_fallback_chain(chain_str: str) -> list[tuple[str, str]]:
 
 
 def _build_fallback_chains() -> dict[LlmTask, list[tuple[str, str]]]:
-    """Build per-task fallback chains from settings.
+    """Build per-task fallback chains from DB config (with env/settings fallback).
 
     Maps logical LlmTask values to ordered lists of (provider, model) pairs.
     Tasks without explicit chains inherit from the default chat chain.
     """
     settings = get_settings()
 
-    chat_default_chain = _parse_fallback_chain(settings.FALLBACK_CHAT_DEFAULT)
-    chat_tools_chain = _parse_fallback_chain(settings.FALLBACK_CHAT_TOOLS)
+    # Read from system_config_service cache (populated at startup by seed_llm_defaults).
+    from src.services.system_config_service import (
+        LLM_FALLBACK_CHAT_DEFAULT as _KEY_DEFAULT,
+        LLM_FALLBACK_CHAT_TOOLS as _KEY_TOOLS,
+        _cache,
+        _CACHE_TTL,
+    )
+    import time as _time
+
+    def _read_cached(key: str, fallback: str) -> str:
+        now = _time.time()
+        if key in _cache:
+            val, ts = _cache[key]
+            if now - ts < _CACHE_TTL and val is not None:
+                return val
+        return fallback
+
+    chat_default_chain = _parse_fallback_chain(
+        _read_cached(_KEY_DEFAULT, settings.FALLBACK_CHAT_DEFAULT)
+    )
+    chat_tools_chain = _parse_fallback_chain(_read_cached(_KEY_TOOLS, settings.FALLBACK_CHAT_TOOLS))
 
     # Most tasks use the default chat chain; tool-heavy tasks use the tools chain
     chains: dict[LlmTask, list[tuple[str, str]]] = {
@@ -171,9 +189,10 @@ _feature_flag_service_instance: FeatureFlagService | None = None
 def _build_feature_flag_service() -> FeatureFlagService:
     """Return the shared FeatureFlagService singleton.
 
-    Creates the instance from application settings on first call. Subsequent
-    calls return the same instance so that per-user overrides loaded via
-    reload() are visible to all consumers (router, model selection API, etc.).
+    Creates the instance from DB-stored config (via system_config_service cache)
+    on first call, falling back to application settings. Subsequent calls
+    return the same instance so that per-user overrides loaded via reload()
+    are visible to all consumers (router, model selection API, etc.).
     """
     global _feature_flag_service_instance
     if _feature_flag_service_instance is not None:
@@ -181,18 +200,33 @@ def _build_feature_flag_service() -> FeatureFlagService:
 
     settings = get_settings()
 
-    # Only ``free`` and ``plus`` allowlist keys exist after the Circle
-    # Reimagining feature; legacy ``circle`` and ``squad`` allowlists were
-    # removed. Per-Circle capabilities are derived from Seat_Tier via
-    # ``FeatureFlagService.effective_tier_for_request``, which resolves
-    # to one of these two keys.
+    # Read from system_config_service cache (populated at startup by seed_llm_defaults).
+    # Falls back to settings (env vars / code defaults) if cache is empty.
+    from src.services.system_config_service import (
+        LLM_ENABLED_PROVIDERS as _KEY_PROVIDERS,
+        LLM_TIER_ALLOWLIST_FREE as _KEY_FREE,
+        LLM_TIER_ALLOWLIST_PLUS as _KEY_PLUS,
+        _cache,
+        _CACHE_TTL,
+    )
+    import time as _time
+
+    def _read_cached(key: str, fallback: str) -> str:
+        """Read from in-memory cache synchronously, fallback to settings."""
+        now = _time.time()
+        if key in _cache:
+            val, ts = _cache[key]
+            if now - ts < _CACHE_TTL and val is not None:
+                return val
+        return fallback
+
     tier_allowlists = {
-        "free": settings.LLM_TIER_ALLOWLIST_FREE,
-        "plus": settings.LLM_TIER_ALLOWLIST_PLUS,
+        "free": _read_cached(_KEY_FREE, settings.LLM_TIER_ALLOWLIST_FREE),
+        "plus": _read_cached(_KEY_PLUS, settings.LLM_TIER_ALLOWLIST_PLUS),
     }
 
     _feature_flag_service_instance = FeatureFlagService(
-        enabled_providers=settings.LLM_ENABLED_PROVIDERS,
+        enabled_providers=_read_cached(_KEY_PROVIDERS, settings.LLM_ENABLED_PROVIDERS),
         tier_allowlists=tier_allowlists,
     )
     return _feature_flag_service_instance
@@ -243,8 +277,9 @@ def _build_cost_tracker() -> CostTracker:
 # Router singleton
 # ---------------------------------------------------------------------------
 
+_llm_router_instance: LLMRouter | None = None
 
-@lru_cache(maxsize=1)
+
 def get_llm_router() -> LLMRouter:
     """Return the process-wide LLMRouter instance.
 
@@ -254,6 +289,10 @@ def get_llm_router() -> LLMRouter:
     This is the primary dependency for route handlers that need multi-provider
     LLM routing.
     """
+    global _llm_router_instance
+    if _llm_router_instance is not None:
+        return _llm_router_instance
+
     settings = get_settings()
 
     feature_flags = _build_feature_flag_service()
@@ -278,4 +317,18 @@ def get_llm_router() -> LLMRouter:
         settings.LLM_ENABLED_PROVIDERS,
     )
 
+    _llm_router_instance = router
     return router
+
+
+def invalidate_llm_router() -> None:
+    """Reset the LLM router and feature flag singletons.
+
+    Called when admin updates LLM configuration via the dashboard.
+    The next call to ``get_llm_router()`` or ``get_feature_flag_service()``
+    will rebuild from the latest DB/env configuration.
+    """
+    global _llm_router_instance, _feature_flag_service_instance
+    _llm_router_instance = None
+    _feature_flag_service_instance = None
+    logger.info("LLM router and feature flag singletons invalidated (will rebuild on next use)")
