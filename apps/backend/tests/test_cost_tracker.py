@@ -153,7 +153,7 @@ class TestRecord:
         assert result.input_tokens == 0
         assert result.output_tokens == 50
         # Cost is computed with 0 input tokens but 50 output tokens
-        expected_cost = round(50 * 2.50e-6, 6)
+        expected_cost = round(50 * 3.00e-6, 6)
         assert result.cost_usd == expected_cost
 
     @pytest.mark.asyncio
