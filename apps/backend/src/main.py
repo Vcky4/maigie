@@ -47,6 +47,7 @@ from .routes.admin import router as admin_router
 from .routes.admin_career_applications import router as admin_career_applications_router
 from .routes.admin_content import router as admin_content_router
 from .routes.admin_finance import router as admin_finance_router
+from .routes.admin_llm_config import router as admin_llm_config_router
 from .routes.admin_staff import router as admin_staff_router
 from .routes.ai import router as ai_router
 from .routes.analytics import router as analytics_router
@@ -253,6 +254,15 @@ async def lifespan(app: FastAPI):
     await connect_db()
     logger.info("Database connection initialized")
 
+    # Seed LLM system config defaults (no-op if already seeded)
+    try:
+        from src.services import system_config_service
+
+        await system_config_service.seed_llm_defaults()
+        logger.info("System config defaults seeded")
+    except Exception as e:
+        logger.warning("Failed to seed system config defaults (non-fatal): %s", e)
+
     # Connect to cache
     await cache.connect()
     logger.info("Cache connection initialized")
@@ -437,6 +447,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_career_applications_router)
     app.include_router(admin_content_router)
     app.include_router(admin_finance_router)
+    app.include_router(admin_llm_config_router)
     app.include_router(admin_staff_router)
 
     app.include_router(ai_router)

@@ -1514,7 +1514,7 @@ async def wake_users_bulk(
 
     await log_admin_action(
         admin_user_id=admin_user.id,
-        action_type="BULK_WAKE_USERS",
+        action="BULK_WAKE_USERS",
         resource_type="users",
         resource_id=None,
         details={"limit": limit, "sent": results["sent"]},
