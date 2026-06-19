@@ -153,7 +153,7 @@ async def get_dashboard_stats(
         }
         at_risk_users = []
 
-    # Daily signups chart data (last 14 days)
+    # Daily signups chart data (last 14 days — default for initial load)
     daily_signups = []
     for i in range(13, -1, -1):
         day = (now - timedelta(days=i)).date()
@@ -243,6 +243,49 @@ async def get_dashboard_stats(
             "activityBreakdown": activity_breakdown,
             "churnRate": churn_rate,
         },
+    }
+
+
+# ==========================================
+#  CHART DATA ENDPOINT
+# ==========================================
+
+
+@router.get("/dashboard/charts", response_model=dict)
+async def get_dashboard_chart_data(
+    _staff: StaffAdminUser,
+    db: DBDep,
+    days: int = Query(14, ge=7, le=90, description="Number of days for chart data"),
+):
+    """
+    Get chart data for the dashboard with configurable time range.
+
+    Supports 7, 14, 30, 60, 90 day ranges.
+    """
+    now = datetime.now(UTC)
+
+    daily_signups = []
+    daily_messages_chart = []
+
+    for i in range(days - 1, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+
+        signup_count = await db.user.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_signups.append({"date": day.strftime("%b %d"), "signups": signup_count})
+
+        msg_count = await db.chatmessage.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_messages_chart.append({"date": day.strftime("%b %d"), "messages": msg_count})
+
+    return {
+        "days": days,
+        "dailySignups": daily_signups,
+        "dailyMessages": daily_messages_chart,
     }
 
 
