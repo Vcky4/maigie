@@ -2561,10 +2561,15 @@ async def get_reengagement_analytics(
     all_nudges = await db.aiagenttask.find_many(
         where={
             "createdAt": {"gte": start_date},
-            "taskType": {"in": [
-                "reengagement", "deep_wake", "study_gap",
-                "goal_nudge", "review_reminder",
-            ]},
+            "taskType": {
+                "in": [
+                    "reengagement",
+                    "deep_wake",
+                    "study_gap",
+                    "goal_nudge",
+                    "review_reminder",
+                ]
+            },
         },
         include={"user": True},
         order={"createdAt": "desc"},
@@ -2587,9 +2592,7 @@ async def get_reengagement_analytics(
     # Calculate effectiveness rates
     for t, counts in by_type.items():
         total = counts["sent"]
-        counts["effectivenessRate"] = round(
-            counts["actedOn"] / total * 100, 1
-        ) if total > 0 else 0
+        counts["effectivenessRate"] = round(counts["actedOn"] / total * 100, 1) if total > 0 else 0
 
     # Total summary
     total_sent = sum(c["sent"] for c in by_type.values())
@@ -2604,27 +2607,35 @@ async def get_reengagement_analytics(
         day_end = day_start + timedelta(days=1)
         day_nudges = [n for n in all_nudges if day_start <= n.createdAt < day_end]
         day_acted = [n for n in day_nudges if n.status == "acted_on"]
-        daily_data.append({
-            "date": day.strftime("%b %d"),
-            "sent": len(day_nudges),
-            "actedOn": len(day_acted),
-        })
+        daily_data.append(
+            {
+                "date": day.strftime("%b %d"),
+                "sent": len(day_nudges),
+                "actedOn": len(day_acted),
+            }
+        )
 
     # Recent activity log (last 50 actions)
     recent_log = []
     for nudge in all_nudges[:50]:
-        recent_log.append({
-            "id": nudge.id,
-            "type": nudge.taskType,
-            "status": nudge.status,
-            "title": nudge.title,
-            "message": nudge.message[:100] if nudge.message else "",
-            "userId": nudge.userId,
-            "userName": nudge.user.name if nudge.user else None,
-            "userEmail": nudge.user.email if nudge.user else None,
-            "createdAt": nudge.createdAt.isoformat(),
-            "automated": nudge.actionData.get("automated", False) if isinstance(nudge.actionData, dict) else False,
-        })
+        recent_log.append(
+            {
+                "id": nudge.id,
+                "type": nudge.taskType,
+                "status": nudge.status,
+                "title": nudge.title,
+                "message": nudge.message[:100] if nudge.message else "",
+                "userId": nudge.userId,
+                "userName": nudge.user.name if nudge.user else None,
+                "userEmail": nudge.user.email if nudge.user else None,
+                "createdAt": nudge.createdAt.isoformat(),
+                "automated": (
+                    nudge.actionData.get("automated", False)
+                    if isinstance(nudge.actionData, dict)
+                    else False
+                ),
+            }
+        )
 
     # Users who came back after being nudged (activity within 48h of nudge)
     comeback_count = 0
