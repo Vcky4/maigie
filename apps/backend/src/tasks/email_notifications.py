@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 TASK_MORNING_SCHEDULE = "email_notifications.send_morning_schedule_emails"
 TASK_SCHEDULE_REMINDER = "email_notifications.send_schedule_reminders"
 TASK_WEEKLY_TIPS = "email_notifications.send_weekly_tips_emails"
+TASK_WEEKLY_SUMMARY = "email_notifications.send_weekly_summary_emails"
 TASK_ACCOUNT_DELETION_LIFECYCLE = "email_notifications.process_account_deletion_lifecycle"
 PAID_TIERS = {
     "PREMIUM_MONTHLY",
@@ -490,6 +491,35 @@ def process_account_deletion_lifecycle_task(self) -> dict:
     return run_async_in_celery(_process_account_deletion_lifecycle_impl())
 
 
+# ---------------------------------------------------------------------------
+#  Weekly Summary Email (retention)
+# ---------------------------------------------------------------------------
+
+
+async def _send_weekly_summary_emails_impl() -> dict:
+    """Send personalized 'Your Week in Review' emails to all active users."""
+    from src.services.weekly_summary_email_service import send_weekly_summary_emails
+
+    await _ensure_db_connected()
+    return await send_weekly_summary_emails()
+
+
+@register_task(
+    name=TASK_WEEKLY_SUMMARY,
+    description="Send weekly study summary emails to boost retention",
+    category="email",
+    tags=["email", "retention", "summary", "engagement"],
+)
+@task(name=TASK_WEEKLY_SUMMARY, bind=True, max_retries=2)
+def send_weekly_summary_emails_task(self) -> dict:
+    from src.config import settings
+
+    if settings.ENVIRONMENT == "development":
+        logger.info("Skipping weekly summary emails (env=%s)", settings.ENVIRONMENT)
+        return {"skipped": True, "reason": "development environment"}
+    return run_async_in_celery(_send_weekly_summary_emails_impl())
+
+
 def register_email_notification_beat_tasks() -> None:
     """Register periodic Celery Beat tasks for email notifications."""
     from celery.schedules import crontab
@@ -520,6 +550,13 @@ def register_email_notification_beat_tasks() -> None:
         name="email_notifications.account_deletion.hourly",
         schedule=HOURLY,
         task=TASK_ACCOUNT_DELETION_LIFECYCLE,
+    )
+
+    # Weekly summary "Your Week in Review" emails: Saturday 9 AM UTC
+    register_periodic_task(
+        name="email_notifications.weekly_summary.saturday",
+        schedule=crontab(hour=9, minute=0, day_of_week=6),
+        task=TASK_WEEKLY_SUMMARY,
     )
 
 

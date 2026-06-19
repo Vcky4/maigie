@@ -9,7 +9,7 @@ Configuration format (environment variables):
     LLM_ENABLED_PROVIDERS: comma-separated list of globally enabled providers
         e.g. "gemini,openai"
     LLM_TIER_ALLOWLIST_FREE: comma-separated "provider:model" pairs
-        e.g. "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
+        e.g. "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: comma-separated "provider:model" pairs
 
 Precedence order for access decisions:

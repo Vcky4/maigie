@@ -226,6 +226,15 @@ class Settings(BaseSettings):
     # Use when the custom CDN hostname has TLS issues but Bunny's default pull zone is valid.
     BUNNY_PUBLIC_URL_BASE: str | None = None
 
+    # --- Auto Blog Pipeline ---
+    BLOG_AUTOPILOT_ENABLED: bool = True
+    BLOG_GOOGLE_DRIVE_FOLDER_ID: str = ""  # Folder containing cover images
+    BLOG_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: str = ""  # Service account JSON for Drive API
+    BLOG_GITHUB_TOKEN: str = ""  # PAT with repo write access to maigie-public
+    BLOG_GITHUB_REPO: str = "Maigie-Ltd/maigie-public"
+    BLOG_DEFAULT_AUTHOR_NAME: str = "Maigie Team"
+    BLOG_DEFAULT_AUTHOR_ROLE: str = "Learning Science"
+
     # --- Pinecone (Vector Database for RAG) ---
     PINECONE_API_KEY: str | None = None
     PINECONE_INDEX_NAME: str = "maigie"
@@ -270,10 +279,10 @@ class Settings(BaseSettings):
 
     # Fallback chains (comma-separated provider:model pairs)
     FALLBACK_CHAT_DEFAULT: str = (
-        "gemini:gemini-2.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
     )
     FALLBACK_CHAT_TOOLS: str = (
-        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
     )
 
     # Feature flags — enabled providers (comma-separated)
@@ -282,9 +291,9 @@ class Settings(BaseSettings):
     # Only ``free`` and ``plus`` exist after Circle Reimagining; Circle-scoped
     # AI capabilities are derived from Seat_Tier and resolve to one of these
     # two keys via FeatureFlagService.effective_tier_for_request.
-    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
+    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
-        "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini"
     )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
@@ -294,7 +303,7 @@ class Settings(BaseSettings):
     GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
     GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
     GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
-    GEMINI_LIVE_MODEL: str = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+    GEMINI_LIVE_MODEL: str = "models/gemini-3.1-flash-live-preview"
     GEMINI_LIVE_GREETING_PROMPT: str | None = None
 
     # --- Firebase Cloud Messaging (Push Notifications) ---

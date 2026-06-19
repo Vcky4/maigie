@@ -30,10 +30,8 @@ router = APIRouter(prefix="/api/v1/models", tags=["models"])
 
 MODEL_DISPLAY_NAMES: dict[str, str] = {
     # Gemini
-    "gemini-2.5-flash": "Gemini 2.5 Flash",
-    "gemini-2.0-flash": "Gemini 2.0 Flash",
-    "gemini-2.0-flash-lite": "Gemini 2.0 Flash Lite",
-    "gemini-3-flash-preview": "Gemini 3 Flash Preview",
+    "gemini-3.5-flash": "Gemini 3.5 Flash",
+    "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
     "gemini-embedding-001": "Gemini Embedding",
     # OpenAI
     "gpt-4o-mini": "GPT-4o Mini",
@@ -49,10 +47,8 @@ MODEL_DISPLAY_NAMES: dict[str, str] = {
 
 MODEL_CAPABILITIES: dict[str, list[str]] = {
     # Gemini models
-    "gemini-2.5-flash": ["chat", "vision", "structured_output"],
-    "gemini-2.0-flash": ["chat", "vision", "structured_output"],
-    "gemini-2.0-flash-lite": ["chat", "structured_output"],
-    "gemini-3-flash-preview": ["chat", "vision", "structured_output"],
+    "gemini-3.5-flash": ["chat", "vision", "structured_output"],
+    "gemini-3.1-flash-lite": ["chat", "structured_output"],
     "gemini-embedding-001": ["embedding"],
     # OpenAI models
     "gpt-4o-mini": ["chat", "vision", "structured_output"],

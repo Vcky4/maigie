@@ -106,7 +106,7 @@ def voice_credits_total_final_settlement(billable_seconds: float, billing_mode: 
 
 # Default Live API model. Override with GEMINI_LIVE_MODEL env.
 # See https://ai.google.dev/gemini-api/docs/live for current model names.
-DEFAULT_LIVE_MODEL = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+DEFAULT_LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
 GEMINI_LIVE_WS_URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 DEFAULT_LIVE_GREETING_PROMPT = "Start with a brief, warm greeting and immediately begin discussing the topic. Keep it concise - no more than two sentences."
 
@@ -538,7 +538,7 @@ async def run_gemini_live_bridge(
             )
 
             response = await client.aio.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.5-flash",
                 contents=prompt,
             )
 
@@ -1004,7 +1004,7 @@ async def generate_study_diagram_for_topic(
 
     client = genai.Client(api_key=api_key)
     response = await client.aio.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         contents=prompt,
     )
     raw_text = (response.text or "").strip()

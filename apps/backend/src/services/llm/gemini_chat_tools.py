@@ -586,7 +586,7 @@ class GeminiChatToolsAdapter(BaseProviderAdapter):
     """Gemini implementation of :class:`BaseProviderAdapter`.
 
     Each instance is bound to a specific Gemini model ID so the router can
-    select between e.g. gemini-2.5-flash and gemini-2.0-flash-lite.
+    select between e.g. gemini-3.5-flash and gemini-3.1-flash-lite.
     """
 
     __slots__ = ("_safety", "_model_id")
@@ -607,7 +607,7 @@ class GeminiChatToolsAdapter(BaseProviderAdapter):
 
     def supported_capabilities(self) -> set[type]:
         # All Gemini flash models support chat, vision, and structured output
-        # (except gemini-2.0-flash-lite which lacks vision, but we include it
+        # (except gemini-3.1-flash-lite which lacks vision, but we include it
         # for simplicity — the router's feature flags handle fine-grained control)
         return {ChatCapability, VisionCapability, StructuredOutputCapability}
 

@@ -64,7 +64,7 @@ class TestEmitAiUsage:
             usage_scope=PERSONAL_USAGE_SCOPE,
             circle_id=None,
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat_default",
             input_tokens=100,
             output_tokens=42,
@@ -78,7 +78,7 @@ class TestEmitAiUsage:
         assert data["usageScope"] == "personal"
         assert data["circleId"] is None
         assert data["provider"] == "gemini"
-        assert data["model"] == "gemini-2.5-flash"
+        assert data["model"] == "gemini-3.5-flash"
         assert data["feature"] == "chat_default"
         assert data["inputTokens"] == 100
         assert data["outputTokens"] == 42
@@ -111,7 +111,7 @@ class TestEmitAiUsage:
             usage_scope=PERSONAL_USAGE_SCOPE,
             circle_id="c-1",
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat",
             db_client=db,
         )
@@ -126,7 +126,7 @@ class TestEmitAiUsage:
             usage_scope="circle:c-99",
             circle_id="c-other",
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat",
             db_client=db,
         )
@@ -140,7 +140,7 @@ class TestEmitAiUsage:
             usage_scope="circle:c-1",
             circle_id=None,
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat",
             db_client=db,
         )
@@ -154,7 +154,7 @@ class TestEmitAiUsage:
             usage_scope="squad:s-1",
             circle_id=None,
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat",
             db_client=db,
         )
@@ -168,7 +168,7 @@ class TestEmitAiUsage:
             usage_scope=PERSONAL_USAGE_SCOPE,
             circle_id=None,
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat",
             input_tokens=-10,
             output_tokens=-1,
@@ -190,7 +190,7 @@ class TestEmitAiUsage:
             usage_scope=PERSONAL_USAGE_SCOPE,
             circle_id=None,
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             feature="chat",
             db_client=db,
         )

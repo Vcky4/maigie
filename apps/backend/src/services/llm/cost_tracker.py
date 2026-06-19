@@ -25,8 +25,12 @@ logger = logging.getLogger(__name__)
 # USD per token (not per million) for direct multiplication.
 # Format: "provider:model" -> (input_rate_per_token, output_rate_per_token)
 PROVIDER_PRICING: dict[str, tuple[float, float]] = {
-    # Gemini
+    # Gemini (current)
+    "gemini:gemini-3.5-flash": (0.50e-6, 3.00e-6),
+    "gemini:gemini-3.1-flash-lite": (0.25e-6, 1.50e-6),
+    # Gemini (legacy — kept for historical cost records)
     "gemini:gemini-2.5-flash": (0.30e-6, 2.50e-6),
+    "gemini:gemini-2.5-flash-lite": (0.10e-6, 0.40e-6),
     "gemini:gemini-2.0-flash": (0.10e-6, 0.40e-6),
     "gemini:gemini-2.0-flash-lite": (0.075e-6, 0.30e-6),
     "gemini:gemini-3-flash-preview": (0.50e-6, 3.00e-6),

@@ -1552,6 +1552,26 @@ model BlogPost {
   @@index([publishedAt])
 }
 
+/// Content calendar for scheduling AI-generated blog posts
+model ContentCalendarEntry {
+  id            String   @id @default(uuid())
+  topic         String // Blog topic / working title
+  keywords      String[] // SEO keywords
+  category      String   @default("Study Tips")
+  scheduledDate DateTime // Target publish date
+  status        String   @default("scheduled") // scheduled, generating, published, failed, draft
+  blogPostId    String? // Created BlogPost ID (set after generation)
+  coverImageUrl String? // Uploaded cover image CDN URL
+  notes         String? // Admin notes
+  autoPublish   Boolean  @default(true) // Auto-publish or create as draft for review
+  errorMessage  String? // Error details if status=failed
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, scheduledDate])
+  @@index([scheduledDate])
+}
+
 model JobPosting {
   id                     String   @id @default(uuid())
   slug                   String   @unique

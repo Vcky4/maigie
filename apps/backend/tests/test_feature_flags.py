@@ -83,18 +83,18 @@ class TestGetAllowedModels:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
+                "free": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini",
             },
         )
         models = svc.get_allowed_models("gemini", "free")
-        assert models == ["gemini-2.5-flash", "gemini-2.0-flash-lite"]
+        assert models == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
 
     def test_filters_by_provider(self):
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet",
             },
         )
         assert svc.get_allowed_models("openai", "plus") == ["gpt-4o-mini"]
@@ -102,23 +102,23 @@ class TestGetAllowedModels:
     def test_unknown_tier_returns_empty(self):
         svc = FeatureFlagService(
             enabled_providers="gemini",
-            tier_allowlists={"free": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash"},
         )
         assert svc.get_allowed_models("gemini", "enterprise") == []
 
     def test_unknown_provider_returns_empty(self):
         svc = FeatureFlagService(
             enabled_providers="gemini",
-            tier_allowlists={"free": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash"},
         )
         assert svc.get_allowed_models("openai", "free") == []
 
     def test_case_insensitive_tier(self):
         svc = FeatureFlagService(
             enabled_providers="gemini",
-            tier_allowlists={"FREE": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"FREE": "gemini:gemini-3.5-flash"},
         )
-        assert svc.get_allowed_models("gemini", "free") == ["gemini-2.5-flash"]
+        assert svc.get_allowed_models("gemini", "free") == ["gemini-3.5-flash"]
 
 
 # ---------------------------------------------------------------------------
@@ -163,14 +163,14 @@ class TestIsModelAllowed:
     def test_model_in_tier_allowlist(self):
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
-            tier_allowlists={"plus": "openai:gpt-4o-mini,gemini:gemini-2.5-flash"},
+            tier_allowlists={"plus": "openai:gpt-4o-mini,gemini:gemini-3.5-flash"},
         )
         assert svc.is_model_allowed("openai", "gpt-4o-mini", "plus", "user-1") is True
 
     def test_model_not_in_tier_allowlist(self):
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
-            tier_allowlists={"free": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash"},
         )
         assert svc.is_model_allowed("openai", "gpt-4o", "free", "user-1") is False
 
@@ -179,7 +179,7 @@ class TestIsModelAllowed:
         store = InMemoryFlagStore(overrides={("user-1", "openai"): True})
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
-            tier_allowlists={"free": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash"},
             store=store,
         )
         await svc.reload()
@@ -253,10 +253,10 @@ class TestParsing:
         """Entries without ':' separator are skipped with a warning."""
         svc = FeatureFlagService(
             enabled_providers="gemini",
-            tier_allowlists={"free": "gemini:gemini-2.5-flash,invalid-entry,openai:gpt-4o"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash,invalid-entry,openai:gpt-4o"},
         )
         models = svc.get_allowed_models("gemini", "free")
-        assert models == ["gemini-2.5-flash"]
+        assert models == ["gemini-3.5-flash"]
 
     def test_empty_allowlist_value(self):
         svc = FeatureFlagService(
@@ -290,21 +290,21 @@ class TestTierEnforcement:
         return FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-                "plus": ("gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"),
+                "free": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
+                "plus": ("gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini"),
             },
         )
 
     # --- Requirement 8.1: FREE tier only Gemini flash models ---
 
     def test_free_tier_allows_gemini_flash(self, full_service):
-        """Req 8.1: FREE tier allows gemini-2.5-flash."""
-        assert full_service.is_model_allowed("gemini", "gemini-2.5-flash", "free", "user-1") is True
+        """Req 8.1: FREE tier allows gemini-3.5-flash."""
+        assert full_service.is_model_allowed("gemini", "gemini-3.5-flash", "free", "user-1") is True
 
     def test_free_tier_allows_gemini_flash_lite(self, full_service):
-        """Req 8.1: FREE tier allows gemini-2.0-flash-lite."""
+        """Req 8.1: FREE tier allows gemini-3.1-flash-lite."""
         assert (
-            full_service.is_model_allowed("gemini", "gemini-2.0-flash-lite", "free", "user-1")
+            full_service.is_model_allowed("gemini", "gemini-3.1-flash-lite", "free", "user-1")
             is True
         )
 
@@ -324,14 +324,14 @@ class TestTierEnforcement:
     def test_premium_monthly_allows_gemini(self, full_service):
         """Req 8.2: PREMIUM_MONTHLY allows Gemini models."""
         assert (
-            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "premium_monthly", "user-1")
+            full_service.is_model_allowed("gemini", "gemini-3.5-flash", "premium_monthly", "user-1")
             is True
         )
 
     def test_premium_yearly_allows_gemini(self, full_service):
         """Req 8.2: PREMIUM_YEARLY allows Gemini models."""
         assert (
-            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "premium_yearly", "user-1")
+            full_service.is_model_allowed("gemini", "gemini-3.5-flash", "premium_yearly", "user-1")
             is True
         )
 
@@ -356,10 +356,10 @@ class TestTierEnforcement:
 
     def test_study_circle_monthly_resolves_to_plus(self, full_service):
         """Legacy STUDY_CIRCLE_MONTHLY maps to ``plus`` allowlist."""
-        # plus allowlist contains gemini-2.5-flash and gpt-4o-mini
+        # plus allowlist contains gemini-3.5-flash and gpt-4o-mini
         assert (
             full_service.is_model_allowed(
-                "gemini", "gemini-2.5-flash", "study_circle_monthly", "user-1"
+                "gemini", "gemini-3.5-flash", "study_circle_monthly", "user-1"
             )
             is True
         )
@@ -377,7 +377,7 @@ class TestTierEnforcement:
         """Legacy STUDY_CIRCLE_YEARLY maps to ``plus`` allowlist."""
         assert (
             full_service.is_model_allowed(
-                "gemini", "gemini-2.5-flash", "study_circle_yearly", "user-1"
+                "gemini", "gemini-3.5-flash", "study_circle_yearly", "user-1"
             )
             is True
         )
@@ -385,7 +385,7 @@ class TestTierEnforcement:
     def test_squad_monthly_resolves_to_plus(self, full_service):
         """Legacy SQUAD_MONTHLY maps to ``plus`` allowlist."""
         assert (
-            full_service.is_model_allowed("gemini", "gemini-2.5-flash", "squad_monthly", "user-1")
+            full_service.is_model_allowed("gemini", "gemini-3.5-flash", "squad_monthly", "user-1")
             is True
         )
         assert (
@@ -406,7 +406,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini",  # openai NOT enabled
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini",
             },
         )
         assert svc.is_model_allowed("openai", "gpt-4o-mini", "plus", "user-1") is False
@@ -418,7 +418,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",  # anthropic NOT enabled
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
             store=store,
         )
@@ -436,7 +436,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
+                "free": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
             },
             store=store,
         )
@@ -453,7 +453,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini",
+                "plus": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini",
             },
             store=store,
         )
@@ -477,7 +477,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini",  # anthropic disabled globally
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-3.5-flash,anthropic:claude-sonnet-4-20250514",
             },
             store=store,
         )
@@ -494,7 +494,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini",
             },
             store=store,
         )
@@ -508,7 +508,7 @@ class TestTierEnforcement:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini",
             },
         )
         # No override, falls through to tier allowlist
@@ -528,7 +528,7 @@ class TestUserOverrideManagement:
         """Setting a grant override allows access."""
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
-            tier_allowlists={"free": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash"},
         )
         svc.set_user_override("user-1", "openai", grant=True)
         assert svc.has_user_override("user-1", "openai") is True
@@ -538,7 +538,7 @@ class TestUserOverrideManagement:
         """Setting a revoke override denies access even if tier allows."""
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
-            tier_allowlists={"plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini"},
+            tier_allowlists={"plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini"},
         )
         svc.set_user_override("user-1", "openai", grant=False)
         assert svc.has_user_override("user-1", "openai") is False
@@ -548,7 +548,7 @@ class TestUserOverrideManagement:
         """Removing an override falls back to tier allowlist."""
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",
-            tier_allowlists={"plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini"},
+            tier_allowlists={"plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini"},
         )
         # First revoke access
         svc.set_user_override("user-1", "openai", grant=False)
@@ -568,7 +568,7 @@ class TestUserOverrideManagement:
         """A grant override cannot bypass a globally disabled provider."""
         svc = FeatureFlagService(
             enabled_providers="gemini",  # openai NOT enabled
-            tier_allowlists={"free": "gemini:gemini-2.5-flash"},
+            tier_allowlists={"free": "gemini:gemini-3.5-flash"},
         )
         svc.set_user_override("user-1", "openai", grant=True)
         # Global disable still wins
@@ -587,13 +587,13 @@ class TestGetAvailableModelsForUser:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
+                "free": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini",
             },
         )
         models = svc.get_available_models_for_user("user-1", "free")
-        assert ("gemini", "gemini-2.5-flash") in models
-        assert ("gemini", "gemini-2.0-flash-lite") in models
+        assert ("gemini", "gemini-3.5-flash") in models
+        assert ("gemini", "gemini-3.1-flash-lite") in models
         # No OpenAI or Anthropic
         assert all(p == "gemini" for p, _ in models)
 
@@ -601,8 +601,8 @@ class TestGetAvailableModelsForUser:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
-                "plus": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini",
+                "free": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
+                "plus": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini",
             },
         )
         models = svc.get_available_models_for_user("user-1", "premium_monthly")
@@ -616,8 +616,8 @@ class TestGetAvailableModelsForUser:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash",
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o-mini",
+                "free": "gemini:gemini-3.5-flash",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o-mini",
             },
         )
         models = svc.get_available_models_for_user("user-1", "study_circle_monthly")
@@ -631,7 +631,7 @@ class TestGetAvailableModelsForUser:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai",  # anthropic NOT enabled
             tier_allowlists={
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
         )
         models = svc.get_available_models_for_user("user-1", "study_circle_monthly")
@@ -642,8 +642,8 @@ class TestGetAvailableModelsForUser:
         svc = FeatureFlagService(
             enabled_providers="gemini,openai,anthropic",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash",
-                "plus": "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
+                "free": "gemini:gemini-3.5-flash",
+                "plus": "gemini:gemini-3.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514",
             },
         )
         svc.set_user_override("user-1", "openai", grant=True)
@@ -670,8 +670,8 @@ class TestEffectiveTierForRequest:
         return FeatureFlagService(
             enabled_providers="gemini",
             tier_allowlists={
-                "free": "gemini:gemini-2.5-flash",
-                "plus": "gemini:gemini-2.5-flash",
+                "free": "gemini:gemini-3.5-flash",
+                "plus": "gemini:gemini-3.5-flash",
             },
         )
 

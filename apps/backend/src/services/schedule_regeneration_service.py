@@ -201,7 +201,7 @@ Return ONLY the JSON array, no other text."""
         # Try Gemini first
         try:
             client = new_gemini_client(settings.GEMINI_API_KEY)
-            model_name = "gemini-2.0-flash"
+            model_name = "gemini-3.5-flash"
             if settings.GEMINI_SCHEDULE_AI_MODELS:
                 model_name = settings.GEMINI_SCHEDULE_AI_MODELS.split(",")[0].strip()
 

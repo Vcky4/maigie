@@ -132,6 +132,64 @@ async def get_dashboard_stats(
     # Assuming $10/month for monthly and $100/year for yearly
     estimated_mrr = (premium_monthly_users * 10) + (premium_yearly_users * 100 / 12)
 
+    # Retention summary (quick numbers for dashboard)
+    try:
+        from ..services.retention_analytics_service import (
+            compute_weekly_retention_summary,
+            get_users_at_risk,
+        )
+
+        retention_summary = await compute_weekly_retention_summary()
+        at_risk_users = await get_users_at_risk(limit=10)
+    except Exception as retention_err:
+        logger.warning("Failed to compute retention summary: %s", retention_err)
+        retention_summary = {
+            "dau": 0,
+            "wau": 0,
+            "mau": 0,
+            "wauChange": 0,
+            "dauMauRatio": 0,
+            "atRiskCount": 0,
+        }
+        at_risk_users = []
+
+    # Daily signups chart data (last 14 days — default for initial load)
+    daily_signups = []
+    for i in range(13, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        count = await db.user.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_signups.append({"date": day.strftime("%b %d"), "signups": count})
+
+    # Daily messages chart data (last 14 days)
+    daily_messages_chart = []
+    for i in range(13, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        count = await db.chatmessage.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_messages_chart.append({"date": day.strftime("%b %d"), "messages": count})
+
+    # Churn & activity breakdown
+    # Active = had activity (message) in last 30 days
+    # Inactive = onboarded but no activity in 30+ days
+    # Churned = inactive 30+ days AND were previously active
+    total_onboarded = await db.user.count(where={"role": "USER", "isOnboarded": True})
+    active_30d = retention_summary.get("mau", 0)
+    inactive_count = total_onboarded - active_30d if total_onboarded > active_30d else 0
+    churn_rate = round((inactive_count / total_onboarded * 100) if total_onboarded > 0 else 0, 1)
+
+    # Active/Inactive pie data
+    activity_breakdown = [
+        {"name": "Active (30d)", "value": active_30d},
+        {"name": "Inactive", "value": inactive_count},
+    ]
+
     return {
         "users": {
             "total": total_users,
@@ -177,6 +235,57 @@ async def get_dashboard_stats(
             "jobsPublished": job_postings_published,
             "jobsUnpublished": job_postings_unpublished,
         },
+        "retention": retention_summary,
+        "atRiskUsers": at_risk_users,
+        "charts": {
+            "dailySignups": daily_signups,
+            "dailyMessages": daily_messages_chart,
+            "activityBreakdown": activity_breakdown,
+            "churnRate": churn_rate,
+        },
+    }
+
+
+# ==========================================
+#  CHART DATA ENDPOINT
+# ==========================================
+
+
+@router.get("/dashboard/charts", response_model=dict)
+async def get_dashboard_chart_data(
+    _staff: StaffAdminUser,
+    db: DBDep,
+    days: int = Query(14, ge=7, le=90, description="Number of days for chart data"),
+):
+    """
+    Get chart data for the dashboard with configurable time range.
+
+    Supports 7, 14, 30, 60, 90 day ranges.
+    """
+    now = datetime.now(UTC)
+
+    daily_signups = []
+    daily_messages_chart = []
+
+    for i in range(days - 1, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+
+        signup_count = await db.user.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_signups.append({"date": day.strftime("%b %d"), "signups": signup_count})
+
+        msg_count = await db.chatmessage.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_messages_chart.append({"date": day.strftime("%b %d"), "messages": msg_count})
+
+    return {
+        "days": days,
+        "dailySignups": daily_signups,
+        "dailyMessages": daily_messages_chart,
     }
 
 
@@ -1216,6 +1325,205 @@ async def get_user_summary(
 
 
 # ============================================================================
+# Re-engage (Wake) User Endpoint
+# ============================================================================
+
+
+class WakeUserRequest(BaseModel):
+    """Request model for waking/re-engaging a user."""
+
+    customMessage: str | None = Field(
+        None, description="Optional custom message to include in the re-engagement email"
+    )
+    regenerateSchedule: bool = Field(
+        True, description="Whether to also regenerate the user's study schedule"
+    )
+
+
+@router.post("/users/{user_id}/wake", response_model=dict)
+async def wake_user(
+    user_id: str,
+    data: WakeUserRequest,
+    admin_user: SuperAdminUser,
+    db: DBDep,
+):
+    """
+    Re-engage an inactive user by sending a personalized email and
+    optionally regenerating their study schedule.
+
+    This is a manual retention intervention for at-risk users.
+    """
+    import asyncio
+
+    user = await db.user.find_unique(
+        where={"id": user_id},
+        include={"userStreak": True},
+    )
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    user_name = (user.name or "").split()[0] if user.name else "there"
+    results: dict = {"userId": user_id, "email": user.email, "actions": []}
+
+    # 1. Send re-engagement email
+    try:
+        from ..services.weekly_summary_email_service import (
+            generate_weekly_summary_for_user,
+            render_weekly_summary_html,
+        )
+
+        # Try to build a personalized summary
+        summary = await generate_weekly_summary_for_user(user_id)
+
+        if summary:
+            subject, html_content = render_weekly_summary_html(summary)
+        else:
+            # Fallback: generic re-engagement email
+            streak_info = ""
+            if user.userStreak and user.userStreak.currentStreak > 0:
+                streak_info = (
+                    f"<p>Your <strong>{user.userStreak.currentStreak}-day streak</strong> "
+                    f"is waiting for you!</p>"
+                )
+
+            custom_block = ""
+            if data.customMessage:
+                custom_block = f'<p style="margin: 16px 0; padding: 12px; background: #F0F9FF; border-radius: 8px; color: #1E40AF;">{data.customMessage}</p>'
+
+            subject = f"Hey {user_name}, we miss you! Come back and keep learning"
+            html_content = f"""
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2937;">
+              <h2>Hey {user_name} 👋</h2>
+              <p>It's been a while since your last study session. Your AI tutor is ready when you are.</p>
+              {streak_info}
+              {custom_block}
+              <p>Even 15 minutes today can make a difference. Here's what you can do:</p>
+              <ul>
+                <li>Continue where you left off on your courses</li>
+                <li>Review topics that need refreshing</li>
+                <li>Chat with your AI tutor about anything</li>
+              </ul>
+              <div style="text-align: center; margin: 32px 0;">
+                <a href="https://app.maigie.com/dashboard" style="display: inline-block; padding: 14px 32px; background: #4F46E5; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                  Continue Studying
+                </a>
+              </div>
+              <p style="font-size: 13px; color: #9CA3AF;">Your Maigie team</p>
+            </div>"""
+
+        await send_bulk_email(
+            email=user.email,
+            name=user.name,
+            subject=subject,
+            content=html_content,
+        )
+        results["actions"].append({"type": "email", "status": "sent", "subject": subject})
+    except Exception as e:
+        logger.warning("Wake user email failed for %s: %s", user_id, e)
+        results["actions"].append({"type": "email", "status": "failed", "error": str(e)})
+
+    # 2. Send push notification
+    try:
+        from ..services.push_notification_service import send_push_notification
+
+        await send_push_notification(
+            user_id=user_id,
+            title=f"Hey {user_name}, your AI tutor misses you!",
+            body="Jump back in — even a quick session today keeps your momentum going.",
+            data={"type": "admin_reengagement"},
+        )
+        results["actions"].append({"type": "push_notification", "status": "sent"})
+    except Exception as e:
+        logger.debug("Wake user push failed for %s: %s", user_id, e)
+        results["actions"].append(
+            {"type": "push_notification", "status": "failed", "error": str(e)}
+        )
+
+    # 3. Regenerate study schedule
+    if data.regenerateSchedule:
+        try:
+            from ..services.schedule_regeneration_service import regenerate_user_schedule
+
+            asyncio.ensure_future(regenerate_user_schedule(user_id))
+            results["actions"].append({"type": "schedule_regeneration", "status": "started"})
+        except Exception as e:
+            logger.warning("Wake user schedule regen failed for %s: %s", user_id, e)
+            results["actions"].append(
+                {"type": "schedule_regeneration", "status": "failed", "error": str(e)}
+            )
+
+    # 4. Log admin action
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action_type="WAKE_USER",
+        resource_type="user",
+        resource_id=user_id,
+        details={
+            "customMessage": data.customMessage,
+            "regenerateSchedule": data.regenerateSchedule,
+        },
+    )
+
+    return results
+
+
+@router.post("/users/wake-bulk", response_model=dict)
+async def wake_users_bulk(
+    admin_user: SuperAdminUser,
+    db: DBDep,
+    limit: int = Query(20, ge=1, le=50, description="Max users to wake"),
+):
+    """
+    Bulk re-engage at-risk users. Sends personalized emails and
+    regenerates schedules for the top at-risk users.
+    """
+    from ..services.retention_analytics_service import get_users_at_risk
+
+    at_risk = await get_users_at_risk(limit=limit)
+
+    results = {"total": len(at_risk), "sent": 0, "failed": 0}
+
+    for user_data in at_risk:
+        try:
+            # Call the individual wake endpoint logic
+            user = await db.user.find_unique(where={"id": user_data["userId"]})
+            if not user:
+                continue
+
+            user_name = (user.name or "").split()[0] if user.name else "there"
+            subject = f"Hey {user_name}, we miss you! Come back and keep learning"
+            html_content = f"""
+            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; color: #1F2937;">
+              <h2>Hey {user_name} 👋</h2>
+              <p>It's been {user_data['daysInactive']} days since your last session. Your AI tutor is ready when you are.</p>
+              <p>Even 15 minutes today can make a difference.</p>
+              <div style="text-align: center; margin: 32px 0;">
+                <a href="https://app.maigie.com/dashboard" style="display: inline-block; padding: 14px 32px; background: #4F46E5; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;">
+                  Continue Studying
+                </a>
+              </div>
+            </div>"""
+
+            await send_bulk_email(
+                email=user.email, name=user.name, subject=subject, content=html_content
+            )
+            results["sent"] += 1
+        except Exception as e:
+            logger.warning("Bulk wake failed for user %s: %s", user_data["userId"], e)
+            results["failed"] += 1
+
+    await log_admin_action(
+        admin_user_id=admin_user.id,
+        action_type="BULK_WAKE_USERS",
+        resource_type="users",
+        resource_id=None,
+        details={"limit": limit, "sent": results["sent"]},
+    )
+
+    return results
+
+
+# ============================================================================
 # Bulk Email Endpoint
 # ============================================================================
 
@@ -2173,62 +2481,186 @@ async def get_retention_analytics(
     db: DBDep,
 ):
     """
-    Get user retention metrics (DAU, MAU, retention cohorts).
+    Get comprehensive user retention metrics.
+
+    Includes real cohort analysis (Day-1/7/30 retention), feature adoption rates,
+    time-to-first-value, nudge effectiveness, and weekly summary.
+
+    Only accessible by admin users.
+    """
+    from ..services.retention_analytics_service import (
+        compute_feature_adoption,
+        compute_nudge_effectiveness,
+        compute_retention_cohorts,
+        compute_time_to_first_value,
+        compute_weekly_retention_summary,
+    )
+
+    # Run all computations
+    cohorts = await compute_retention_cohorts(months=6)
+    feature_adoption = await compute_feature_adoption()
+    time_to_value = await compute_time_to_first_value()
+    nudge_effectiveness = await compute_nudge_effectiveness()
+    weekly_summary = await compute_weekly_retention_summary()
+
+    return {
+        "summary": weekly_summary,
+        "cohorts": cohorts,
+        "featureAdoption": feature_adoption,
+        "timeToFirstValue": time_to_value,
+        "nudgeEffectiveness": nudge_effectiveness,
+    }
+
+
+@router.get("/analytics/users-at-risk", response_model=dict)
+async def get_users_at_risk_endpoint(
+    admin_user: SuperAdminUser,
+    db: DBDep,
+    limit: int = Query(30, ge=1, le=100, description="Maximum users to return"),
+):
+    """
+    Get users at risk of churning.
+
+    Returns users who were active but haven't engaged in 3-14 days,
+    prioritized by tier and engagement history.
+
+    Only accessible by admin users.
+    """
+    from ..services.retention_analytics_service import get_users_at_risk
+
+    users = await get_users_at_risk(limit=limit)
+
+    # Count by risk level
+    risk_counts = {"high": 0, "medium": 0, "low": 0}
+    for u in users:
+        risk_counts[u["riskLevel"]] = risk_counts.get(u["riskLevel"], 0) + 1
+
+    return {
+        "users": users,
+        "total": len(users),
+        "riskCounts": risk_counts,
+    }
+
+
+@router.get("/analytics/reengagement", response_model=dict)
+async def get_reengagement_analytics(
+    admin_user: SuperAdminUser,
+    db: DBDep,
+    days: int = Query(30, ge=7, le=90, description="Look-back period in days"),
+):
+    """
+    Get re-engagement analytics — shows what automated wake/nudge actions happened,
+    how effective they were, and which users came back.
 
     Only accessible by admin users.
     """
     now = datetime.now(UTC)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    thirty_days_ago = now - timedelta(days=30)
+    start_date = now - timedelta(days=days)
 
-    # Daily Active Users (DAU) - users who had activity today
-    dau = await db.user.count(
+    # Get all nudge/wake actions in the period
+    all_nudges = await db.aiagenttask.find_many(
         where={
-            "isActive": True,
-            "updatedAt": {"gte": today_start},
-        }
+            "createdAt": {"gte": start_date},
+            "taskType": {
+                "in": [
+                    "reengagement",
+                    "deep_wake",
+                    "study_gap",
+                    "goal_nudge",
+                    "review_reminder",
+                ]
+            },
+        },
+        include={"user": True},
+        order={"createdAt": "desc"},
     )
 
-    # Monthly Active Users (MAU) - users active in last 30 days
-    mau = await db.user.count(
-        where={
-            "isActive": True,
-            "updatedAt": {"gte": thirty_days_ago},
-        }
-    )
+    # Summary by type
+    by_type: dict = {}
+    for nudge in all_nudges:
+        t = nudge.taskType
+        if t not in by_type:
+            by_type[t] = {"sent": 0, "actedOn": 0, "dismissed": 0, "pending": 0}
+        by_type[t]["sent"] += 1
+        if nudge.status == "acted_on":
+            by_type[t]["actedOn"] += 1
+        elif nudge.status == "dismissed":
+            by_type[t]["dismissed"] += 1
+        elif nudge.status == "pending":
+            by_type[t]["pending"] += 1
 
-    # Calculate retention cohorts (simplified)
-    # Get users who signed up in each month
-    all_users = await db.user.find_many(
-        where={"role": "USER", "isActive": True}, order={"createdAt": "asc"}
-    )
+    # Calculate effectiveness rates
+    for t, counts in by_type.items():
+        total = counts["sent"]
+        counts["effectivenessRate"] = round(counts["actedOn"] / total * 100, 1) if total > 0 else 0
 
-    cohorts = {}
-    for user in all_users:
-        signup_month = user.createdAt.strftime("%Y-%m")
-        if signup_month not in cohorts:
-            cohorts[signup_month] = {"signups": 0, "active": 0}
-        cohorts[signup_month]["signups"] += 1
+    # Total summary
+    total_sent = sum(c["sent"] for c in by_type.values())
+    total_acted = sum(c["actedOn"] for c in by_type.values())
+    overall_rate = round(total_acted / total_sent * 100, 1) if total_sent > 0 else 0
 
-        # Check if user was active in last 30 days
-        if user.updatedAt >= thirty_days_ago:
-            cohorts[signup_month]["active"] += 1
+    # Daily breakdown for chart
+    daily_data = []
+    for i in range(min(days, 30) - 1, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        day_nudges = [n for n in all_nudges if day_start <= n.createdAt < day_end]
+        day_acted = [n for n in day_nudges if n.status == "acted_on"]
+        daily_data.append(
+            {
+                "date": day.strftime("%b %d"),
+                "sent": len(day_nudges),
+                "actedOn": len(day_acted),
+            }
+        )
 
-    # Calculate retention rates
-    cohort_retention = {}
-    for month, data in cohorts.items():
-        retention_rate = (data["active"] / data["signups"] * 100) if data["signups"] > 0 else 0.0
-        cohort_retention[month] = {
-            "signups": data["signups"],
-            "active": data["active"],
-            "retentionRate": round(retention_rate, 2),
-        }
+    # Recent activity log (last 50 actions)
+    recent_log = []
+    for nudge in all_nudges[:50]:
+        recent_log.append(
+            {
+                "id": nudge.id,
+                "type": nudge.taskType,
+                "status": nudge.status,
+                "title": nudge.title,
+                "message": nudge.message[:100] if nudge.message else "",
+                "userId": nudge.userId,
+                "userName": nudge.user.name if nudge.user else None,
+                "userEmail": nudge.user.email if nudge.user else None,
+                "createdAt": nudge.createdAt.isoformat(),
+                "automated": (
+                    nudge.actionData.get("automated", False)
+                    if isinstance(nudge.actionData, dict)
+                    else False
+                ),
+            }
+        )
+
+    # Users who came back after being nudged (activity within 48h of nudge)
+    comeback_count = 0
+    for nudge in all_nudges:
+        if not nudge.user:
+            continue
+        nudge_time = nudge.createdAt
+        comeback_window = nudge_time + timedelta(hours=48)
+        if nudge.user.updatedAt and nudge_time < nudge.user.updatedAt <= comeback_window:
+            comeback_count += 1
+
+    comeback_rate = round(comeback_count / total_sent * 100, 1) if total_sent > 0 else 0
 
     return {
-        "dau": dau,
-        "mau": mau,
-        "dauMauRatio": round((dau / mau * 100) if mau > 0 else 0.0, 2),
-        "cohortRetention": cohort_retention,
+        "period": days,
+        "summary": {
+            "totalSent": total_sent,
+            "totalActedOn": total_acted,
+            "overallEffectiveness": overall_rate,
+            "comebackCount": comeback_count,
+            "comebackRate": comeback_rate,
+        },
+        "byType": by_type,
+        "dailyData": daily_data,
+        "recentLog": recent_log,
     }
 
 
