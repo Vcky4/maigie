@@ -153,6 +153,43 @@ async def get_dashboard_stats(
         }
         at_risk_users = []
 
+    # Daily signups chart data (last 14 days)
+    daily_signups = []
+    for i in range(13, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        count = await db.user.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_signups.append({"date": day.strftime("%b %d"), "signups": count})
+
+    # Daily messages chart data (last 14 days)
+    daily_messages_chart = []
+    for i in range(13, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        count = await db.chatmessage.count(
+            where={"createdAt": {"gte": day_start, "lt": day_end}, "role": "USER"}
+        )
+        daily_messages_chart.append({"date": day.strftime("%b %d"), "messages": count})
+
+    # Churn & activity breakdown
+    # Active = had activity (message) in last 30 days
+    # Inactive = onboarded but no activity in 30+ days
+    # Churned = inactive 30+ days AND were previously active
+    total_onboarded = await db.user.count(where={"role": "USER", "isOnboarded": True})
+    active_30d = retention_summary.get("mau", 0)
+    inactive_count = total_onboarded - active_30d if total_onboarded > active_30d else 0
+    churn_rate = round((inactive_count / total_onboarded * 100) if total_onboarded > 0 else 0, 1)
+
+    # Active/Inactive pie data
+    activity_breakdown = [
+        {"name": "Active (30d)", "value": active_30d},
+        {"name": "Inactive", "value": inactive_count},
+    ]
+
     return {
         "users": {
             "total": total_users,
@@ -200,6 +237,12 @@ async def get_dashboard_stats(
         },
         "retention": retention_summary,
         "atRiskUsers": at_risk_users,
+        "charts": {
+            "dailySignups": daily_signups,
+            "dailyMessages": daily_messages_chart,
+            "activityBreakdown": activity_breakdown,
+            "churnRate": churn_rate,
+        },
     }
 
 
