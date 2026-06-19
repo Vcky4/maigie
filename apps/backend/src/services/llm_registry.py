@@ -32,18 +32,18 @@ class LlmTask(StrEnum):
 
 
 _DEFAULTS: dict[LlmTask, str] = {
-    LlmTask.CHAT_DEFAULT: "gemini-2.5-flash",
-    LlmTask.CHAT_TOOLS_SESSION: "gemini-2.5-flash",
-    LlmTask.CHAT_TOOLS_USAGE_FALLBACK: "gemini-3-flash-preview",
-    LlmTask.FACT_EXTRACTION_LITE: "gemini-2.0-flash-lite",
-    LlmTask.MINIMAL_RESPONSE: "gemini-2.0-flash-lite",
-    LlmTask.COURSE_OUTLINE: "gemini-2.0-flash",
-    LlmTask.STRUCTURED_COMPLETION: "gemini-2.0-flash",
-    LlmTask.MEMORY_JSON: "gemini-2.0-flash-lite",
+    LlmTask.CHAT_DEFAULT: "gemini-3.5-flash",
+    LlmTask.CHAT_TOOLS_SESSION: "gemini-3.5-flash",
+    LlmTask.CHAT_TOOLS_USAGE_FALLBACK: "gemini-3.5-flash",
+    LlmTask.FACT_EXTRACTION_LITE: "gemini-3.1-flash-lite",
+    LlmTask.MINIMAL_RESPONSE: "gemini-3.1-flash-lite",
+    LlmTask.COURSE_OUTLINE: "gemini-3.5-flash",
+    LlmTask.STRUCTURED_COMPLETION: "gemini-3.5-flash",
+    LlmTask.MEMORY_JSON: "gemini-3.1-flash-lite",
     LlmTask.EMBEDDING: "gemini-embedding-001",
-    LlmTask.EMAIL_PRIMARY: "gemini-2.5-flash",
-    LlmTask.EMAIL_FALLBACK: "gemini-2.0-flash-lite",
-    LlmTask.VOICE_TRANSCRIPTION: "gemini-3-flash-preview",
+    LlmTask.EMAIL_PRIMARY: "gemini-3.5-flash",
+    LlmTask.EMAIL_FALLBACK: "gemini-3.1-flash-lite",
+    LlmTask.VOICE_TRANSCRIPTION: "gemini-3.5-flash",
 }
 
 

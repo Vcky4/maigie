@@ -15,9 +15,8 @@ from src.services.llm_registry import LlmTask, default_model_for
     "model_name,input_t,output_t,expected_min,expected_max",
     [
         # 1M in + 1M out at listed rate should land on exact sum for exact ids
-        ("gemini-2.5-flash", 1_000_000, 1_000_000, 0.30 + 2.50, 0.30 + 2.50),
-        ("gemini-3-flash-preview", 1_000_000, 1_000_000, 0.50 + 3.00, 0.50 + 3.00),
-        ("gemini-2.0-flash-lite", 1_000_000, 1_000_000, 0.075 + 0.30, 0.075 + 0.30),
+        ("gemini-3.5-flash", 1_000_000, 1_000_000, 0.50 + 3.00, 0.50 + 3.00),
+        ("gemini-3.1-flash-lite", 1_000_000, 1_000_000, 0.25 + 1.50, 0.25 + 1.50),
         ("gemini-embedding-001", 1_000_000, 0, 0.15, 0.15),
     ],
 )
@@ -27,8 +26,8 @@ def test_calculate_ai_cost_exact_models(model_name, input_t, output_t, expected_
 
 
 def test_calculate_ai_cost_models_prefix_stripped():
-    cost = calculate_ai_cost(1_000_000, 0, model_name="models/gemini-2.5-flash")
-    assert abs(cost - 0.30) < 1e-9
+    cost = calculate_ai_cost(1_000_000, 0, model_name="models/gemini-3.5-flash")
+    assert abs(cost - 0.50) < 1e-9
 
 
 def test_calculate_ai_cost_none_model_uses_registry_default():

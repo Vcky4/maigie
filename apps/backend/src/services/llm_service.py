@@ -759,8 +759,8 @@ def _gemini_model_not_found(exc: BaseException) -> bool:
     return "404" in msg and ("not found" in msg or "not_found" in msg)
 
 
-# gemini-1.5-* ids often 404 on generativelanguage v1beta for generateContent.
-_DEFAULT_GEMINI_ROTATING_MODELS = "gemini-2.0-flash,gemini-2.5-flash,gemini-2.0-flash-lite"
+# Default Gemini models for rotation across features.
+_DEFAULT_GEMINI_ROTATING_MODELS = "gemini-3.5-flash,gemini-3.1-flash-lite"
 
 
 def _gemini_rotating_model_list(primary_env: str) -> list[str]:

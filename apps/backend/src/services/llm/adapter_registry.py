@@ -34,8 +34,8 @@ def _parse_fallback_chain(chain_str: str) -> list[tuple[str, str]]:
     """Parse a comma-separated 'provider:model' string into a list of tuples.
 
     Example:
-        "gemini:gemini-2.5-flash,openai:gpt-4o-mini" →
-        [("gemini", "gemini-2.5-flash"), ("openai", "gpt-4o-mini")]
+        "gemini:gemini-3.5-flash,openai:gpt-4o-mini" →
+        [("gemini", "gemini-3.5-flash"), ("openai", "gpt-4o-mini")]
     """
     pairs: list[tuple[str, str]] = []
     for entry in chain_str.split(","):
@@ -103,10 +103,8 @@ def _build_adapter_registry() -> dict[str, BaseProviderAdapter]:
 
             safety_settings: list[Any] = []
             gemini_models = [
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
-                "gemini-2.0-flash-lite",
-                "gemini-3-flash-preview",
+                "gemini-3.5-flash",
+                "gemini-3.1-flash-lite",
             ]
             for model_id in gemini_models:
                 adapter = GeminiChatToolsAdapter(safety_settings=safety_settings, model_id=model_id)

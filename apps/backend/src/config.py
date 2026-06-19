@@ -279,10 +279,10 @@ class Settings(BaseSettings):
 
     # Fallback chains (comma-separated provider:model pairs)
     FALLBACK_CHAT_DEFAULT: str = (
-        "gemini:gemini-2.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
+        "gemini:gemini-3.5-flash,openai:gpt-4o-mini,anthropic:claude-sonnet-4-20250514"
     )
     FALLBACK_CHAT_TOOLS: str = (
-        "gemini:gemini-2.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
+        "gemini:gemini-3.5-flash,openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
     )
 
     # Feature flags — enabled providers (comma-separated)
@@ -291,9 +291,9 @@ class Settings(BaseSettings):
     # Only ``free`` and ``plus`` exist after Circle Reimagining; Circle-scoped
     # AI capabilities are derived from Seat_Tier and resolve to one of these
     # two keys via FeatureFlagService.effective_tier_for_request.
-    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite"
+    LLM_TIER_ALLOWLIST_FREE: str = "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite"
     LLM_TIER_ALLOWLIST_PLUS: str = (
-        "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite,openai:gpt-4o-mini"
+        "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite,openai:gpt-4o-mini"
     )
 
     # --- Gemini Live (voice) — was scattered os.getenv reads; keep in Settings ---
@@ -303,7 +303,7 @@ class Settings(BaseSettings):
     GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
     GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
     GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
-    GEMINI_LIVE_MODEL: str = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+    GEMINI_LIVE_MODEL: str = "models/gemini-3.1-flash-live-preview"
     GEMINI_LIVE_GREETING_PROMPT: str | None = None
 
     # --- Firebase Cloud Messaging (Push Notifications) ---

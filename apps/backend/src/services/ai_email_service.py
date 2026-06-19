@@ -47,7 +47,7 @@ async def _call_gemini_for_email(
         except Exception as e:
             if "429" in str(e) or "503" in str(e):
                 logger.warning(
-                    "Rate limited or unavailable on primary model, falling back to gemini-2.0-flash-lite: %s",
+                    "Rate limited or unavailable on primary model, falling back to gemini-3.1-flash-lite: %s",
                     e,
                 )
                 response = await client.aio.models.generate_content(

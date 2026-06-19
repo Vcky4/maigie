@@ -79,7 +79,7 @@ Return ONLY valid JSON, no markdown fences or other text."""
 
         client = new_gemini_client(settings.GEMINI_API_KEY)
         response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             contents=prompt,
         )
         response_text = response.text or ""

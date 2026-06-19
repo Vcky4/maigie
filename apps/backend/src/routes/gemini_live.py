@@ -93,7 +93,7 @@ async def study_diagram(
     current_user: CurrentUser,
     body: StudyDiagramRequest,
 ) -> StudyDiagramResponse:
-    """Generate Mermaid / display math for the current topic (uses gemini-2.5-flash, not Live audio)."""
+    """Generate Mermaid / display math for the current topic (uses gemini-3.5-flash, not Live audio)."""
     credits_needed = CREDIT_COSTS.get("study_diagram", 80)
     is_available, msg = await check_credit_availability(current_user, credits_needed)
     if not is_available:

@@ -28,12 +28,16 @@ GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION = 0.30
 
 # USD per 1M tokens (input, output) — Paid tier Standard from Gemini API pricing page.
 _EXACT_MODEL_PRICING: dict[str, tuple[float, float]] = {
+    # Current models
+    "gemini-3.5-flash": (0.50, 3.00),
+    "gemini-3.1-flash-lite": (0.25, 1.50),
+    "gemini-embedding-001": (0.15, 0.0),
+    # Legacy (kept for historical cost attribution)
     "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-flash-lite": (0.10, 0.40),
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-2.0-flash-lite": (0.075, 0.30),
-    "gemini-embedding-001": (0.15, 0.0),
     "gemini-1.5-pro": (
         GEMINI_15_PRO_INPUT_COST_PER_MILLION,
         GEMINI_15_PRO_OUTPUT_COST_PER_MILLION,
@@ -43,9 +47,6 @@ _EXACT_MODEL_PRICING: dict[str, tuple[float, float]] = {
         GEMINI_15_FLASH_OUTPUT_COST_PER_MILLION,
     ),
 }
-
-# Gemini 3.1 Flash-Lite Standard (text / image / video)
-_GEMINI_31_FLASH_LITE = (0.25, 1.50)
 
 DEFAULT_MODEL = default_model_for(LlmTask.CHAT_DEFAULT)
 
@@ -76,9 +77,9 @@ def _pricing_for_model(model_name: str | None) -> tuple[float, float]:
 
     # Preview / variant ids not listed exactly above
     if "gemini-3" in normalized and "lite" in normalized:
-        return _GEMINI_31_FLASH_LITE
+        return _EXACT_MODEL_PRICING["gemini-3.1-flash-lite"]
     if "gemini-3" in normalized and "flash" in normalized:
-        return _EXACT_MODEL_PRICING["gemini-3-flash-preview"]
+        return _EXACT_MODEL_PRICING["gemini-3.5-flash"]
     if "2.5" in normalized and "flash-lite" in normalized:
         return _EXACT_MODEL_PRICING["gemini-2.5-flash-lite"]
     if "2.5" in normalized and "flash" in normalized:
@@ -92,9 +93,9 @@ def _pricing_for_model(model_name: str | None) -> tuple[float, float]:
     if "1.5" in normalized and "pro" in normalized:
         return _EXACT_MODEL_PRICING["gemini-1.5-pro"]
     if "flash-lite" in normalized:
-        return _EXACT_MODEL_PRICING["gemini-2.5-flash-lite"]
+        return _EXACT_MODEL_PRICING["gemini-3.1-flash-lite"]
     if "flash" in normalized:
-        return _EXACT_MODEL_PRICING["gemini-2.5-flash"]
+        return _EXACT_MODEL_PRICING["gemini-3.5-flash"]
 
     # Non-flash / unknown: use Pro-tier legacy as upper-bound-ish default
     return (
@@ -114,7 +115,7 @@ def calculate_ai_cost(
     Args:
         input_tokens: Number of input tokens
         output_tokens: Number of output tokens
-        model_name: Model id (e.g. gemini-2.5-flash, gemini-3-flash-preview)
+        model_name: Model id (e.g. gemini-3.5-flash, gemini-3.1-flash-lite)
 
     Returns:
         Cost in USD

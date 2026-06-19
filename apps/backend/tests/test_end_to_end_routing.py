@@ -137,9 +137,9 @@ def feature_flags():
     return FeatureFlagService(
         enabled_providers="gemini,openai,anthropic",
         tier_allowlists={
-            "free": "gemini:gemini-2.5-flash,gemini:gemini-2.0-flash-lite",
+            "free": "gemini:gemini-3.5-flash,gemini:gemini-3.1-flash-lite",
             "plus": (
-                "gemini:gemini-2.5-flash,openai:gpt-4o-mini,"
+                "gemini:gemini-3.5-flash,openai:gpt-4o-mini,"
                 "openai:gpt-4o,anthropic:claude-sonnet-4-20250514"
             ),
         },
@@ -162,7 +162,7 @@ def mock_cost_tracker():
 
 @pytest.fixture
 def gemini_adapter():
-    return MockChatAdapter("gemini", "gemini-2.5-flash", "Gemini response")
+    return MockChatAdapter("gemini", "gemini-3.5-flash", "Gemini response")
 
 
 @pytest.fixture
@@ -192,8 +192,8 @@ class TestSuccessfulRouting:
             feature_flags=feature_flags,
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
-            adapter_registry={"gemini:gemini-2.5-flash": gemini_adapter},
-            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-2.5-flash")]},
+            adapter_registry={"gemini:gemini-3.5-flash": gemini_adapter},
+            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-3.5-flash")]},
             timeout_seconds=10.0,
         )
 
@@ -219,8 +219,8 @@ class TestSuccessfulRouting:
             feature_flags=feature_flags,
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
-            adapter_registry={"gemini:gemini-2.5-flash": gemini_adapter},
-            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-2.5-flash")]},
+            adapter_registry={"gemini:gemini-3.5-flash": gemini_adapter},
+            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-3.5-flash")]},
             timeout_seconds=10.0,
         )
 
@@ -235,7 +235,7 @@ class TestSuccessfulRouting:
 
         mock_cost_tracker.record.assert_called_once_with(
             provider="gemini",
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             input_tokens=100,
             output_tokens=50,
             user_id="user-1",
@@ -252,12 +252,12 @@ class TestSuccessfulRouting:
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": gemini_adapter,
+                "gemini:gemini-3.5-flash": gemini_adapter,
                 "openai:gpt-4o-mini": openai_adapter,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -291,19 +291,19 @@ class TestFallbackBehavior:
         self, feature_flags, circuit_breaker, mock_cost_tracker, openai_adapter
     ):
         """Router falls back to next candidate on retriable failure."""
-        failing_gemini = MockFailingAdapter("gemini", "gemini-2.5-flash")
+        failing_gemini = MockFailingAdapter("gemini", "gemini-3.5-flash")
 
         router = LLMRouter(
             feature_flags=feature_flags,
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": failing_gemini,
+                "gemini:gemini-3.5-flash": failing_gemini,
                 "openai:gpt-4o-mini": openai_adapter,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -328,19 +328,19 @@ class TestFallbackBehavior:
         self, feature_flags, circuit_breaker, mock_cost_tracker, openai_adapter
     ):
         """Non-retriable errors propagate without trying fallback."""
-        auth_failure = MockNonRetriableAdapter("gemini", "gemini-2.5-flash")
+        auth_failure = MockNonRetriableAdapter("gemini", "gemini-3.5-flash")
 
         router = LLMRouter(
             feature_flags=feature_flags,
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": auth_failure,
+                "gemini:gemini-3.5-flash": auth_failure,
                 "openai:gpt-4o-mini": openai_adapter,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -366,7 +366,7 @@ class TestFallbackBehavior:
         self, feature_flags, circuit_breaker, mock_cost_tracker
     ):
         """When all candidates fail, raises overloaded error."""
-        failing_gemini = MockFailingAdapter("gemini", "gemini-2.5-flash")
+        failing_gemini = MockFailingAdapter("gemini", "gemini-3.5-flash")
         failing_openai = MockFailingAdapter("openai", "gpt-4o-mini")
 
         router = LLMRouter(
@@ -374,12 +374,12 @@ class TestFallbackBehavior:
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": failing_gemini,
+                "gemini:gemini-3.5-flash": failing_gemini,
                 "openai:gpt-4o-mini": failing_openai,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -404,19 +404,19 @@ class TestFallbackBehavior:
         self, feature_flags, circuit_breaker, mock_cost_tracker, openai_adapter
     ):
         """Circuit breaker records failure when adapter returns retriable error."""
-        failing_gemini = MockFailingAdapter("gemini", "gemini-2.5-flash")
+        failing_gemini = MockFailingAdapter("gemini", "gemini-3.5-flash")
 
         router = LLMRouter(
             feature_flags=feature_flags,
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": failing_gemini,
+                "gemini:gemini-3.5-flash": failing_gemini,
                 "openai:gpt-4o-mini": openai_adapter,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -437,7 +437,7 @@ class TestFallbackBehavior:
 
         # Not enough failures to trip (threshold=3), but failure is recorded
         assert (
-            circuit_breaker._failures_in_window(circuit_breaker._key("gemini", "gemini-2.5-flash"))
+            circuit_breaker._failures_in_window(circuit_breaker._key("gemini", "gemini-3.5-flash"))
             == 1
         )
 
@@ -487,12 +487,12 @@ class TestTierAccessControl:
             circuit_breaker=circuit_breaker,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": gemini_adapter,
+                "gemini:gemini-3.5-flash": gemini_adapter,
                 "openai:gpt-4o-mini": openai_adapter,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -531,8 +531,8 @@ class TestCircuitBreakerIntegration:
         cb = CircuitBreaker(failure_threshold=2, cooldown_seconds=300.0)
 
         # Trip the circuit breaker for Gemini
-        cb.record_failure("gemini", "gemini-2.5-flash")
-        cb.record_failure("gemini", "gemini-2.5-flash")
+        cb.record_failure("gemini", "gemini-3.5-flash")
+        cb.record_failure("gemini", "gemini-3.5-flash")
         # Now Gemini circuit is OPEN
 
         router = LLMRouter(
@@ -540,12 +540,12 @@ class TestCircuitBreakerIntegration:
             circuit_breaker=cb,
             cost_tracker=mock_cost_tracker,
             adapter_registry={
-                "gemini:gemini-2.5-flash": gemini_adapter,
+                "gemini:gemini-3.5-flash": gemini_adapter,
                 "openai:gpt-4o-mini": openai_adapter,
             },
             fallback_chains={
                 LlmTask.CHAT_DEFAULT: [
-                    ("gemini", "gemini-2.5-flash"),
+                    ("gemini", "gemini-3.5-flash"),
                     ("openai", "gpt-4o-mini"),
                 ]
             },
@@ -587,8 +587,8 @@ class TestCostTrackingResilience:
             feature_flags=feature_flags,
             circuit_breaker=circuit_breaker,
             cost_tracker=failing_tracker,
-            adapter_registry={"gemini:gemini-2.5-flash": gemini_adapter},
-            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-2.5-flash")]},
+            adapter_registry={"gemini:gemini-3.5-flash": gemini_adapter},
+            fallback_chains={LlmTask.CHAT_DEFAULT: [("gemini", "gemini-3.5-flash")]},
             timeout_seconds=10.0,
         )
 
