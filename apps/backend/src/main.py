@@ -255,10 +255,13 @@ async def lifespan(app: FastAPI):
     logger.info("Database connection initialized")
 
     # Seed LLM system config defaults (no-op if already seeded)
-    from src.services import system_config_service
+    try:
+        from src.services import system_config_service
 
-    await system_config_service.seed_llm_defaults()
-    logger.info("System config defaults seeded")
+        await system_config_service.seed_llm_defaults()
+        logger.info("System config defaults seeded")
+    except Exception as e:
+        logger.warning("Failed to seed system config defaults (non-fatal): %s", e)
 
     # Connect to cache
     await cache.connect()
