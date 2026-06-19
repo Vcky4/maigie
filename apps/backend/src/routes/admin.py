@@ -2542,6 +2542,117 @@ async def get_users_at_risk_endpoint(
     }
 
 
+@router.get("/analytics/reengagement", response_model=dict)
+async def get_reengagement_analytics(
+    admin_user: SuperAdminUser,
+    db: DBDep,
+    days: int = Query(30, ge=7, le=90, description="Look-back period in days"),
+):
+    """
+    Get re-engagement analytics — shows what automated wake/nudge actions happened,
+    how effective they were, and which users came back.
+
+    Only accessible by admin users.
+    """
+    now = datetime.now(UTC)
+    start_date = now - timedelta(days=days)
+
+    # Get all nudge/wake actions in the period
+    all_nudges = await db.aiagenttask.find_many(
+        where={
+            "createdAt": {"gte": start_date},
+            "taskType": {"in": [
+                "reengagement", "deep_wake", "study_gap",
+                "goal_nudge", "review_reminder",
+            ]},
+        },
+        include={"user": True},
+        order={"createdAt": "desc"},
+    )
+
+    # Summary by type
+    by_type: dict = {}
+    for nudge in all_nudges:
+        t = nudge.taskType
+        if t not in by_type:
+            by_type[t] = {"sent": 0, "actedOn": 0, "dismissed": 0, "pending": 0}
+        by_type[t]["sent"] += 1
+        if nudge.status == "acted_on":
+            by_type[t]["actedOn"] += 1
+        elif nudge.status == "dismissed":
+            by_type[t]["dismissed"] += 1
+        elif nudge.status == "pending":
+            by_type[t]["pending"] += 1
+
+    # Calculate effectiveness rates
+    for t, counts in by_type.items():
+        total = counts["sent"]
+        counts["effectivenessRate"] = round(
+            counts["actedOn"] / total * 100, 1
+        ) if total > 0 else 0
+
+    # Total summary
+    total_sent = sum(c["sent"] for c in by_type.values())
+    total_acted = sum(c["actedOn"] for c in by_type.values())
+    overall_rate = round(total_acted / total_sent * 100, 1) if total_sent > 0 else 0
+
+    # Daily breakdown for chart
+    daily_data = []
+    for i in range(min(days, 30) - 1, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+        day_end = day_start + timedelta(days=1)
+        day_nudges = [n for n in all_nudges if day_start <= n.createdAt < day_end]
+        day_acted = [n for n in day_nudges if n.status == "acted_on"]
+        daily_data.append({
+            "date": day.strftime("%b %d"),
+            "sent": len(day_nudges),
+            "actedOn": len(day_acted),
+        })
+
+    # Recent activity log (last 50 actions)
+    recent_log = []
+    for nudge in all_nudges[:50]:
+        recent_log.append({
+            "id": nudge.id,
+            "type": nudge.taskType,
+            "status": nudge.status,
+            "title": nudge.title,
+            "message": nudge.message[:100] if nudge.message else "",
+            "userId": nudge.userId,
+            "userName": nudge.user.name if nudge.user else None,
+            "userEmail": nudge.user.email if nudge.user else None,
+            "createdAt": nudge.createdAt.isoformat(),
+            "automated": nudge.actionData.get("automated", False) if isinstance(nudge.actionData, dict) else False,
+        })
+
+    # Users who came back after being nudged (activity within 48h of nudge)
+    comeback_count = 0
+    for nudge in all_nudges:
+        if not nudge.user:
+            continue
+        nudge_time = nudge.createdAt
+        comeback_window = nudge_time + timedelta(hours=48)
+        if nudge.user.updatedAt and nudge_time < nudge.user.updatedAt <= comeback_window:
+            comeback_count += 1
+
+    comeback_rate = round(comeback_count / total_sent * 100, 1) if total_sent > 0 else 0
+
+    return {
+        "period": days,
+        "summary": {
+            "totalSent": total_sent,
+            "totalActedOn": total_acted,
+            "overallEffectiveness": overall_rate,
+            "comebackCount": comeback_count,
+            "comebackRate": comeback_rate,
+        },
+        "byType": by_type,
+        "dailyData": daily_data,
+        "recentLog": recent_log,
+    }
+
+
 @router.get("/analytics/growth", response_model=dict)
 async def get_growth_analytics(
     admin_user: SuperAdminUser,
