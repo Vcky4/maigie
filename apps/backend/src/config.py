@@ -226,6 +226,15 @@ class Settings(BaseSettings):
     # Use when the custom CDN hostname has TLS issues but Bunny's default pull zone is valid.
     BUNNY_PUBLIC_URL_BASE: str | None = None
 
+    # --- Auto Blog Pipeline ---
+    BLOG_AUTOPILOT_ENABLED: bool = True
+    BLOG_GOOGLE_DRIVE_FOLDER_ID: str = ""  # Folder containing cover images
+    BLOG_GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: str = ""  # Service account JSON for Drive API
+    BLOG_GITHUB_TOKEN: str = ""  # PAT with repo write access to maigie-public
+    BLOG_GITHUB_REPO: str = "Maigie-Ltd/maigie-public"
+    BLOG_DEFAULT_AUTHOR_NAME: str = "Maigie Team"
+    BLOG_DEFAULT_AUTHOR_ROLE: str = "Learning Science"
+
     # --- Pinecone (Vector Database for RAG) ---
     PINECONE_API_KEY: str | None = None
     PINECONE_INDEX_NAME: str = "maigie"

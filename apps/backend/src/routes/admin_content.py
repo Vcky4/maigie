@@ -5,7 +5,8 @@ Admin CMS: blog posts and job postings (super admins + content managers).
 import logging
 import re
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from pydantic import BaseModel
 
 from src.dependencies import DBDep, StaffAdminUser
 from src.models.cms import (
@@ -326,3 +327,228 @@ async def admin_delete_job(
         details={"slug": row.slug},
         db_client=db,
     )
+
+
+# ==========================================
+#  CONTENT CALENDAR (Blog Autopilot)
+# ==========================================
+
+
+class ContentCalendarCreate(BaseModel):
+    topic: str
+    keywords: list[str] = []
+    category: str = "Study Tips"
+    scheduledDate: str  # ISO date string YYYY-MM-DD
+    autoPublish: bool = True
+    notes: str | None = None
+
+
+class ContentCalendarUpdate(BaseModel):
+    topic: str | None = None
+    keywords: list[str] | None = None
+    category: str | None = None
+    scheduledDate: str | None = None
+    autoPublish: bool | None = None
+    notes: str | None = None
+    status: str | None = None
+
+
+class ContentCalendarResponse(BaseModel):
+    id: str
+    topic: str
+    keywords: list[str]
+    category: str
+    scheduledDate: str
+    status: str
+    blogPostId: str | None
+    coverImageUrl: str | None
+    notes: str | None
+    autoPublish: bool
+    errorMessage: str | None
+    createdAt: str
+    updatedAt: str
+
+
+@router.get("/calendar", response_model=list[ContentCalendarResponse])
+async def list_content_calendar(
+    _admin: StaffAdminUser,
+    db: DBDep,
+):
+    """List all content calendar entries."""
+    entries = await db.contentcalendarentry.find_many(order={"scheduledDate": "desc"})
+    return [
+        ContentCalendarResponse(
+            id=e.id,
+            topic=e.topic,
+            keywords=e.keywords or [],
+            category=e.category or "Study Tips",
+            scheduledDate=e.scheduledDate.isoformat(),
+            status=e.status,
+            blogPostId=e.blogPostId,
+            coverImageUrl=e.coverImageUrl,
+            notes=e.notes,
+            autoPublish=e.autoPublish,
+            errorMessage=e.errorMessage,
+            createdAt=e.createdAt.isoformat(),
+            updatedAt=e.updatedAt.isoformat(),
+        )
+        for e in entries
+    ]
+
+
+@router.post(
+    "/calendar", response_model=ContentCalendarResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_content_calendar_entry(
+    body: ContentCalendarCreate,
+    _admin: StaffAdminUser,
+    db: DBDep,
+):
+    """Create a new content calendar entry."""
+    from datetime import datetime, UTC
+
+    scheduled = datetime.fromisoformat(body.scheduledDate).replace(tzinfo=UTC)
+
+    entry = await db.contentcalendarentry.create(
+        data={
+            "topic": body.topic,
+            "keywords": body.keywords,
+            "category": body.category,
+            "scheduledDate": scheduled,
+            "autoPublish": body.autoPublish,
+            "notes": body.notes,
+        }
+    )
+
+    return ContentCalendarResponse(
+        id=entry.id,
+        topic=entry.topic,
+        keywords=entry.keywords or [],
+        category=entry.category or "Study Tips",
+        scheduledDate=entry.scheduledDate.isoformat(),
+        status=entry.status,
+        blogPostId=entry.blogPostId,
+        coverImageUrl=entry.coverImageUrl,
+        notes=entry.notes,
+        autoPublish=entry.autoPublish,
+        errorMessage=entry.errorMessage,
+        createdAt=entry.createdAt.isoformat(),
+        updatedAt=entry.updatedAt.isoformat(),
+    )
+
+
+@router.patch("/calendar/{entry_id}", response_model=ContentCalendarResponse)
+async def update_content_calendar_entry(
+    entry_id: str,
+    body: ContentCalendarUpdate,
+    _admin: StaffAdminUser,
+    db: DBDep,
+):
+    """Update a content calendar entry."""
+    from datetime import datetime, UTC
+
+    existing = await db.contentcalendarentry.find_unique(where={"id": entry_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Calendar entry not found")
+
+    update_data: dict = {}
+    if body.topic is not None:
+        update_data["topic"] = body.topic
+    if body.keywords is not None:
+        update_data["keywords"] = body.keywords
+    if body.category is not None:
+        update_data["category"] = body.category
+    if body.scheduledDate is not None:
+        update_data["scheduledDate"] = datetime.fromisoformat(body.scheduledDate).replace(
+            tzinfo=UTC
+        )
+    if body.autoPublish is not None:
+        update_data["autoPublish"] = body.autoPublish
+    if body.notes is not None:
+        update_data["notes"] = body.notes
+    if body.status is not None:
+        update_data["status"] = body.status
+
+    entry = await db.contentcalendarentry.update(where={"id": entry_id}, data=update_data)
+
+    return ContentCalendarResponse(
+        id=entry.id,
+        topic=entry.topic,
+        keywords=entry.keywords or [],
+        category=entry.category or "Study Tips",
+        scheduledDate=entry.scheduledDate.isoformat(),
+        status=entry.status,
+        blogPostId=entry.blogPostId,
+        coverImageUrl=entry.coverImageUrl,
+        notes=entry.notes,
+        autoPublish=entry.autoPublish,
+        errorMessage=entry.errorMessage,
+        createdAt=entry.createdAt.isoformat(),
+        updatedAt=entry.updatedAt.isoformat(),
+    )
+
+
+@router.delete("/calendar/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_content_calendar_entry(
+    entry_id: str,
+    _admin: StaffAdminUser,
+    db: DBDep,
+):
+    """Delete a content calendar entry."""
+    existing = await db.contentcalendarentry.find_unique(where={"id": entry_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Calendar entry not found")
+    await db.contentcalendarentry.delete(where={"id": entry_id})
+
+
+@router.post("/calendar/{entry_id}/cover-image", response_model=dict)
+async def upload_calendar_cover_image(
+    entry_id: str,
+    _admin: StaffAdminUser,
+    db: DBDep,
+    file: UploadFile = File(...),
+):
+    """Upload a cover image for a calendar entry. Uploads to Bunny CDN."""
+    from src.services.storage_service import storage_service
+
+    existing = await db.contentcalendarentry.find_unique(where={"id": entry_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Calendar entry not found")
+
+    # Upload to Bunny under blog-image/ path
+    result = await storage_service.upload_file(file, path="blog-image")
+
+    # Update entry with the CDN URL
+    await db.contentcalendarentry.update(
+        where={"id": entry_id},
+        data={"coverImageUrl": result["url"]},
+    )
+
+    return {"url": result["url"], "filename": result["filename"]}
+
+
+@router.post("/calendar/{entry_id}/generate", response_model=dict)
+async def trigger_calendar_entry_generation(
+    entry_id: str,
+    _admin: StaffAdminUser,
+    db: DBDep,
+):
+    """Manually trigger blog generation for a calendar entry (doesn't wait for schedule)."""
+    from src.services.blog_autopilot_service import process_calendar_entry
+
+    existing = await db.contentcalendarentry.find_unique(where={"id": entry_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Calendar entry not found")
+
+    if existing.status == "published":
+        raise HTTPException(status_code=400, detail="Entry already published")
+
+    # Reset status if it was failed
+    if existing.status == "failed":
+        await db.contentcalendarentry.update(
+            where={"id": entry_id},
+            data={"status": "scheduled", "errorMessage": None},
+        )
+
+    result = await process_calendar_entry(entry_id)
+    return result
