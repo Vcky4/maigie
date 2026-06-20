@@ -661,7 +661,17 @@ async def _deep_wake_impl():
 
     now = datetime.now(UTC)
     seven_days_ago = now - timedelta(days=7)
-    thirty_days_ago = now - timedelta(days=30)
+
+    # Read configurable max inactive days from SystemConfig (admin-adjustable)
+    try:
+        from src.services import system_config_service
+
+        max_days_str = await system_config_service.get_config("retention.deep_wake_max_days", "30")
+        max_inactive_days = int(max_days_str)
+    except Exception:
+        max_inactive_days = 30
+
+    max_days_ago = now - timedelta(days=max_inactive_days)
 
     try:
         # Find users inactive 7-30 days who are onboarded and have some history
@@ -670,7 +680,7 @@ async def _deep_wake_impl():
                 "isActive": True,
                 "isOnboarded": True,
                 "role": "USER",
-                "updatedAt": {"lt": seven_days_ago, "gt": thirty_days_ago},
+                "updatedAt": {"lt": seven_days_ago, "gt": max_days_ago},
                 # Must have engaged at least once (have chat messages)
                 "chatMessages": {"some": {}},
             },
