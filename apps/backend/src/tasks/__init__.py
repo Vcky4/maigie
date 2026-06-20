@@ -59,12 +59,6 @@ from .utils import (
     purge_queue,
 )
 
-# Import examples to register them (optional - remove if not needed)
-try:
-    from . import examples  # noqa: F401
-except ImportError:
-    pass  # Examples may not be available in all environments
-
 __all__ = [
     # Base task
     "BaseTask",
