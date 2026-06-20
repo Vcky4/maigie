@@ -123,6 +123,7 @@ celery_app = create_celery_app()
 # task modules here to make them discoverable without requiring autodiscovery.
 try:
     from ..tasks import (
+        agent_tasks,  # noqa: F401
         course_generation,  # noqa: F401
         email_notifications,  # noqa: F401
         exam_prep_tasks,  # noqa: F401
