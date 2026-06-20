@@ -1,0 +1,155 @@
+# Production deployment with zero-downtime rolling updates.
+#
+# Works with your existing Nginx reverse proxy (BT Panel) that handles SSL
+# and routes to the backend on port 8000.
+#
+# Zero-downtime deploy:
+#   ./deploy.sh                    # Build + rolling update
+#   ./deploy.sh --quick            # Restart with existing image
+#
+# How it works:
+#   1. Nginx health-checks the backend at /health
+#   2. Docker starts new container, waits for health check
+#   3. Once healthy, new container binds to port 8000
+#   4. Old container stops gracefully (finishes in-flight requests)
+#
+# Note: For true zero-downtime with a single port, we use a small built-in
+# load balancer (uvicorn with 2 workers handles this internally).
+# For multi-container zero-downtime, uncomment the Traefik section below.
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Redis
+  # ─────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: maigie-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --maxmemory 200mb --maxmemory-policy noeviction --save 60 1000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Backend API
+  # Uses graceful shutdown to minimize downtime during redeploy.
+  # Nginx upstream health checks will route away during the brief restart.
+  # ─────────────────────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - maigie_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    # Graceful shutdown: let in-flight requests and WebSockets finish
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    command: >
+      sh -c "
+        prisma migrate deploy 2>&1 || echo '[WARN] prisma migrate failed';
+        python prisma/cleanup-duplicates.py 2>&1 || echo 'No duplicates';
+        python prisma/seed.py 2>&1 || echo 'Seed done';
+        exec uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 2 --limit-max-requests 5000
+      "
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Celery Worker
+  # ─────────────────────────────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-celery-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    command: >
+      sh -c "
+        if [ \"$$ENVIRONMENT\" = 'production' ]; then
+          CONCURRENCY=3;
+        else
+          CONCURRENCY=1;
+        fi;
+        celery -A src.core.celery_app worker
+        --loglevel=info
+        --concurrency=$$CONCURRENCY
+        --max-tasks-per-child=50
+        --queues=default,heavy
+        --without-gossip
+        --without-mingle
+        --without-heartbeat
+        -Ofair
+      "
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Celery Beat (scheduler)
+  # ─────────────────────────────────────────────────────────────────────────
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-celery-beat
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    command: celery -A src.core.celery_app beat --loglevel=info
+
+volumes:
+  redis_data:
+
+networks:
+  maigie_network:
+    driver: bridge

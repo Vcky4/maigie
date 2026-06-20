@@ -1039,16 +1039,25 @@ jobs:
                 driver: bridge
             EOF
 
-            # Stop existing containers
-            docker-compose down || true
-            echo "✓ Old containers stopped"
+            # Graceful deploy: restart containers without full down (minimizes downtime)
+            # The new image is already loaded, just recreate the containers
+            docker-compose up -d --force-recreate 2>&1 | tail -10
+            echo "✓ Containers recreated with new image"
 
-            # Deploy (no build needed, using pre-loaded image)
-            docker-compose up -d 2>&1 | tail -5
-            echo "✓ Containers started"
+            # Wait for health check to pass
+            echo "Waiting for backend to become healthy..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✓ Backend is healthy!"
+                break
+              fi
+              if [ $i -eq 12 ]; then
+                echo "⚠ Health check not passing after 60s, checking logs..."
+                docker-compose logs --tail=20 backend
+              fi
+              sleep 5
+            done
 
-            # Brief wait then confirm containers are running
-            sleep 5
             echo "Container status:"
             docker-compose ps
             echo "Production deployment complete!"
@@ -1448,17 +1457,19 @@ jobs:
                 driver: bridge
             EOF
 
-            # Stop existing containers (preserve volumes - don't lose Redis data)
-            docker-compose down || true
-            echo "✓ Old containers stopped"
+            # Graceful deploy: recreate containers with new image (minimizes downtime)
+            docker-compose up -d --force-recreate 2>&1 | tail -10
+            echo "✓ Containers recreated with new image"
 
-            # Deploy (no build needed, using pre-loaded image)
-            # Use --detach and print progress to keep SSH alive
-            docker-compose up -d 2>&1 | tail -5
-            echo "✓ Containers started"
-
-            # Brief wait then confirm containers are running (don't wait for full health)
-            sleep 5
+            # Wait for health check
+            echo "Waiting for backend to become healthy..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+                echo "✓ Backend is healthy!"
+                break
+              fi
+              sleep 5
+            done
             echo "Container status:"
             docker-compose ps
             echo "Staging deployment complete!"
