@@ -1543,6 +1543,7 @@ class BulkScheduleRegenRequest(BaseModel):
 async def bulk_regenerate_schedules(
     body: BulkScheduleRegenRequest,
     admin_user: SuperAdminUser,
+    db: DBDep,
 ):
     """
     Regenerate study schedules for users with active courses.
