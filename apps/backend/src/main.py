@@ -48,6 +48,7 @@ from .routes.admin_career_applications import router as admin_career_application
 from .routes.admin_content import router as admin_content_router
 from .routes.admin_finance import router as admin_finance_router
 from .routes.admin_llm_config import router as admin_llm_config_router
+from .routes.admin_health import router as admin_health_router
 from .routes.admin_staff import router as admin_staff_router
 from .routes.ai import router as ai_router
 from .routes.analytics import router as analytics_router
@@ -448,6 +449,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_content_router)
     app.include_router(admin_finance_router)
     app.include_router(admin_llm_config_router)
+    app.include_router(admin_health_router)
     app.include_router(admin_staff_router)
 
     app.include_router(ai_router)
