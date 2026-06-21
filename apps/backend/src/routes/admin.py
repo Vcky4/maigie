@@ -2060,7 +2060,7 @@ async def sync_subscription(
 
 @router.get("/courses", response_model=dict)
 async def list_all_courses(
-    admin_user: SuperAdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -2145,13 +2145,13 @@ async def list_all_courses(
 @router.get("/courses/{course_id}", response_model=dict)
 async def get_course_details(
     course_id: str,
-    admin_user: SuperAdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
 ):
     """
     Get detailed course information (admin view).
 
-    Only accessible by admin users.
+    Accessible by all admin staff (super admins and content managers).
     """
     course = await db.course.find_unique(
         where={"id": course_id},
