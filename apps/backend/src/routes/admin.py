@@ -1681,7 +1681,7 @@ async def update_deep_wake_config(
 @router.post("/bulk-email", response_model=BulkEmailResponse)
 async def send_bulk_emails(
     email_data: BulkEmailRequest,
-    admin_user: SuperAdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
 ):
     """
@@ -2441,7 +2441,7 @@ async def get_chat_statistics(
 
 @router.get("/referrals", response_model=dict)
 async def list_referrals(
-    admin_user: SuperAdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
     page: int = Query(1, ge=1, description="Page number"),
     pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
@@ -2502,7 +2502,7 @@ async def list_referrals(
 
 @router.get("/referrals/stats", response_model=dict)
 async def get_referral_statistics(
-    admin_user: SuperAdminUser,
+    admin_user: StaffAdminUser,
     db: DBDep,
 ):
     """
