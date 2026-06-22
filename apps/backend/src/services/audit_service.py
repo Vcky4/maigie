@@ -16,7 +16,7 @@ import logging
 from datetime import UTC, datetime, timezone
 from typing import Optional
 
-from prisma import Prisma
+from prisma import Json, Prisma
 
 from ..core.database import db
 
@@ -48,16 +48,21 @@ async def log_admin_action(
     try:
         # Store in database for production audit trail
         timestamp = datetime.now(UTC)
-        await db_client.auditlog.create(
-            data={
-                "adminUserId": admin_user_id,
-                "actionType": action,
-                "resourceType": resource_type,
-                "resourceId": resource_id,
-                "details": details,
-                "timestamp": timestamp,
-            }
-        )
+
+        # Build data dict; Prisma Python requires Json() wrapper for Json? fields
+        data: dict = {
+            "actionType": action,
+            "resourceType": resource_type,
+            "resourceId": resource_id,
+            "timestamp": timestamp,
+            "adminUser": {"connect": {"id": admin_user_id}},
+        }
+
+        # Prisma Python Json? fields need explicit Json() wrapper
+        if details is not None:
+            data["details"] = Json(details)
+
+        await db_client.auditlog.create(data=data)
 
         # Also log to application logs for immediate visibility
         log_message = (
