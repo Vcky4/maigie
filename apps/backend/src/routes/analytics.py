@@ -118,6 +118,14 @@ async def start_study_session(
             }
         )
 
+        # Track activity (streak + lastSeenAt)
+        try:
+            from src.services.activity_tracker import record_activity
+
+            await record_activity(current_user.id)
+        except Exception:
+            pass  # Non-blocking
+
         logger.info(f"Created new study session: {session.id}")
 
         return {

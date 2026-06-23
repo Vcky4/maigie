@@ -385,8 +385,14 @@ model User {
   // Gamification
   // points Int @default(0) // Note: using dynamic calculation for now
 
+  // Activity tracking (for retention analytics and re-engagement)
+  lastSeenAt       DateTime? // Updated on any authenticated request (throttled to every 5 min)
+  lastSeenPlatform String?   // "web", "android", "ios" — derived from User-Agent
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([lastSeenAt])
 }
 
 // ==========================================

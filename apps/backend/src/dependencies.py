@@ -7,9 +7,11 @@ Licensed under the Business Source License 1.1 (BUSL-1.1).
 See LICENSE file in the repository root for details.
 """
 
+import logging
+import time
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer  # <--- CHANGED
 from jose import JWTError
 
@@ -20,6 +22,8 @@ from .config import Settings, get_settings
 from .core.database import db
 from .core.security import decode_access_token
 from .models.auth import TokenData
+
+logger = logging.getLogger(__name__)
 
 # Common dependencies
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -46,12 +50,53 @@ DBDep = Annotated[Prisma, Depends(get_db)]
 security = HTTPBearer()
 
 
+# In-memory throttle for lastSeenAt updates (per user_id -> last_update_time)
+_last_seen_cache: dict[str, float] = {}
+_LAST_SEEN_THROTTLE_SECONDS = 300  # Only update DB every 5 minutes per user
+
+
+def _detect_platform(request: Request) -> str:
+    """Detect platform from User-Agent header."""
+    ua = (request.headers.get("user-agent") or "").lower()
+    if "android" in ua or "okhttp" in ua:
+        return "android"
+    if "iphone" in ua or "ipad" in ua or "ios" in ua or "darwin" in ua:
+        return "ios"
+    return "web"
+
+
+async def _update_last_seen(user_id: str, platform: str) -> None:
+    """Update lastSeenAt and platform, throttled to avoid DB spam."""
+    now = time.time()
+    last_update = _last_seen_cache.get(user_id, 0)
+
+    if now - last_update < _LAST_SEEN_THROTTLE_SECONDS:
+        return  # Skip, updated recently
+
+    _last_seen_cache[user_id] = now
+
+    try:
+        from datetime import UTC, datetime
+
+        await db.user.update(
+            where={"id": user_id},
+            data={
+                "lastSeenAt": datetime.now(UTC),
+                "lastSeenPlatform": platform,
+            },
+        )
+    except Exception:
+        pass  # Non-blocking, never fail a request for this
+
+
 async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    request: Request,
 ) -> User:
     """
     Validate JWT and retrieve the current user from the database.
     This is the main dependency for protecting routes.
+    Also updates lastSeenAt (throttled) for activity tracking.
     """
     # Extract the token string from the Bearer object
     token = credentials.credentials
@@ -88,6 +133,14 @@ async def get_current_user(
     # Optional: Check if user is active
     if not user.isActive:
         raise HTTPException(status_code=400, detail="Inactive user")
+
+    # 4. Update lastSeenAt (fire-and-forget, throttled to every 5 min)
+    if user.role == "USER":
+        platform = _detect_platform(request)
+        # Don't await in the critical path for non-admin users
+        import asyncio
+
+        asyncio.ensure_future(_update_last_seen(user.id, platform))
 
     return user
 

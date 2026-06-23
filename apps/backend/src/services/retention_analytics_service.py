@@ -379,13 +379,16 @@ async def get_users_at_risk(limit: int = 50) -> list[dict[str, Any]]:
 
     # Find users who were active but dropped off
     # "Active" = sent at least one chat message ever
-    # "At risk" = no activity in last 3-14 days
+    # "At risk" = no meaningful activity in last 3-14 days
     at_risk_users = await db.user.find_many(
         where={
             "role": "USER",
             "isActive": True,
             "isOnboarded": True,
-            "updatedAt": {"lt": three_days_ago, "gt": fourteen_days_ago},
+            "OR": [
+                {"lastSeenAt": {"lt": three_days_ago, "gt": fourteen_days_ago}},
+                {"lastSeenAt": None, "updatedAt": {"lt": three_days_ago, "gt": fourteen_days_ago}},
+            ],
             # Must have at least some history
             "chatMessages": {"some": {}},
         },
@@ -399,7 +402,8 @@ async def get_users_at_risk(limit: int = 50) -> list[dict[str, Any]]:
     # Enrich with activity data
     results = []
     for user in at_risk_users:
-        days_inactive = (now - user.updatedAt).days
+        last_active = user.lastSeenAt or user.updatedAt
+        days_inactive = (now - last_active).days
         streak = user.userStreak
 
         results.append(
@@ -411,7 +415,7 @@ async def get_users_at_risk(limit: int = 50) -> list[dict[str, Any]]:
                 "daysInactive": days_inactive,
                 "currentStreak": streak.currentStreak if streak else 0,
                 "longestStreak": streak.longestStreak if streak else 0,
-                "lastActivity": user.updatedAt.isoformat(),
+                "lastActivity": last_active.isoformat(),
                 "signupDate": user.createdAt.isoformat(),
                 "riskLevel": _calculate_risk_level(days_inactive, str(user.tier), streak),
             }
@@ -463,45 +467,37 @@ async def compute_weekly_retention_summary() -> dict[str, Any]:
     fourteen_days_ago = now - timedelta(days=14)
     thirty_days_ago = now - timedelta(days=30)
 
-    # WAU (Weekly Active Users) - users with chat messages in last 7 days
-    wau_messages = await db.chatmessage.find_many(
+    # DAU (Daily Active Users) - users seen today (any authenticated request)
+    dau = await db.user.count(
         where={
             "role": "USER",
-            "createdAt": {"gte": seven_days_ago},
-        },
-        distinct=["userId"],
+            "lastSeenAt": {"gte": today_start},
+        }
     )
-    wau = len({m.userId for m in wau_messages if m.userId})
+
+    # WAU (Weekly Active Users) - users seen in last 7 days
+    wau = await db.user.count(
+        where={
+            "role": "USER",
+            "lastSeenAt": {"gte": seven_days_ago},
+        }
+    )
 
     # Previous week WAU for comparison
-    prev_wau_messages = await db.chatmessage.find_many(
+    prev_wau = await db.user.count(
         where={
             "role": "USER",
-            "createdAt": {"gte": fourteen_days_ago, "lt": seven_days_ago},
-        },
-        distinct=["userId"],
+            "lastSeenAt": {"gte": fourteen_days_ago, "lt": seven_days_ago},
+        }
     )
-    prev_wau = len({m.userId for m in prev_wau_messages if m.userId})
 
-    # DAU (today)
-    dau_messages = await db.chatmessage.find_many(
+    # MAU (Monthly Active Users) - users seen in last 30 days
+    mau = await db.user.count(
         where={
             "role": "USER",
-            "createdAt": {"gte": today_start},
-        },
-        distinct=["userId"],
+            "lastSeenAt": {"gte": thirty_days_ago},
+        }
     )
-    dau = len({m.userId for m in dau_messages if m.userId})
-
-    # MAU
-    mau_messages = await db.chatmessage.find_many(
-        where={
-            "role": "USER",
-            "createdAt": {"gte": thirty_days_ago},
-        },
-        distinct=["userId"],
-    )
-    mau = len({m.userId for m in mau_messages if m.userId})
 
     # Users at risk count
     three_days_ago = now - timedelta(days=3)
@@ -510,7 +506,10 @@ async def compute_weekly_retention_summary() -> dict[str, Any]:
             "role": "USER",
             "isActive": True,
             "isOnboarded": True,
-            "updatedAt": {"lt": three_days_ago, "gt": fourteen_days_ago},
+            "OR": [
+                {"lastSeenAt": {"lt": three_days_ago, "gt": fourteen_days_ago}},
+                {"lastSeenAt": None, "updatedAt": {"lt": three_days_ago, "gt": fourteen_days_ago}},
+            ],
             "chatMessages": {"some": {}},
         }
     )

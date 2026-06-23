@@ -496,13 +496,18 @@ async def _reengagement_nudge_impl():
     seven_days_ago = now - timedelta(days=7)
 
     try:
-        # Find users who haven't had a study session in 3-7 days
-        # (beyond 7 days, they've already received study_gap nudges)
+        # Find users who haven't had meaningful activity in 3-7 days.
+        # Use lastSeenAt (set on chat/study), falling back to updatedAt for legacy users.
         inactive_users = await db.user.find_many(
             where={
                 "isActive": True,
                 "isOnboarded": True,
-                "updatedAt": {"lt": three_days_ago, "gt": seven_days_ago},
+                "OR": [
+                    # Users with lastSeenAt set: use it for accuracy
+                    {"lastSeenAt": {"lt": three_days_ago, "gt": seven_days_ago}},
+                    # Legacy users without lastSeenAt: fall back to updatedAt
+                    {"lastSeenAt": None, "updatedAt": {"lt": three_days_ago, "gt": seven_days_ago}},
+                ],
             },
             include={
                 "preferences": True,
@@ -674,13 +679,17 @@ async def _deep_wake_impl():
     max_days_ago = now - timedelta(days=max_inactive_days)
 
     try:
-        # Find users inactive 7-30 days who are onboarded and have some history
+        # Find users inactive 7-N days who are onboarded and have some history.
+        # Use lastSeenAt for accuracy, falling back to updatedAt for legacy users.
         inactive_users = await db.user.find_many(
             where={
                 "isActive": True,
                 "isOnboarded": True,
                 "role": "USER",
-                "updatedAt": {"lt": seven_days_ago, "gt": max_days_ago},
+                "OR": [
+                    {"lastSeenAt": {"lt": seven_days_ago, "gt": max_days_ago}},
+                    {"lastSeenAt": None, "updatedAt": {"lt": seven_days_ago, "gt": max_days_ago}},
+                ],
                 # Must have engaged at least once (have chat messages)
                 "chatMessages": {"some": {}},
             },

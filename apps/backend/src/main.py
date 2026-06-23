@@ -264,6 +264,35 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Failed to seed system config defaults (non-fatal): %s", e)
 
+    # Backfill lastSeenAt for users who don't have it yet (one-time migration)
+    try:
+        from src.core.database import db as _db
+
+        users_without_lastseen = await _db.user.count(
+            where={"lastSeenAt": None, "role": "USER", "isOnboarded": True}
+        )
+        if users_without_lastseen > 0:
+            logger.info(
+                "Backfilling lastSeenAt for %d users (setting to 3 days ago)...",
+                users_without_lastseen,
+            )
+            # Set lastSeenAt to 3 days ago so the re-engagement task picks them up immediately
+            from datetime import datetime as _dt, timedelta, timezone
+
+            three_days_ago = _dt.now(timezone.utc) - timedelta(days=3)
+            await _db.execute_raw(
+                f"""
+                UPDATE "User"
+                SET "lastSeenAt" = '{three_days_ago.strftime("%Y-%m-%d %H:%M:%S")}'::timestamp
+                WHERE "lastSeenAt" IS NULL
+                  AND role = 'USER'
+                  AND "isOnboarded" = true
+                """
+            )
+            logger.info("lastSeenAt backfill complete (set to 3 days ago)")
+    except Exception as e:
+        logger.warning("lastSeenAt backfill failed (non-fatal): %s", e)
+
     # Connect to cache
     await cache.connect()
     logger.info("Cache connection initialized")

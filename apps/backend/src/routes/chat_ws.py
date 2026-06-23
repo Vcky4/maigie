@@ -88,6 +88,12 @@ _TOOL_SKILL_MAP: dict[str, dict[str, str]] = {
     "create_study_plan": {"id": "planning", "name": "Study Planning", "icon": "map"},
     "get_learning_insights": {"id": "planning", "name": "Learning Insights", "icon": "bar-chart"},
     "get_pending_nudges": {"id": "planning", "name": "Smart Nudges", "icon": "bell"},
+    # Document Generation
+    "generate_document": {
+        "id": "documents",
+        "name": "Document Generation",
+        "icon": "file-arrow-down",
+    },
 }
 
 _QUERY_TYPE_SKILL_MAP: dict[str, dict[str, str]] = {
@@ -552,6 +558,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                     user_message_data["replyToMessageId"] = reply_target_message.id
 
                 user_message = await db.chatmessage.create(data=user_message_data)
+
+                # Track activity (streak + lastSeenAt)
+                try:
+                    from src.services.activity_tracker import record_activity
+
+                    await record_activity(user.id)
+                except Exception:
+                    pass  # Non-blocking
 
                 # 4.1a Send confirmation to client for ID correlation
                 await manager.send_connection_json(

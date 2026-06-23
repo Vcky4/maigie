@@ -22,6 +22,7 @@ def map_action_to_component(action_type: str) -> str | None:
         "create_note": "NoteCardMessage",
         "create_schedule": "ScheduleBlockMessage",
         "recommend_resources": "ResourceListMessage",
+        "generate_document": "DocumentCardMessage",
     }
     return action_to_component.get(action_type)
 
