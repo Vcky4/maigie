@@ -224,6 +224,7 @@ class SkillRegistry:
     def _load_all_skills(self) -> None:
         """Import and register all skill modules."""
         from src.services.skills.skill_courses import register as register_courses
+        from src.services.skills.skill_documents import register as register_documents
         from src.services.skills.skill_goals import register as register_goals
         from src.services.skills.skill_memory import register as register_memory
         from src.services.skills.skill_notes import register as register_notes
@@ -240,6 +241,7 @@ class SkillRegistry:
         register_memory(self)
         register_planning(self)
         register_study_mode(self)
+        register_documents(self)
 
         logger.info(
             f"Skill registry initialized: {len(self._skills)} skills, "

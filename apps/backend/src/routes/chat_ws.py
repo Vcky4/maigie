@@ -88,6 +88,12 @@ _TOOL_SKILL_MAP: dict[str, dict[str, str]] = {
     "create_study_plan": {"id": "planning", "name": "Study Planning", "icon": "map"},
     "get_learning_insights": {"id": "planning", "name": "Learning Insights", "icon": "bar-chart"},
     "get_pending_nudges": {"id": "planning", "name": "Smart Nudges", "icon": "bell"},
+    # Document Generation
+    "generate_document": {
+        "id": "documents",
+        "name": "Document Generation",
+        "icon": "file-arrow-down",
+    },
 }
 
 _QUERY_TYPE_SKILL_MAP: dict[str, dict[str, str]] = {

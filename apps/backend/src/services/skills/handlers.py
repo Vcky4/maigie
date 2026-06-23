@@ -61,6 +61,7 @@ async def handle_tool_call(
         "update_course_outline": handle_update_course_outline,
         "delete_course": handle_delete_course,
         "save_user_fact": handle_save_user_fact,
+        "generate_document": handle_generate_document,
         # Agentic handlers
         "create_study_plan": handle_create_study_plan,
         "get_learning_insights": handle_get_learning_insights,
@@ -1259,3 +1260,56 @@ async def handle_email_user(
     except Exception as e:
         logger.error("email_user error: %s", e, exc_info=True)
         return {"status": "error", "message": f"Failed to send email: {e}"}
+
+
+# ==========================================
+#  Document Generation Handlers
+# ==========================================
+
+
+async def handle_generate_document(
+    args: dict[str, Any],
+    user_id: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Handle generate_document tool call. Generates a PDF or DOCX document."""
+    from src.services.document_generation_service import document_generation_service
+
+    doc_format = args.get("format", "pdf")
+    title = args.get("title")
+    content = args.get("content")
+    style = args.get("style", "academic")
+
+    if not title:
+        return {"status": "error", "message": "Document title is required."}
+    if not content:
+        return {"status": "error", "message": "Document content is required."}
+
+    try:
+        result = await document_generation_service.generate_document(
+            format=doc_format,
+            title=title,
+            content=content,
+            style=style,
+            user_id=user_id,
+        )
+
+        return {
+            "status": "success",
+            "action": "generate_document",
+            "_component_type": "DocumentCardMessage",
+            "message": f"Your {doc_format.upper()} document '{title}' is ready to download.",
+            "document": {
+                "title": result["title"],
+                "filename": result["filename"],
+                "url": result["url"],
+                "size": result["size"],
+                "format": result["format"],
+                "contentType": result["content_type"],
+            },
+        }
+    except ValueError as e:
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        logger.error(f"Document generation failed for user {user_id}: {e}", exc_info=True)
+        return {"status": "error", "message": f"Failed to generate document: {str(e)}"}
