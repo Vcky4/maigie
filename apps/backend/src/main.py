@@ -230,6 +230,8 @@ async def lifespan(app: FastAPI):
             logger.warning("Sentry DSN appears to be a placeholder - error tracking disabled")
         else:
             try:
+                from sentry_sdk.integrations.httpx import HttpxIntegration
+
                 sentry_sdk.init(
                     dsn=sentry_dsn,
                     environment=settings.ENVIRONMENT,
@@ -239,6 +241,7 @@ async def lifespan(app: FastAPI):
                         FastApiIntegration(transaction_style="endpoint"),
                         LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
                     ],
+                    disabled_integrations=[HttpxIntegration],
                     release=settings.APP_VERSION,
                 )
                 logger.info("Sentry error tracking initialized")

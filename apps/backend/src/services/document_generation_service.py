@@ -110,7 +110,7 @@ class DocumentGenerationService:
 
         # Title
         pdf.set_font("Helvetica", "B", s["title_size"])
-        pdf.multi_cell(0, s["title_size"] * 0.5, title)
+        pdf.multi_cell(0, s["title_size"] * 0.5, self._sanitize_for_pdf(title))
         pdf.ln(8)
 
         # Date
@@ -135,12 +135,20 @@ class DocumentGenerationService:
         lines = content.split("\n")
         in_code_block = False
         code_buffer: list[str] = []
+        table_buffer: list[str] = []
+        in_table = False
 
         for line in lines:
+            # Sanitize unicode characters unsupported by Helvetica
+            line = self._sanitize_for_pdf(line)
+
             # Code blocks
             if line.strip().startswith("```"):
+                if in_table:
+                    self._render_table_pdf(pdf, table_buffer, style)
+                    table_buffer = []
+                    in_table = False
                 if in_code_block:
-                    # End code block - render buffered code
                     self._render_code_block_pdf(pdf, "\n".join(code_buffer), style)
                     code_buffer = []
                     in_code_block = False
@@ -152,21 +160,49 @@ class DocumentGenerationService:
                 code_buffer.append(line)
                 continue
 
+            # Table detection: lines starting and containing pipes
+            is_table_line = "|" in line and line.strip().startswith("|")
+            is_separator = is_table_line and all(
+                c in "|-: " for c in line.strip().strip("|")
+            )
+
+            if is_table_line:
+                if not in_table:
+                    in_table = True
+                    table_buffer = []
+                if not is_separator:
+                    table_buffer.append(line)
+                continue
+            elif in_table:
+                # End of table
+                self._render_table_pdf(pdf, table_buffer, style)
+                table_buffer = []
+                in_table = False
+
+            # Horizontal rules
+            if line.strip() in ("---", "***", "___"):
+                pdf.ln(4)
+                y = pdf.get_y()
+                pdf.set_draw_color(200, 200, 200)
+                pdf.line(pdf.l_margin, y, 210 - pdf.r_margin, y)
+                pdf.ln(4)
+                continue
+
             # Headings
             if line.startswith("### "):
                 pdf.ln(6)
                 pdf.set_font("Helvetica", "B", style["body_size"] + 2)
-                pdf.multi_cell(0, 6, line[4:].strip())
+                pdf.multi_cell(0, 6, self._strip_markdown_inline(line[4:].strip()))
                 pdf.ln(3)
             elif line.startswith("## "):
                 pdf.ln(8)
                 pdf.set_font("Helvetica", "B", style["heading_size"] - 2)
-                pdf.multi_cell(0, 7, line[3:].strip())
+                pdf.multi_cell(0, 7, self._strip_markdown_inline(line[3:].strip()))
                 pdf.ln(4)
             elif line.startswith("# "):
                 pdf.ln(10)
                 pdf.set_font("Helvetica", "B", style["heading_size"])
-                pdf.multi_cell(0, 8, line[2:].strip())
+                pdf.multi_cell(0, 8, self._strip_markdown_inline(line[2:].strip()))
                 pdf.ln(5)
             # Bullet points
             elif line.strip().startswith("- ") or line.strip().startswith("* "):
@@ -174,7 +210,7 @@ class DocumentGenerationService:
                 indent = len(line) - len(line.lstrip())
                 bullet_text = line.strip()[2:]
                 pdf.set_x(pdf.l_margin + indent * 2 + 5)
-                pdf.cell(4, 5, "-")
+                pdf.cell(4, 5, "\xb7")  # middle dot bullet (latin-1 safe)
                 pdf.multi_cell(0, 5, f" {self._strip_markdown_inline(bullet_text)}")
                 pdf.ln(1)
             # Numbered lists
@@ -195,8 +231,92 @@ class DocumentGenerationService:
             else:
                 pdf.set_font("Helvetica", "", style["body_size"])
                 clean_text = self._strip_markdown_inline(line)
-                pdf.multi_cell(0, 5, clean_text)
-                pdf.ln(2)
+                if clean_text.strip():
+                    pdf.multi_cell(0, 5, clean_text)
+                    pdf.ln(2)
+
+        # Flush any remaining table
+        if in_table and table_buffer:
+            self._render_table_pdf(pdf, table_buffer, style)
+
+    def _render_table_pdf(self, pdf: Any, rows: list[str], style: dict) -> None:
+        """Render a markdown table as a properly formatted PDF table with grid lines."""
+        if not rows:
+            return
+
+        # Parse cells from each row
+        parsed_rows: list[list[str]] = []
+        for row in rows:
+            cells = [
+                self._strip_markdown_inline(cell.strip())
+                for cell in row.strip().strip("|").split("|")
+            ]
+            parsed_rows.append(cells)
+
+        if not parsed_rows:
+            return
+
+        # Determine column count and available width
+        num_cols = max(len(row) for row in parsed_rows)
+        available_width = 210 - pdf.l_margin - pdf.r_margin
+
+        # Calculate column widths based on content
+        col_widths = [0.0] * num_cols
+        for row in parsed_rows:
+            for i, cell in enumerate(row):
+                if i < num_cols:
+                    # Approximate character width at body_size
+                    cell_width = pdf.get_string_width(cell) + 4
+                    col_widths[i] = max(col_widths[i], cell_width)
+
+        # Scale columns to fit available width
+        total_width = sum(col_widths)
+        if total_width > available_width:
+            scale = available_width / total_width
+            col_widths = [w * scale for w in col_widths]
+        elif total_width < available_width * 0.5:
+            # If table is too narrow, distribute extra space proportionally
+            scale = min(available_width / total_width, 1.5)
+            col_widths = [w * scale for w in col_widths]
+            total_width = sum(col_widths)
+
+        line_height = 6
+        pdf.ln(4)
+
+        for row_idx, row in enumerate(parsed_rows):
+            # Check if we need a page break
+            if pdf.get_y() + line_height > 280:
+                pdf.add_page()
+
+            x_start = pdf.get_x()
+            y_start = pdf.get_y()
+
+            # Header row styling
+            if row_idx == 0:
+                pdf.set_font("Helvetica", "B", style["body_size"] - 1)
+                pdf.set_fill_color(240, 240, 245)
+                fill = True
+            else:
+                pdf.set_font("Helvetica", "", style["body_size"] - 1)
+                # Alternate row shading
+                if row_idx % 2 == 0:
+                    pdf.set_fill_color(248, 248, 252)
+                    fill = True
+                else:
+                    fill = False
+
+            # Draw cells
+            for i in range(num_cols):
+                cell_text = row[i] if i < len(row) else ""
+                w = col_widths[i] if i < len(col_widths) else 20
+                # Truncate if text is too wide for cell
+                while pdf.get_string_width(cell_text) > w - 3 and len(cell_text) > 3:
+                    cell_text = cell_text[:-4] + "..."
+                pdf.cell(w, line_height, cell_text, border=1, fill=fill)
+
+            pdf.ln(line_height)
+
+        pdf.ln(4)
 
     def _render_code_block_pdf(self, pdf: Any, code: str, style: dict) -> None:
         """Render a code block with a gray background."""
@@ -237,6 +357,35 @@ class DocumentGenerationService:
         text = re.sub(r"`(.+?)`", r"\1", text)
         # Links [text](url) -> text
         text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
+        return text
+
+    def _sanitize_for_pdf(self, text: str) -> str:
+        """Replace Unicode characters unsupported by Helvetica with ASCII equivalents."""
+        replacements = {
+            "\u2013": "-",   # en-dash
+            "\u2014": "--",  # em-dash
+            "\u2018": "'",   # left single quote
+            "\u2019": "'",   # right single quote
+            "\u201c": '"',   # left double quote
+            "\u201d": '"',   # right double quote
+            "\u2026": "...", # ellipsis
+            "\u2022": "-",   # bullet
+            "\u00b7": "-",   # middle dot
+            "\u2212": "-",   # minus sign
+            "\u00a0": " ",   # non-breaking space
+            "\u2003": " ",   # em space
+            "\u2002": " ",   # en space
+            "\u00d7": "x",   # multiplication sign
+            "\u00f7": "/",   # division sign
+            "\u2264": "<=",  # less than or equal
+            "\u2265": ">=",  # greater than or equal
+            "\u2260": "!=",  # not equal
+            "\u00b0": " deg",  # degree sign
+        }
+        for char, replacement in replacements.items():
+            text = text.replace(char, replacement)
+        # Strip any remaining non-latin1 characters
+        text = text.encode("latin-1", errors="replace").decode("latin-1")
         return text
 
     def _generate_docx(self, title: str, content: str, style: str) -> bytes:
@@ -368,14 +517,10 @@ class DocumentGenerationService:
         headers = {
             "AccessKey": storage_service.api_key,
             "Content-Type": "application/octet-stream",
-            "Content-Length": str(len(content)),
         }
 
-        # Build the request explicitly to avoid Sentry httpx integration
-        # triggering a sync/async mismatch when intercepting the request.
         async with httpx.AsyncClient(timeout=60.0) as client:
-            request = client.build_request("PUT", upload_url, headers=headers, content=content)
-            response = await client.send(request)
+            response = await client.put(upload_url, headers=headers, content=content)
             if response.status_code != 201:
                 raise RuntimeError(f"Upload failed: {response.status_code} - {response.text}")
 
