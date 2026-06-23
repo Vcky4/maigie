@@ -23,7 +23,7 @@ RUN poetry config virtualenvs.create false && poetry install --no-root --no-inte
 
 FROM python:3.12-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y libpq-dev curl libatomic1 postgresql-client && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libpq-dev curl libatomic1 postgresql-client fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .

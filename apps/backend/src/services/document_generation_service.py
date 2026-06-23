@@ -1,7 +1,7 @@
 """
 Document Generation Service.
 
-Generates downloadable documents (PDF, DOCX) from markdown content.
+Generates downloadable documents (PDF, DOCX) from HTML content.
 Used by the AI chat to export responses, research, and project work
 into formatted documents for students.
 """
@@ -28,7 +28,7 @@ MAX_CONTENT_LENGTH = 100_000
 
 
 class DocumentGenerationService:
-    """Generates PDF and DOCX documents from markdown content."""
+    """Generates PDF and DOCX documents from HTML content."""
 
     def __init__(self):
         pass
@@ -47,7 +47,7 @@ class DocumentGenerationService:
         Args:
             format: Document format ("pdf" or "docx")
             title: Document title
-            content: Markdown content to render
+            content: HTML content to render
             style: Document style ("academic", "report", "minimal")
             user_id: User ID for path namespacing
 
@@ -90,309 +90,153 @@ class DocumentGenerationService:
         }
 
     def _generate_pdf(self, title: str, content: str, style: str) -> bytes:
-        """Generate a PDF document from markdown content."""
+        """Generate a PDF from HTML content using fpdf2's write_html with Unicode support."""
         from fpdf import FPDF
-
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=20)
-        pdf.add_page()
 
         # Style configurations
         styles = {
-            "academic": {"title_size": 22, "heading_size": 16, "body_size": 11, "margin": 25},
-            "report": {"title_size": 24, "heading_size": 18, "body_size": 12, "margin": 20},
-            "minimal": {"title_size": 20, "heading_size": 14, "body_size": 11, "margin": 15},
+            "academic": {"title_size": 22, "body_size": 11, "margin": 25},
+            "report": {"title_size": 24, "body_size": 12, "margin": 20},
+            "minimal": {"title_size": 20, "body_size": 11, "margin": 15},
         }
         s = styles.get(style, styles["academic"])
 
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=20)
         pdf.set_left_margin(s["margin"])
         pdf.set_right_margin(s["margin"])
 
+        # Add DejaVu font for full Unicode support
+        # In Docker: /usr/share/fonts/truetype/dejavu/
+        # Locally: try common system paths
+        font_loaded = self._load_unicode_font(pdf)
+
+        pdf.add_page()
+
         # Title
-        pdf.set_font("Helvetica", "B", s["title_size"])
-        pdf.multi_cell(0, s["title_size"] * 0.5, self._sanitize_for_pdf(title))
-        pdf.ln(8)
+        font_name = "DejaVu" if font_loaded else "Helvetica"
+        pdf.set_font(font_name, "B", s["title_size"])
+        pdf.multi_cell(0, s["title_size"] * 0.5, title)
+        pdf.ln(4)
 
         # Date
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font(font_name, "", 9)
         pdf.set_text_color(120, 120, 120)
         pdf.cell(0, 5, f"Generated on {datetime.now(UTC).strftime('%B %d, %Y')}")
-        pdf.ln(12)
+        pdf.ln(8)
         pdf.set_text_color(0, 0, 0)
 
-        # Separator line
+        # Separator
         pdf.set_draw_color(200, 200, 200)
         pdf.line(s["margin"], pdf.get_y(), 210 - s["margin"], pdf.get_y())
-        pdf.ln(10)
+        pdf.ln(8)
 
-        # Parse and render markdown content
-        self._render_markdown_to_pdf(pdf, content, s)
+        # Set default font for HTML body
+        pdf.set_font(font_name, "", s["body_size"])
+
+        # Build the styled HTML wrapper
+        html_content = self._wrap_html_with_styles(content, s["body_size"], font_name)
+
+        # If Unicode font not available, sanitize content to ASCII-safe characters
+        if not font_loaded:
+            html_content = self._sanitize_for_latin1(html_content)
+
+        # Render HTML content
+        pdf.write_html(html_content)
 
         return pdf.output()
 
-    def _render_markdown_to_pdf(self, pdf: Any, content: str, style: dict) -> None:
-        """Parse markdown and render to PDF with formatting."""
-        lines = content.split("\n")
-        in_code_block = False
-        code_buffer: list[str] = []
-        table_buffer: list[str] = []
-        in_table = False
+    def _load_unicode_font(self, pdf: Any) -> bool:
+        """Try to load DejaVu Unicode font from system paths."""
+        import os
 
-        for line in lines:
-            # Sanitize unicode characters unsupported by Helvetica
-            line = self._sanitize_for_pdf(line)
+        # Common paths for DejaVu fonts
+        font_dirs = [
+            "/usr/share/fonts/truetype/dejavu",  # Debian/Ubuntu Docker
+            "/usr/share/fonts/dejavu",  # Some distros
+            "C:/Windows/Fonts",  # Windows (has DejaVu if installed)
+            "/System/Library/Fonts",  # macOS
+        ]
 
-            # Code blocks
-            if line.strip().startswith("```"):
-                if in_table:
-                    self._render_table_pdf(pdf, table_buffer, style)
-                    table_buffer = []
-                    in_table = False
-                if in_code_block:
-                    self._render_code_block_pdf(pdf, "\n".join(code_buffer), style)
-                    code_buffer = []
-                    in_code_block = False
-                else:
-                    in_code_block = True
-                continue
+        for font_dir in font_dirs:
+            regular = os.path.join(font_dir, "DejaVuSans.ttf")
+            bold = os.path.join(font_dir, "DejaVuSans-Bold.ttf")
+            if os.path.isfile(regular):
+                try:
+                    pdf.add_font("DejaVu", "", regular)
+                    if os.path.isfile(bold):
+                        pdf.add_font("DejaVu", "B", bold)
+                    else:
+                        pdf.add_font("DejaVu", "B", regular)
+                    italic = os.path.join(font_dir, "DejaVuSans-Oblique.ttf")
+                    if os.path.isfile(italic):
+                        pdf.add_font("DejaVu", "I", italic)
+                    return True
+                except Exception as e:
+                    logger.warning(f"Failed to load DejaVu from {font_dir}: {e}")
+                    continue
 
-            if in_code_block:
-                code_buffer.append(line)
-                continue
+        logger.warning("DejaVu fonts not found, falling back to Helvetica (limited Unicode)")
+        return False
 
-            # Table detection: lines starting and containing pipes
-            is_table_line = "|" in line and line.strip().startswith("|")
-            is_separator = is_table_line and all(
-                c in "|-: " for c in line.strip().strip("|")
-            )
-
-            if is_table_line:
-                if not in_table:
-                    in_table = True
-                    table_buffer = []
-                if not is_separator:
-                    table_buffer.append(line)
-                continue
-            elif in_table:
-                # End of table
-                self._render_table_pdf(pdf, table_buffer, style)
-                table_buffer = []
-                in_table = False
-
-            # Horizontal rules
-            if line.strip() in ("---", "***", "___"):
-                pdf.ln(4)
-                y = pdf.get_y()
-                pdf.set_draw_color(200, 200, 200)
-                pdf.line(pdf.l_margin, y, 210 - pdf.r_margin, y)
-                pdf.ln(4)
-                continue
-
-            # Headings
-            if line.startswith("### "):
-                pdf.ln(6)
-                pdf.set_font("Helvetica", "B", style["body_size"] + 2)
-                pdf.multi_cell(0, 6, self._strip_markdown_inline(line[4:].strip()))
-                pdf.ln(3)
-            elif line.startswith("## "):
-                pdf.ln(8)
-                pdf.set_font("Helvetica", "B", style["heading_size"] - 2)
-                pdf.multi_cell(0, 7, self._strip_markdown_inline(line[3:].strip()))
-                pdf.ln(4)
-            elif line.startswith("# "):
-                pdf.ln(10)
-                pdf.set_font("Helvetica", "B", style["heading_size"])
-                pdf.multi_cell(0, 8, self._strip_markdown_inline(line[2:].strip()))
-                pdf.ln(5)
-            # Bullet points
-            elif line.strip().startswith("- ") or line.strip().startswith("* "):
-                pdf.set_font("Helvetica", "", style["body_size"])
-                indent = len(line) - len(line.lstrip())
-                bullet_text = line.strip()[2:]
-                pdf.set_x(pdf.l_margin + indent * 2 + 5)
-                pdf.cell(4, 5, "\xb7")  # middle dot bullet (latin-1 safe)
-                pdf.multi_cell(0, 5, f" {self._strip_markdown_inline(bullet_text)}")
-                pdf.ln(1)
-            # Numbered lists
-            elif re.match(r"^\s*\d+\.\s", line):
-                pdf.set_font("Helvetica", "", style["body_size"])
-                match = re.match(r"^(\s*\d+\.)\s(.*)", line)
-                if match:
-                    num = match.group(1)
-                    text = match.group(2)
-                    pdf.set_x(pdf.l_margin + 5)
-                    pdf.cell(10, 5, num)
-                    pdf.multi_cell(0, 5, self._strip_markdown_inline(text))
-                    pdf.ln(1)
-            # Empty line
-            elif not line.strip():
-                pdf.ln(4)
-            # Regular paragraph
-            else:
-                pdf.set_font("Helvetica", "", style["body_size"])
-                clean_text = self._strip_markdown_inline(line)
-                if clean_text.strip():
-                    pdf.multi_cell(0, 5, clean_text)
-                    pdf.ln(2)
-
-        # Flush any remaining table
-        if in_table and table_buffer:
-            self._render_table_pdf(pdf, table_buffer, style)
-
-    def _render_table_pdf(self, pdf: Any, rows: list[str], style: dict) -> None:
-        """Render a markdown table as a properly formatted PDF table with grid lines."""
-        if not rows:
-            return
-
-        # Parse cells from each row
-        parsed_rows: list[list[str]] = []
-        for row in rows:
-            cells = [
-                self._strip_markdown_inline(cell.strip())
-                for cell in row.strip().strip("|").split("|")
-            ]
-            parsed_rows.append(cells)
-
-        if not parsed_rows:
-            return
-
-        # Determine column count and available width
-        num_cols = max(len(row) for row in parsed_rows)
-        available_width = 210 - pdf.l_margin - pdf.r_margin
-
-        # Calculate column widths based on content
-        col_widths = [0.0] * num_cols
-        for row in parsed_rows:
-            for i, cell in enumerate(row):
-                if i < num_cols:
-                    # Approximate character width at body_size
-                    cell_width = pdf.get_string_width(cell) + 4
-                    col_widths[i] = max(col_widths[i], cell_width)
-
-        # Scale columns to fit available width
-        total_width = sum(col_widths)
-        if total_width > available_width:
-            scale = available_width / total_width
-            col_widths = [w * scale for w in col_widths]
-        elif total_width < available_width * 0.5:
-            # If table is too narrow, distribute extra space proportionally
-            scale = min(available_width / total_width, 1.5)
-            col_widths = [w * scale for w in col_widths]
-            total_width = sum(col_widths)
-
-        line_height = 6
-        pdf.ln(4)
-
-        for row_idx, row in enumerate(parsed_rows):
-            # Check if we need a page break
-            if pdf.get_y() + line_height > 280:
-                pdf.add_page()
-
-            x_start = pdf.get_x()
-            y_start = pdf.get_y()
-
-            # Header row styling
-            if row_idx == 0:
-                pdf.set_font("Helvetica", "B", style["body_size"] - 1)
-                pdf.set_fill_color(240, 240, 245)
-                fill = True
-            else:
-                pdf.set_font("Helvetica", "", style["body_size"] - 1)
-                # Alternate row shading
-                if row_idx % 2 == 0:
-                    pdf.set_fill_color(248, 248, 252)
-                    fill = True
-                else:
-                    fill = False
-
-            # Draw cells
-            for i in range(num_cols):
-                cell_text = row[i] if i < len(row) else ""
-                w = col_widths[i] if i < len(col_widths) else 20
-                # Truncate if text is too wide for cell
-                while pdf.get_string_width(cell_text) > w - 3 and len(cell_text) > 3:
-                    cell_text = cell_text[:-4] + "..."
-                pdf.cell(w, line_height, cell_text, border=1, fill=fill)
-
-            pdf.ln(line_height)
-
-        pdf.ln(4)
-
-    def _render_code_block_pdf(self, pdf: Any, code: str, style: dict) -> None:
-        """Render a code block with a gray background."""
-        pdf.ln(3)
-        # Gray background
-        x = pdf.get_x()
-        y = pdf.get_y()
-        pdf.set_fill_color(245, 245, 245)
-        pdf.set_font("Courier", "", style["body_size"] - 1)
-
-        code_lines = code.split("\n")
-        line_height = 4.5
-        block_height = len(code_lines) * line_height + 8
-
-        # Draw background rect
-        pdf.rect(pdf.l_margin, y, 210 - pdf.l_margin - pdf.r_margin, block_height, "F")
-
-        pdf.set_xy(pdf.l_margin + 4, y + 4)
-        for code_line in code_lines:
-            pdf.set_x(pdf.l_margin + 4)
-            # Truncate very long lines
-            if len(code_line) > 90:
-                code_line = code_line[:87] + "..."
-            pdf.cell(0, line_height, code_line)
-            pdf.ln(line_height)
-
-        pdf.ln(6)
-
-    def _strip_markdown_inline(self, text: str) -> str:
-        """Remove inline markdown formatting (bold, italic, code, links)."""
-        # Bold
-        text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
-        text = re.sub(r"__(.+?)__", r"\1", text)
-        # Italic
-        text = re.sub(r"\*(.+?)\*", r"\1", text)
-        text = re.sub(r"_(.+?)_", r"\1", text)
-        # Inline code
-        text = re.sub(r"`(.+?)`", r"\1", text)
-        # Links [text](url) -> text
-        text = re.sub(r"\[(.+?)\]\(.+?\)", r"\1", text)
-        return text
-
-    def _sanitize_for_pdf(self, text: str) -> str:
+    def _sanitize_for_latin1(self, text: str) -> str:
         """Replace Unicode characters unsupported by Helvetica with ASCII equivalents."""
         replacements = {
-            "\u2013": "-",   # en-dash
+            "\u2013": "-",  # en-dash
             "\u2014": "--",  # em-dash
-            "\u2018": "'",   # left single quote
-            "\u2019": "'",   # right single quote
-            "\u201c": '"',   # left double quote
-            "\u201d": '"',   # right double quote
-            "\u2026": "...", # ellipsis
-            "\u2022": "-",   # bullet
-            "\u00b7": "-",   # middle dot
-            "\u2212": "-",   # minus sign
-            "\u00a0": " ",   # non-breaking space
-            "\u2003": " ",   # em space
-            "\u2002": " ",   # en space
-            "\u00d7": "x",   # multiplication sign
-            "\u00f7": "/",   # division sign
+            "\u2018": "'",  # left single quote
+            "\u2019": "'",  # right single quote
+            "\u201c": '"',  # left double quote
+            "\u201d": '"',  # right double quote
+            "\u2026": "...",  # ellipsis
+            "\u2022": "*",  # bullet
+            "\u00b7": "*",  # middle dot
+            "\u2212": "-",  # minus sign
+            "\u00a0": " ",  # non-breaking space
+            "\u2003": " ",  # em space
+            "\u2002": " ",  # en space
+            "\u00d7": "x",  # multiplication sign
+            "\u00f7": "/",  # division sign
             "\u2264": "<=",  # less than or equal
             "\u2265": ">=",  # greater than or equal
             "\u2260": "!=",  # not equal
+            "\u2192": "->",  # right arrow
+            "\u2190": "<-",  # left arrow
             "\u00b0": " deg",  # degree sign
+            "\u2261": "===",  # identical to
         }
         for char, replacement in replacements.items():
             text = text.replace(char, replacement)
-        # Strip any remaining non-latin1 characters
-        text = text.encode("latin-1", errors="replace").decode("latin-1")
-        return text
+        # Strip any remaining non-latin1 characters (preserve HTML tags)
+        result = []
+        for ch in text:
+            try:
+                ch.encode("latin-1")
+                result.append(ch)
+            except UnicodeEncodeError:
+                result.append("?")
+        return "".join(result)
+
+    def _wrap_html_with_styles(self, content: str, body_size: int, font_name: str) -> str:
+        """Wrap raw HTML content with inline style defaults for fpdf2."""
+        styled = content
+
+        # Add border attribute to tables if not already present
+        styled = re.sub(
+            r"<table(?![^>]*border)",
+            '<table border="1" cellpadding="4" cellspacing="0"',
+            styled,
+        )
+
+        # Wrap in a font tag to ensure correct font is used throughout
+        styled = f'<font face="{font_name}" size="{body_size}">{styled}</font>'
+
+        return styled
 
     def _generate_docx(self, title: str, content: str, style: str) -> bytes:
-        """Generate a DOCX document from markdown content."""
+        """Generate a DOCX document from HTML content."""
         from docx import Document
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.shared import Inches, Pt, RGBColor
+        from docx.shared import Pt, RGBColor
 
         doc = Document()
 
@@ -416,8 +260,8 @@ class DocumentGenerationService:
         date_run.font.size = Pt(9)
         date_run.font.color.rgb = RGBColor(120, 120, 120)
 
-        # Parse and render markdown
-        self._render_markdown_to_docx(doc, content, s)
+        # Parse HTML and render to DOCX
+        self._render_html_to_docx(doc, content, s)
 
         # Save to bytes
         buffer = io.BytesIO()
@@ -425,82 +269,147 @@ class DocumentGenerationService:
         buffer.seek(0)
         return buffer.getvalue()
 
-    def _render_markdown_to_docx(self, doc: Any, content: str, style: dict) -> None:
-        """Parse markdown and render to DOCX with formatting."""
-        from docx.shared import Pt, RGBColor
-
-        lines = content.split("\n")
-        in_code_block = False
-        code_buffer: list[str] = []
-
-        for line in lines:
-            # Code blocks
-            if line.strip().startswith("```"):
-                if in_code_block:
-                    self._render_code_block_docx(doc, "\n".join(code_buffer), style)
-                    code_buffer = []
-                    in_code_block = False
-                else:
-                    in_code_block = True
-                continue
-
-            if in_code_block:
-                code_buffer.append(line)
-                continue
-
-            # Headings
-            if line.startswith("### "):
-                doc.add_heading(line[4:].strip(), level=3)
-            elif line.startswith("## "):
-                doc.add_heading(line[3:].strip(), level=2)
-            elif line.startswith("# "):
-                doc.add_heading(line[2:].strip(), level=1)
-            # Bullet points
-            elif line.strip().startswith("- ") or line.strip().startswith("* "):
-                text = line.strip()[2:]
-                para = doc.add_paragraph(style="List Bullet")
-                self._add_formatted_run(para, text, style["body_size"])
-            # Numbered lists
-            elif re.match(r"^\s*\d+\.\s", line):
-                match = re.match(r"^\s*\d+\.\s(.*)", line)
-                if match:
-                    text = match.group(1)
-                    para = doc.add_paragraph(style="List Number")
-                    self._add_formatted_run(para, text, style["body_size"])
-            # Empty line
-            elif not line.strip():
-                continue  # DOCX handles spacing via paragraph styles
-            # Regular paragraph
-            else:
-                para = doc.add_paragraph()
-                self._add_formatted_run(para, line, style["body_size"])
-
-    def _render_code_block_docx(self, doc: Any, code: str, style: dict) -> None:
-        """Render a code block in DOCX with monospace font."""
-        from docx.shared import Pt, RGBColor
-
-        para = doc.add_paragraph()
-        run = para.add_run(code)
-        run.font.name = "Courier New"
-        run.font.size = Pt(style["body_size"] - 1)
-        # Set paragraph shading (gray background)
-        from docx.oxml import OxmlElement
-        from docx.oxml.ns import qn
-
-        shd = OxmlElement("w:shd")
-        shd.set(qn("w:fill"), "F5F5F5")
-        shd.set(qn("w:val"), "clear")
-        para.paragraph_format.element.get_or_add_pPr().append(shd)
-
-    def _add_formatted_run(self, para: Any, text: str, body_size: int) -> None:
-        """Add text to a paragraph with inline markdown formatting."""
+    def _render_html_to_docx(self, doc: Any, html_content: str, style: dict) -> None:
+        """Parse HTML and render to DOCX with proper formatting."""
         from docx.shared import Pt
 
-        # Simple approach: strip markdown and add as plain text
-        # A more advanced version could parse bold/italic segments
-        clean_text = self._strip_markdown_inline(text)
-        run = para.add_run(clean_text)
-        run.font.size = Pt(body_size)
+        # Use a simple tag-based parser for the HTML subset we generate
+        # Strip any wrapping tags
+        text = html_content
+
+        # Remove HTML tags and convert to structured DOCX
+        # This is a simplified parser for the HTML subset the LLM produces
+        lines = self._html_to_lines(text)
+
+        for line_type, line_text in lines:
+            if line_type == "h1":
+                doc.add_heading(line_text, level=1)
+            elif line_type == "h2":
+                doc.add_heading(line_text, level=2)
+            elif line_type == "h3":
+                doc.add_heading(line_text, level=3)
+            elif line_type == "bullet":
+                para = doc.add_paragraph(style="List Bullet")
+                run = para.add_run(line_text)
+                run.font.size = Pt(style["body_size"])
+            elif line_type == "number":
+                para = doc.add_paragraph(style="List Number")
+                run = para.add_run(line_text)
+                run.font.size = Pt(style["body_size"])
+            elif line_type == "code":
+                para = doc.add_paragraph()
+                run = para.add_run(line_text)
+                run.font.name = "Courier New"
+                run.font.size = Pt(style["body_size"] - 1)
+            elif line_type == "table_row":
+                # Tables in DOCX require special handling
+                # For now, render as tab-separated text
+                para = doc.add_paragraph()
+                run = para.add_run(line_text)
+                run.font.size = Pt(style["body_size"])
+            elif line_type == "paragraph" and line_text.strip():
+                para = doc.add_paragraph()
+                run = para.add_run(line_text)
+                run.font.size = Pt(style["body_size"])
+
+    def _html_to_lines(self, html: str) -> list[tuple[str, str]]:
+        """Convert HTML to a list of (type, text) tuples for DOCX rendering."""
+        lines: list[tuple[str, str]] = []
+
+        # Strip tags helper
+        def strip_tags(s: str) -> str:
+            return re.sub(r"<[^>]+>", "", s).strip()
+
+        # Extract headings
+        html = re.sub(
+            r"<h1[^>]*>(.*?)</h1>",
+            lambda m: f"\n__H1__{strip_tags(m.group(1))}\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        html = re.sub(
+            r"<h2[^>]*>(.*?)</h2>",
+            lambda m: f"\n__H2__{strip_tags(m.group(1))}\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        html = re.sub(
+            r"<h3[^>]*>(.*?)</h3>",
+            lambda m: f"\n__H3__{strip_tags(m.group(1))}\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Extract list items
+        html = re.sub(
+            r"<li[^>]*>(.*?)</li>",
+            lambda m: f"\n__LI__{strip_tags(m.group(1))}\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Extract code blocks
+        html = re.sub(
+            r"<pre[^>]*>(.*?)</pre>",
+            lambda m: f"\n__CODE__{strip_tags(m.group(1))}\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Extract paragraphs
+        html = re.sub(
+            r"<p[^>]*>(.*?)</p>",
+            lambda m: f"\n__PARA__{strip_tags(m.group(1))}\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Extract table rows
+        html = re.sub(
+            r"<tr[^>]*>(.*?)</tr>",
+            lambda m: "\n__TR__"
+            + "\t".join(
+                strip_tags(cell)
+                for cell in re.findall(
+                    r"<t[hd][^>]*>(.*?)</t[hd]>", m.group(1), re.DOTALL | re.IGNORECASE
+                )
+            )
+            + "\n",
+            html,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        # Track if we're inside an ordered list
+        in_ol = False
+        ol_counter = 0
+
+        # Check for ordered list context
+        ol_regions: list[tuple[int, int]] = []
+        for m in re.finditer(r"<ol[^>]*>(.*?)</ol>", html, re.DOTALL | re.IGNORECASE):
+            ol_regions.append((m.start(), m.end()))
+
+        # Parse the processed text into lines
+        remaining = strip_tags(html)
+        for segment in html.split("\n"):
+            segment = segment.strip()
+            if not segment:
+                continue
+            if segment.startswith("__H1__"):
+                lines.append(("h1", segment[6:]))
+            elif segment.startswith("__H2__"):
+                lines.append(("h2", segment[6:]))
+            elif segment.startswith("__H3__"):
+                lines.append(("h3", segment[6:]))
+            elif segment.startswith("__LI__"):
+                lines.append(("bullet", segment[6:]))
+            elif segment.startswith("__CODE__"):
+                lines.append(("code", segment[8:]))
+            elif segment.startswith("__PARA__"):
+                lines.append(("paragraph", segment[8:]))
+            elif segment.startswith("__TR__"):
+                lines.append(("table_row", segment[6:]))
+
+        return lines
 
     async def _upload_bytes(
         self, storage_service: Any, content: bytes, filename: str, path: str

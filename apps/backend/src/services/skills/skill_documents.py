@@ -39,9 +39,7 @@ SKILL = Skill(
             description=(
                 "Generate a downloadable document (PDF or DOCX) from content. "
                 "Use this when the user asks to create a document, export to PDF, "
-                "generate a report, make a Word file, or save content as a downloadable file. "
-                "Structure the content well with headings, bullet points, and sections. "
-                "The content should be comprehensive and well-formatted in markdown."
+                "generate a report, make a Word file, or save content as a downloadable file."
             ),
             parameters={
                 "type": "object",
@@ -58,9 +56,13 @@ SKILL = Skill(
                     "content": {
                         "type": "string",
                         "description": (
-                            "The document content in markdown format. Include proper headings (# ## ###), "
-                            "bullet points (- or *), numbered lists (1. 2. 3.), code blocks (```), "
-                            "and paragraphs. Make it comprehensive and well-structured."
+                            "The document body as HTML markup. Use semantic tags: "
+                            "<h1>, <h2>, <h3> for headings; <p> for paragraphs; "
+                            "<ul>/<ol> with <li> for lists; <table> with <thead>, <tbody>, <tr>, <th>, <td> for tables; "
+                            "<b>/<i> for bold/italic; <code> for inline code; <pre> for code blocks; "
+                            "<hr> for horizontal rules. Do NOT include <html>, <head>, or <body> wrappers. "
+                            "Use plain ASCII characters only (no smart quotes, em-dashes, or special unicode). "
+                            "Make the content comprehensive and well-structured."
                         ),
                     },
                     "style": {
