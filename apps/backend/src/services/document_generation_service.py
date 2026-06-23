@@ -368,10 +368,14 @@ class DocumentGenerationService:
         headers = {
             "AccessKey": storage_service.api_key,
             "Content-Type": "application/octet-stream",
+            "Content-Length": str(len(content)),
         }
 
+        # Build the request explicitly to avoid Sentry httpx integration
+        # triggering a sync/async mismatch when intercepting the request.
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.put(upload_url, headers=headers, content=content)
+            request = client.build_request("PUT", upload_url, headers=headers, content=content)
+            response = await client.send(request)
             if response.status_code != 201:
                 raise RuntimeError(f"Upload failed: {response.status_code} - {response.text}")
 
