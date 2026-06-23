@@ -266,7 +266,9 @@ async def lifespan(app: FastAPI):
 
     # Backfill lastSeenAt for users who don't have it yet (one-time migration)
     try:
-        users_without_lastseen = await db.user.count(
+        from src.core.database import db as _db
+
+        users_without_lastseen = await _db.user.count(
             where={"lastSeenAt": None, "role": "USER", "isOnboarded": True}
         )
         if users_without_lastseen > 0:
@@ -278,7 +280,7 @@ async def lifespan(app: FastAPI):
             from datetime import datetime as _dt, timedelta, timezone
 
             three_days_ago = _dt.now(timezone.utc) - timedelta(days=3)
-            await db.execute_raw(
+            await _db.execute_raw(
                 f"""
                 UPDATE "User"
                 SET "lastSeenAt" = '{three_days_ago.strftime("%Y-%m-%d %H:%M:%S")}'::timestamp
