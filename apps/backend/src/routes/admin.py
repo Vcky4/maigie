@@ -3081,3 +3081,138 @@ async def list_audit_logs(
         "pageSize": pageSize,
         "totalPages": total_pages,
     }
+
+
+@router.get("/ai-agent-tasks", response_model=dict)
+async def list_ai_agent_tasks(
+    admin_user: StaffAdminUser,
+    db: DBDep,
+    page: int = Query(1, ge=1, description="Page number"),
+    pageSize: int = Query(20, ge=1, le=100, description="Items per page"),
+    taskType: str | None = Query(None, description="Filter by task type"),
+    status: str | None = Query(None, description="Filter by status"),
+    userId: str | None = Query(None, description="Filter by user ID"),
+):
+    """
+    List AI Agent Tasks (automated nudges, re-engagement actions, reminders).
+
+    Accessible by all admin staff.
+    """
+    where: dict = {}
+
+    if taskType:
+        where["taskType"] = taskType
+    if status:
+        where["status"] = status
+    if userId:
+        where["userId"] = userId
+
+    total = await db.aiagenttask.count(where=where)
+    skip = (page - 1) * pageSize
+
+    tasks = await db.aiagenttask.find_many(
+        where=where,
+        skip=skip,
+        take=pageSize,
+        order={"createdAt": "desc"},
+        include={"user": True},
+    )
+
+    task_list = []
+    for t in tasks:
+        task_list.append(
+            {
+                "id": t.id,
+                "userId": t.userId,
+                "userName": t.user.name if t.user else None,
+                "userEmail": t.user.email if t.user else None,
+                "taskType": t.taskType,
+                "status": t.status,
+                "priority": t.priority,
+                "title": t.title,
+                "message": t.message[:200] if t.message else "",
+                "actionData": t.actionData,
+                "scheduledAt": t.scheduledAt.isoformat() if t.scheduledAt else None,
+                "sentAt": t.sentAt.isoformat() if t.sentAt else None,
+                "dismissedAt": t.dismissedAt.isoformat() if t.dismissedAt else None,
+                "createdAt": t.createdAt.isoformat(),
+            }
+        )
+
+    total_pages = (total + pageSize - 1) // pageSize
+
+    return {
+        "tasks": task_list,
+        "total": total,
+        "page": page,
+        "pageSize": pageSize,
+        "totalPages": total_pages,
+    }
+
+
+@router.get("/ai-action-logs", response_model=dict)
+async def list_ai_action_logs(
+    admin_user: StaffAdminUser,
+    db: DBDep,
+    page: int = Query(1, ge=1, description="Page number"),
+    pageSize: int = Query(25, ge=1, le=100, description="Items per page"),
+    actionType: str | None = Query(None, description="Filter by action type"),
+    status: str | None = Query(None, description="Filter by status (PENDING, SUCCESS, FAILED)"),
+):
+    """
+    List AI Action Logs (tool calls made by the AI during chat sessions).
+
+    Shows what actions the AI took on behalf of users (create_course, create_goal, etc.)
+    Accessible by all admin staff.
+    """
+    where: dict = {}
+
+    if actionType:
+        where["actionType"] = actionType
+    if status:
+        where["status"] = status
+
+    total = await db.aiactionlog.count(where=where)
+    skip = (page - 1) * pageSize
+
+    logs = await db.aiactionlog.find_many(
+        where=where,
+        skip=skip,
+        take=pageSize,
+        order={"createdAt": "desc"},
+        include={
+            "message": {
+                "include": {
+                    "user": True,
+                }
+            }
+        },
+    )
+
+    log_list = []
+    for log in logs:
+        user = log.message.user if log.message else None
+        log_list.append(
+            {
+                "id": log.id,
+                "messageId": log.messageId,
+                "actionType": log.actionType,
+                "actionData": log.actionData,
+                "status": log.status,
+                "error": log.error,
+                "createdAt": log.createdAt.isoformat(),
+                "userName": user.name if user else None,
+                "userEmail": user.email if user else None,
+                "userId": user.id if user else None,
+            }
+        )
+
+    total_pages = (total + pageSize - 1) // pageSize
+
+    return {
+        "logs": log_list,
+        "total": total,
+        "page": page,
+        "pageSize": pageSize,
+        "totalPages": total_pages,
+    }

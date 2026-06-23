@@ -553,6 +553,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
 
                 user_message = await db.chatmessage.create(data=user_message_data)
 
+                # Track activity (streak + lastSeenAt)
+                try:
+                    from src.services.activity_tracker import record_activity
+
+                    await record_activity(user.id)
+                except Exception:
+                    pass  # Non-blocking
+
                 # 4.1a Send confirmation to client for ID correlation
                 await manager.send_connection_json(
                     {
