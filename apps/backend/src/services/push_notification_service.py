@@ -106,14 +106,18 @@ async def send_push_notification(
     """
     app = get_firebase_app()
     if app is None:
-        logger.debug("Firebase not initialized — skipping push notification")
-        return {"sent": 0, "failed": 0, "skipped": True}
+        logger.warning(
+            "Firebase not initialized — skipping push notification for user %s. "
+            "Set FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_PATH env var.",
+            user_id,
+        )
+        return {"sent": 0, "failed": 0, "skipped": True, "reason": "firebase_not_configured"}
 
     # Fetch all active device tokens for the user
     device_tokens = await db.devicetoken.find_many(where={"userId": user_id, "isActive": True})
 
     if not device_tokens:
-        logger.debug(f"No active device tokens for user {user_id}")
+        logger.warning(f"No active device tokens for user {user_id} — cannot send push")
         return {"sent": 0, "failed": 0, "no_tokens": True}
 
     tokens = [dt.token for dt in device_tokens]
