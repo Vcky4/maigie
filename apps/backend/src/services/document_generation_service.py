@@ -398,8 +398,6 @@ class DocumentGenerationService:
                 self.content_buffer.append(data)
 
             def handle_entityref(self, name: str) -> None:
-                from html import unescape
-
                 char = unescape(f"&{name};")
                 if self.in_table:
                     self.table_html += char
@@ -407,8 +405,6 @@ class DocumentGenerationService:
                     self.content_buffer.append(char)
 
             def handle_charref(self, name: str) -> None:
-                from html import unescape
-
                 char = unescape(f"&#{name};")
                 if self.in_table:
                     self.table_html += char
