@@ -524,6 +524,7 @@ class AnthropicChatToolsAdapter(BaseProviderAdapter):
                             "add_tags_to_note",
                             "complete_review",
                             "update_course_outline",
+                            "generate_document",
                         ]:
                             executed_actions.append(
                                 {

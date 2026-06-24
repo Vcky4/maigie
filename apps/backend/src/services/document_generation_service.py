@@ -128,7 +128,9 @@ class DocumentGenerationService:
         pdf.set_font(font_name, "", s["body_size"])
 
         # Build the styled HTML wrapper
-        html_content = self._wrap_html_with_styles(content, s["body_size"], font_name)
+        # Strip escaped apostrophes/quotes from JSON serialization artifacts
+        clean_content = content.replace("\\'", "'").replace('\\"', '"')
+        html_content = self._wrap_html_with_styles(clean_content, s["body_size"], font_name)
 
         # If Unicode font not available, sanitize content to ASCII-safe characters
         if not font_loaded:
@@ -251,7 +253,9 @@ class DocumentGenerationService:
                 title_para.runs[0].font.size = Pt(s["title_size"])
 
         # Parse HTML and render to DOCX
-        self._render_html_to_docx(doc, unescape(content), s, style)
+        # Strip escaped apostrophes/quotes from JSON serialization artifacts
+        clean_content = unescape(content).replace("\\'", "'").replace('\\"', '"')
+        self._render_html_to_docx(doc, clean_content, s, style)
 
         # Save to bytes
         buffer = io.BytesIO()

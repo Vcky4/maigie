@@ -506,6 +506,7 @@ async def run_gemini_chat_with_tools(
                         "add_tags_to_note",
                         "complete_review",
                         "update_course_outline",
+                        "generate_document",
                     ]:
                         executed_actions.append(
                             {
