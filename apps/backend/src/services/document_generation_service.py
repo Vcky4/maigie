@@ -117,14 +117,7 @@ class DocumentGenerationService:
         font_name = "DejaVu" if font_loaded else "Helvetica"
         pdf.set_font(font_name, "B", s["title_size"])
         pdf.multi_cell(0, s["title_size"] * 0.5, title)
-        pdf.ln(4)
-
-        # Date
-        pdf.set_font(font_name, "", 9)
-        pdf.set_text_color(120, 120, 120)
-        pdf.cell(0, 5, f"Generated on {datetime.now(UTC).strftime('%B %d, %Y')}")
         pdf.ln(8)
-        pdf.set_text_color(0, 0, 0)
 
         # Separator
         pdf.set_draw_color(200, 200, 200)
@@ -234,34 +227,31 @@ class DocumentGenerationService:
         return styled
 
     def _generate_docx(self, title: str, content: str, style: str) -> bytes:
-        """Generate a DOCX document from HTML content."""
+        """Generate a DOCX document from HTML content with proper formatting."""
+        from html import unescape
+
         from docx import Document
-        from docx.shared import Pt, RGBColor
+        from docx.shared import Pt
 
         doc = Document()
 
         # Style configurations
         styles_config = {
-            "academic": {"title_size": 22, "heading_size": 14, "body_size": 11},
-            "report": {"title_size": 24, "heading_size": 16, "body_size": 12},
+            "academic": {"title_size": 24, "heading_size": 14, "body_size": 12},
+            "report": {"title_size": 22, "heading_size": 14, "body_size": 11},
             "minimal": {"title_size": 18, "heading_size": 13, "body_size": 11},
         }
         s = styles_config.get(style, styles_config["academic"])
 
-        # Title
-        title_para = doc.add_heading(title, level=0)
-        title_run = title_para.runs[0] if title_para.runs else None
-        if title_run:
-            title_run.font.size = Pt(s["title_size"])
-
-        # Date subtitle
-        date_para = doc.add_paragraph()
-        date_run = date_para.add_run(f"Generated on {datetime.now(UTC).strftime('%B %d, %Y')}")
-        date_run.font.size = Pt(9)
-        date_run.font.color.rgb = RGBColor(120, 120, 120)
+        # For academic style, let HTML content handle title page
+        # For other styles, add a simple title
+        if style != "academic":
+            title_para = doc.add_heading(title, level=0)
+            if title_para.runs:
+                title_para.runs[0].font.size = Pt(s["title_size"])
 
         # Parse HTML and render to DOCX
-        self._render_html_to_docx(doc, content, s)
+        self._render_html_to_docx(doc, unescape(content), s, style)
 
         # Save to bytes
         buffer = io.BytesIO()
@@ -269,147 +259,240 @@ class DocumentGenerationService:
         buffer.seek(0)
         return buffer.getvalue()
 
-    def _render_html_to_docx(self, doc: Any, html_content: str, style: dict) -> None:
-        """Parse HTML and render to DOCX with proper formatting."""
+    def _render_html_to_docx(
+        self, doc: Any, html_content: str, style: dict, doc_style: str
+    ) -> None:
+        """Parse HTML and render to DOCX with proper tables, page breaks, and formatting."""
+        from html import unescape
+        from html.parser import HTMLParser
+
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.shared import Pt
 
-        # Use a simple tag-based parser for the HTML subset we generate
-        # Strip any wrapping tags
-        text = html_content
+        body_size = style["body_size"]
+        service = self  # reference for nested class
 
-        # Remove HTML tags and convert to structured DOCX
-        # This is a simplified parser for the HTML subset the LLM produces
-        lines = self._html_to_lines(text)
+        class DocxHTMLParser(HTMLParser):
+            """Proper HTML parser that handles nesting correctly."""
 
-        for line_type, line_text in lines:
-            if line_type == "h1":
-                doc.add_heading(line_text, level=1)
-            elif line_type == "h2":
-                doc.add_heading(line_text, level=2)
-            elif line_type == "h3":
-                doc.add_heading(line_text, level=3)
-            elif line_type == "bullet":
-                para = doc.add_paragraph(style="List Bullet")
-                run = para.add_run(line_text)
-                run.font.size = Pt(style["body_size"])
-            elif line_type == "number":
-                para = doc.add_paragraph(style="List Number")
-                run = para.add_run(line_text)
-                run.font.size = Pt(style["body_size"])
-            elif line_type == "code":
-                para = doc.add_paragraph()
-                run = para.add_run(line_text)
-                run.font.name = "Courier New"
-                run.font.size = Pt(style["body_size"] - 1)
-            elif line_type == "table_row":
-                # Tables in DOCX require special handling
-                # For now, render as tab-separated text
-                para = doc.add_paragraph()
-                run = para.add_run(line_text)
-                run.font.size = Pt(style["body_size"])
-            elif line_type == "paragraph" and line_text.strip():
-                para = doc.add_paragraph()
-                run = para.add_run(line_text)
-                run.font.size = Pt(style["body_size"])
+            def __init__(self):
+                super().__init__()
+                self.tag_stack: list[str] = []
+                self.content_buffer: list[str] = []
+                self.in_list: str | None = None  # "ul" or "ol"
+                self.in_table = False
+                self.table_html = ""
+                self.skip_content = False
 
-    def _html_to_lines(self, html: str) -> list[tuple[str, str]]:
-        """Convert HTML to a list of (type, text) tuples for DOCX rendering."""
-        lines: list[tuple[str, str]] = []
+            def handle_starttag(self, tag: str, attrs: list) -> None:
+                tag = tag.lower()
 
-        # Strip tags helper
+                if tag == "table":
+                    self.in_table = True
+                    self.table_html = ""
+                    return
+
+                if self.in_table:
+                    # Accumulate raw HTML for table processing
+                    attr_str = " ".join(f'{k}="{v}"' for k, v in attrs) if attrs else ""
+                    self.table_html += f"<{tag} {attr_str}>".strip() if attr_str else f"<{tag}>"
+                    return
+
+                if tag == "hr":
+                    self._flush_buffer()
+                    if doc_style == "academic":
+                        doc.add_page_break()
+                    else:
+                        doc.add_paragraph()
+                    return
+
+                if tag == "br":
+                    self.content_buffer.append("\n")
+                    return
+
+                if tag in ("ul", "ol"):
+                    self._flush_buffer()
+                    self.in_list = tag
+                    return
+
+                if tag == "li":
+                    self.content_buffer = []
+                    return
+
+                if tag in ("h1", "h2", "h3", "h4", "p", "pre"):
+                    self._flush_buffer()
+                    self.tag_stack.append(tag)
+                    self.content_buffer = []
+                    return
+
+                if tag in ("b", "strong", "i", "em", "code"):
+                    # Inline formatting - just collect text
+                    return
+
+            def handle_endtag(self, tag: str) -> None:
+                tag = tag.lower()
+
+                if tag == "table":
+                    self.in_table = False
+                    service._render_html_table_to_docx(doc, self.table_html, body_size)
+                    self.table_html = ""
+                    return
+
+                if self.in_table:
+                    self.table_html += f"</{tag}>"
+                    return
+
+                if tag in ("ul", "ol"):
+                    self.in_list = None
+                    return
+
+                if tag == "li":
+                    text = "".join(self.content_buffer).strip()
+                    if text and self.in_list:
+                        list_style = "List Bullet" if self.in_list == "ul" else "List Number"
+                        para = doc.add_paragraph(style=list_style)
+                        run = para.add_run(text)
+                        run.font.size = Pt(body_size)
+                    self.content_buffer = []
+                    return
+
+                if tag in ("h1", "h2", "h3", "h4", "p", "pre"):
+                    text = "".join(self.content_buffer).strip()
+                    if self.tag_stack and self.tag_stack[-1] == tag:
+                        self.tag_stack.pop()
+
+                    if not text:
+                        self.content_buffer = []
+                        return
+
+                    if tag == "h1":
+                        heading = doc.add_heading(text, level=1)
+                        if doc_style == "academic":
+                            heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    elif tag == "h2":
+                        doc.add_heading(text, level=2)
+                    elif tag == "h3":
+                        doc.add_heading(text, level=3)
+                    elif tag == "h4":
+                        para = doc.add_paragraph()
+                        run = para.add_run(text)
+                        run.font.size = Pt(body_size + 1)
+                        run.bold = True
+                    elif tag == "p":
+                        para = doc.add_paragraph()
+                        run = para.add_run(text)
+                        run.font.size = Pt(body_size)
+                    elif tag == "pre":
+                        para = doc.add_paragraph()
+                        run = para.add_run(text)
+                        run.font.name = "Courier New"
+                        run.font.size = Pt(body_size - 1)
+
+                    self.content_buffer = []
+                    return
+
+            def handle_data(self, data: str) -> None:
+                if self.in_table:
+                    self.table_html += data
+                    return
+                self.content_buffer.append(data)
+
+            def handle_entityref(self, name: str) -> None:
+                from html import unescape
+
+                char = unescape(f"&{name};")
+                if self.in_table:
+                    self.table_html += char
+                else:
+                    self.content_buffer.append(char)
+
+            def handle_charref(self, name: str) -> None:
+                from html import unescape
+
+                char = unescape(f"&#{name};")
+                if self.in_table:
+                    self.table_html += char
+                else:
+                    self.content_buffer.append(char)
+
+            def _flush_buffer(self) -> None:
+                """Flush any pending text as a paragraph."""
+                text = "".join(self.content_buffer).strip()
+                if text and not self.tag_stack and not self.in_list:
+                    para = doc.add_paragraph()
+                    run = para.add_run(text)
+                    run.font.size = Pt(body_size)
+                self.content_buffer = []
+
+        parser = DocxHTMLParser()
+        parser.feed(html_content)
+        parser._flush_buffer()  # flush any trailing content
+
+    def _render_html_table_to_docx(self, doc: Any, table_html: str, body_size: int) -> None:
+        """Render an HTML table as a proper Word table with grid borders."""
+        from html import unescape
+
+        from docx.shared import Pt
+
         def strip_tags(s: str) -> str:
-            return re.sub(r"<[^>]+>", "", s).strip()
+            return unescape(re.sub(r"<[^>]+>", "", s)).strip()
 
-        # Extract headings
-        html = re.sub(
-            r"<h1[^>]*>(.*?)</h1>",
-            lambda m: f"\n__H1__{strip_tags(m.group(1))}\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        html = re.sub(
-            r"<h2[^>]*>(.*?)</h2>",
-            lambda m: f"\n__H2__{strip_tags(m.group(1))}\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        html = re.sub(
-            r"<h3[^>]*>(.*?)</h3>",
-            lambda m: f"\n__H3__{strip_tags(m.group(1))}\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+        # Extract header rows
+        header_rows: list[list[str]] = []
+        thead_match = re.search(r"<thead[^>]*>(.*?)</thead>", table_html, re.DOTALL | re.IGNORECASE)
+        if thead_match:
+            for tr in re.findall(
+                r"<tr[^>]*>(.*?)</tr>",
+                thead_match.group(1),
+                re.DOTALL | re.IGNORECASE,
+            ):
+                cells = [
+                    strip_tags(c)
+                    for c in re.findall(
+                        r"<t[hd][^>]*>(.*?)</t[hd]>",
+                        tr,
+                        re.DOTALL | re.IGNORECASE,
+                    )
+                ]
+                if cells:
+                    header_rows.append(cells)
 
-        # Extract list items
-        html = re.sub(
-            r"<li[^>]*>(.*?)</li>",
-            lambda m: f"\n__LI__{strip_tags(m.group(1))}\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+        # Extract body rows
+        body_rows: list[list[str]] = []
+        tbody_match = re.search(r"<tbody[^>]*>(.*?)</tbody>", table_html, re.DOTALL | re.IGNORECASE)
+        tbody_content = tbody_match.group(1) if tbody_match else table_html
+        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", tbody_content, re.DOTALL | re.IGNORECASE):
+            cells = [
+                strip_tags(c)
+                for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.DOTALL | re.IGNORECASE)
+            ]
+            if cells and cells not in header_rows:
+                body_rows.append(cells)
 
-        # Extract code blocks
-        html = re.sub(
-            r"<pre[^>]*>(.*?)</pre>",
-            lambda m: f"\n__CODE__{strip_tags(m.group(1))}\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+        all_rows = header_rows + body_rows
+        if not all_rows:
+            return
 
-        # Extract paragraphs
-        html = re.sub(
-            r"<p[^>]*>(.*?)</p>",
-            lambda m: f"\n__PARA__{strip_tags(m.group(1))}\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+        num_cols = max(len(row) for row in all_rows)
+        num_rows = len(all_rows)
 
-        # Extract table rows
-        html = re.sub(
-            r"<tr[^>]*>(.*?)</tr>",
-            lambda m: "\n__TR__"
-            + "\t".join(
-                strip_tags(cell)
-                for cell in re.findall(
-                    r"<t[hd][^>]*>(.*?)</t[hd]>", m.group(1), re.DOTALL | re.IGNORECASE
-                )
-            )
-            + "\n",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
+        # Create Word table with grid style
+        table = doc.add_table(rows=num_rows, cols=num_cols)
+        table.style = "Table Grid"
 
-        # Track if we're inside an ordered list
-        in_ol = False
-        ol_counter = 0
+        # Populate cells
+        for row_idx, row_data in enumerate(all_rows):
+            row_cells = table.rows[row_idx].cells
+            for col_idx, cell_text in enumerate(row_data):
+                if col_idx < num_cols:
+                    row_cells[col_idx].text = cell_text
+                    for paragraph in row_cells[col_idx].paragraphs:
+                        for run in paragraph.runs:
+                            run.font.size = Pt(body_size - 1)
+                            if row_idx < len(header_rows):
+                                run.bold = True
 
-        # Check for ordered list context
-        ol_regions: list[tuple[int, int]] = []
-        for m in re.finditer(r"<ol[^>]*>(.*?)</ol>", html, re.DOTALL | re.IGNORECASE):
-            ol_regions.append((m.start(), m.end()))
-
-        # Parse the processed text into lines
-        remaining = strip_tags(html)
-        for segment in html.split("\n"):
-            segment = segment.strip()
-            if not segment:
-                continue
-            if segment.startswith("__H1__"):
-                lines.append(("h1", segment[6:]))
-            elif segment.startswith("__H2__"):
-                lines.append(("h2", segment[6:]))
-            elif segment.startswith("__H3__"):
-                lines.append(("h3", segment[6:]))
-            elif segment.startswith("__LI__"):
-                lines.append(("bullet", segment[6:]))
-            elif segment.startswith("__CODE__"):
-                lines.append(("code", segment[8:]))
-            elif segment.startswith("__PARA__"):
-                lines.append(("paragraph", segment[8:]))
-            elif segment.startswith("__TR__"):
-                lines.append(("table_row", segment[6:]))
-
-        return lines
+        doc.add_paragraph()  # spacing after table
 
     async def _upload_bytes(
         self, storage_service: Any, content: bytes, filename: str, path: str
@@ -428,8 +511,8 @@ class DocumentGenerationService:
             "Content-Type": "application/octet-stream",
         }
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.put(upload_url, headers=headers, content=content)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, write=30.0)) as client:
+            response = await client.put(upload_url, headers=headers, content=bytes(content))
             if response.status_code != 201:
                 raise RuntimeError(f"Upload failed: {response.status_code} - {response.text}")
 
