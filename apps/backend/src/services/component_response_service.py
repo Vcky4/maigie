@@ -80,6 +80,15 @@ async def format_action_component_response(
     component_data = {}
     text = action_result.get("message", "")
 
+    # Actions that don't need a database lookup
+    if action_type == "generate_document":
+        document = action_result.get("document", {})
+        if document:
+            component_data = {"document": document}
+        if not component_data:
+            return None
+        return format_component_response(component_type, component_data, text)
+
     if not db:
         # If db not provided, return None (fallback to basic data will be handled by caller)
         return None
