@@ -435,64 +435,152 @@ class DocumentGenerationService:
         return buffer.getvalue()
 
     def _generate_pptx(self, title: str, content: str, style: str) -> bytes:
-        """Generate a PPTX presentation from content (JSON slides or HTML sections).
-
-        Supports:
-        - JSON array of slide objects
-        - HTML with <section> tags (extracts text content for PPTX)
-        """
-        import json
-
+        """Generate a styled PPTX presentation from content."""
         from pptx import Presentation
         from pptx.dml.color import RGBColor
-        from pptx.enum.text import PP_ALIGN
-        from pptx.util import Inches, Pt
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Emu, Inches, Pt
 
         prs = Presentation()
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
-        # Parse slide data from content
+        # Color scheme
+        primary = RGBColor(0x4F, 0x46, 0xE5)  # Indigo
+        dark = RGBColor(0x1A, 0x1A, 0x2E)
+        white = RGBColor(0xFF, 0xFF, 0xFF)
+        light_bg = RGBColor(0xF8, 0xFA, 0xFC)
+        text_dark = RGBColor(0x1A, 0x1A, 0x1A)
+        text_gray = RGBColor(0x55, 0x55, 0x55)
+
         slides_data = self._extract_slides_from_content(content, title)
 
         for i, slide_data in enumerate(slides_data):
             slide_title = slide_data.get("title", f"Slide {i + 1}")
             bullets = slide_data.get("bullets", [])
-            notes = slide_data.get("notes", "")
             subtitle = slide_data.get("subtitle", "")
 
-            if i == 0:
-                # Title slide
-                layout = prs.slide_layouts[0]
-                slide = prs.slides.add_slide(layout)
-                if slide.placeholders[0]:
-                    slide.placeholders[0].text = slide_title
-                if subtitle and len(slide.placeholders) > 1:
-                    slide.placeholders[1].text = subtitle
-                elif bullets and len(slide.placeholders) > 1:
-                    slide.placeholders[1].text = bullets[0] if bullets else ""
-            else:
-                # Content slides
-                layout = prs.slide_layouts[1]
-                slide = prs.slides.add_slide(layout)
-                if slide.placeholders[0]:
-                    slide.placeholders[0].text = slide_title
+            # Use blank layout for full control
+            layout = prs.slide_layouts[6]  # Blank
+            slide = prs.slides.add_slide(layout)
 
-                if bullets and len(slide.placeholders) > 1:
-                    tf = slide.placeholders[1].text_frame
-                    tf.clear()
+            if i == 0:
+                # === TITLE SLIDE ===
+                # Dark background
+                bg = slide.background
+                fill = bg.fill
+                fill.solid()
+                fill.fore_color.rgb = dark
+
+                # Accent bar at top
+                bar = slide.shapes.add_shape(1, Inches(0), Inches(0), prs.slide_width, Inches(0.15))
+                bar.fill.solid()
+                bar.fill.fore_color.rgb = primary
+                bar.line.fill.background()
+
+                # Title text
+                title_box = slide.shapes.add_textbox(
+                    Inches(1.5), Inches(2.2), Inches(10.3), Inches(2)
+                )
+                tf = title_box.text_frame
+                tf.word_wrap = True
+                p = tf.paragraphs[0]
+                p.text = slide_title
+                p.font.size = Pt(44)
+                p.font.bold = True
+                p.font.color.rgb = white
+                p.alignment = PP_ALIGN.LEFT
+
+                # Subtitle
+                if subtitle:
+                    sub_box = slide.shapes.add_textbox(
+                        Inches(1.5), Inches(4.4), Inches(10.3), Inches(1.2)
+                    )
+                    tf2 = sub_box.text_frame
+                    tf2.word_wrap = True
+                    p2 = tf2.paragraphs[0]
+                    p2.text = subtitle
+                    p2.font.size = Pt(22)
+                    p2.font.color.rgb = RGBColor(0xA0, 0xA0, 0xC0)
+                    p2.alignment = PP_ALIGN.LEFT
+                elif bullets:
+                    sub_box = slide.shapes.add_textbox(
+                        Inches(1.5), Inches(4.4), Inches(10.3), Inches(1.2)
+                    )
+                    tf2 = sub_box.text_frame
+                    tf2.word_wrap = True
+                    p2 = tf2.paragraphs[0]
+                    p2.text = bullets[0]
+                    p2.font.size = Pt(20)
+                    p2.font.color.rgb = RGBColor(0xA0, 0xA0, 0xC0)
+
+                # Bottom accent line
+                line = slide.shapes.add_shape(1, Inches(1.5), Inches(6.8), Inches(3), Inches(0.06))
+                line.fill.solid()
+                line.fill.fore_color.rgb = primary
+                line.line.fill.background()
+
+            else:
+                # === CONTENT SLIDE ===
+                # Light background
+                bg = slide.background
+                fill = bg.fill
+                fill.solid()
+                fill.fore_color.rgb = white
+
+                # Colored header bar
+                header_bar = slide.shapes.add_shape(
+                    1, Inches(0), Inches(0), prs.slide_width, Inches(1.4)
+                )
+                header_bar.fill.solid()
+                header_bar.fill.fore_color.rgb = primary
+                header_bar.line.fill.background()
+
+                # Title on the header bar
+                title_box = slide.shapes.add_textbox(
+                    Inches(0.8), Inches(0.3), Inches(11.5), Inches(0.9)
+                )
+                tf = title_box.text_frame
+                tf.word_wrap = True
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                p = tf.paragraphs[0]
+                p.text = slide_title
+                p.font.size = Pt(28)
+                p.font.bold = True
+                p.font.color.rgb = white
+                p.alignment = PP_ALIGN.LEFT
+
+                # Content area with bullets
+                if bullets:
+                    content_box = slide.shapes.add_textbox(
+                        Inches(0.8), Inches(1.8), Inches(11.5), Inches(5.2)
+                    )
+                    tf = content_box.text_frame
+                    tf.word_wrap = True
+
                     for j, bullet in enumerate(bullets):
                         if j == 0:
-                            tf.paragraphs[0].text = bullet
+                            para = tf.paragraphs[0]
                         else:
-                            p = tf.add_paragraph()
-                            p.text = bullet
-                        para = tf.paragraphs[j] if j < len(tf.paragraphs) else tf.paragraphs[-1]
-                        para.font.size = Pt(18)
+                            para = tf.add_paragraph()
 
-            if notes:
-                notes_slide = slide.notes_slide
-                notes_slide.notes_text_frame.text = notes
+                        para.text = bullet
+                        para.font.size = Pt(20)
+                        para.font.color.rgb = text_dark
+                        para.space_after = Pt(12)
+                        # Add bullet character
+                        para.level = 0
+
+                # Slide number
+                num_box = slide.shapes.add_textbox(
+                    Inches(12.2), Inches(7.0), Inches(0.8), Inches(0.4)
+                )
+                ntf = num_box.text_frame
+                np = ntf.paragraphs[0]
+                np.text = str(i + 1)
+                np.font.size = Pt(11)
+                np.font.color.rgb = text_gray
+                np.alignment = PP_ALIGN.RIGHT
 
         buffer = io.BytesIO()
         prs.save(buffer)
