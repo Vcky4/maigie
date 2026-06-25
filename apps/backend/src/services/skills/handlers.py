@@ -1306,6 +1306,7 @@ async def handle_generate_document(
                 "size": result["size"],
                 "format": result["format"],
                 "contentType": result["content_type"],
+                "previewUrl": result["preview_url"],
             },
         }
     except ValueError as e:

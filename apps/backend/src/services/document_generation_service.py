@@ -225,6 +225,13 @@ class DocumentGenerationService:
         storage_path = f"generated-docs/{user_id or 'anonymous'}"
         upload_result = await self._upload_bytes(storage_service, doc_bytes, filename, storage_path)
 
+        # Also upload the styled HTML for in-app preview
+        full_html = self._build_full_html(title, content, style)
+        html_filename = f"{safe_title}_{timestamp}_{short_id}.html"
+        preview_result = await self._upload_bytes(
+            storage_service, full_html.encode("utf-8"), html_filename, storage_path
+        )
+
         return {
             "filename": filename,
             "url": upload_result["url"],
@@ -232,6 +239,7 @@ class DocumentGenerationService:
             "format": format,
             "content_type": CONTENT_TYPES[format],
             "title": title,
+            "preview_url": preview_result["url"],
         }
 
     def _ensure_html(self, content: str) -> str:
