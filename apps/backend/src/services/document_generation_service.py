@@ -435,15 +435,11 @@ class DocumentGenerationService:
         return buffer.getvalue()
 
     def _generate_pptx(self, title: str, content: str, style: str) -> bytes:
-        """Generate a PPTX presentation from JSON slide data.
+        """Generate a PPTX presentation from content (JSON slides or HTML sections).
 
-        Content should be a JSON string with structure:
-        [
-            {"title": "Slide Title", "bullets": ["Point 1", "Point 2", ...]},
-            {"title": "Another Slide", "bullets": ["..."], "notes": "Speaker notes"},
-            ...
-        ]
-        Falls back to parsing as plain text if JSON is invalid.
+        Supports:
+        - JSON array of slide objects
+        - HTML with <section> tags (extracts text content for PPTX)
         """
         import json
 
@@ -456,8 +452,8 @@ class DocumentGenerationService:
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
-        # Parse slide data
-        slides_data = self._parse_pptx_content(content, title)
+        # Parse slide data from content
+        slides_data = self._extract_slides_from_content(content, title)
 
         for i, slide_data in enumerate(slides_data):
             slide_title = slide_data.get("title", f"Slide {i + 1}")
@@ -467,7 +463,7 @@ class DocumentGenerationService:
 
             if i == 0:
                 # Title slide
-                layout = prs.slide_layouts[0]  # Title Slide layout
+                layout = prs.slide_layouts[0]
                 slide = prs.slides.add_slide(layout)
                 if slide.placeholders[0]:
                     slide.placeholders[0].text = slide_title
@@ -477,12 +473,11 @@ class DocumentGenerationService:
                     slide.placeholders[1].text = bullets[0] if bullets else ""
             else:
                 # Content slides
-                layout = prs.slide_layouts[1]  # Title and Content layout
+                layout = prs.slide_layouts[1]
                 slide = prs.slides.add_slide(layout)
                 if slide.placeholders[0]:
                     slide.placeholders[0].text = slide_title
 
-                # Add bullet points
                 if bullets and len(slide.placeholders) > 1:
                     tf = slide.placeholders[1].text_frame
                     tf.clear()
@@ -492,11 +487,9 @@ class DocumentGenerationService:
                         else:
                             p = tf.add_paragraph()
                             p.text = bullet
-                        # Style the paragraph
                         para = tf.paragraphs[j] if j < len(tf.paragraphs) else tf.paragraphs[-1]
                         para.font.size = Pt(18)
 
-            # Add speaker notes
             if notes:
                 notes_slide = slide.notes_slide
                 notes_slide.notes_text_frame.text = notes
@@ -505,6 +498,77 @@ class DocumentGenerationService:
         prs.save(buffer)
         buffer.seek(0)
         return buffer.getvalue()
+
+    def _extract_slides_from_content(self, content: str, title: str) -> list[dict]:
+        """Extract slide data from content (HTML sections, JSON, or plain text)."""
+        import json
+
+        # Try JSON first
+        try:
+            data = json.loads(content)
+            if isinstance(data, list) and len(data) > 0:
+                return data
+            if isinstance(data, dict) and "slides" in data:
+                return data["slides"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Try HTML <section> format
+        if "<section" in content:
+            return self._parse_sections_to_slides(content)
+
+        # Fallback: use the legacy parser
+        return self._parse_pptx_content(content, title)
+
+    def _parse_sections_to_slides(self, html: str) -> list[dict]:
+        """Parse HTML <section> tags into slide data for PPTX."""
+        slides: list[dict] = []
+        # Split by section tags
+        sections = re.split(r"<section[^>]*>", html)
+
+        for section in sections:
+            if not section.strip():
+                continue
+            # Remove closing tag
+            section = re.sub(r"</section>.*", "", section, flags=re.DOTALL)
+
+            # Extract title from h1 or h2
+            title_match = re.search(r"<h[12][^>]*>(.*?)</h[12]>", section, re.DOTALL)
+            slide_title = ""
+            if title_match:
+                slide_title = re.sub(r"<[^>]+>", "", title_match.group(1)).strip()
+
+            # Extract subtitle from first <p> after title
+            subtitle = ""
+            subtitle_match = re.search(r"</h[12]>\s*<p[^>]*>(.*?)</p>", section, re.DOTALL)
+            if subtitle_match:
+                subtitle = re.sub(r"<[^>]+>", "", subtitle_match.group(1)).strip()
+
+            # Extract bullet points from <li> tags
+            bullets: list[str] = []
+            for li_match in re.finditer(r"<li[^>]*>(.*?)</li>", section, re.DOTALL):
+                text = re.sub(r"<[^>]+>", "", li_match.group(1)).strip()
+                if text:
+                    bullets.append(text)
+
+            # If no bullets, extract <p> content as bullets (skip subtitle)
+            if not bullets:
+                p_tags = re.findall(r"<p[^>]*>(.*?)</p>", section, re.DOTALL)
+                for p in p_tags:
+                    text = re.sub(r"<[^>]+>", "", p).strip()
+                    if text and text != subtitle:
+                        bullets.append(text)
+
+            if slide_title or bullets:
+                slide: dict = {"title": slide_title or "Untitled", "bullets": bullets}
+                if subtitle:
+                    slide["subtitle"] = subtitle
+                slides.append(slide)
+
+        if not slides:
+            slides = [{"title": "Presentation", "subtitle": "", "bullets": []}]
+
+        return slides
 
     def _parse_pptx_content(self, content: str, title: str) -> list[dict]:
         """Parse content into slide data. Supports JSON array or plain text fallback."""
@@ -565,65 +629,204 @@ class DocumentGenerationService:
         return slides
 
     def _build_pptx_preview_html(self, title: str, content: str, style: str) -> str:
-        """Build an HTML preview for a PPTX presentation."""
-        slides_data = self._parse_pptx_content(content, title)
+        """Build an HTML preview for a PPTX presentation from HTML section slides."""
+        # Check if content uses <section> tags (new rich HTML format)
+        if "<section" in content:
+            body = content
+        else:
+            # Legacy JSON format fallback
+            import json
 
-        slides_html = []
-        for i, slide in enumerate(slides_data):
-            slide_title = slide.get("title", f"Slide {i + 1}")
-            bullets = slide.get("bullets", [])
-            subtitle = slide.get("subtitle", "")
+            slides_data = self._parse_pptx_content(content, title)
+            slides_parts = []
+            for i, slide in enumerate(slides_data):
+                slide_title = slide.get("title", f"Slide {i + 1}")
+                bullets = slide.get("bullets", [])
+                subtitle = slide.get("subtitle", "")
+                bullets_html = ""
+                if bullets:
+                    items = "".join(f"<li>{self._escape_html(b)}</li>" for b in bullets)
+                    bullets_html = f"<ul>{items}</ul>"
+                subtitle_html = f"<p>{self._escape_html(subtitle)}</p>" if subtitle else ""
+                slides_parts.append(
+                    f"<section><h2>{self._escape_html(slide_title)}</h2>"
+                    f"{subtitle_html}{bullets_html}</section>"
+                )
+            body = "\n".join(slides_parts)
 
-            bullets_html = ""
-            if bullets:
-                items = "".join(f"<li>{self._escape_html(b)}</li>" for b in bullets)
-                bullets_html = f"<ul>{items}</ul>"
+        return self._wrap_presentation_html(title, body)
 
-            subtitle_html = (
-                f'<p class="subtitle">{self._escape_html(subtitle)}</p>' if subtitle else ""
-            )
-
-            slides_html.append(
-                f"""
-            <div class="slide">
-                <div class="slide-number">Slide {i + 1}</div>
-                <h2>{self._escape_html(slide_title)}</h2>
-                {subtitle_html}
-                {bullets_html}
-            </div>"""
-            )
-
-        body = "\n".join(slides_html)
+    def _wrap_presentation_html(self, title: str, body: str) -> str:
+        """Wrap slide sections with full presentation CSS styling."""
         css = """
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-            padding: 20px;
-            background: #f5f5f5;
-            color: #1a1a1a;
-        }
-        h1 { text-align: center; margin-bottom: 24px; font-size: 24px; }
-        .slide {
-            background: white;
-            border-radius: 12px;
-            padding: 32px;
-            margin-bottom: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-            position: relative;
-        }
-        .slide-number {
-            position: absolute;
-            top: 12px;
-            right: 16px;
-            font-size: 12px;
-            color: #999;
-            font-weight: 600;
-        }
-        .slide h2 { font-size: 20px; margin: 0 0 12px 0; color: #111; }
-        .slide .subtitle { color: #666; font-size: 15px; margin-bottom: 8px; }
-        .slide ul { margin: 0; padding-left: 20px; }
-        .slide li { font-size: 16px; line-height: 1.6; margin-bottom: 6px; color: #333; }
-        """
-
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    padding: 20px;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    line-height: 1.5;
+}
+h1.deck-title {
+    text-align: center;
+    margin-bottom: 24px;
+    font-size: 22px;
+    color: #fff;
+    font-weight: 700;
+}
+section {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 36px 32px;
+    margin-bottom: 20px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    color: #1a1a1a;
+    position: relative;
+    overflow: hidden;
+}
+section h1 {
+    font-size: 28px;
+    font-weight: 800;
+    margin-bottom: 12px;
+    color: #111;
+}
+section h2 {
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    color: #1a1a1a;
+    border-bottom: 3px solid #4f46e5;
+    padding-bottom: 8px;
+    display: inline-block;
+}
+section h3 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 14px 0 8px;
+    color: #333;
+}
+section p {
+    font-size: 15px;
+    margin-bottom: 10px;
+    color: #444;
+    line-height: 1.6;
+}
+section ul, section ol {
+    padding-left: 20px;
+    margin: 10px 0;
+}
+section li {
+    font-size: 15px;
+    margin-bottom: 8px;
+    color: #333;
+    line-height: 1.5;
+}
+section table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 14px;
+}
+section th {
+    background: #4f46e5;
+    color: white;
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
+}
+section td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #eee;
+    color: #333;
+}
+section tr:nth-child(even) td { background: #f8f8ff; }
+section blockquote {
+    border-left: 4px solid #4f46e5;
+    padding: 12px 16px;
+    margin: 14px 0;
+    background: #f5f3ff;
+    border-radius: 0 8px 8px 0;
+    font-style: italic;
+    color: #4a4a6a;
+}
+section blockquote cite {
+    display: block;
+    margin-top: 8px;
+    font-style: normal;
+    font-size: 13px;
+    color: #666;
+    font-weight: 600;
+}
+section svg {
+    display: block;
+    margin: 16px auto;
+    max-width: 100%;
+}
+.columns {
+    display: flex;
+    gap: 16px;
+    margin: 14px 0;
+}
+.columns > div {
+    flex: 1;
+    background: #f8fafc;
+    padding: 16px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+}
+.columns > div h3 { margin-top: 0; }
+.stat {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    background: #f0f0ff;
+    padding: 16px 24px;
+    border-radius: 12px;
+    margin: 8px 12px 8px 0;
+}
+.stat .number {
+    font-size: 32px;
+    font-weight: 800;
+    color: #4f46e5;
+    line-height: 1;
+}
+.stat .label {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.highlight {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    color: white;
+    padding: 18px 22px;
+    border-radius: 12px;
+    margin: 14px 0;
+}
+.highlight h3, .highlight p, .highlight li { color: white; }
+.highlight ul { padding-left: 20px; }
+.timeline { margin: 14px 0; }
+.timeline .event {
+    padding: 12px 0 12px 20px;
+    border-left: 3px solid #4f46e5;
+    margin-bottom: 4px;
+    position: relative;
+}
+.timeline .event::before {
+    content: '';
+    position: absolute;
+    left: -7px;
+    top: 16px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #4f46e5;
+}
+.timeline .event b { color: #4f46e5; font-size: 14px; }
+.timeline .event p { margin: 4px 0 0; font-size: 14px; color: #555; }
+"""
         return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -633,7 +836,7 @@ class DocumentGenerationService:
 <style>{css}</style>
 </head>
 <body>
-<h1>{self._escape_html(title)}</h1>
+<h1 class="deck-title">{self._escape_html(title)}</h1>
 {body}
 </body>
 </html>"""
