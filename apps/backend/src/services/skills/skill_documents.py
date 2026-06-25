@@ -47,9 +47,14 @@ SKILL = Skill(
                 "For general documents: use clean professional formatting. "
                 "Always produce publication-ready content that matches the standard expected "
                 "in the user's academic or professional context. "
-                "CRITICAL: After calling this tool, do NOT include any download link, URL, or file path "
-                "in your response message. The document download card is shown automatically to the user. "
-                "Simply confirm the document was created (e.g. 'Your document is ready!') and offer further help."
+                "The content MUST be substantial and thorough — at minimum 2000 words for reports and essays. "
+                "Do not produce skeleton or outline-only content. Write full paragraphs, complete arguments, "
+                "and proper analysis as if you were writing the actual paper. "
+                "CRITICAL RESPONSE RULES after calling this tool: "
+                "1. Keep your chat response to ONE short sentence like 'Your document is ready!' and offer further help."
+                "2. Do NOT mention the download card, say 'above', 'below', or reference card placement. "
+                "3. Do NOT include any download link, URL, or file path. "
+                "4. The download card appears automatically — just confirm and stop."
             ),
             parameters={
                 "type": "object",
@@ -66,32 +71,31 @@ SKILL = Skill(
                     "content": {
                         "type": "string",
                         "description": (
-                            "The document body as HTML markup. Produce high-quality, comprehensive content "
-                            "matching the user's requested document type and academic level. "
+                            "The full document body in HTML format. Produce high-quality, comprehensive, "
+                            "publication-ready content. "
                             "HTML tags to use: "
-                            "<h1> for document/chapter titles; <h2> for major sections; <h3> for subsections; <h4> for sub-subsections; "
+                            "<h1> for document/chapter titles; <h2> for major sections; <h3> for subsections; "
                             "<p> for paragraphs; <ul>/<ol> with <li> for lists; "
                             "<table> with <thead>, <tbody>, <tr>, <th>, <td> for data tables; "
                             "<b>/<i> for emphasis; <code> for inline code; <pre> for code blocks; "
-                            "<hr> for page/section breaks. "
-                            "RULES: "
-                            "- Do NOT include <html>, <head>, <body>, or <style> tags. "
-                            "- Use plain ASCII only (no smart quotes, em-dashes, or special unicode). "
-                            "- For academic reports: start with metadata (author, department, date, institution) in a structured block, "
-                            "  then abstract, table of contents, chapters with proper decimal numbering (1.1, 1.2, 2.1...). "
-                            "- For tables: always include <thead> with <th> headers and <tbody> with <td> data cells. "
-                            "- Use <hr> between major chapters/sections to indicate page breaks. "
-                            "- Ensure references use proper academic citation format. "
-                            "- Content must be thorough, well-argued, and ready for submission without editing."
+                            "<blockquote> for quotes; <hr> for section/page breaks. "
+                            "CONTENT REQUIREMENTS: "
+                            "- For academic reports/essays: write MINIMUM 2000-3000 words with full paragraphs, "
+                            "  complete arguments, proper analysis, introduction, body, conclusion, and references. "
+                            "- For book reviews: include plot summary, character analysis, thematic exploration, "
+                            "  literary device discussion, critical evaluation, and personal reflection (1500+ words). "
+                            "- For research: include abstract, literature review, methodology, findings, discussion. "
+                            "- NEVER produce skeleton/outline-only content. Write the actual full text. "
+                            "- Do NOT include <html>, <head>, <body>, or <style> tags — only body content. "
+                            "- Use plain ASCII only (no smart quotes, em-dashes, or special unicode characters)."
                         ),
                     },
                     "style": {
                         "type": "string",
                         "enum": ["academic", "report", "minimal"],
                         "description": (
-                            "Document style. 'academic' for project reports, theses, research papers (adds formal title page, "
-                            "page breaks between chapters, Times New Roman style). "
-                            "'report' for professional/business reports (clean, modern formatting). "
+                            "Document style. 'academic' for project reports, theses, research papers. "
+                            "'report' for professional/business reports. "
                             "'minimal' for study notes, reference sheets, quick exports."
                         ),
                     },

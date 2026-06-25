@@ -2,8 +2,7 @@
 Document Generation Service.
 
 Generates downloadable documents (PDF, DOCX) from HTML content.
-Used by the AI chat to export responses, research, and project work
-into formatted documents for students.
+Uses WeasyPrint for PDF rendering and htmldocx for DOCX conversion.
 """
 
 from __future__ import annotations
@@ -26,6 +25,149 @@ CONTENT_TYPES = {
 # Max content length to prevent abuse (100k chars ~= 50 pages)
 MAX_CONTENT_LENGTH = 100_000
 
+# CSS styles for different document styles
+_ACADEMIC_CSS = """
+@page {
+    size: A4;
+    margin: 2.5cm 2cm;
+}
+body {
+    font-family: 'Times New Roman', Times, Georgia, serif;
+    font-size: 12pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+}
+h1 { font-size: 22pt; margin-top: 1.5em; margin-bottom: 0.5em; color: #111; }
+h2 { font-size: 16pt; margin-top: 1.3em; margin-bottom: 0.4em; color: #222; }
+h3 { font-size: 13pt; margin-top: 1.1em; margin-bottom: 0.3em; color: #333; }
+h4 { font-size: 12pt; margin-top: 1em; margin-bottom: 0.3em; font-style: italic; }
+p { margin-bottom: 0.8em; text-align: justify; }
+ul, ol { margin-bottom: 0.8em; padding-left: 2em; }
+li { margin-bottom: 0.3em; }
+blockquote {
+    border-left: 3px solid #ccc;
+    margin-left: 0;
+    padding-left: 1em;
+    color: #555;
+    font-style: italic;
+}
+code {
+    font-family: 'Courier New', monospace;
+    font-size: 10pt;
+    background: #f5f5f5;
+    padding: 1px 4px;
+}
+pre {
+    background: #f5f5f5;
+    padding: 12px;
+    font-size: 10pt;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code { background: none; padding: 0; }
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 11pt;
+}
+th, td {
+    border: 1px solid #ccc;
+    padding: 8px 10px;
+    text-align: left;
+}
+th { background: #f0f0f0; font-weight: bold; }
+hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
+"""
+
+_REPORT_CSS = """
+@page {
+    size: A4;
+    margin: 2cm;
+}
+body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: #2d2d2d;
+}
+h1 { font-size: 24pt; margin-top: 1.2em; margin-bottom: 0.4em; color: #1a1a1a; font-weight: bold; }
+h2 { font-size: 16pt; margin-top: 1.2em; margin-bottom: 0.4em; color: #333; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+h3 { font-size: 13pt; margin-top: 1em; margin-bottom: 0.3em; color: #444; }
+h4 { font-size: 11pt; margin-top: 0.8em; margin-bottom: 0.3em; color: #555; font-weight: bold; }
+p { margin-bottom: 0.7em; }
+ul, ol { margin-bottom: 0.7em; padding-left: 1.8em; }
+li { margin-bottom: 0.2em; }
+blockquote {
+    border-left: 4px solid #4f46e5;
+    margin-left: 0;
+    padding-left: 1em;
+    color: #555;
+}
+code {
+    font-family: 'Courier New', monospace;
+    font-size: 9.5pt;
+    background: #f8f8f8;
+    padding: 2px 5px;
+}
+pre {
+    background: #f8f8f8;
+    padding: 14px;
+    font-size: 9.5pt;
+    line-height: 1.4;
+    border: 1px solid #e8e8e8;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+pre code { background: none; padding: 0; border: none; }
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 10pt;
+}
+th, td {
+    border: 1px solid #ddd;
+    padding: 8px 12px;
+    text-align: left;
+}
+th { background: #f5f5f5; font-weight: bold; }
+hr { border: none; border-top: 2px solid #eee; margin: 1.5em 0; }
+"""
+
+_MINIMAL_CSS = """
+@page {
+    size: A4;
+    margin: 1.5cm;
+}
+body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.45;
+    color: #333;
+}
+h1 { font-size: 18pt; margin-top: 1em; margin-bottom: 0.3em; }
+h2 { font-size: 14pt; margin-top: 0.9em; margin-bottom: 0.3em; }
+h3 { font-size: 12pt; margin-top: 0.8em; margin-bottom: 0.2em; }
+p { margin-bottom: 0.5em; }
+ul, ol { margin-bottom: 0.5em; padding-left: 1.5em; }
+li { margin-bottom: 0.15em; }
+code { font-family: monospace; font-size: 9.5pt; background: #f5f5f5; padding: 1px 3px; }
+pre { background: #f5f5f5; padding: 10px; font-size: 9pt; white-space: pre-wrap; word-wrap: break-word; }
+pre code { background: none; padding: 0; }
+table { width: 100%; border-collapse: collapse; margin: 0.8em 0; font-size: 9.5pt; }
+th, td { border: 1px solid #ddd; padding: 6px 8px; }
+th { background: #f0f0f0; font-weight: bold; }
+hr { border: none; border-top: 1px solid #ddd; margin: 1em 0; }
+"""
+
+_STYLE_CSS = {
+    "academic": _ACADEMIC_CSS,
+    "report": _REPORT_CSS,
+    "minimal": _MINIMAL_CSS,
+}
+
 
 class DocumentGenerationService:
     """Generates PDF and DOCX documents from HTML content."""
@@ -47,7 +189,7 @@ class DocumentGenerationService:
         Args:
             format: Document format ("pdf" or "docx")
             title: Document title
-            content: HTML content to render
+            content: HTML content to render (also handles markdown via conversion)
             style: Document style ("academic", "report", "minimal")
             user_id: User ID for path namespacing
 
@@ -57,6 +199,9 @@ class DocumentGenerationService:
         if len(content) > MAX_CONTENT_LENGTH:
             content = content[:MAX_CONTENT_LENGTH]
             logger.warning(f"Content truncated to {MAX_CONTENT_LENGTH} chars for user {user_id}")
+
+        # Normalize content: if it's markdown, convert to HTML
+        content = self._ensure_html(content)
 
         format = format.lower().strip()
         if format not in ("pdf", "docx"):
@@ -89,410 +234,193 @@ class DocumentGenerationService:
             "title": title,
         }
 
+    def _ensure_html(self, content: str) -> str:
+        """If content is markdown, convert to HTML. If already HTML, return as-is."""
+        # Detect if content is already HTML (has block-level HTML tags)
+        if re.search(r"<(h[1-6]|p|ul|ol|li|table|div|pre|blockquote)\b", content, re.IGNORECASE):
+            return content
+
+        # Content is markdown — convert to HTML
+        return self._markdown_to_html(content)
+
+    def _markdown_to_html(self, md: str) -> str:
+        """Convert markdown to HTML for document rendering."""
+        lines = md.split("\n")
+        html_parts: list[str] = []
+        in_code_block = False
+        code_buffer: list[str] = []
+        in_list = False
+        list_type = ""
+        paragraph_buffer: list[str] = []
+
+        def flush_paragraph():
+            if paragraph_buffer:
+                text = " ".join(paragraph_buffer)
+                text = self._inline_md_to_html(text)
+                html_parts.append(f"<p>{text}</p>")
+                paragraph_buffer.clear()
+
+        def flush_list():
+            nonlocal in_list, list_type
+            if in_list:
+                html_parts.append(f"</{list_type}>")
+                in_list = False
+                list_type = ""
+
+        for line in lines:
+            # Code blocks
+            if line.strip().startswith("```"):
+                if in_code_block:
+                    html_parts.append(
+                        f"<pre><code>{self._escape_html(chr(10).join(code_buffer))}</code></pre>"
+                    )
+                    code_buffer = []
+                    in_code_block = False
+                else:
+                    flush_paragraph()
+                    flush_list()
+                    in_code_block = True
+                continue
+
+            if in_code_block:
+                code_buffer.append(line)
+                continue
+
+            # Headings
+            heading_match = re.match(r"^(#{1,6})\s+(.+)$", line)
+            if heading_match:
+                flush_paragraph()
+                flush_list()
+                level = len(heading_match.group(1))
+                text = self._inline_md_to_html(heading_match.group(2))
+                html_parts.append(f"<h{level}>{text}</h{level}>")
+                continue
+
+            # Horizontal rule
+            if re.match(r"^(\-{3,}|\*{3,}|_{3,})\s*$", line):
+                flush_paragraph()
+                flush_list()
+                html_parts.append("<hr>")
+                continue
+
+            # Bullet lists
+            bullet_match = re.match(r"^(\s*)([-*+])\s+(.+)$", line)
+            if bullet_match:
+                flush_paragraph()
+                if not in_list or list_type != "ul":
+                    flush_list()
+                    html_parts.append("<ul>")
+                    in_list = True
+                    list_type = "ul"
+                text = self._inline_md_to_html(bullet_match.group(3))
+                html_parts.append(f"<li>{text}</li>")
+                continue
+
+            # Numbered lists
+            numbered_match = re.match(r"^(\s*)\d+\.\s+(.+)$", line)
+            if numbered_match:
+                flush_paragraph()
+                if not in_list or list_type != "ol":
+                    flush_list()
+                    html_parts.append("<ol>")
+                    in_list = True
+                    list_type = "ol"
+                text = self._inline_md_to_html(numbered_match.group(2))
+                html_parts.append(f"<li>{text}</li>")
+                continue
+
+            # Blockquotes
+            if line.startswith("> "):
+                flush_paragraph()
+                flush_list()
+                text = self._inline_md_to_html(line[2:])
+                html_parts.append(f"<blockquote><p>{text}</p></blockquote>")
+                continue
+
+            # Empty line
+            if not line.strip():
+                flush_paragraph()
+                flush_list()
+                continue
+
+            # Regular text — accumulate for paragraph
+            flush_list()
+            paragraph_buffer.append(line.strip())
+
+        # Flush remaining
+        flush_paragraph()
+        flush_list()
+        if in_code_block and code_buffer:
+            html_parts.append(
+                f"<pre><code>{self._escape_html(chr(10).join(code_buffer))}</code></pre>"
+            )
+
+        return "\n".join(html_parts)
+
+    def _inline_md_to_html(self, text: str) -> str:
+        """Convert inline markdown (bold, italic, code, links) to HTML."""
+        # Bold
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
+        # Italic
+        text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+        text = re.sub(r"_(.+?)_", r"<i>\1</i>", text)
+        # Inline code
+        text = re.sub(r"`(.+?)`", r"<code>\1</code>", text)
+        # Links
+        text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2">\1</a>', text)
+        return text
+
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters."""
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _build_full_html(self, title: str, body_html: str, style: str) -> str:
+        """Wrap body HTML with full document structure and CSS."""
+        css = _STYLE_CSS.get(style, _ACADEMIC_CSS)
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{self._escape_html(title)}</title>
+<style>{css}</style>
+</head>
+<body>
+{body_html}
+</body>
+</html>"""
+
     def _generate_pdf(self, title: str, content: str, style: str) -> bytes:
-        """Generate a PDF from HTML content using fpdf2's write_html with Unicode support."""
-        from fpdf import FPDF
+        """Generate a PDF document from HTML content using xhtml2pdf."""
+        from xhtml2pdf import pisa
 
-        # Style configurations
-        styles = {
-            "academic": {"title_size": 22, "body_size": 11, "margin": 25},
-            "report": {"title_size": 24, "body_size": 12, "margin": 20},
-            "minimal": {"title_size": 20, "body_size": 11, "margin": 15},
-        }
-        s = styles.get(style, styles["academic"])
+        full_html = self._build_full_html(title, content, style)
+        buffer = io.BytesIO()
+        pisa_status = pisa.CreatePDF(io.StringIO(full_html), dest=buffer)
 
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=20)
-        pdf.set_left_margin(s["margin"])
-        pdf.set_right_margin(s["margin"])
+        if pisa_status.err:
+            logger.error(f"xhtml2pdf error count: {pisa_status.err}")
 
-        # Add DejaVu font for full Unicode support
-        # In Docker: /usr/share/fonts/truetype/dejavu/
-        # Locally: try common system paths
-        font_loaded = self._load_unicode_font(pdf)
-
-        pdf.add_page()
-
-        # Title
-        font_name = "DejaVu" if font_loaded else "Helvetica"
-        pdf.set_font(font_name, "B", s["title_size"])
-        pdf.multi_cell(0, s["title_size"] * 0.5, title)
-        pdf.ln(8)
-
-        # Separator
-        pdf.set_draw_color(200, 200, 200)
-        pdf.line(s["margin"], pdf.get_y(), 210 - s["margin"], pdf.get_y())
-        pdf.ln(8)
-
-        # Set default font for HTML body
-        pdf.set_font(font_name, "", s["body_size"])
-
-        # Build the styled HTML wrapper
-        # Strip escaped apostrophes/quotes from JSON serialization artifacts
-        clean_content = content.replace("\\'", "'").replace('\\"', '"')
-        html_content = self._wrap_html_with_styles(clean_content, s["body_size"], font_name)
-
-        # If Unicode font not available, sanitize content to ASCII-safe characters
-        if not font_loaded:
-            html_content = self._sanitize_for_latin1(html_content)
-
-        # Render HTML content
-        pdf.write_html(html_content)
-
-        return pdf.output()
-
-    def _load_unicode_font(self, pdf: Any) -> bool:
-        """Try to load DejaVu Unicode font from system paths."""
-        import os
-
-        # Common paths for DejaVu fonts
-        font_dirs = [
-            "/usr/share/fonts/truetype/dejavu",  # Debian/Ubuntu Docker
-            "/usr/share/fonts/dejavu",  # Some distros
-            "C:/Windows/Fonts",  # Windows (has DejaVu if installed)
-            "/System/Library/Fonts",  # macOS
-        ]
-
-        for font_dir in font_dirs:
-            regular = os.path.join(font_dir, "DejaVuSans.ttf")
-            bold = os.path.join(font_dir, "DejaVuSans-Bold.ttf")
-            if os.path.isfile(regular):
-                try:
-                    pdf.add_font("DejaVu", "", regular)
-                    if os.path.isfile(bold):
-                        pdf.add_font("DejaVu", "B", bold)
-                    else:
-                        pdf.add_font("DejaVu", "B", regular)
-                    italic = os.path.join(font_dir, "DejaVuSans-Oblique.ttf")
-                    if os.path.isfile(italic):
-                        pdf.add_font("DejaVu", "I", italic)
-                    return True
-                except Exception as e:
-                    logger.warning(f"Failed to load DejaVu from {font_dir}: {e}")
-                    continue
-
-        logger.warning("DejaVu fonts not found, falling back to Helvetica (limited Unicode)")
-        return False
-
-    def _sanitize_for_latin1(self, text: str) -> str:
-        """Replace Unicode characters unsupported by Helvetica with ASCII equivalents."""
-        replacements = {
-            "\u2013": "-",  # en-dash
-            "\u2014": "--",  # em-dash
-            "\u2018": "'",  # left single quote
-            "\u2019": "'",  # right single quote
-            "\u201c": '"',  # left double quote
-            "\u201d": '"',  # right double quote
-            "\u2026": "...",  # ellipsis
-            "\u2022": "*",  # bullet
-            "\u00b7": "*",  # middle dot
-            "\u2212": "-",  # minus sign
-            "\u00a0": " ",  # non-breaking space
-            "\u2003": " ",  # em space
-            "\u2002": " ",  # en space
-            "\u00d7": "x",  # multiplication sign
-            "\u00f7": "/",  # division sign
-            "\u2264": "<=",  # less than or equal
-            "\u2265": ">=",  # greater than or equal
-            "\u2260": "!=",  # not equal
-            "\u2192": "->",  # right arrow
-            "\u2190": "<-",  # left arrow
-            "\u00b0": " deg",  # degree sign
-            "\u2261": "===",  # identical to
-        }
-        for char, replacement in replacements.items():
-            text = text.replace(char, replacement)
-        # Strip any remaining non-latin1 characters (preserve HTML tags)
-        result = []
-        for ch in text:
-            try:
-                ch.encode("latin-1")
-                result.append(ch)
-            except UnicodeEncodeError:
-                result.append("?")
-        return "".join(result)
-
-    def _wrap_html_with_styles(self, content: str, body_size: int, font_name: str) -> str:
-        """Wrap raw HTML content with inline style defaults for fpdf2."""
-        styled = content
-
-        # Add border attribute to tables if not already present
-        styled = re.sub(
-            r"<table(?![^>]*border)",
-            '<table border="1" cellpadding="4" cellspacing="0"',
-            styled,
-        )
-
-        # Wrap in a font tag to ensure correct font is used throughout
-        styled = f'<font face="{font_name}" size="{body_size}">{styled}</font>'
-
-        return styled
+        buffer.seek(0)
+        return buffer.getvalue()
 
     def _generate_docx(self, title: str, content: str, style: str) -> bytes:
-        """Generate a DOCX document from HTML content with proper formatting."""
-        from html import unescape
-
+        """Generate a DOCX document from HTML content using htmldocx."""
         from docx import Document
         from docx.shared import Pt
+        from htmldocx import HtmlToDocx
 
         doc = Document()
+        parser = HtmlToDocx()
 
-        # Style configurations
-        styles_config = {
-            "academic": {"title_size": 24, "heading_size": 14, "body_size": 12},
-            "report": {"title_size": 22, "heading_size": 14, "body_size": 11},
-            "minimal": {"title_size": 18, "heading_size": 13, "body_size": 11},
-        }
-        s = styles_config.get(style, styles_config["academic"])
-
-        # For academic style, let HTML content handle title page
-        # For other styles, add a simple title
-        if style != "academic":
-            title_para = doc.add_heading(title, level=0)
-            if title_para.runs:
-                title_para.runs[0].font.size = Pt(s["title_size"])
-
-        # Parse HTML and render to DOCX
-        # Strip escaped apostrophes/quotes from JSON serialization artifacts
-        clean_content = unescape(content).replace("\\'", "'").replace('\\"', '"')
-        self._render_html_to_docx(doc, clean_content, s, style)
+        # Add the HTML content
+        parser.add_html_to_document(content, doc)
 
         # Save to bytes
         buffer = io.BytesIO()
         doc.save(buffer)
         buffer.seek(0)
         return buffer.getvalue()
-
-    def _render_html_to_docx(
-        self, doc: Any, html_content: str, style: dict, doc_style: str
-    ) -> None:
-        """Parse HTML and render to DOCX with proper tables, page breaks, and formatting."""
-        from html import unescape
-        from html.parser import HTMLParser
-
-        from docx.enum.text import WD_ALIGN_PARAGRAPH
-        from docx.shared import Pt
-
-        body_size = style["body_size"]
-        service = self  # reference for nested class
-
-        class DocxHTMLParser(HTMLParser):
-            """Proper HTML parser that handles nesting correctly."""
-
-            def __init__(self):
-                super().__init__()
-                self.tag_stack: list[str] = []
-                self.content_buffer: list[str] = []
-                self.in_list: str | None = None  # "ul" or "ol"
-                self.in_table = False
-                self.table_html = ""
-                self.skip_content = False
-
-            def handle_starttag(self, tag: str, attrs: list) -> None:
-                tag = tag.lower()
-
-                if tag == "table":
-                    self.in_table = True
-                    self.table_html = ""
-                    return
-
-                if self.in_table:
-                    # Accumulate raw HTML for table processing
-                    attr_str = " ".join(f'{k}="{v}"' for k, v in attrs) if attrs else ""
-                    self.table_html += f"<{tag} {attr_str}>".strip() if attr_str else f"<{tag}>"
-                    return
-
-                if tag == "hr":
-                    self._flush_buffer()
-                    if doc_style == "academic":
-                        doc.add_page_break()
-                    else:
-                        doc.add_paragraph()
-                    return
-
-                if tag == "br":
-                    self.content_buffer.append("\n")
-                    return
-
-                if tag in ("ul", "ol"):
-                    self._flush_buffer()
-                    self.in_list = tag
-                    return
-
-                if tag == "li":
-                    self.content_buffer = []
-                    return
-
-                if tag in ("h1", "h2", "h3", "h4", "p", "pre"):
-                    self._flush_buffer()
-                    self.tag_stack.append(tag)
-                    self.content_buffer = []
-                    return
-
-                if tag in ("b", "strong", "i", "em", "code"):
-                    # Inline formatting - just collect text
-                    return
-
-            def handle_endtag(self, tag: str) -> None:
-                tag = tag.lower()
-
-                if tag == "table":
-                    self.in_table = False
-                    service._render_html_table_to_docx(doc, self.table_html, body_size)
-                    self.table_html = ""
-                    return
-
-                if self.in_table:
-                    self.table_html += f"</{tag}>"
-                    return
-
-                if tag in ("ul", "ol"):
-                    self.in_list = None
-                    return
-
-                if tag == "li":
-                    text = "".join(self.content_buffer).strip()
-                    if text and self.in_list:
-                        list_style = "List Bullet" if self.in_list == "ul" else "List Number"
-                        para = doc.add_paragraph(style=list_style)
-                        run = para.add_run(text)
-                        run.font.size = Pt(body_size)
-                    self.content_buffer = []
-                    return
-
-                if tag in ("h1", "h2", "h3", "h4", "p", "pre"):
-                    text = "".join(self.content_buffer).strip()
-                    if self.tag_stack and self.tag_stack[-1] == tag:
-                        self.tag_stack.pop()
-
-                    if not text:
-                        self.content_buffer = []
-                        return
-
-                    if tag == "h1":
-                        heading = doc.add_heading(text, level=1)
-                        if doc_style == "academic":
-                            heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    elif tag == "h2":
-                        doc.add_heading(text, level=2)
-                    elif tag == "h3":
-                        doc.add_heading(text, level=3)
-                    elif tag == "h4":
-                        para = doc.add_paragraph()
-                        run = para.add_run(text)
-                        run.font.size = Pt(body_size + 1)
-                        run.bold = True
-                    elif tag == "p":
-                        para = doc.add_paragraph()
-                        run = para.add_run(text)
-                        run.font.size = Pt(body_size)
-                    elif tag == "pre":
-                        para = doc.add_paragraph()
-                        run = para.add_run(text)
-                        run.font.name = "Courier New"
-                        run.font.size = Pt(body_size - 1)
-
-                    self.content_buffer = []
-                    return
-
-            def handle_data(self, data: str) -> None:
-                if self.in_table:
-                    self.table_html += data
-                    return
-                self.content_buffer.append(data)
-
-            def handle_entityref(self, name: str) -> None:
-                char = unescape(f"&{name};")
-                if self.in_table:
-                    self.table_html += char
-                else:
-                    self.content_buffer.append(char)
-
-            def handle_charref(self, name: str) -> None:
-                char = unescape(f"&#{name};")
-                if self.in_table:
-                    self.table_html += char
-                else:
-                    self.content_buffer.append(char)
-
-            def _flush_buffer(self) -> None:
-                """Flush any pending text as a paragraph."""
-                text = "".join(self.content_buffer).strip()
-                if text and not self.tag_stack and not self.in_list:
-                    para = doc.add_paragraph()
-                    run = para.add_run(text)
-                    run.font.size = Pt(body_size)
-                self.content_buffer = []
-
-        parser = DocxHTMLParser()
-        parser.feed(html_content)
-        parser._flush_buffer()  # flush any trailing content
-
-    def _render_html_table_to_docx(self, doc: Any, table_html: str, body_size: int) -> None:
-        """Render an HTML table as a proper Word table with grid borders."""
-        from html import unescape
-
-        from docx.shared import Pt
-
-        def strip_tags(s: str) -> str:
-            return unescape(re.sub(r"<[^>]+>", "", s)).strip()
-
-        # Extract header rows
-        header_rows: list[list[str]] = []
-        thead_match = re.search(r"<thead[^>]*>(.*?)</thead>", table_html, re.DOTALL | re.IGNORECASE)
-        if thead_match:
-            for tr in re.findall(
-                r"<tr[^>]*>(.*?)</tr>",
-                thead_match.group(1),
-                re.DOTALL | re.IGNORECASE,
-            ):
-                cells = [
-                    strip_tags(c)
-                    for c in re.findall(
-                        r"<t[hd][^>]*>(.*?)</t[hd]>",
-                        tr,
-                        re.DOTALL | re.IGNORECASE,
-                    )
-                ]
-                if cells:
-                    header_rows.append(cells)
-
-        # Extract body rows
-        body_rows: list[list[str]] = []
-        tbody_match = re.search(r"<tbody[^>]*>(.*?)</tbody>", table_html, re.DOTALL | re.IGNORECASE)
-        tbody_content = tbody_match.group(1) if tbody_match else table_html
-        for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", tbody_content, re.DOTALL | re.IGNORECASE):
-            cells = [
-                strip_tags(c)
-                for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.DOTALL | re.IGNORECASE)
-            ]
-            if cells and cells not in header_rows:
-                body_rows.append(cells)
-
-        all_rows = header_rows + body_rows
-        if not all_rows:
-            return
-
-        num_cols = max(len(row) for row in all_rows)
-        num_rows = len(all_rows)
-
-        # Create Word table with grid style
-        table = doc.add_table(rows=num_rows, cols=num_cols)
-        table.style = "Table Grid"
-
-        # Populate cells
-        for row_idx, row_data in enumerate(all_rows):
-            row_cells = table.rows[row_idx].cells
-            for col_idx, cell_text in enumerate(row_data):
-                if col_idx < num_cols:
-                    row_cells[col_idx].text = cell_text
-                    for paragraph in row_cells[col_idx].paragraphs:
-                        for run in paragraph.runs:
-                            run.font.size = Pt(body_size - 1)
-                            if row_idx < len(header_rows):
-                                run.bold = True
-
-        doc.add_paragraph()  # spacing after table
 
     async def _upload_bytes(
         self, storage_service: Any, content: bytes, filename: str, path: str
@@ -511,8 +439,8 @@ class DocumentGenerationService:
             "Content-Type": "application/octet-stream",
         }
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, write=30.0)) as client:
-            response = await client.put(upload_url, headers=headers, content=bytes(content))
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.put(upload_url, headers=headers, content=content)
             if response.status_code != 201:
                 raise RuntimeError(f"Upload failed: {response.status_code} - {response.text}")
 
