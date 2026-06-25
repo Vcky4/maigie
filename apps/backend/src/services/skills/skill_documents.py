@@ -46,7 +46,10 @@ SKILL = Skill(
                 "For study notes: use concise headings, bullet points, key definitions. "
                 "For general documents: use clean professional formatting. "
                 "Always produce publication-ready content that matches the standard expected "
-                "in the user's academic or professional context."
+                "in the user's academic or professional context. "
+                "CRITICAL: After calling this tool, do NOT include any download link, URL, or file path "
+                "in your response message. The document download card is shown automatically to the user. "
+                "Simply confirm the document was created (e.g. 'Your document is ready!') and offer further help."
             ),
             parameters={
                 "type": "object",
