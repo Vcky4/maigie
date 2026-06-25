@@ -22,6 +22,10 @@ SKILL = Skill(
         "pdf",
         "docx",
         "word",
+        "pptx",
+        "presentation",
+        "slides",
+        "powerpoint",
         "export",
         "download",
         "generate document",
@@ -61,8 +65,8 @@ SKILL = Skill(
                 "properties": {
                     "format": {
                         "type": "string",
-                        "enum": ["pdf", "docx"],
-                        "description": "Document format. Use 'docx' for academic reports, essays, and editable documents. Use 'pdf' for reference materials and study guides.",
+                        "enum": ["pdf", "docx", "pptx"],
+                        "description": "Document format. Use 'docx' for academic reports, essays, and editable documents. Use 'pdf' for reference materials and study guides. Use 'pptx' for presentations and slides.",
                     },
                     "title": {
                         "type": "string",
@@ -71,23 +75,23 @@ SKILL = Skill(
                     "content": {
                         "type": "string",
                         "description": (
-                            "The full document body in HTML format. Produce high-quality, comprehensive, "
-                            "publication-ready content. "
-                            "HTML tags to use: "
-                            "<h1> for document/chapter titles; <h2> for major sections; <h3> for subsections; "
-                            "<p> for paragraphs; <ul>/<ol> with <li> for lists; "
-                            "<table> with <thead>, <tbody>, <tr>, <th>, <td> for data tables; "
-                            "<b>/<i> for emphasis; <code> for inline code; <pre> for code blocks; "
-                            "<blockquote> for quotes; <hr> for section/page breaks. "
+                            "The document content. Format depends on the chosen format: "
+                            "FOR PDF/DOCX: Full document body in HTML format. Use "
+                            "<h1>, <h2>, <h3> for headings; <p> for paragraphs; <ul>/<ol> with <li> for lists; "
+                            "<table> with <thead>, <tbody>, <tr>, <th>, <td> for tables; "
+                            "<b>/<i> for emphasis; <pre> for code blocks; <blockquote> for quotes; <hr> for breaks. "
+                            "Do NOT include <html>, <head>, <body>, or <style> tags. "
+                            "FOR PPTX: A JSON array of slide objects. Each slide has: "
+                            '{"title": "Slide Title", "bullets": ["Point 1", "Point 2", ...], "notes": "Optional speaker notes"}. '
+                            "First slide should be the title slide (include a 'subtitle' field). "
+                            "Aim for 8-15 slides with 3-6 bullet points per slide. Keep bullets concise (under 15 words). "
                             "CONTENT REQUIREMENTS: "
-                            "- For academic reports/essays: write MINIMUM 2000-3000 words with full paragraphs, "
-                            "  complete arguments, proper analysis, introduction, body, conclusion, and references. "
-                            "- For book reviews: include plot summary, character analysis, thematic exploration, "
-                            "  literary device discussion, critical evaluation, and personal reflection (1500+ words). "
-                            "- For research: include abstract, literature review, methodology, findings, discussion. "
-                            "- NEVER produce skeleton/outline-only content. Write the actual full text. "
-                            "- Do NOT include <html>, <head>, <body>, or <style> tags — only body content. "
-                            "- Use plain ASCII only (no smart quotes, em-dashes, or special unicode characters)."
+                            "- For PDF/DOCX academic reports/essays: MINIMUM 2000-3000 words, full paragraphs, "
+                            "  complete arguments, introduction, body, conclusion, and references. "
+                            "- For PDF/DOCX book reviews: 1500+ words with analysis and critical evaluation. "
+                            "- For PPTX: 8-15 well-structured slides covering the topic comprehensively. "
+                            "- NEVER produce skeleton/outline-only content. Write full text (PDF/DOCX) or comprehensive slides (PPTX). "
+                            "- Use plain ASCII only (no smart quotes, em-dashes, or special unicode)."
                         ),
                     },
                     "style": {

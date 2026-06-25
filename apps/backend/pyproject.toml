@@ -50,6 +50,7 @@ anthropic = "^0.34.0"
 firebase-admin = "^6.5.0"
 htmldocx = "^0.0.6"
 xhtml2pdf = "^0.2.16"
+python-pptx = "^1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

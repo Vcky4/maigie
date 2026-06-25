@@ -1285,6 +1285,10 @@ async def handle_generate_document(
     if not content:
         return {"status": "error", "message": "Document content is required."}
 
+    # Default style for presentations
+    if doc_format == "pptx" and style not in ("academic", "report", "minimal"):
+        style = "report"
+
     try:
         result = await document_generation_service.generate_document(
             format=doc_format,

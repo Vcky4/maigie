@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 CONTENT_TYPES = {
     "pdf": "application/pdf",
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }
 
 # Max content length to prevent abuse (100k chars ~= 50 pages)
@@ -200,18 +201,22 @@ class DocumentGenerationService:
             content = content[:MAX_CONTENT_LENGTH]
             logger.warning(f"Content truncated to {MAX_CONTENT_LENGTH} chars for user {user_id}")
 
-        # Normalize content: if it's markdown, convert to HTML
-        content = self._ensure_html(content)
-
         format = format.lower().strip()
-        if format not in ("pdf", "docx"):
-            raise ValueError(f"Unsupported format: {format}. Use 'pdf' or 'docx'.")
+        if format not in ("pdf", "docx", "pptx"):
+            raise ValueError(f"Unsupported format: {format}. Use 'pdf', 'docx', or 'pptx'.")
 
-        # Generate the document bytes
-        if format == "pdf":
-            doc_bytes = self._generate_pdf(title, content, style)
+        # For pptx, content is a JSON string of slides; for pdf/docx it's HTML/markdown
+        if format == "pptx":
+            doc_bytes = self._generate_pptx(title, content, style)
+            preview_html = self._build_pptx_preview_html(title, content, style)
         else:
-            doc_bytes = self._generate_docx(title, content, style)
+            # Normalize content: if it's markdown, convert to HTML
+            content = self._ensure_html(content)
+            if format == "pdf":
+                doc_bytes = self._generate_pdf(title, content, style)
+            else:
+                doc_bytes = self._generate_docx(title, content, style)
+            preview_html = self._build_full_html(title, content, style)
 
         # Generate a unique filename
         safe_title = re.sub(r"[^\w\s-]", "", title)[:50].strip().replace(" ", "_")
@@ -226,10 +231,9 @@ class DocumentGenerationService:
         upload_result = await self._upload_bytes(storage_service, doc_bytes, filename, storage_path)
 
         # Also upload the styled HTML for in-app preview
-        full_html = self._build_full_html(title, content, style)
         html_filename = f"{safe_title}_{timestamp}_{short_id}.html"
         preview_result = await self._upload_bytes(
-            storage_service, full_html.encode("utf-8"), html_filename, storage_path
+            storage_service, preview_html.encode("utf-8"), html_filename, storage_path
         )
 
         return {
@@ -429,6 +433,210 @@ class DocumentGenerationService:
         doc.save(buffer)
         buffer.seek(0)
         return buffer.getvalue()
+
+    def _generate_pptx(self, title: str, content: str, style: str) -> bytes:
+        """Generate a PPTX presentation from JSON slide data.
+
+        Content should be a JSON string with structure:
+        [
+            {"title": "Slide Title", "bullets": ["Point 1", "Point 2", ...]},
+            {"title": "Another Slide", "bullets": ["..."], "notes": "Speaker notes"},
+            ...
+        ]
+        Falls back to parsing as plain text if JSON is invalid.
+        """
+        import json
+
+        from pptx import Presentation
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.util import Inches, Pt
+
+        prs = Presentation()
+        prs.slide_width = Inches(13.333)
+        prs.slide_height = Inches(7.5)
+
+        # Parse slide data
+        slides_data = self._parse_pptx_content(content, title)
+
+        for i, slide_data in enumerate(slides_data):
+            slide_title = slide_data.get("title", f"Slide {i + 1}")
+            bullets = slide_data.get("bullets", [])
+            notes = slide_data.get("notes", "")
+            subtitle = slide_data.get("subtitle", "")
+
+            if i == 0:
+                # Title slide
+                layout = prs.slide_layouts[0]  # Title Slide layout
+                slide = prs.slides.add_slide(layout)
+                if slide.placeholders[0]:
+                    slide.placeholders[0].text = slide_title
+                if subtitle and len(slide.placeholders) > 1:
+                    slide.placeholders[1].text = subtitle
+                elif bullets and len(slide.placeholders) > 1:
+                    slide.placeholders[1].text = bullets[0] if bullets else ""
+            else:
+                # Content slides
+                layout = prs.slide_layouts[1]  # Title and Content layout
+                slide = prs.slides.add_slide(layout)
+                if slide.placeholders[0]:
+                    slide.placeholders[0].text = slide_title
+
+                # Add bullet points
+                if bullets and len(slide.placeholders) > 1:
+                    tf = slide.placeholders[1].text_frame
+                    tf.clear()
+                    for j, bullet in enumerate(bullets):
+                        if j == 0:
+                            tf.paragraphs[0].text = bullet
+                        else:
+                            p = tf.add_paragraph()
+                            p.text = bullet
+                        # Style the paragraph
+                        para = tf.paragraphs[j] if j < len(tf.paragraphs) else tf.paragraphs[-1]
+                        para.font.size = Pt(18)
+
+            # Add speaker notes
+            if notes:
+                notes_slide = slide.notes_slide
+                notes_slide.notes_text_frame.text = notes
+
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+    def _parse_pptx_content(self, content: str, title: str) -> list[dict]:
+        """Parse content into slide data. Supports JSON array or plain text fallback."""
+        import json
+
+        # Try JSON first
+        try:
+            data = json.loads(content)
+            if isinstance(data, list) and len(data) > 0:
+                return data
+            if isinstance(data, dict) and "slides" in data:
+                return data["slides"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Fallback: parse HTML/text content into slides by splitting on headings
+        slides: list[dict] = []
+        current_slide: dict | None = None
+
+        # Strip HTML tags for text extraction
+        text = re.sub(r"<[^>]+>", "\n", content)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        lines = text.split("\n")
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # Detect heading-like lines (short, no period at end, capitalized)
+            is_heading = (
+                len(line) < 100
+                and not line.endswith(".")
+                and (line[0].isupper() or line[0].isdigit())
+                and not line.startswith("-")
+                and not line.startswith("*")
+            )
+
+            if is_heading and (not current_slide or len(current_slide.get("bullets", [])) > 0):
+                if current_slide:
+                    slides.append(current_slide)
+                current_slide = {"title": line, "bullets": []}
+            elif current_slide:
+                # Clean bullet markers
+                clean = re.sub(r"^[-*•]\s*", "", line)
+                if clean:
+                    current_slide["bullets"].append(clean)
+            else:
+                current_slide = {"title": title, "bullets": [line]}
+
+        if current_slide:
+            slides.append(current_slide)
+
+        # If no slides parsed, create a single title slide
+        if not slides:
+            slides = [{"title": title, "subtitle": "Generated presentation", "bullets": []}]
+
+        return slides
+
+    def _build_pptx_preview_html(self, title: str, content: str, style: str) -> str:
+        """Build an HTML preview for a PPTX presentation."""
+        slides_data = self._parse_pptx_content(content, title)
+
+        slides_html = []
+        for i, slide in enumerate(slides_data):
+            slide_title = slide.get("title", f"Slide {i + 1}")
+            bullets = slide.get("bullets", [])
+            subtitle = slide.get("subtitle", "")
+
+            bullets_html = ""
+            if bullets:
+                items = "".join(f"<li>{self._escape_html(b)}</li>" for b in bullets)
+                bullets_html = f"<ul>{items}</ul>"
+
+            subtitle_html = (
+                f'<p class="subtitle">{self._escape_html(subtitle)}</p>' if subtitle else ""
+            )
+
+            slides_html.append(
+                f"""
+            <div class="slide">
+                <div class="slide-number">Slide {i + 1}</div>
+                <h2>{self._escape_html(slide_title)}</h2>
+                {subtitle_html}
+                {bullets_html}
+            </div>"""
+            )
+
+        body = "\n".join(slides_html)
+        css = """
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            padding: 20px;
+            background: #f5f5f5;
+            color: #1a1a1a;
+        }
+        h1 { text-align: center; margin-bottom: 24px; font-size: 24px; }
+        .slide {
+            background: white;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            position: relative;
+        }
+        .slide-number {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            font-size: 12px;
+            color: #999;
+            font-weight: 600;
+        }
+        .slide h2 { font-size: 20px; margin: 0 0 12px 0; color: #111; }
+        .slide .subtitle { color: #666; font-size: 15px; margin-bottom: 8px; }
+        .slide ul { margin: 0; padding-left: 20px; }
+        .slide li { font-size: 16px; line-height: 1.6; margin-bottom: 6px; color: #333; }
+        """
+
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{self._escape_html(title)}</title>
+<style>{css}</style>
+</head>
+<body>
+<h1>{self._escape_html(title)}</h1>
+{body}
+</body>
+</html>"""
 
     async def _upload_bytes(
         self, storage_service: Any, content: bytes, filename: str, path: str
