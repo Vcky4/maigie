@@ -1298,11 +1298,32 @@ async def handle_generate_document(
             user_id=user_id,
         )
 
+        # Save document to database for sharing & tracking
+        share_id = None
+        try:
+            doc_record = await db.generateddocument.create(
+                data={
+                    "userId": user_id,
+                    "title": result["title"],
+                    "format": result["format"],
+                    "style": style,
+                    "filename": result["filename"],
+                    "fileUrl": result["url"],
+                    "previewUrl": result["preview_url"],
+                    "size": result["size"],
+                    "contentType": result["content_type"],
+                    "isPublic": True,
+                }
+            )
+            share_id = doc_record.shareId
+        except Exception as e:
+            logger.warning(f"Failed to save document record: {e}")
+
         return {
             "status": "success",
             "action": "generate_document",
             "_component_type": "DocumentCardMessage",
-            "message": f"Your {doc_format.upper()} document '{title}' is ready to download.",
+            "message": f"Your {doc_format.upper()} document '{title}' is ready.",
             "document": {
                 "title": result["title"],
                 "filename": result["filename"],
@@ -1311,6 +1332,7 @@ async def handle_generate_document(
                 "format": result["format"],
                 "contentType": result["content_type"],
                 "previewUrl": result["preview_url"],
+                "shareId": share_id,
             },
         }
     except ValueError as e:

@@ -745,115 +745,97 @@ class DocumentGenerationService:
         return self._wrap_presentation_html(title, body)
 
     def _wrap_presentation_html(self, title: str, body: str) -> str:
-        """Wrap slide sections with full presentation CSS styling."""
+        """Wrap slide sections with reveal.js for interactive slideshow + standalone CSS fallback."""
         css = """
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    padding: 20px;
-    background: #1a1a2e;
-    color: #e0e0e0;
-    line-height: 1.5;
+* { box-sizing: border-box; }
+.reveal section {
+    padding: 40px;
+    text-align: left;
 }
-h1.deck-title {
-    text-align: center;
-    margin-bottom: 24px;
-    font-size: 22px;
-    color: #fff;
-    font-weight: 700;
-}
-section {
-    background: #ffffff;
-    border-radius: 16px;
-    padding: 36px 32px;
-    margin-bottom: 20px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
-    color: #1a1a1a;
-    position: relative;
-    overflow: hidden;
-}
-section h1 {
-    font-size: 28px;
+.reveal h1 {
+    font-size: 2.2em;
     font-weight: 800;
-    margin-bottom: 12px;
+    margin-bottom: 0.3em;
     color: #111;
 }
-section h2 {
-    font-size: 22px;
+.reveal h2 {
+    font-size: 1.6em;
     font-weight: 700;
-    margin-bottom: 16px;
+    margin-bottom: 0.5em;
     color: #1a1a1a;
     border-bottom: 3px solid #4f46e5;
     padding-bottom: 8px;
     display: inline-block;
 }
-section h3 {
-    font-size: 17px;
+.reveal h3 {
+    font-size: 1.2em;
     font-weight: 600;
-    margin: 14px 0 8px;
+    margin: 0.8em 0 0.4em;
     color: #333;
 }
-section p {
-    font-size: 15px;
-    margin-bottom: 10px;
+.reveal p {
+    font-size: 0.95em;
+    margin-bottom: 0.6em;
     color: #444;
     line-height: 1.6;
 }
-section ul, section ol {
-    padding-left: 20px;
-    margin: 10px 0;
+.reveal ul, .reveal ol {
+    display: block;
+    padding-left: 1.5em;
+    margin: 0.5em 0;
 }
-section li {
-    font-size: 15px;
-    margin-bottom: 8px;
+.reveal li {
+    font-size: 0.9em;
+    margin-bottom: 0.5em;
     color: #333;
     line-height: 1.5;
 }
-section table {
+.reveal table {
     width: 100%;
     border-collapse: collapse;
-    margin: 14px 0;
-    font-size: 14px;
+    margin: 1em 0;
+    font-size: 0.85em;
 }
-section th {
+.reveal th {
     background: #4f46e5;
     color: white;
     padding: 10px 14px;
     text-align: left;
     font-weight: 600;
 }
-section td {
+.reveal td {
     padding: 10px 14px;
     border-bottom: 1px solid #eee;
     color: #333;
 }
-section tr:nth-child(even) td { background: #f8f8ff; }
-section blockquote {
+.reveal tr:nth-child(even) td { background: #f8f8ff; }
+.reveal blockquote {
     border-left: 4px solid #4f46e5;
     padding: 12px 16px;
-    margin: 14px 0;
+    margin: 1em 0;
     background: #f5f3ff;
     border-radius: 0 8px 8px 0;
     font-style: italic;
     color: #4a4a6a;
+    width: 90%;
 }
-section blockquote cite {
+.reveal blockquote cite {
     display: block;
     margin-top: 8px;
     font-style: normal;
-    font-size: 13px;
+    font-size: 0.85em;
     color: #666;
     font-weight: 600;
 }
-section svg {
+.reveal svg {
     display: block;
-    margin: 16px auto;
+    margin: 1em auto;
     max-width: 100%;
 }
 .columns {
     display: flex;
-    gap: 16px;
-    margin: 14px 0;
+    gap: 20px;
+    margin: 1em 0;
 }
 .columns > div {
     flex: 1;
@@ -868,20 +850,20 @@ section svg {
     flex-direction: column;
     align-items: center;
     background: #f0f0ff;
-    padding: 16px 24px;
+    padding: 20px 28px;
     border-radius: 12px;
     margin: 8px 12px 8px 0;
 }
 .stat .number {
-    font-size: 32px;
+    font-size: 2.5em;
     font-weight: 800;
     color: #4f46e5;
     line-height: 1;
 }
 .stat .label {
-    font-size: 12px;
+    font-size: 0.75em;
     color: #666;
-    margin-top: 4px;
+    margin-top: 6px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -889,17 +871,17 @@ section svg {
 .highlight {
     background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
     color: white;
-    padding: 18px 22px;
+    padding: 20px 24px;
     border-radius: 12px;
-    margin: 14px 0;
+    margin: 1em 0;
 }
-.highlight h3, .highlight p, .highlight li { color: white; }
+.highlight h3, .highlight p, .highlight li { color: white !important; }
 .highlight ul { padding-left: 20px; }
-.timeline { margin: 14px 0; }
+.timeline { margin: 1em 0; }
 .timeline .event {
-    padding: 12px 0 12px 20px;
+    padding: 12px 0 12px 24px;
     border-left: 3px solid #4f46e5;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
     position: relative;
 }
 .timeline .event::before {
@@ -907,13 +889,13 @@ section svg {
     position: absolute;
     left: -7px;
     top: 16px;
-    width: 10px;
-    height: 10px;
+    width: 11px;
+    height: 11px;
     border-radius: 50%;
     background: #4f46e5;
 }
-.timeline .event b { color: #4f46e5; font-size: 14px; }
-.timeline .event p { margin: 4px 0 0; font-size: 14px; color: #555; }
+.timeline .event b { color: #4f46e5; }
+.timeline .event p { margin: 4px 0 0; font-size: 0.9em; color: #555; }
 """
         return f"""<!DOCTYPE html>
 <html>
@@ -921,11 +903,29 @@ section svg {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{self._escape_html(title)}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/theme/white.css">
 <style>{css}</style>
 </head>
 <body>
-<h1 class="deck-title">{self._escape_html(title)}</h1>
+<div class="reveal">
+<div class="slides">
 {body}
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@5.1.0/dist/reveal.js"></script>
+<script>
+Reveal.initialize({{
+    hash: true,
+    slideNumber: true,
+    controls: true,
+    progress: true,
+    center: false,
+    transition: 'slide',
+    width: 1280,
+    height: 720,
+}});
+</script>
 </body>
 </html>"""
 

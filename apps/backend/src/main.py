@@ -554,6 +554,11 @@ def create_app() -> FastAPI:
     # Device token registration (push notifications)
     app.include_router(device_tokens_router)
 
+    # Document sharing (public share links for generated documents)
+    from .routes.documents import router as documents_router
+
+    app.include_router(documents_router, prefix=f"{settings.API_V1_STR}")
+
     # Example/demonstration endpoints
     app.include_router(examples_router)
 

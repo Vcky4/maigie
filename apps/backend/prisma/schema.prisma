@@ -389,6 +389,9 @@ model User {
   lastSeenAt       DateTime? // Updated on any authenticated request (throttled to every 5 min)
   lastSeenPlatform String?   // "web", "android", "ios" — derived from User-Agent
 
+  // Generated Documents (AI Document Generation)
+  generatedDocuments GeneratedDocument[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2407,4 +2410,38 @@ model SystemConfig {
   createdAt DateTime @default(now())
 
   @@index([category])
+}
+
+// ==========================================
+//  GENERATED DOCUMENTS (AI Document Generation)
+// ==========================================
+
+model GeneratedDocument {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  format      String // "pdf", "docx", "pptx"
+  style       String @default("academic")
+  filename    String
+  fileUrl     String // CDN URL for the actual document file
+  previewUrl  String // CDN URL for the HTML preview
+  size        Int    @default(0)
+  contentType String
+
+  // Share settings
+  shareId   String  @unique @default(cuid()) // Short public share ID
+  isPublic  Boolean @default(true) // Whether the share link is active
+
+  // Metadata
+  messageId String? // Chat message that generated this document
+  sessionId String? // Chat session context
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([shareId])
+  @@index([userId, createdAt])
 }
