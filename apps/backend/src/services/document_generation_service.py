@@ -435,23 +435,26 @@ class DocumentGenerationService:
         return buffer.getvalue()
 
     def _generate_pptx(self, title: str, content: str, style: str) -> bytes:
-        """Generate a styled PPTX presentation from content."""
+        """Generate a richly styled PPTX from content with tables, shapes, and layouts."""
         from pptx import Presentation
         from pptx.dml.color import RGBColor
+        from pptx.enum.shapes import MSO_SHAPE
         from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
-        from pptx.util import Emu, Inches, Pt
+        from pptx.util import Inches, Pt
 
         prs = Presentation()
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
-        # Color scheme
-        primary = RGBColor(0x4F, 0x46, 0xE5)  # Indigo
-        dark = RGBColor(0x1A, 0x1A, 0x2E)
-        white = RGBColor(0xFF, 0xFF, 0xFF)
-        light_bg = RGBColor(0xF8, 0xFA, 0xFC)
-        text_dark = RGBColor(0x1A, 0x1A, 0x1A)
-        text_gray = RGBColor(0x55, 0x55, 0x55)
+        # Color palette
+        PRIMARY = RGBColor(0x4F, 0x46, 0xE5)
+        DARK_BG = RGBColor(0x1E, 0x1B, 0x4B)
+        WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+        LIGHT_GRAY = RGBColor(0xF1, 0xF5, 0xF9)
+        TEXT_DARK = RGBColor(0x1E, 0x29, 0x3B)
+        TEXT_GRAY = RGBColor(0x64, 0x74, 0x8B)
+        ACCENT2 = RGBColor(0x7C, 0x3A, 0xED)
+        ACCENT3 = RGBColor(0x06, 0xB6, 0xD4)
 
         slides_data = self._extract_slides_from_content(content, title)
 
@@ -459,133 +462,183 @@ class DocumentGenerationService:
             slide_title = slide_data.get("title", f"Slide {i + 1}")
             bullets = slide_data.get("bullets", [])
             subtitle = slide_data.get("subtitle", "")
+            table_data = slide_data.get("table")
 
-            # Use blank layout for full control
             layout = prs.slide_layouts[6]  # Blank
             slide = prs.slides.add_slide(layout)
 
             if i == 0:
-                # === TITLE SLIDE ===
-                # Dark background
-                bg = slide.background
-                fill = bg.fill
-                fill.solid()
-                fill.fore_color.rgb = dark
+                # ═══ TITLE SLIDE ═══
+                bg = slide.background.fill
+                bg.solid()
+                bg.fore_color.rgb = DARK_BG
 
-                # Accent bar at top
-                bar = slide.shapes.add_shape(1, Inches(0), Inches(0), prs.slide_width, Inches(0.15))
+                # Top accent bar
+                bar = slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), prs.slide_width, Inches(0.12)
+                )
                 bar.fill.solid()
-                bar.fill.fore_color.rgb = primary
+                bar.fill.fore_color.rgb = PRIMARY
                 bar.line.fill.background()
 
-                # Title text
-                title_box = slide.shapes.add_textbox(
-                    Inches(1.5), Inches(2.2), Inches(10.3), Inches(2)
+                # Left accent stripe
+                acc = slide.shapes.add_shape(
+                    MSO_SHAPE.RECTANGLE, Inches(0.8), Inches(2.0), Inches(0.08), Inches(2.5)
                 )
-                tf = title_box.text_frame
+                acc.fill.solid()
+                acc.fill.fore_color.rgb = PRIMARY
+                acc.line.fill.background()
+
+                # Title
+                tb = slide.shapes.add_textbox(Inches(1.2), Inches(2.0), Inches(10), Inches(1.8))
+                tf = tb.text_frame
                 tf.word_wrap = True
                 p = tf.paragraphs[0]
                 p.text = slide_title
-                p.font.size = Pt(44)
+                p.font.size = Pt(48)
                 p.font.bold = True
-                p.font.color.rgb = white
-                p.alignment = PP_ALIGN.LEFT
+                p.font.color.rgb = WHITE
 
                 # Subtitle
-                if subtitle:
-                    sub_box = slide.shapes.add_textbox(
-                        Inches(1.5), Inches(4.4), Inches(10.3), Inches(1.2)
-                    )
-                    tf2 = sub_box.text_frame
+                sub_text = subtitle or (bullets[0] if bullets else "")
+                if sub_text:
+                    tb2 = slide.shapes.add_textbox(Inches(1.2), Inches(4.2), Inches(10), Inches(1))
+                    tf2 = tb2.text_frame
                     tf2.word_wrap = True
                     p2 = tf2.paragraphs[0]
-                    p2.text = subtitle
-                    p2.font.size = Pt(22)
-                    p2.font.color.rgb = RGBColor(0xA0, 0xA0, 0xC0)
-                    p2.alignment = PP_ALIGN.LEFT
-                elif bullets:
-                    sub_box = slide.shapes.add_textbox(
-                        Inches(1.5), Inches(4.4), Inches(10.3), Inches(1.2)
-                    )
-                    tf2 = sub_box.text_frame
-                    tf2.word_wrap = True
-                    p2 = tf2.paragraphs[0]
-                    p2.text = bullets[0]
+                    p2.text = sub_text
                     p2.font.size = Pt(20)
-                    p2.font.color.rgb = RGBColor(0xA0, 0xA0, 0xC0)
+                    p2.font.color.rgb = RGBColor(0x94, 0xA3, 0xB8)
 
-                # Bottom accent line
-                line = slide.shapes.add_shape(1, Inches(1.5), Inches(6.8), Inches(3), Inches(0.06))
-                line.fill.solid()
-                line.fill.fore_color.rgb = primary
-                line.line.fill.background()
-
-            else:
-                # === CONTENT SLIDE ===
-                # Light background
-                bg = slide.background
-                fill = bg.fill
-                fill.solid()
-                fill.fore_color.rgb = white
-
-                # Colored header bar
-                header_bar = slide.shapes.add_shape(
-                    1, Inches(0), Inches(0), prs.slide_width, Inches(1.4)
-                )
-                header_bar.fill.solid()
-                header_bar.fill.fore_color.rgb = primary
-                header_bar.line.fill.background()
-
-                # Title on the header bar
-                title_box = slide.shapes.add_textbox(
-                    Inches(0.8), Inches(0.3), Inches(11.5), Inches(0.9)
-                )
-                tf = title_box.text_frame
-                tf.word_wrap = True
-                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-                p = tf.paragraphs[0]
-                p.text = slide_title
-                p.font.size = Pt(28)
-                p.font.bold = True
-                p.font.color.rgb = white
-                p.alignment = PP_ALIGN.LEFT
-
-                # Content area with bullets
-                if bullets:
-                    content_box = slide.shapes.add_textbox(
-                        Inches(0.8), Inches(1.8), Inches(11.5), Inches(5.2)
+                # Decorative circles
+                for cx, clr in [(Inches(10), ACCENT2), (Inches(11.2), ACCENT3)]:
+                    c = slide.shapes.add_shape(
+                        MSO_SHAPE.OVAL, cx, Inches(5.5), Inches(1.5), Inches(1.5)
                     )
-                    tf = content_box.text_frame
-                    tf.word_wrap = True
+                    c.fill.solid()
+                    c.fill.fore_color.rgb = clr
+                    c.line.fill.background()
 
-                    for j, bullet in enumerate(bullets):
-                        if j == 0:
-                            para = tf.paragraphs[0]
-                        else:
-                            para = tf.add_paragraph()
+            elif table_data and isinstance(table_data, dict):
+                # ═══ TABLE SLIDE ═══
+                self._pptx_add_header(slide, slide_title, prs.slide_width, PRIMARY, WHITE)
+                headers = table_data.get("headers", [])
+                rows = table_data.get("rows", [])
+                if headers and rows:
+                    n_rows = len(rows) + 1
+                    n_cols = len(headers)
+                    tbl_w = min(prs.slide_width - Inches(1.6), Inches(n_cols * 2.5))
+                    tbl_left = (prs.slide_width - tbl_w) // 2
+                    shape = slide.shapes.add_table(
+                        n_rows, n_cols, tbl_left, Inches(2.0), tbl_w, Inches(4.5)
+                    )
+                    tbl = shape.table
+                    tbl.first_row = True
+                    for ci, h in enumerate(headers):
+                        cell = tbl.cell(0, ci)
+                        cell.text = str(h)
+                        cell.fill.solid()
+                        cell.fill.fore_color.rgb = PRIMARY
+                        for para in cell.text_frame.paragraphs:
+                            para.font.color.rgb = WHITE
+                            para.font.size = Pt(14)
+                            para.font.bold = True
+                    for ri, row in enumerate(rows):
+                        for ci, val in enumerate(row[:n_cols]):
+                            cell = tbl.cell(ri + 1, ci)
+                            cell.text = str(val)
+                            for para in cell.text_frame.paragraphs:
+                                para.font.size = Pt(13)
+                                para.font.color.rgb = TEXT_DARK
+                            if ri % 2 == 1:
+                                cell.fill.solid()
+                                cell.fill.fore_color.rgb = LIGHT_GRAY
+            else:
+                # ═══ CONTENT SLIDE ═══
+                self._pptx_add_header(slide, slide_title, prs.slide_width, PRIMARY, WHITE)
+                if len(bullets) > 6:
+                    mid = len(bullets) // 2
+                    self._pptx_add_bullets(
+                        slide,
+                        bullets[:mid],
+                        Inches(0.8),
+                        Inches(2.0),
+                        Inches(5.5),
+                        TEXT_DARK,
+                        PRIMARY,
+                    )
+                    self._pptx_add_bullets(
+                        slide,
+                        bullets[mid:],
+                        Inches(6.8),
+                        Inches(2.0),
+                        Inches(5.5),
+                        TEXT_DARK,
+                        ACCENT2,
+                    )
+                elif bullets:
+                    self._pptx_add_bullets(
+                        slide, bullets, Inches(0.8), Inches(2.0), Inches(11.5), TEXT_DARK, PRIMARY
+                    )
 
-                        para.text = bullet
-                        para.font.size = Pt(20)
-                        para.font.color.rgb = text_dark
-                        para.space_after = Pt(12)
-                        # Add bullet character
-                        para.level = 0
-
-                # Slide number
-                num_box = slide.shapes.add_textbox(
-                    Inches(12.2), Inches(7.0), Inches(0.8), Inches(0.4)
-                )
-                ntf = num_box.text_frame
-                np = ntf.paragraphs[0]
-                np.text = str(i + 1)
-                np.font.size = Pt(11)
-                np.font.color.rgb = text_gray
+            # Slide number
+            if i > 0:
+                nb = slide.shapes.add_textbox(Inches(12.4), Inches(7.0), Inches(0.7), Inches(0.4))
+                np = nb.text_frame.paragraphs[0]
+                np.text = str(i)
+                np.font.size = Pt(10)
+                np.font.color.rgb = TEXT_GRAY
                 np.alignment = PP_ALIGN.RIGHT
 
         buffer = io.BytesIO()
         prs.save(buffer)
         buffer.seek(0)
         return buffer.getvalue()
+
+    def _pptx_add_header(self, slide, title_text, slide_width, color, text_color):
+        """Add styled header bar to a slide."""
+        from pptx.enum.shapes import MSO_SHAPE
+        from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+        from pptx.util import Inches, Pt
+
+        hdr = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), slide_width, Inches(1.5)
+        )
+        hdr.fill.solid()
+        hdr.fill.fore_color.rgb = color
+        hdr.line.fill.background()
+        tb = slide.shapes.add_textbox(Inches(0.8), Inches(0.25), Inches(11.5), Inches(1.0))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        p = tf.paragraphs[0]
+        p.text = title_text
+        p.font.size = Pt(30)
+        p.font.bold = True
+        p.font.color.rgb = text_color
+        p.alignment = PP_ALIGN.LEFT
+
+    def _pptx_add_bullets(self, slide, bullets, left, top, width, text_color, dot_color):
+        """Add styled bullet list with dot shapes."""
+        from pptx.enum.shapes import MSO_SHAPE
+        from pptx.util import Inches, Pt
+
+        y = top
+        for bullet in bullets:
+            dot = slide.shapes.add_shape(
+                MSO_SHAPE.OVAL, left, y + Inches(0.12), Inches(0.15), Inches(0.15)
+            )
+            dot.fill.solid()
+            dot.fill.fore_color.rgb = dot_color
+            dot.line.fill.background()
+            tb = slide.shapes.add_textbox(left + Inches(0.35), y, width - Inches(0.35), Inches(0.6))
+            tf = tb.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            p.text = str(bullet)
+            p.font.size = Pt(18)
+            p.font.color.rgb = text_color
+            y += Inches(0.7)
 
     def _extract_slides_from_content(self, content: str, title: str) -> list[dict]:
         """Extract slide data from content (HTML sections, JSON, or plain text)."""
@@ -609,7 +662,7 @@ class DocumentGenerationService:
         return self._parse_pptx_content(content, title)
 
     def _parse_sections_to_slides(self, html: str) -> list[dict]:
-        """Parse HTML <section> tags into slide data for PPTX."""
+        """Parse HTML <section> tags into slide data for PPTX, including tables."""
         slides: list[dict] = []
         # Split by section tags
         sections = re.split(r"<section[^>]*>", html)
@@ -632,6 +685,31 @@ class DocumentGenerationService:
             if subtitle_match:
                 subtitle = re.sub(r"<[^>]+>", "", subtitle_match.group(1)).strip()
 
+            # Extract table data if present
+            table_data = None
+            table_match = re.search(
+                r"<table[^>]*>(.*?)</table>", section, re.DOTALL | re.IGNORECASE
+            )
+            if table_match:
+                table_html = table_match.group(1)
+                headers: list[str] = []
+                rows: list[list[str]] = []
+                # Extract headers from <th> tags
+                for th in re.finditer(r"<th[^>]*>(.*?)</th>", table_html, re.DOTALL):
+                    headers.append(re.sub(r"<[^>]+>", "", th.group(1)).strip())
+                # Extract rows from <td> tags grouped by <tr>
+                for tr in re.finditer(r"<tr[^>]*>(.*?)</tr>", table_html, re.DOTALL):
+                    tr_content = tr.group(1)
+                    if "<th" in tr_content:
+                        continue  # Skip header row
+                    row: list[str] = []
+                    for td in re.finditer(r"<td[^>]*>(.*?)</td>", tr_content, re.DOTALL):
+                        row.append(re.sub(r"<[^>]+>", "", td.group(1)).strip())
+                    if row:
+                        rows.append(row)
+                if headers and rows:
+                    table_data = {"headers": headers, "rows": rows}
+
             # Extract bullet points from <li> tags
             bullets: list[str] = []
             for li_match in re.finditer(r"<li[^>]*>(.*?)</li>", section, re.DOTALL):
@@ -639,18 +717,20 @@ class DocumentGenerationService:
                 if text:
                     bullets.append(text)
 
-            # If no bullets, extract <p> content as bullets (skip subtitle)
-            if not bullets:
+            # If no bullets and no table, extract <p> content as bullets
+            if not bullets and not table_data:
                 p_tags = re.findall(r"<p[^>]*>(.*?)</p>", section, re.DOTALL)
                 for p in p_tags:
                     text = re.sub(r"<[^>]+>", "", p).strip()
                     if text and text != subtitle:
                         bullets.append(text)
 
-            if slide_title or bullets:
+            if slide_title or bullets or table_data:
                 slide: dict = {"title": slide_title or "Untitled", "bullets": bullets}
                 if subtitle:
                     slide["subtitle"] = subtitle
+                if table_data:
+                    slide["table"] = table_data
                 slides.append(slide)
 
         if not slides:
