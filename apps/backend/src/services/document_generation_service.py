@@ -458,6 +458,16 @@ class DocumentGenerationService:
 
         slides_data = self._extract_slides_from_content(content, title)
 
+        # Filter out slides with only a title and no real content
+        # Keep: first slide (title slide), slides with bullets, slides with tables
+        filtered = []
+        for idx, s in enumerate(slides_data):
+            if idx == 0:
+                filtered.append(s)
+            elif s.get("bullets") or s.get("table"):
+                filtered.append(s)
+        slides_data = filtered if filtered else slides_data[:1]
+
         for i, slide_data in enumerate(slides_data):
             slide_title = slide_data.get("title", f"Slide {i + 1}")
             bullets = slide_data.get("bullets", [])
@@ -679,12 +689,6 @@ class DocumentGenerationService:
             if title_match:
                 slide_title = re.sub(r"<[^>]+>", "", title_match.group(1)).strip()
 
-            # Extract subtitle from first <p> after title
-            subtitle = ""
-            subtitle_match = re.search(r"</h[12]>\s*<p[^>]*>(.*?)</p>", section, re.DOTALL)
-            if subtitle_match:
-                subtitle = re.sub(r"<[^>]+>", "", subtitle_match.group(1)).strip()
-
             # Extract table data if present
             table_data = None
             table_match = re.search(
@@ -717,18 +721,40 @@ class DocumentGenerationService:
                 if text:
                     bullets.append(text)
 
-            # If no bullets and no table, extract <p> content as bullets
-            if not bullets and not table_data:
-                p_tags = re.findall(r"<p[^>]*>(.*?)</p>", section, re.DOTALL)
-                for p in p_tags:
-                    text = re.sub(r"<[^>]+>", "", p).strip()
-                    if text and text != subtitle:
+            # Also extract text from <p>, <div>, <blockquote>, <h3>, <h4> etc.
+            # This catches stats, highlights, quotes, and other rich content
+            if not bullets or not table_data:
+                extra_blocks = re.findall(
+                    r"<(?:p|blockquote|h3|h4)[^>]*>(.*?)</(?:p|blockquote|h3|h4)>",
+                    section,
+                    re.DOTALL,
+                )
+                for block in extra_blocks:
+                    text = re.sub(r"<[^>]+>", "", block).strip()
+                    if text and len(text) > 3 and text not in bullets:
                         bullets.append(text)
+
+                # Extract text from div.stat, div.highlight etc.
+                div_blocks = re.findall(r"<div[^>]*>(.*?)</div>", section, re.DOTALL)
+                for block in div_blocks:
+                    # Skip divs that contain other divs (wrappers like .columns)
+                    if "<div" in block:
+                        # Extract inner text from nested divs
+                        inner_texts = re.findall(
+                            r"<(?:span|b|p|h3)[^>]*>(.*?)</(?:span|b|p|h3)>", block, re.DOTALL
+                        )
+                        combined = " ".join(
+                            re.sub(r"<[^>]+>", "", t).strip() for t in inner_texts if t.strip()
+                        )
+                        if combined and len(combined) > 3 and combined not in bullets:
+                            bullets.append(combined)
+                    else:
+                        text = re.sub(r"<[^>]+>", "", block).strip()
+                        if text and len(text) > 3 and text not in bullets:
+                            bullets.append(text)
 
             if slide_title or bullets or table_data:
                 slide: dict = {"title": slide_title or "Untitled", "bullets": bullets}
-                if subtitle:
-                    slide["subtitle"] = subtitle
                 if table_data:
                     slide["table"] = table_data
                 slides.append(slide)
