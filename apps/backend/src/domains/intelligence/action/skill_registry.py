@@ -1,5 +1,5 @@
-"""
-Skill Registry — registers and dispatches AI skills (tools).
+﻿"""
+Skill Registry â€” registers and dispatches AI skills (tools).
 
 Skills are actions that Intelligence can take to modify the learning
 environment: create courses, schedule blocks, generate notes, etc.
@@ -20,7 +20,7 @@ def get_skill_registry():
 
     During migration, delegates to existing src/services/skills/ system.
     """
-    from src.services.skills.registry import get_registry
+    from src.domains.intelligence.action.skills.registry import get_registry
 
     return get_registry()
 
@@ -36,7 +36,7 @@ async def execute_skill(
 
     This is called by the reasoning layer when the LLM requests a tool call.
     """
-    from src.services.skills.handlers import handle_skill_call
+    from src.domains.intelligence.action.skills.handlers import handle_skill_call
 
     return await handle_skill_call(
         skill_name=skill_name,

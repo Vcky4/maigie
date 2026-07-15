@@ -1,5 +1,5 @@
-"""
-Study Block (schedule) management — CRUD with Google Calendar sync.
+﻿"""
+Study Block (schedule) management â€” CRUD with Google Calendar sync.
 """
 
 import logging
@@ -16,8 +16,8 @@ async def create_block(*, user_id: str, data: dict[str, Any]) -> Any:
     block = await progress_repo.create_block({"userId": user_id, **data})
     # Sync to Google Calendar if connected
     try:
-        from src.services.google_calendar_service import google_calendar_service
-        await google_calendar_service.sync_schedule_block(user_id, block.id)
+        from src.integrations.google_calendar import sync_schedule_block
+        await sync_schedule_block(user_id, block.id)
     except Exception as e:
         logger.debug(f"Calendar sync skipped: {e}")
     return block

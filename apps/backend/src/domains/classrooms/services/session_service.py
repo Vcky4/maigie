@@ -1,5 +1,5 @@
-"""
-Learning Session management — schedule, start, complete, cancel.
+﻿"""
+Learning Session management â€” schedule, start, complete, cancel.
 """
 
 import logging
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def create_session(*, space_id: str, user_id: str, data: dict[str, Any]) -> Any:
     """Schedule a Learning Session."""
-    from src.services.circle_service import _require_role
+    from src.domains.learning_spaces.services.space_impl import _require_role
     from src.shared.database import db
 
     await _require_role(db, space_id, user_id, min_role="TUTOR")
@@ -57,7 +57,7 @@ async def update_session(*, session_id: str, user_id: str, data: dict[str, Any])
     if not session:
         raise NotFoundError("Session", session_id)
 
-    from src.services.circle_service import _require_role
+    from src.domains.learning_spaces.services.space_impl import _require_role
     from src.shared.database import db
 
     await _require_role(db, session.circleId, user_id, min_role="TUTOR")
@@ -74,7 +74,7 @@ async def delete_session(*, session_id: str, user_id: str) -> None:
     if not session:
         raise NotFoundError("Session", session_id)
 
-    from src.services.circle_service import _require_role
+    from src.domains.learning_spaces.services.space_impl import _require_role
     from src.shared.database import db
 
     await _require_role(db, session.circleId, user_id, min_role="TUTOR")
@@ -84,7 +84,7 @@ async def delete_session(*, session_id: str, user_id: str) -> None:
 async def suggest_sessions(*, space_id: str, user_id: str) -> list[dict[str, Any]]:
     """Generate AI-suggested sessions for a space."""
     # Delegate to existing service
-    from src.services.circle_service import suggest_sessions as _suggest
+    from src.domains.learning_spaces.services.space_impl import suggest_sessions as _suggest
     from src.shared.database import db
 
     return await _suggest(db, space_id, user_id)

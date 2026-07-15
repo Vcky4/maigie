@@ -1,5 +1,5 @@
-"""
-Memory service — long-term context for Intelligence.
+﻿"""
+Memory service â€” long-term context for Intelligence.
 
 Manages conversation summaries, user facts, and interaction history.
 Memory allows Intelligence to understand learners over time rather
@@ -20,7 +20,7 @@ async def get_memory_context(user_id: str) -> dict[str, Any]:
     Used by the reasoning layer before generating responses.
     Includes user facts, recent conversation summaries, and learning context.
     """
-    from src.services.memory_service import get_memory_context as _get_context
+    from src.domains.intelligence.memory.memory_impl import get_memory_context as _get_context
 
     return await _get_context(user_id)
 
@@ -72,7 +72,7 @@ async def record_interaction(
     metadata: dict | None = None,
 ) -> None:
     """Record a user interaction for future personalization."""
-    from src.services.user_memory_service import user_memory_service
+    from src.domains.intelligence.memory.user_memory_impl import user_memory_service
 
     await user_memory_service.record_interaction(
         user_id=user_id,

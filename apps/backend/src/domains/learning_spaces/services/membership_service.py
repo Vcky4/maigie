@@ -1,5 +1,5 @@
-"""
-Learning Space membership — join, leave, invite, roles, transfer ownership.
+﻿"""
+Learning Space membership â€” join, leave, invite, roles, transfer ownership.
 """
 
 import logging
@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 
 async def invite_members(*, space_id: str, user_id: str, emails: list[str], role: str | None = None, seat_tier: str | None = None) -> list[Any]:
     """Invite users to a Learning Space by email."""
-    from src.services.circle_service import invite_members as _invite
+    from src.domains.learning_spaces.services.space_impl import invite_members as _invite
     from src.shared.database import db
-    from src.models.circles import CircleInviteCreate
+    from src.domains.learning_spaces.models import CircleInviteCreate
 
     invite_data = CircleInviteCreate(emails=emails, role=role, seat_tier=seat_tier)
     return await _invite(db, space_id, user_id, invite_data)
@@ -27,7 +27,7 @@ async def invite_members(*, space_id: str, user_id: str, emails: list[str], role
 
 async def accept_invite(*, invite_id: str, user_id: str) -> Any:
     """Accept a pending invitation."""
-    from src.services.circle_service import accept_invite as _accept
+    from src.domains.learning_spaces.services.space_impl import accept_invite as _accept
     from src.shared.database import db
 
     result = await _accept(db, invite_id, user_id)
@@ -38,7 +38,7 @@ async def accept_invite(*, invite_id: str, user_id: str) -> Any:
 
 async def leave_space(*, space_id: str, user_id: str) -> None:
     """Leave a Learning Space."""
-    from src.services.circle_service import leave_circle as _leave
+    from src.domains.learning_spaces.services.space_impl import leave_circle as _leave
     from src.shared.database import db
 
     await _leave(db, space_id, user_id)
@@ -47,7 +47,7 @@ async def leave_space(*, space_id: str, user_id: str) -> None:
 
 async def update_member_role(*, space_id: str, user_id: str, target_user_id: str, new_role: str) -> Any:
     """Update a member's role within the space."""
-    from src.services.circle_service import update_member_role as _update
+    from src.domains.learning_spaces.services.space_impl import update_member_role as _update
     from src.shared.database import db
 
     result = await _update(db, space_id, user_id, target_user_id, new_role)
@@ -61,7 +61,7 @@ async def update_member_role(*, space_id: str, user_id: str, target_user_id: str
 
 async def remove_member(*, space_id: str, user_id: str, target_user_id: str) -> None:
     """Remove a member from the space (OWNER/ADMIN only)."""
-    from src.services.circle_service import remove_member as _remove
+    from src.domains.learning_spaces.services.space_impl import remove_member as _remove
     from src.shared.database import db
 
     await _remove(db, space_id, user_id, target_user_id)
@@ -70,7 +70,7 @@ async def remove_member(*, space_id: str, user_id: str, target_user_id: str) -> 
 
 async def transfer_ownership(*, space_id: str, user_id: str, new_owner_id: str) -> Any:
     """Transfer space ownership to another member."""
-    from src.services.circle_service import transfer_ownership as _transfer
+    from src.domains.learning_spaces.services.space_impl import transfer_ownership as _transfer
     from src.shared.database import db
 
     return await _transfer(db, space_id, user_id, new_owner_id)

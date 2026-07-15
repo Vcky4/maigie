@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 async def generate_document(*, user: User, data: dict[str, Any]) -> Any:
-    """Generate a document using AI. Delegates to existing service."""
-    from src.services.document_generation_service import generate_document as _generate
+    """Generate a document using AI."""
+    from src.domains.personal_learning.services.document_impl import generate_document as _generate
 
     return await _generate(
         user_id=user.id,

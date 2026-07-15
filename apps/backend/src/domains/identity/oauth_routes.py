@@ -198,14 +198,14 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request)
             )
 
             # Create Maigie calendar
-            from src.services.google_calendar_service import google_calendar_service
+            from src.integrations.google_calendar import create_maigie_calendar, sync_existing_schedules
 
-            calendar_id = await google_calendar_service.create_maigie_calendar(calendar_user_id)
+            calendar_id = await create_maigie_calendar(calendar_user_id)
 
             # Sync existing schedules
             sync_results = {"success_count": 0, "total": 0}
             try:
-                sync_results = await google_calendar_service.sync_existing_schedules(calendar_user_id)
+                sync_results = await sync_existing_schedules(calendar_user_id)
             except Exception as e:
                 logger.warning(f"Schedule sync failed: {e}")
 

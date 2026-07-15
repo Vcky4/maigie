@@ -71,7 +71,7 @@ async def signup(*, email: str, password: str, name: str) -> User:
 
     # Send verification email (fire-and-forget)
     try:
-        from src.services.email import send_verification_email
+        from src.integrations.brevo import send_verification_email
 
         await send_verification_email(email, otp)
     except Exception as e:
@@ -100,7 +100,7 @@ async def verify_email(*, email: str, code: str) -> None:
 
     # Send welcome email (fire-and-forget)
     try:
-        from src.services.email import send_welcome_email
+        from src.integrations.brevo import send_welcome_email
 
         await send_welcome_email(email, user.name)
     except Exception as e:
@@ -129,7 +129,7 @@ async def resend_otp(*, email: str) -> None:
     await identity_repo.set_verification_code(user.id, new_otp, new_expiry)
 
     try:
-        from src.services.email import send_verification_email
+        from src.integrations.brevo import send_verification_email
 
         await send_verification_email(email, new_otp)
     except Exception as e:
@@ -239,7 +239,7 @@ async def forgot_password(*, email: str) -> None:
     await identity_repo.set_password_reset_code(user.id, otp, expiry)
 
     try:
-        from src.services.email import send_password_reset_email
+        from src.integrations.brevo import send_password_reset_email
 
         await send_password_reset_email(email, otp, user.name)
     except Exception as e:
@@ -313,13 +313,15 @@ async def link_referral(*, user: User, referral_code: str) -> dict:
 
     await identity_repo.set_referred_by(user.id, code)
 
-    # Track referral reward (delegate to billing domain via event in future)
+    # Track referral reward via domain event (billing domain handles rewards)
     try:
-        from src.services.referral_service import track_referral_signup
+        from src.shared.events import emit
 
-        fresh_user = await identity_repo.find_by_id(user.id)
-        if fresh_user:
-            await track_referral_signup(fresh_user, code)
+        await emit("billing.referral_linked", {
+            "user_id": user.id,
+            "referral_code": code,
+            "referrer_id": referrer.id,
+        })
     except Exception as e:
         logger.error(f"Error tracking referral: {e}")
 

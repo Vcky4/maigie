@@ -1,5 +1,5 @@
-"""
-Learning Space lifecycle — create, update, delete, list.
+﻿"""
+Learning Space lifecycle â€” create, update, delete, list.
 
 Delegates to existing circle_service during migration.
 """
@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 async def create_space(*, user: User, data: dict[str, Any]) -> Any:
     """Create a new Learning Space. User becomes OWNER."""
-    from src.services.circle_service import create_circle
+    from src.domains.learning_spaces.services.space_impl import create_circle
     from src.shared.database import db
-    from src.models.circles import CircleCreate
+    from src.domains.learning_spaces.models import CircleCreate
 
     create_model = CircleCreate(**data)
     circle = await create_circle(db, user.id, str(user.tier), create_model)
@@ -37,7 +37,7 @@ async def list_user_spaces(*, user_id: str) -> list[Any]:
 
 async def get_space_detail(*, space_id: str, user_id: str) -> Any:
     """Get detailed Learning Space info. Verifies membership."""
-    from src.services.circle_service import get_circle_detail
+    from src.domains.learning_spaces.services.space_impl import get_circle_detail
     from src.shared.database import db
 
     return await get_circle_detail(db, space_id, user_id)
@@ -45,9 +45,9 @@ async def get_space_detail(*, space_id: str, user_id: str) -> Any:
 
 async def update_space(*, space_id: str, user_id: str, data: dict[str, Any]) -> Any:
     """Update space settings (OWNER/ADMIN only)."""
-    from src.services.circle_service import update_circle
+    from src.domains.learning_spaces.services.space_impl import update_circle
     from src.shared.database import db
-    from src.models.circles import CircleUpdate
+    from src.domains.learning_spaces.models import CircleUpdate
 
     update_model = CircleUpdate(**data)
     return await update_circle(db, space_id, user_id, update_model)
@@ -55,7 +55,7 @@ async def update_space(*, space_id: str, user_id: str, data: dict[str, Any]) -> 
 
 async def delete_space(*, space_id: str, user_id: str) -> None:
     """Delete a Learning Space (OWNER only)."""
-    from src.services.circle_service import delete_circle
+    from src.domains.learning_spaces.services.space_impl import delete_circle
     from src.shared.database import db
 
     await delete_circle(db, space_id, user_id)

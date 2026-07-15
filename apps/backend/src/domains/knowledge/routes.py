@@ -37,8 +37,8 @@ async def generate_ai_course(
     current_user: CurrentUser,
 ):
     """Trigger AI course generation (returns immediately, updates via WebSocket)."""
-    from src.services.ai_course import generate_course_content_task
-    from src.services.credit_service import CREDIT_COSTS, consume_credits
+    from src.domains.knowledge.services.ai_course_generation import generate_course_content_task
+    from src.domains.billing.services.credit_consumption_service import consume_credits, CREDIT_COSTS
     from src.shared.database import db
 
     user_id = current_user.id
@@ -398,8 +398,7 @@ async def generate_topic_content(
         raise HTTPException(status_code=400, detail="Topic path mismatch")
 
     # Delegate to Intelligence layer (LLM)
-    from src.services.llm.gemini_sdk import new_gemini_client, types as _types
-    from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+    from src.domains.intelligence.reasoning.llm import generate_content
 
     prompts = {
         "explain": f'Explain "{topic.title}" clearly with examples. Markdown format.',
@@ -411,13 +410,7 @@ async def generate_topic_content(
     if topic.content:
         prompt += f"\n\nExisting context:\n{topic.content[:2000]}"
 
-    client = new_gemini_client(gemini_api_key() or None)
-    response = await client.aio.models.generate_content(
-        model=default_model_for(LlmTask.CHAT_DEFAULT),
-        contents=prompt,
-        config=_types.GenerateContentConfig(max_output_tokens=2048, temperature=0.7),
-    )
-    content = (response.text or "").strip()
+    content = await generate_content(prompt)
     if not content:
         raise HTTPException(status_code=500, detail="AI returned empty content")
 

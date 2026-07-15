@@ -212,7 +212,7 @@ async def get_credit_packs(current_user: CurrentUser):
 async def purchase_credit_pack(body: models.PurchaseInitiateRequest, current_user: CurrentUser):
     """Initiate a credit pack purchase."""
     from src.shared.infrastructure.redis import cache
-    from src.utils.rate_limit import enforce_rate_limit
+    from src.shared.infrastructure.rate_limit import enforce_rate_limit
 
     await enforce_rate_limit(
         user_id=current_user.id,

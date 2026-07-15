@@ -1,5 +1,5 @@
-"""
-Classroom lifecycle — create, update, delete, list.
+﻿"""
+Classroom lifecycle â€” create, update, delete, list.
 """
 
 import logging
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 async def create_classroom(*, space_id: str, user_id: str, data: dict[str, Any]) -> Any:
     """Create a Classroom within a Learning Space."""
     # Verify membership and permission via existing service
-    from src.services.circle_service import _require_role
+    from src.domains.learning_spaces.services.space_impl import _require_role
     from src.shared.database import db
 
     await _require_role(db, space_id, user_id, min_role="TUTOR")
@@ -52,7 +52,7 @@ async def update_classroom(*, classroom_id: str, user_id: str, data: dict[str, A
         raise NotFoundError("Classroom", classroom_id)
 
     # Permission check
-    from src.services.circle_service import _require_role
+    from src.domains.learning_spaces.services.space_impl import _require_role
     from src.shared.database import db
 
     await _require_role(db, classroom.circleId, user_id, min_role="TUTOR")
@@ -69,7 +69,7 @@ async def delete_classroom(*, classroom_id: str, user_id: str) -> None:
     if not classroom:
         raise NotFoundError("Classroom", classroom_id)
 
-    from src.services.circle_service import _require_role
+    from src.domains.learning_spaces.services.space_impl import _require_role
     from src.shared.database import db
 
     await _require_role(db, classroom.circleId, user_id, min_role="ADMIN")

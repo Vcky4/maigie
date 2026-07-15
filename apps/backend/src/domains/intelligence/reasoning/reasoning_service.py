@@ -1,5 +1,5 @@
-"""
-Reasoning service — LLM orchestration for chat responses.
+﻿"""
+Reasoning service â€” LLM orchestration for chat responses.
 
 Routes requests through the multi-provider LLM infrastructure,
 applying memory context, RAG, and tool definitions.
@@ -32,7 +32,7 @@ async def generate_response(
     Delegates to the existing chat pipeline during migration.
     """
     # During migration, delegate to existing chat service
-    from src.services.chat_session_service import process_chat_message
+    from src.domains.intelligence.reasoning.chat_impl import process_chat_message
 
     result = await process_chat_message(
         user_id=user_id,

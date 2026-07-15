@@ -1,5 +1,5 @@
-"""
-Goal management — CRUD, progress recording, plan regeneration.
+﻿"""
+Goal management â€” CRUD, progress recording, plan regeneration.
 """
 
 import logging
@@ -62,5 +62,5 @@ async def delete_goal(*, goal_id: str, user_id: str) -> None:
 
 
 async def regenerate_plan(*, user_id: str, goal_id: str, duration_weeks: int = 4, request: str | None = None) -> dict[str, Any]:
-    from src.services.planning_service import regenerate_goal_plan
+    from src.domains.intelligence.planning.planning_impl import regenerate_goal_plan
     return await regenerate_goal_plan(user_id=user_id, goal_id=goal_id, duration_weeks=duration_weeks, request=request)

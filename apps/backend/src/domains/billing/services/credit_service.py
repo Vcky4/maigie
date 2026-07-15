@@ -25,7 +25,7 @@ MAX_ADS_PER_DAY = 10
 
 async def get_credit_packs(user: User) -> list[dict[str, Any]]:
     """Get available credit packs with user-specific pricing."""
-    from src.services.credit_purchase_service import get_credit_packs as _get_packs
+    from src.domains.billing.services.credit_purchase_service import get_credit_packs as _get_packs
 
     return await _get_packs(user)
 
@@ -34,7 +34,7 @@ async def initiate_purchase(
     *, user: User, pack_id: str, success_url: str, cancel_url: str
 ) -> dict[str, Any]:
     """Initiate a credit pack purchase (one-time payment)."""
-    from src.services.credit_purchase_service import initiate_purchase as _initiate
+    from src.domains.billing.services.credit_purchase_service import initiate_purchase as _initiate
 
     return await _initiate(
         user=user,
@@ -48,7 +48,7 @@ async def get_purchase_history(
     *, user_id: str, page: int = 1, page_size: int = 20
 ) -> dict[str, Any]:
     """Get paginated purchase history."""
-    from src.services.credit_purchase_service import get_purchase_history as _history
+    from src.domains.billing.services.credit_purchase_service import get_purchase_history as _history
 
     return await _history(user_id=user_id, page=page, page_size=page_size)
 
@@ -57,7 +57,7 @@ async def admin_adjust_balance(
     *, admin_id: str, target_user_id: str, amount: int, reason: str
 ) -> User:
     """Admin: adjust a user's purchased credits balance."""
-    from src.services.credit_purchase_service import admin_adjust_balance as _adjust
+    from src.domains.billing.services.credit_purchase_service import admin_adjust_balance as _adjust
 
     return await _adjust(
         admin_id=admin_id,

@@ -136,10 +136,10 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
     if not note or not note.content:
         raise NotFoundError("Note", note_id)
 
-    from src.services.llm_service import llm_service
+    from src.domains.intelligence.reasoning.llm import generate_content
 
     # Build context
-    context: dict[str, str] = {}
+    context_parts = [f"Title: {note.title}"]
     if note.topicId:
         from src.shared.database import db
 
@@ -148,19 +148,25 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
             include={"module": {"include": {"course": True}}},
         )
         if topic:
-            context["topicTitle"] = topic.title
+            context_parts.append(f"Topic: {topic.title}")
             if topic.module:
-                context["moduleTitle"] = topic.module.title
+                context_parts.append(f"Module: {topic.module.title}")
                 if topic.module.course:
-                    context["courseTitle"] = topic.module.course.title
+                    context_parts.append(f"Course: {topic.module.course.title}")
 
     cleaned = re.sub(
         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", note.content, flags=re.DOTALL
     ).strip()
 
-    rewritten = await llm_service.rewrite_note_content(
-        content=cleaned, title=note.title, context=context
+    prompt = (
+        f"Rewrite and improve this note with better markdown formatting, "
+        f"clearer structure, and enhanced readability.\n\n"
+        f"Context: {' | '.join(context_parts)}\n\n"
+        f"Original content:\n{cleaned}\n\n"
+        f"Return ONLY the improved note content in markdown. No meta-commentary."
     )
+
+    rewritten = await generate_content(prompt, max_tokens=3000)
     rewritten = re.sub(
         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", rewritten, flags=re.DOTALL
     ).strip()
@@ -177,20 +183,27 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
     if not note or not note.content:
         raise NotFoundError("Note", note_id)
 
-    from src.services.llm_service import llm_service
+    from src.domains.intelligence.reasoning.llm import generate_content
 
     cleaned = re.sub(
         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", note.content, flags=re.DOTALL
     ).strip()
 
-    summary = await llm_service.generate_summary(cleaned)
+    prompt = (
+        f"Summarize this note concisely. Include key points, definitions, and takeaways.\n\n"
+        f"Note title: {note.title}\n"
+        f"Content:\n{cleaned[:3000]}\n\n"
+        f"Return a clear, scannable summary in markdown (bullet points preferred)."
+    )
+
+    summary = await generate_content(prompt, max_tokens=1000)
     await repo.update_note(note_id, {"summary": summary})
     return await repo.find_note(note_id, user_id)
 
 
 async def import_to_space(*, user_id: str, note_id: str, space_id: str) -> Any:
     """Import a personal note into a Learning Space."""
-    from src.services.note_service import import_note_to_circle
+    from src.domains.personal_learning.services.note_impl import import_note_to_circle
     from src.shared.database import db
 
     return await import_note_to_circle(db, note_id, space_id, user_id)

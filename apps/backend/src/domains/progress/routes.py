@@ -1,5 +1,5 @@
-"""
-Progress domain — API routes.
+﻿"""
+Progress domain â€” API routes.
 
 Analytics, goals, study blocks, streaks, achievements,
 spaced repetition, and study sessions.
@@ -243,7 +243,7 @@ async def list_due_reviews(current_user: CurrentUser):
 @router.post("/reviews/{review_id}/submit")
 async def submit_review(review_id: str, body: models.ReviewQualityRequest, current_user: CurrentUser):
     """Submit review quality for spaced repetition (SM-2 algorithm)."""
-    from src.services.spaced_repetition_service import process_review_response
+    from src.domains.progress.services.spaced_repetition_impl import process_review_response
     from src.shared.database import db
 
     result = await process_review_response(db, current_user.id, review_id, body.quality)

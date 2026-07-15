@@ -54,7 +54,7 @@ async def stripe_webhook(
 
     # Delegate to subscription service
     try:
-        from src.services.subscription_service import handle_subscription_webhook
+        from src.domains.billing.services.stripe_service import handle_subscription_webhook
 
         await handle_subscription_webhook(event, db)
     except Exception as e:
@@ -93,7 +93,7 @@ async def paystack_webhook(
 
     try:
         event = json.loads(body)
-        from src.services.paystack_subscription_service import handle_paystack_webhook
+        from src.domains.billing.services.paystack_service import handle_paystack_webhook
 
         await handle_paystack_webhook(event, db)
     except Exception as e:
@@ -112,7 +112,7 @@ async def google_play_rtdn(request: Request):
     """Handle Google Play Real-Time Developer Notifications via Pub/Sub."""
     try:
         body = await request.json()
-        from src.services.google_play_billing_service import handle_rtdn_notification
+        from src.domains.billing.services.google_play_service import handle_rtdn_notification
 
         await handle_rtdn_notification(body)
     except Exception as e:

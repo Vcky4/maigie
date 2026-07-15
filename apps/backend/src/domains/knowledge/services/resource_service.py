@@ -131,16 +131,29 @@ async def delete_resource(*, user_id: str, resource_id: str) -> None:
 
 async def recommend_resources(*, user_id: str, query: str, limit: int = 5, context: dict | None = None) -> dict[str, Any]:
     """Generate AI-powered resource recommendations via RAG."""
-    from src.services.rag_service import rag_service
-    from src.services.user_memory_service import user_memory_service
+    from src.domains.intelligence.memory.memory_service import get_memory_context
 
-    user_context = await user_memory_service.get_user_context(user_id)
+    user_context = await get_memory_context(user_id)
     if context:
         user_context.update(context)
 
-    recommendations = await rag_service.generate_recommendations(
-        query=query, user_id=user_id, user_context=user_context, limit=limit
+    # Use intelligence domain's RAG capability
+    from src.domains.intelligence.reasoning.llm import generate_content
+
+    prompt = (
+        f"Based on the user's learning context, recommend {limit} resources for: {query}\n\n"
+        f"User context: {str(user_context)[:500]}\n\n"
+        "Return as a JSON array of objects with: title, url, description, type, relevance, score."
     )
+
+    import json
+    raw = await generate_content(prompt, max_tokens=1500, temperature=0.3)
+    try:
+        import re
+        match = re.search(r"\[.*\]", raw, re.DOTALL)
+        recommendations = json.loads(match.group(0)) if match else []
+    except Exception:
+        recommendations = []
 
     return {
         "recommendations": [
@@ -152,7 +165,7 @@ async def recommend_resources(*, user_id: str, query: str, limit: int = 5, conte
                 "relevance": r.get("relevance"),
                 "score": r.get("score", 0.5),
             }
-            for r in recommendations
+            for r in recommendations[:limit]
         ],
         "query": query,
         "personalized": True,

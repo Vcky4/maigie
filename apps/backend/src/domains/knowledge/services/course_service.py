@@ -147,7 +147,7 @@ async def archive_course(*, course_id: str, user_id: str) -> Any:
 async def delete_course(*, course_id: str, user_id: str) -> None:
     """Delete a course with cascade."""
     await check_course_ownership(course_id, user_id)
-    from src.services.course_delete_service import delete_course_cascade
+    from src.domains.knowledge.services.course_delete_service import delete_course_cascade
     from src.shared.database import db
 
     await delete_course_cascade(db, course_id, user_id)
@@ -171,11 +171,8 @@ async def toggle_topic_completion(
 
     if completed:
         await emit_topic_completed(user_id, topic_id, course_id)
-        # Spaced repetition hook
-        from src.services.spaced_repetition_service import ensure_review_item_for_completed_topic
-        from src.shared.database import db
-
-        await ensure_review_item_for_completed_topic(db, user_id, topic_id)
+        # Spaced repetition: Progress domain listens to topic.completed event
+        # and creates ReviewSchedule automatically via the event bus
     else:
         await emit_topic_uncompleted(user_id, topic_id, course_id)
 

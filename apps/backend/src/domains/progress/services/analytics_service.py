@@ -1,5 +1,5 @@
-"""
-Analytics — study sessions, streaks, achievements, and reporting.
+﻿"""
+Analytics â€” study sessions, streaks, achievements, and reporting.
 """
 
 import logging
@@ -29,7 +29,7 @@ async def start_study_session(*, user_id: str, course_id: str | None = None, top
 
     # Track activity for streak
     try:
-        from src.services.activity_tracker import record_activity
+        from src.domains.progress.services.activity_tracker import record_activity
         await record_activity(user_id)
     except Exception:
         pass
