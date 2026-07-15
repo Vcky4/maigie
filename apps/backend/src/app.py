@@ -147,8 +147,10 @@ def _register_domains(app: FastAPI) -> None:
     prefix = "/api/v1"
 
     # --- Identity ---
-    # from src.domains.identity.routes import router as identity_router
-    # app.include_router(identity_router, prefix=f"{prefix}/auth", tags=["identity"])
+    from src.domains.identity.routes import auth_router, users_router
+
+    app.include_router(auth_router, prefix=f"{prefix}/auth", tags=["auth"])
+    app.include_router(users_router, prefix=f"{prefix}/users", tags=["users"])
 
     # --- Personal Learning ---
     # from src.domains.personal_learning.routes import router as learning_router
