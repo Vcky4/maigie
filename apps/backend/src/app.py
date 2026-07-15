@@ -296,8 +296,9 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
 
     # --- Progress ---
-    # from src.domains.progress.routes import router as progress_router
-    # app.include_router(progress_router, prefix=f"{prefix}/progress", tags=["progress"])
+    from src.domains.progress.routes import router as progress_router
+
+    app.include_router(progress_router, prefix=f"{prefix}/progress", tags=["progress"])
 
     # --- Billing ---
     from src.domains.billing.routes import router as billing_router
@@ -307,10 +308,9 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
 
     # --- Admin ---
-    # from src.domains.admin.routes import router as admin_router
-    # app.include_router(admin_router, prefix=f"{prefix}/admin", tags=["admin"])
+    from src.domains.admin.routes import router as admin_router
 
-    pass  # Domains will be uncommented as they are migrated
+    app.include_router(admin_router, prefix=f"{prefix}/admin", tags=["admin"])
 
 
 # ---------------------------------------------------------------------------
