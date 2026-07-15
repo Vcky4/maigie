@@ -8,7 +8,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from src.shared.events import emit
 from src.shared.exceptions import ForbiddenError, NotFoundError, ValidationError

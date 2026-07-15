@@ -18,10 +18,12 @@ import logging
 import math
 from datetime import UTC, datetime, timedelta
 
+from typing import Any
+
 import httpx
 import stripe
-from prisma import Prisma
-from prisma.models import User
+
+from src.domains.identity.db_models import User
 
 from src.config import get_settings
 from src.shared.database.client import db
@@ -63,7 +65,7 @@ def _format_price(amount_smallest_unit: int, currency: str) -> str:
         return f"${dollars:.2f}"
 
 
-async def get_credit_packs(user: User, db_client: Prisma | None = None) -> list[dict]:
+async def get_credit_packs(user: User, db_client: Any | None = None) -> list[dict]:
     """Return the credit pack catalog with prices in the user's currency.
 
     Fetches active credit packs ordered by sortOrder. Determines the user's
@@ -124,7 +126,7 @@ async def initiate_purchase(
     pack_id: str,
     success_url: str,
     cancel_url: str,
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
 ) -> dict:
     """Create a one-time payment session for a credit pack purchase.
 
@@ -223,7 +225,7 @@ async def initiate_purchase(
 async def fulfill_purchase(
     provider_reference: str,
     provider: str,
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
 ) -> bool:
     """Idempotently fulfill a credit pack purchase after payment confirmation.
 
@@ -361,7 +363,7 @@ async def get_purchase_history(
     user_id: str,
     page: int = 1,
     page_size: int = 20,
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
 ) -> dict:
     """Return paginated purchase transaction history for a user.
 
@@ -441,7 +443,7 @@ async def admin_adjust_balance(
     target_user_id: str,
     amount: int,
     reason: str,
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
 ) -> User:
     """Adjust a user's purchased credits balance (admin action).
 

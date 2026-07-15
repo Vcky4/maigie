@@ -19,7 +19,7 @@ import google.auth.exceptions
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
-from prisma.errors import DataError as PrismaDataError
+
 
 from src.config import get_settings, Settings
 from src.shared.auth import create_access_token, create_refresh_token
@@ -244,8 +244,10 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request)
         raise
     except (httpx.TimeoutException, httpx.ConnectError):
         raise HTTPException(status_code=503, detail="OAuth provider unavailable")
-    except PrismaDataError:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    except Exception as e:
+        if "DataError" in type(e).__name__:
+            raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+        raise
     except Exception as e:
         logger.error(f"OAuth callback error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"OAuth callback failed: {type(e).__name__}")

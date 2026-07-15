@@ -7,7 +7,7 @@ Handles referral statistics, claimable rewards, and reward claiming.
 import logging
 from typing import Any
 
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from ..repository import billing_repo
 

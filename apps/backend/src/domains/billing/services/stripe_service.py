@@ -15,10 +15,11 @@ See LICENSE file in the repository root for details.
 import logging
 from datetime import datetime
 
+from typing import Any
+
 import stripe
 
-from prisma import Prisma
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from ..config import Settings, get_settings
 from ..core.database import db
@@ -790,7 +791,7 @@ async def cancel_subscription(user: User) -> dict:
 
 
 async def sync_subscription_from_checkout_session(
-    session_id: str, user_id: str, db_client: Prisma | None = None
+    session_id: str, user_id: str, db_client: Any | None = None
 ) -> User | None:
     """
     Sync user subscription from a Stripe checkout session (e.g. after free trial signup).
@@ -832,7 +833,7 @@ async def sync_subscription_from_checkout_session(
 
 
 async def update_user_subscription_from_stripe(
-    subscription_id: str, db_client: Prisma | None = None
+    subscription_id: str, db_client: Any | None = None
 ) -> User | None:
     """
     Update user subscription data from Stripe subscription object.
@@ -996,7 +997,7 @@ async def update_user_subscription_from_stripe(
 
 
 async def handle_subscription_webhook(
-    event_type: str, subscription: dict, db_client: Prisma | None = None
+    event_type: str, subscription: dict, db_client: Any | None = None
 ) -> None:
     """
     Handle Stripe webhook events for subscriptions.

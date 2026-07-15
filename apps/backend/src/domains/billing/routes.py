@@ -10,7 +10,7 @@ Mounted at: /api/v1/billing
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from src.config import Settings, get_settings
 from src.shared.auth import CurrentUser, StaffUser

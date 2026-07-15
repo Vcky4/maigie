@@ -9,7 +9,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from src.config import get_settings
 from src.shared.auth import (

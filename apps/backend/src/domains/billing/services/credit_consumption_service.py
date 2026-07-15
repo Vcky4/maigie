@@ -17,10 +17,9 @@ See LICENSE file in the repository root for details.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
-from prisma import Prisma
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from src.config import Settings, get_settings
 from src.shared.database.client import db
@@ -186,7 +185,7 @@ async def initialize_user_credits(
     return updated_user
 
 
-async def reset_daily_credits_if_needed(user: User, db_client: Prisma | None = None) -> User:
+async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None) -> User:
     """
     Reset daily credits if a new day has started (for FREE tier users).
 
@@ -239,7 +238,7 @@ async def reset_daily_credits_if_needed(user: User, db_client: Prisma | None = N
     return user
 
 
-async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> User:
+async def ensure_credit_period(user: User, db_client: Any | None = None) -> User:
     """
     Ensure user has an active credit period. If period has expired or doesn't exist,
     initialize a new one.
@@ -323,7 +322,7 @@ async def ensure_credit_period(user: User, db_client: Prisma | None = None) -> U
 
 
 async def check_credit_availability(
-    user: User, credits_needed: int, db_client: Prisma | None = None, circle_id: str | None = None
+    user: User, credits_needed: int, db_client: Any | None = None, circle_id: str | None = None
 ) -> tuple[bool, str | None]:
     """
     Check if user (or circle) has enough credits available.
@@ -470,7 +469,7 @@ async def consume_credits(
     user: User,
     credits: int,
     operation: str = "unknown",
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
     circle_id: str | None = None,
 ) -> CreditConsumptionResult:
     """
@@ -792,7 +791,7 @@ async def consume_credits(
         )
 
 
-async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
+async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
     """
     Get current credit usage information for a user.
 
@@ -873,7 +872,7 @@ async def get_credit_usage(user: User, db_client: Prisma | None = None) -> dict:
 
 
 async def reset_credits_for_period_start(
-    user: User, period_start: datetime, period_end: datetime, db_client: Prisma | None = None
+    user: User, period_start: datetime, period_end: datetime, db_client: Any | None = None
 ) -> User:
     """
     Reset credits when a new subscription period starts.

@@ -11,10 +11,11 @@ import logging
 from datetime import datetime
 from typing import Any
 
+from typing import Any
+
 import httpx
 
-from prisma import Prisma
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from ..config import get_settings
 from ..core.database import db
@@ -139,7 +140,7 @@ def _is_upgrade(current_tier: str, new_plan_id: str) -> bool:
 async def disable_paystack_subscription(
     subscription_code: str,
     email_token: str,
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
 ) -> bool:
     """
     Disable (cancel) a Paystack subscription.
@@ -181,7 +182,7 @@ async def disable_paystack_subscription(
     return True
 
 
-async def cancel_paystack_subscription(user: User, db_client: Prisma | None = None) -> dict:
+async def cancel_paystack_subscription(user: User, db_client: Any | None = None) -> dict:
     """
     Cancel a Paystack subscription at the end of the period.
 
@@ -260,7 +261,7 @@ async def initialize_paystack_subscription(
     plan_id: str,
     success_url: str,
     cancel_url: str,
-    db_client: Prisma | None = None,
+    db_client: Any | None = None,
 ) -> dict:
     """
     Initialize a Paystack subscription transaction.
@@ -363,7 +364,7 @@ async def initialize_paystack_subscription(
 
 
 async def verify_paystack_transaction(
-    reference: str, user_id: str, db_client: Prisma | None = None
+    reference: str, user_id: str, db_client: Any | None = None
 ) -> User | None:
     """
     Verify a Paystack transaction and sync subscription to user.
@@ -468,7 +469,7 @@ async def verify_paystack_transaction(
 
 
 async def handle_paystack_webhook(
-    event: str, payload: dict, db_client: Prisma | None = None
+    event: str, payload: dict, db_client: Any | None = None
 ) -> None:
     """
     Handle Paystack webhook events for subscriptions.
@@ -486,7 +487,7 @@ async def handle_paystack_webhook(
         await _handle_charge_success(payload, db_client)
 
 
-async def _handle_subscription_create(payload: dict, db_client: Prisma) -> None:
+async def _handle_subscription_create(payload: dict, db_client: Any) -> None:
     data = payload.get("data", {})
     customer = data.get("customer", {})
     customer_code = customer.get("customer_code") if isinstance(customer, dict) else customer
@@ -538,7 +539,7 @@ async def _handle_subscription_create(payload: dict, db_client: Prisma) -> None:
     logger.info(f"Paystack subscription created for user {user.id}, tier={tier}")
 
 
-async def _handle_subscription_disable(payload: dict, db_client: Prisma) -> None:
+async def _handle_subscription_disable(payload: dict, db_client: Any) -> None:
     data = payload.get("data", {})
     sub_code = data.get("subscription_code")
     if not sub_code:
@@ -559,7 +560,7 @@ async def _handle_subscription_disable(payload: dict, db_client: Prisma) -> None
     logger.info(f"Paystack subscription disabled for user {user.id}")
 
 
-async def _handle_charge_success(payload: dict, db_client: Prisma) -> None:
+async def _handle_charge_success(payload: dict, db_client: Any) -> None:
     """On successful charge, check if it's a credit pack purchase or subscription renewal."""
     data = payload.get("data", {})
     metadata = data.get("metadata", {}) or {}

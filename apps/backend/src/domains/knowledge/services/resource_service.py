@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from src.shared.exceptions import NotFoundError
 

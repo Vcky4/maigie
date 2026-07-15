@@ -17,10 +17,9 @@ import logging
 import secrets
 import string
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
-from prisma import Prisma
-from prisma.models import User
+from src.domains.identity.db_models import User
 
 from ..core.database import db
 
@@ -47,7 +46,7 @@ def generate_referral_code(length: int = 8) -> str:
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
-async def get_or_create_referral_code(user: User, db_client: Prisma | None = None) -> str:
+async def get_or_create_referral_code(user: User, db_client: Any | None = None) -> str:
     """
     Get existing referral code for user or generate a new one.
 
@@ -83,7 +82,7 @@ async def get_or_create_referral_code(user: User, db_client: Prisma | None = Non
 
 
 async def track_referral_signup(
-    referred_user: User, referral_code: str, db_client: Prisma | None = None
+    referred_user: User, referral_code: str, db_client: Any | None = None
 ) -> User | None:
     """
     Track when a user signs up with a referral code and award the referrer.
@@ -149,7 +148,7 @@ async def track_referral_signup(
     return referrer
 
 
-async def track_referral_subscription(referred_user: User, db_client: Prisma | None = None) -> None:
+async def track_referral_subscription(referred_user: User, db_client: Any | None = None) -> None:
     """
     Track when a referred user subscribes and award the referrer.
 
@@ -203,7 +202,7 @@ async def track_referral_subscription(referred_user: User, db_client: Prisma | N
     )
 
 
-async def get_claimable_rewards(user: User, db_client: Prisma | None = None) -> list[dict]:
+async def get_claimable_rewards(user: User, db_client: Any | None = None) -> list[dict]:
     """
     Get all unclaimed referral rewards for a user.
 
@@ -240,7 +239,7 @@ async def get_claimable_rewards(user: User, db_client: Prisma | None = None) -> 
 
 
 async def claim_referral_reward(
-    user: User, reward_id: str, db_client: Prisma | None = None
+    user: User, reward_id: str, db_client: Any | None = None
 ) -> dict:
     """
     Claim a referral reward. This increases the user's daily limit for the current day.
@@ -321,7 +320,7 @@ async def claim_referral_reward(
     }
 
 
-async def get_daily_limit_increase(user: User, db_client: Prisma | None = None) -> int:
+async def get_daily_limit_increase(user: User, db_client: Any | None = None) -> int:
     """
     Get the total daily limit increase from claimed referral rewards for today.
 
@@ -353,7 +352,7 @@ async def get_daily_limit_increase(user: User, db_client: Prisma | None = None) 
     return total_increase
 
 
-async def get_referral_stats(user: User, db_client: Prisma | None = None) -> dict:
+async def get_referral_stats(user: User, db_client: Any | None = None) -> dict:
     """
     Get referral statistics for a user.
 
