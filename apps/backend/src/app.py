@@ -271,8 +271,9 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(users_router, prefix=f"{prefix}/users", tags=["users"])
 
     # --- Personal Learning ---
-    # from src.domains.personal_learning.routes import router as learning_router
-    # app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
+    from src.domains.personal_learning.routes import router as learning_router
+
+    app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
     # --- Knowledge ---
     from src.domains.knowledge.routes import router as knowledge_router
