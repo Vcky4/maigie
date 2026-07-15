@@ -119,18 +119,13 @@ def _install_sigchld_handler(**kwargs: Any) -> None:
 celery_app = create_celery_app()
 
 # Ensure feature tasks are imported so Celery registers them.
-# Celery worker entrypoint is `-A src.core.celery_app:celery_app`, so we import
-# task modules here to make them discoverable without requiring autodiscovery.
+# New domain-scoped task modules in src/workers/.
 try:
-    from ..tasks import (
-        agent_tasks,  # noqa: F401
-        course_generation,  # noqa: F401
-        email_notifications,  # noqa: F401
-        exam_prep_tasks,  # noqa: F401
-        push_notifications,  # noqa: F401
-        resource_recommendations,  # noqa: F401
-        schedule_generation,  # noqa: F401
-        spaced_repetition,  # noqa: F401
+    from src.workers import (
+        intelligence_tasks,  # noqa: F401
+        notification_tasks,  # noqa: F401
+        progress_tasks,  # noqa: F401
+        billing_tasks,  # noqa: F401
     )
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,

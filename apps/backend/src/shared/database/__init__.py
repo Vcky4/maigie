@@ -1,5 +1,21 @@
 """Database client lifecycle management."""
 
-from .client import check_db_health, connect_db, db, disconnect_db
+from .base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from .session import (
+    check_db_health,
+    connect_db,
+    disconnect_db,
+    get_session,
+    get_session_factory,
+)
 
-__all__ = ["db", "connect_db", "disconnect_db", "check_db_health"]
+__all__ = [
+    "Base",
+    "TimestampMixin",
+    "UUIDPrimaryKeyMixin",
+    "connect_db",
+    "disconnect_db",
+    "check_db_health",
+    "get_session",
+    "get_session_factory",
+]

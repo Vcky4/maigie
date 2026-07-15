@@ -1,5 +1,5 @@
 ﻿"""
-Analytics â€” study sessions, streaks, achievements, and reporting.
+Analytics — study sessions, streaks, achievements, and reporting.
 """
 
 import logging
@@ -17,7 +17,7 @@ async def start_study_session(*, user_id: str, course_id: str | None = None, top
     """Start a study session (or return existing active one)."""
     active = await progress_repo.find_active_session(user_id)
     if active:
-        return {"sessionId": active.id, "startTime": active.startTime.isoformat(), "message": "Active session exists"}
+        return {"sessionId": active.id, "startTime": active.start_time.isoformat(), "message": "Active session exists"}
 
     session = await progress_repo.create_session({
         "userId": user_id,
@@ -34,23 +34,21 @@ async def start_study_session(*, user_id: str, course_id: str | None = None, top
     except Exception:
         pass
 
-    return {"sessionId": session.id, "startTime": session.startTime.isoformat()}
+    return {"sessionId": session.id, "startTime": session.start_time.isoformat()}
 
 
 async def stop_study_session(*, session_id: str, user_id: str) -> dict[str, Any]:
     """Stop a study session and update streak."""
-    from src.shared.database import db
-
-    session = await db.studysession.find_unique(where={"id": session_id})
-    if not session or session.userId != user_id:
+    session = await progress_repo.find_session(session_id)
+    if not session or session.user_id != user_id:
         from src.shared.exceptions import NotFoundError
         raise NotFoundError("StudySession", session_id)
 
-    if session.endTime:
+    if session.end_time:
         return {"sessionId": session.id, "duration": session.duration, "message": "Already ended"}
 
     end_time = datetime.now(UTC)
-    start_time = session.startTime
+    start_time = session.start_time
     if start_time.tzinfo is None:
         start_time = start_time.replace(tzinfo=UTC)
     duration_minutes = (end_time - start_time).total_seconds() / 60
@@ -73,9 +71,9 @@ async def get_streak(*, user_id: str) -> dict[str, Any]:
     if not streak:
         return {"currentStreak": 0, "longestStreak": 0, "lastStudyDate": None}
     return {
-        "currentStreak": streak.currentStreak or 0,
-        "longestStreak": streak.longestStreak or 0,
-        "lastStudyDate": streak.lastStudyDate.isoformat() if streak.lastStudyDate else None,
+        "currentStreak": streak.current_streak or 0,
+        "longestStreak": streak.longest_streak or 0,
+        "lastStudyDate": streak.last_study_date.isoformat() if streak.last_study_date else None,
     }
 
 
@@ -85,12 +83,12 @@ async def list_achievements(*, user_id: str) -> list[dict[str, Any]]:
     return [
         {
             "id": a.id,
-            "type": str(a.achievementType),
+            "type": str(a.achievement_type),
             "title": a.title,
             "description": a.description or "",
             "icon": a.icon,
-            "unlockedAt": a.unlockedAt.isoformat(),
-            "metadata": a.metadata,
+            "unlockedAt": a.unlocked_at.isoformat(),
+            "metadata": a.metadata_json,
         }
         for a in achievements
     ]
@@ -107,19 +105,19 @@ async def _update_streak(user_id: str, study_datetime: datetime) -> None:
         })
         return
 
-    if streak.lastStudyDate:
-        last_date = streak.lastStudyDate.date() if isinstance(streak.lastStudyDate, datetime) else streak.lastStudyDate
+    if streak.last_study_date:
+        last_date = streak.last_study_date.date() if isinstance(streak.last_study_date, datetime) else streak.last_study_date
         days_diff = (study_date - last_date).days
         if days_diff == 0:
             return
         elif days_diff == 1:
-            new_streak = streak.currentStreak + 1
+            new_streak = streak.current_streak + 1
         else:
             new_streak = 1
     else:
         new_streak = 1
 
-    longest = max(streak.longestStreak or 0, new_streak)
+    longest = max(streak.longest_streak or 0, new_streak)
     await progress_repo.upsert_streak(user_id, {
         "currentStreak": new_streak, "longestStreak": longest, "lastStudyDate": study_datetime
     })

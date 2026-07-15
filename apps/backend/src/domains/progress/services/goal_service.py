@@ -5,8 +5,6 @@ Goal management â€” CRUD, progress recording, plan regeneration.
 import logging
 from typing import Any
 
-from prisma.models import User
-
 from src.shared.exceptions import NotFoundError
 
 from ..repository import progress_repo

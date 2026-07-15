@@ -24,7 +24,6 @@ from prisma.errors import DataError as PrismaDataError
 from src.config import get_settings, Settings
 from src.shared.auth import create_access_token, create_refresh_token
 from src.shared.auth.oauth_providers import GoogleIdTokenVerifier, OAuthProviderFactory
-from src.shared.database import db
 
 from .models import NativeGoogleCallbackRequest, OAuthAuthorizeResponse, OAuthUserInfo, TokenResponse
 from .services import get_or_create_oauth_user
@@ -182,20 +181,19 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request)
 
         # Calendar sync flow
         if purpose == "calendar_sync" and calendar_user_id:
-            user = await db.user.find_unique(where={"id": calendar_user_id})
+            from .repository import identity_repo
+
+            user = await identity_repo.find_by_id(calendar_user_id)
             if not user:
                 raise HTTPException(status_code=404, detail="User not found")
 
             expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
-            await db.user.update(
-                where={"id": calendar_user_id},
-                data={
-                    "googleCalendarAccessToken": access_token,
-                    "googleCalendarRefreshToken": refresh_token_oauth,
-                    "googleCalendarTokenExpiresAt": expires_at,
-                    "googleCalendarSyncEnabled": True,
-                },
-            )
+            await identity_repo.update(calendar_user_id, {
+                "googleCalendarAccessToken": access_token,
+                "googleCalendarRefreshToken": refresh_token_oauth,
+                "googleCalendarTokenExpiresAt": expires_at,
+                "googleCalendarSyncEnabled": True,
+            })
 
             # Create Maigie calendar
             from src.integrations.google_calendar import create_maigie_calendar, sync_existing_schedules

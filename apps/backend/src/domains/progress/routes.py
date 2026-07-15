@@ -225,16 +225,16 @@ async def list_due_reviews(current_user: CurrentUser):
     return [
         models.ReviewScheduleResponse(
             id=r.id,
-            userId=r.userId,
-            topicId=r.topicId,
+            userId=r.user_id,
+            topicId=r.topic_id,
             topicTitle=r.topic.title if r.topic else None,
-            nextReviewAt=r.nextReviewAt,
-            intervalDays=r.intervalDays,
-            repetitionCount=r.repetitionCount,
-            easeFactor=r.easeFactor,
-            lastQuality=r.lastQuality,
-            lapseCount=r.lapseCount,
-            lastReviewedAt=r.lastReviewedAt,
+            nextReviewAt=r.next_review_at,
+            intervalDays=r.interval_days,
+            repetitionCount=r.repetition_count,
+            easeFactor=r.ease_factor,
+            lastQuality=r.last_quality,
+            lapseCount=r.lapse_count,
+            lastReviewedAt=r.last_reviewed_at,
         )
         for r in reviews
     ]
@@ -243,10 +243,9 @@ async def list_due_reviews(current_user: CurrentUser):
 @router.post("/reviews/{review_id}/submit")
 async def submit_review(review_id: str, body: models.ReviewQualityRequest, current_user: CurrentUser):
     """Submit review quality for spaced repetition (SM-2 algorithm)."""
-    from src.domains.progress.services.spaced_repetition_impl import process_review_response
-    from src.shared.database import db
+    from src.domains.progress.services.spaced_repetition_impl import advance_review_sqlalchemy
 
-    result = await process_review_response(db, current_user.id, review_id, body.quality)
+    result = await advance_review_sqlalchemy(current_user.id, review_id, body.quality)
     return result
 
 
@@ -258,34 +257,34 @@ async def submit_review(review_id: str, body: models.ReviewQualityRequest, curre
 def _to_goal_response(goal) -> models.GoalResponse:
     return models.GoalResponse(
         id=goal.id,
-        userId=goal.userId,
+        userId=goal.user_id,
         title=goal.title,
         description=goal.description,
-        targetDate=goal.targetDate.isoformat() if goal.targetDate else None,
+        targetDate=goal.target_date.isoformat() if goal.target_date else None,
         status=goal.status,
         progress=goal.progress or 0.0,
-        courseId=getattr(goal, "courseId", None),
-        topicId=getattr(goal, "topicId", None),
-        createdAt=goal.createdAt.isoformat(),
-        updatedAt=goal.updatedAt.isoformat(),
+        courseId=goal.course_id,
+        topicId=goal.topic_id,
+        createdAt=goal.created_at.isoformat(),
+        updatedAt=goal.updated_at.isoformat(),
     )
 
 
 def _to_block_response(block) -> models.StudyBlockResponse:
     return models.StudyBlockResponse(
         id=block.id,
-        userId=block.userId,
+        userId=block.user_id,
         title=block.title,
         description=block.description,
-        startAt=block.startAt.isoformat(),
-        endAt=block.endAt.isoformat(),
-        recurringRule=block.recurringRule,
-        courseId=getattr(block, "courseId", None),
-        topicId=getattr(block, "topicId", None),
-        goalId=getattr(block, "goalId", None),
-        reviewItemId=getattr(block, "reviewItemId", None),
-        googleCalendarEventId=getattr(block, "googleCalendarEventId", None),
-        googleCalendarSyncedAt=block.googleCalendarSyncedAt.isoformat() if getattr(block, "googleCalendarSyncedAt", None) else None,
-        createdAt=block.createdAt.isoformat(),
-        updatedAt=block.updatedAt.isoformat(),
+        startAt=block.start_at.isoformat(),
+        endAt=block.end_at.isoformat(),
+        recurringRule=block.recurring_rule,
+        courseId=block.course_id,
+        topicId=block.topic_id,
+        goalId=block.goal_id,
+        reviewItemId=block.review_item_id,
+        googleCalendarEventId=block.google_calendar_event_id,
+        googleCalendarSyncedAt=block.google_calendar_synced_at.isoformat() if block.google_calendar_synced_at else None,
+        createdAt=block.created_at.isoformat(),
+        updatedAt=block.updated_at.isoformat(),
     )

@@ -51,6 +51,9 @@ firebase-admin = "^6.5.0"
 htmldocx = "^0.0.6"
 xhtml2pdf = "^0.2.16"
 python-pptx = "^1.0.0"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.51"}
+asyncpg = "^0.31.0"
+alembic = "^1.18.5"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

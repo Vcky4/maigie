@@ -147,10 +147,7 @@ async def archive_course(*, course_id: str, user_id: str) -> Any:
 async def delete_course(*, course_id: str, user_id: str) -> None:
     """Delete a course with cascade."""
     await check_course_ownership(course_id, user_id)
-    from src.domains.knowledge.services.course_delete_service import delete_course_cascade
-    from src.shared.database import db
-
-    await delete_course_cascade(db, course_id, user_id)
+    await knowledge_repo.delete_course(course_id)
 
 
 # ---------------------------------------------------------------------------

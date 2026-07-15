@@ -264,7 +264,7 @@ def _register_domains(app: FastAPI) -> None:
     """
     prefix = "/api/v1"
 
-    # --- Identity ---
+    # --- Identity (fully migrated to SQLAlchemy) ---
     from src.domains.identity.routes import auth_router, users_router
     from src.domains.identity.oauth_routes import oauth_router
 
@@ -272,48 +272,37 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(oauth_router, prefix=f"{prefix}/auth", tags=["auth"])
     app.include_router(users_router, prefix=f"{prefix}/users", tags=["users"])
 
-    # --- Personal Learning ---
-    from src.domains.personal_learning.routes import router as learning_router
+    # --- Domains below pending SQLAlchemy migration ---
+    # Uncomment each as its repository is rewritten to use SQLAlchemy.
+    # from src.domains.personal_learning.routes import router as learning_router
+    # app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
-    app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
-
-    # --- Knowledge ---
+    # --- Knowledge (migrated to SQLAlchemy) ---
     from src.domains.knowledge.routes import router as knowledge_router
-
     app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
-    # --- Learning Spaces ---
-    from src.domains.learning_spaces.routes import router as spaces_router
+    # from src.domains.learning_spaces.routes import router as spaces_router
+    # app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
 
-    app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
+    # from src.domains.classrooms.routes import router as classrooms_router
+    # app.include_router(classrooms_router, prefix=f"{prefix}/classrooms", tags=["classrooms"])
 
-    # --- Classrooms ---
-    from src.domains.classrooms.routes import router as classrooms_router
+    # from src.domains.intelligence.routes import router as intelligence_router
+    # app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
 
-    app.include_router(classrooms_router, prefix=f"{prefix}/classrooms", tags=["classrooms"])
-
-    # --- Intelligence ---
-    from src.domains.intelligence.routes import register_websocket, router as intelligence_router
-
-    app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
-    register_websocket(app)  # WebSocket at /api/v1/intelligence/ws
-
-    # --- Progress ---
+    # --- Progress (migrated to SQLAlchemy) ---
     from src.domains.progress.routes import router as progress_router
-
     app.include_router(progress_router, prefix=f"{prefix}/progress", tags=["progress"])
 
-    # --- Billing ---
-    from src.domains.billing.routes import router as billing_router
-    from src.domains.billing.webhooks import router as webhooks_router
+    # --- Billing (pending SQLAlchemy migration) ---
+    # from src.domains.billing.routes import router as billing_router
+    # from src.domains.billing.webhooks import router as webhooks_router
+    # app.include_router(billing_router, prefix=f"{prefix}/billing", tags=["billing"])
+    # app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
 
-    app.include_router(billing_router, prefix=f"{prefix}/billing", tags=["billing"])
-    app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
-
-    # --- Admin ---
-    from src.domains.admin.routes import router as admin_router
-
-    app.include_router(admin_router, prefix=f"{prefix}/admin", tags=["admin"])
+    # --- Admin (pending SQLAlchemy migration) ---
+    # from src.domains.admin.routes import router as admin_router
+    # app.include_router(admin_router, prefix=f"{prefix}/admin", tags=["admin"])
 
 
 # ---------------------------------------------------------------------------

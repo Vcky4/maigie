@@ -12,8 +12,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from prisma import Client as PrismaClient
-from prisma.models import User
-
 from src.shared.auth import CurrentUser
 
 from . import models
@@ -37,9 +35,9 @@ async def generate_ai_course(
     current_user: CurrentUser,
 ):
     """Trigger AI course generation (returns immediately, updates via WebSocket)."""
-    from src.domains.knowledge.services.ai_course_generation import generate_course_content_task
-    from src.domains.billing.services.credit_consumption_service import consume_credits, CREDIT_COSTS
-    from src.shared.database import db
+    # TODO: Re-enable when AI course generation is migrated
+    from fastapi import HTTPException as _HTTPException
+    raise _HTTPException(status_code=501, detail="AI course generation pending migration")
 
     user_id = current_user.id
 
