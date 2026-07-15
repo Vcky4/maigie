@@ -9,13 +9,10 @@ See LICENSE file in the repository root for details.
 """
 
 import json
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import HTTPException
-
-from prisma import Json
-from src.core.database import db
+from ..repository import intelligence_repo
 
 
 class UserMemoryService:
@@ -49,17 +46,10 @@ class UserMemoryService:
             ID of the created interaction record
         """
         try:
-            # 1. Sanitize and Wrap Metadata
-            # Prisma's Json type is strict. We must ensure:
-            # a) The data is a pure Python dictionary (no Pydantic models)
-            # b) All values are JSON primitives (no UUIDs or Datetime objects)
-            # c) It is wrapped in the explicit 'Json' type helper to satisfy the Union validator
-
-            prisma_metadata = Json({})
-
+            # Sanitize metadata
+            clean_metadata = {}
             if metadata:
                 try:
-                    # Step A: Normalize input to a standard dict
                     if hasattr(metadata, "model_dump"):
                         temp = metadata.model_dump()
                     elif hasattr(metadata, "dict"):
@@ -67,52 +57,30 @@ class UserMemoryService:
                     elif isinstance(metadata, str):
                         try:
                             temp = json.loads(metadata)
-                        except Exception:  # <--- FIXED: Added specific exception
+                        except Exception:
                             temp = {"raw_content": metadata}
                     elif isinstance(metadata, dict):
                         temp = metadata
                     else:
                         temp = {"value": str(metadata)}
 
-                    # Step B: Deep Sanitize
-                    # We round-trip through json.dumps with default=str.
-                    # This converts complex types (UUID, Datetime) into strings that DB can store.
-                    clean_dict = json.loads(json.dumps(temp, default=str))
-
-                    # Step C: Wrap in Prisma Json type
-                    prisma_metadata = Json(clean_dict)
-
+                    # Deep sanitize via JSON round-trip
+                    clean_metadata = json.loads(json.dumps(temp, default=str))
                 except Exception as e:
-                    print(f"Metadata sanitization warning: {e}")
-                    # Fallback to a safe error object rather than crashing
-                    prisma_metadata = Json({"error": "Invalid metadata format", "details": str(e)})
+                    clean_metadata = {"error": "Invalid metadata format", "details": str(e)}
 
-            # 2. Build Data Payload
-            # We use the 'Unchecked' strategy (providing the scalar userId string).
-            # This is efficient and avoids the ambiguity of the 'user' relation object.
-            interaction_data = {
+            interaction = await intelligence_repo.create_interaction({
                 "userId": str(user_id),
                 "interactionType": interaction_type,
                 "entityType": entity_type,
+                "entityId": str(entity_id) if entity_id else None,
+                "metadata": clean_metadata,
                 "importance": float(importance),
-                "metadata": prisma_metadata,
-            }
-
-            # 3. Add Optional Entity ID
-            if entity_id:
-                interaction_data["entityId"] = str(entity_id)
-
-            # 4. Create Record
-            interaction = await db.userinteractionmemory.create(data=interaction_data)
+            })
             return interaction.id
 
         except Exception as e:
-            # Log error strictly but return empty string to handle failure gracefully.
-            # This ensures the user's main action (e.g., viewing a resource) isn't blocked
-            # just because the analytics/tracking failed.
             print(f"Error recording interaction: {e}")
-            # import traceback
-            # traceback.print_exc()
             return ""
 
     async def get_user_preferences(self, user_id: str, limit: int = 50) -> dict[str, Any]:
@@ -127,12 +95,7 @@ class UserMemoryService:
             Dictionary with user preferences and patterns
         """
         try:
-            # Get recent important interactions
-            recent_interactions = await db.userinteractionmemory.find_many(
-                where={"userId": user_id},
-                order={"createdAt": "desc"},
-                take=limit,
-            )
+            recent_interactions = await intelligence_repo.list_interactions(user_id, take=limit)
 
             preferences = {
                 "preferredResourceTypes": [],
@@ -142,45 +105,22 @@ class UserMemoryService:
                 "learningGoals": [],
             }
 
-            # Analyze interactions to extract preferences
-            resource_type_counts = {}
-            course_ids = set()
-            topic_ids = set()
-            interaction_counts = {}
+            resource_type_counts: dict[str, int] = {}
+            course_ids: set[str] = set()
+            topic_ids: set[str] = set()
+            interaction_counts: dict[str, int] = {}
 
             for interaction in recent_interactions:
-                # Count interaction types
-                interaction_type = interaction.interactionType
-                interaction_counts[interaction_type] = (
-                    interaction_counts.get(interaction_type, 0) + 1
-                )
+                interaction_type = interaction.interaction_type
+                interaction_counts[interaction_type] = interaction_counts.get(interaction_type, 0) + 1
 
-                # Extract entity information
-                entity_type = interaction.entityType
-                entity_id = interaction.entityId
+                entity_type = interaction.entity_type
+                entity_id = interaction.entity_id
 
-                if entity_type == "resource" and entity_id:
-                    # Try to get resource type
-                    resource = await db.resource.find_unique(where={"id": entity_id})
-                    if resource:
-                        resource_type = resource.type
-                        resource_type_counts[resource_type] = (
-                            resource_type_counts.get(resource_type, 0) + 1
-                        )
-
-                elif entity_type == "course" and entity_id:
+                if entity_type == "course" and entity_id:
                     course_ids.add(entity_id)
-
                 elif entity_type == "topic" and entity_id:
                     topic_ids.add(entity_id)
-
-            # Build preferences
-            if resource_type_counts:
-                # Sort by frequency
-                sorted_types = sorted(
-                    resource_type_counts.items(), key=lambda x: x[1], reverse=True
-                )
-                preferences["preferredResourceTypes"] = [rtype for rtype, _ in sorted_types[:5]]
 
             preferences["activeCourses"] = list(course_ids)[:10]
             preferences["recentTopics"] = list(topic_ids)[:10]
@@ -220,35 +160,27 @@ class UserMemoryService:
             List of interaction records
         """
         try:
-            where_clause = {"userId": user_id}
-
-            if interaction_type:
-                where_clause["interactionType"] = interaction_type
-
-            if entity_type:
-                where_clause["entityType"] = entity_type
-
-            # Calculate date threshold (use timezone-aware datetime)
             threshold_date = datetime.now(UTC) - timedelta(days=days)
 
-            interactions = await db.userinteractionmemory.find_many(
-                where=where_clause,
-                order={"createdAt": "desc"},
+            interactions = await intelligence_repo.list_interactions(
+                user_id,
+                interaction_type=interaction_type,
+                entity_type=entity_type,
                 take=limit,
             )
 
-            # Filter by date in Python (Prisma doesn't support easy complex date filtering in where clause)
-            filtered = [i for i in interactions if i.createdAt >= threshold_date]
+            # Filter by date in Python
+            filtered = [i for i in interactions if i.created_at >= threshold_date]
 
             return [
                 {
                     "id": i.id,
-                    "interactionType": i.interactionType,
-                    "entityType": i.entityType,
-                    "entityId": i.entityId,
-                    "metadata": i.metadata,
+                    "interactionType": i.interaction_type,
+                    "entityType": i.entity_type,
+                    "entityId": i.entity_id,
+                    "metadata": i.metadata_json,
                     "importance": i.importance,
-                    "createdAt": i.createdAt.isoformat(),
+                    "createdAt": i.created_at.isoformat(),
                 }
                 for i in filtered
             ]
@@ -268,25 +200,19 @@ class UserMemoryService:
             Dictionary with user context including courses, goals, recent activity
         """
         try:
+            from src.domains.knowledge.repository import KnowledgeRepository
+            from src.domains.progress.repository import progress_repo
+
+            knowledge_repo = KnowledgeRepository()
+
             # Get user's courses
-            courses = await db.course.find_many(
-                where={"userId": user_id, "archived": False},
-                take=10,
-                order={"updatedAt": "desc"},
+            courses, _ = await knowledge_repo.list_courses(
+                user_id, where={"archived": False}, skip=0, take=10
             )
 
-            # Get user's goals (active goals)
-            goals = await db.goal.find_many(
-                where={"userId": user_id, "status": "ACTIVE"},
-                take=10,
-                order={"updatedAt": "desc"},
-            )
-
-            # Get user's notes
-            recent_notes = await db.note.find_many(
-                where={"userId": user_id, "archived": False},
-                take=10,
-                order={"updatedAt": "desc"},
+            # Get user's goals
+            goals, _ = await progress_repo.list_goals(
+                user_id, where={"status": "ACTIVE"}, skip=0, take=10
             )
 
             # Get recent interactions
@@ -313,23 +239,15 @@ class UserMemoryService:
                         "id": g.id,
                         "title": g.title,
                         "description": g.description,
-                        "targetDate": g.targetDate.isoformat() if g.targetDate else None,
+                        "targetDate": g.target_date.isoformat() if g.target_date else None,
                         "status": g.status,
                         "progress": g.progress,
-                        "courseId": getattr(g, "courseId", None),
-                        "topicId": getattr(g, "topicId", None),
+                        "courseId": g.course_id,
+                        "topicId": g.topic_id,
                     }
                     for g in goals
                 ],
-                "recentNotes": [
-                    {
-                        "id": n.id,
-                        "title": n.title,
-                        "summary": n.summary,
-                        "courseId": n.courseId,
-                    }
-                    for n in recent_notes
-                ],
+                "recentNotes": [],  # Notes not yet in SQLAlchemy
                 "recentActivity": recent_interactions,
                 "preferences": preferences,
             }
@@ -359,14 +277,8 @@ class UserMemoryService:
             List of fact records
         """
         try:
-            where_clause: dict[str, Any] = {"userId": user_id, "isActive": True}
-            if category:
-                where_clause["category"] = category
-
-            facts = await db.userfact.find_many(
-                where=where_clause,
-                order={"updatedAt": "desc"},
-                take=limit,
+            facts = await intelligence_repo.list_user_facts(
+                user_id, category=category, active_only=True, take=limit
             )
 
             return [
@@ -376,7 +288,7 @@ class UserMemoryService:
                     "content": f.content,
                     "source": f.source,
                     "confidence": f.confidence,
-                    "createdAt": f.createdAt.isoformat(),
+                    "createdAt": f.created_at.isoformat(),
                 }
                 for f in facts
             ]
@@ -390,51 +302,43 @@ class UserMemoryService:
         category: str,
         content: str,
         source: str = "conversation",
-        confidence: float = 0.85,
+        confidence: float = 0.8,
     ) -> str:
         """
         Save a fact about the user.
 
         Args:
             user_id: ID of the user
-            category: Category of the fact
+            category: Fact category
             content: The fact content
-            source: Source of the fact (conversation, onboarding, manual)
-            confidence: Confidence score (0.0 to 1.0)
+            source: Source of the fact
+            confidence: Confidence score
 
         Returns:
-            ID of the created fact record
+            ID of the created fact
         """
         try:
-            fact = await db.userfact.create(
-                data={
-                    "userId": user_id,
-                    "category": category,
-                    "content": content,
-                    "source": source,
-                    "confidence": confidence,
-                }
-            )
+            fact = await intelligence_repo.create_user_fact({
+                "userId": user_id,
+                "category": category,
+                "content": content,
+                "source": source,
+                "confidence": confidence,
+            })
             return fact.id
         except Exception as e:
             print(f"Error saving user fact: {e}")
             return ""
 
-    async def deactivate_user_fact(self, fact_id: str, user_id: str) -> bool:
+    async def deactivate_fact(self, fact_id: str) -> bool:
         """Deactivate (soft-delete) a user fact."""
         try:
-            fact = await db.userfact.find_first(where={"id": fact_id, "userId": user_id})
-            if not fact:
-                return False
-            await db.userfact.update(
-                where={"id": fact_id},
-                data={"isActive": False},
-            )
+            await intelligence_repo.deactivate_user_fact(fact_id)
             return True
         except Exception as e:
-            print(f"Error deactivating user fact: {e}")
+            print(f"Error deactivating fact: {e}")
             return False
 
 
-# Global instance
+# Singleton
 user_memory_service = UserMemoryService()

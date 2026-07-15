@@ -23,7 +23,7 @@ from prisma import Prisma
 from prisma.models import User
 
 from src.config import Settings, get_settings
-from src.core.database import db
+from src.shared.database.client import db
 from src.services.email import send_limit_reached_email
 from src.services.referral_service import get_daily_limit_increase
 from src.utils.exceptions import SubscriptionLimitError

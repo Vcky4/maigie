@@ -13,7 +13,10 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from src.core.database import db
+from src.domains.intelligence.repository import intelligence_repo
+from src.domains.knowledge.repository import knowledge_repo
+from src.domains.progress.repository import progress_repo
+from src.shared.database import get_session_factory
 from src.services.action_service import action_service
 
 logger = logging.getLogger(__name__)
@@ -118,12 +121,12 @@ async def handle_get_user_courses(
 
     include_archived = args.get("include_archived", False)
 
-    # Fetch from DB
-    courses = await db.course.find_many(
-        where={"userId": user_id, "archived": include_archived},
-        include={"modules": {"include": {"topics": True}}},
-        order={"updatedAt": "desc"},
-        take=int(limit),
+    where: dict[str, Any] = {}
+    if not include_archived:
+        where["archived"] = False
+
+    courses, _ = await knowledge_repo.list_courses(
+        user_id, where=where, skip=0, take=int(limit)
     )
 
     # Format data
@@ -145,7 +148,6 @@ async def handle_get_user_courses(
             }
         )
 
-    # Return formatted result for component response
     return {
         "_component_type": "CourseListMessage",
         "_query_type": "courses",
@@ -171,19 +173,14 @@ async def handle_get_user_goals(
 
     course_id = args.get("course_id")
 
-    # Build where clause
-    where_clause = {"userId": user_id, "status": status}
+    where: dict[str, Any] = {"status": status}
     if course_id:
-        where_clause["courseId"] = course_id
+        where["courseId"] = course_id
 
-    # Fetch from DB
-    goals = await db.goal.find_many(
-        where=where_clause,
-        order={"updatedAt": "desc"},
-        take=int(limit),
+    goals, _ = await progress_repo.list_goals(
+        user_id, where=where, skip=0, take=int(limit), order={"createdAt": "desc"}
     )
 
-    # Format data
     goals_data = []
     for goal in goals:
         goals_data.append(
@@ -192,11 +189,11 @@ async def handle_get_user_goals(
                 "id": goal.id,
                 "title": goal.title,
                 "description": goal.description or "",
-                "targetDate": goal.targetDate.isoformat() if goal.targetDate else None,
+                "targetDate": goal.target_date.isoformat() if goal.target_date else None,
                 "progress": goal.progress or 0,
                 "status": goal.status,
-                "courseId": goal.courseId,
-                "topicId": goal.topicId,
+                "courseId": goal.course_id,
+                "topicId": goal.topic_id,
             }
         )
 
@@ -215,76 +212,34 @@ async def handle_get_user_schedule(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle get_user_schedule tool call."""
-    start_date_str = args.get("start_date", "today")
-    end_date_str = args.get("end_date", "+30days")
     limit = args.get("limit", 50)
     if not isinstance(limit, int | float) or limit < 1 or limit > 200:
         limit = 50
 
     course_id = args.get("course_id")
 
-    # Parse start_date
-    now = datetime.now(UTC)
-    if start_date_str == "today":
-        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    elif start_date_str == "tomorrow":
-        start_date = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-    elif start_date_str == "this_week":
-        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    else:
-        try:
-            start_date = datetime.fromisoformat(start_date_str.replace("Z", "+00:00"))
-        except Exception:
-            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-    # Parse end_date
-    if end_date_str == "today":
-        end_date = now.replace(hour=23, minute=59, second=59, microsecond=999999)
-    elif end_date_str == "tomorrow":
-        end_date = (now + timedelta(days=1)).replace(
-            hour=23, minute=59, second=59, microsecond=999999
-        )
-    elif end_date_str == "next_week":
-        end_date = now + timedelta(days=7)
-    elif end_date_str.startswith("+") and end_date_str[1:].rstrip("days").isdigit():
-        days = int(end_date_str[1:].rstrip("days"))
-        end_date = now + timedelta(days=days)
-    else:
-        try:
-            end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
-        except Exception:
-            end_date = now + timedelta(days=30)
-
-    # Build where clause
-    where_clause = {
-        "userId": user_id,
-        "startAt": {"gte": start_date, "lte": end_date},
-    }
+    where: dict[str, Any] = {}
     if course_id:
-        where_clause["courseId"] = course_id
+        where["courseId"] = course_id
 
-    # Fetch from DB
-    schedules = await db.scheduleblock.find_many(
-        where=where_clause,
-        order={"startAt": "asc"},
-        take=int(limit),
+    blocks, _ = await progress_repo.list_blocks(
+        user_id, where=where, skip=0, take=int(limit)
     )
 
-    # Format data
     schedules_data = []
-    for schedule in schedules:
+    for schedule in blocks:
         schedules_data.append(
             {
                 "scheduleId": schedule.id,
                 "id": schedule.id,
                 "title": schedule.title,
-                "startAt": schedule.startAt.isoformat() if schedule.startAt else None,
-                "endAt": schedule.endAt.isoformat() if schedule.endAt else None,
+                "startAt": schedule.start_at.isoformat() if schedule.start_at else None,
+                "endAt": schedule.end_at.isoformat() if schedule.end_at else None,
                 "description": schedule.description or "",
-                "courseId": schedule.courseId,
-                "topicId": schedule.topicId,
-                "goalId": schedule.goalId,
-                "reviewItemId": getattr(schedule, "reviewItemId", None),
+                "courseId": schedule.course_id,
+                "topicId": schedule.topic_id,
+                "goalId": schedule.goal_id,
+                "reviewItemId": schedule.review_item_id,
             }
         )
 
@@ -307,40 +262,37 @@ async def handle_get_user_notes(
     if not isinstance(limit, int | float) or limit < 1 or limit > 100:
         limit = 20
 
-    include_archived = args.get("include_archived", False)
-    topic_id = args.get("topic_id")
-    course_id = args.get("course_id")
+    # Notes not yet migrated to SQLAlchemy — query directly via session
+    from sqlalchemy import select, text
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            query = text(
+                'SELECT id, title, content, summary, "courseId", "topicId", '
+                '"createdAt", "updatedAt" FROM "Note" '
+                'WHERE "userId" = :uid AND archived = false '
+                'ORDER BY "updatedAt" DESC LIMIT :lim'
+            )
+            result = await session.execute(query, {"uid": user_id, "lim": int(limit)})
+            rows = result.mappings().all()
 
-    # Build where clause
-    where_clause = {"userId": user_id, "archived": include_archived}
-    if topic_id:
-        where_clause["topicId"] = topic_id
-    if course_id:
-        where_clause["courseId"] = course_id
-
-    # Fetch from DB
-    notes = await db.note.find_many(
-        where=where_clause,
-        order={"updatedAt": "desc"},
-        take=int(limit),
-    )
-
-    # Format data
-    notes_data = []
-    for note in notes:
-        notes_data.append(
+        notes_data = [
             {
-                "noteId": note.id,
-                "id": note.id,
-                "title": note.title,
-                "content": note.content or "",
-                "summary": note.summary,
-                "createdAt": note.createdAt.isoformat() if note.createdAt else None,
-                "updatedAt": note.updatedAt.isoformat() if note.updatedAt else None,
-                "courseId": note.courseId,
-                "topicId": note.topicId,
+                "noteId": r["id"],
+                "id": r["id"],
+                "title": r["title"],
+                "content": (r["content"] or "")[:200],
+                "summary": r["summary"],
+                "courseId": r["courseId"],
+                "topicId": r["topicId"],
+                "createdAt": r["createdAt"].isoformat() if r["createdAt"] else None,
+                "updatedAt": r["updatedAt"].isoformat() if r["updatedAt"] else None,
             }
-        )
+            for r in rows
+        ]
+    except Exception as e:
+        logger.warning("handle_get_user_notes error: %s", e)
+        notes_data = []
 
     return {
         "_component_type": "NoteListMessage",
@@ -361,27 +313,21 @@ async def handle_get_user_resources(
     if not isinstance(limit, int | float) or limit < 1 or limit > 100:
         limit = 20
 
+    where: dict[str, Any] = {}
     topic_id = args.get("topic_id")
     course_id = args.get("course_id")
     resource_type = args.get("resource_type")
-
-    # Build where clause
-    where_clause = {"userId": user_id}
     if topic_id:
-        where_clause["topicId"] = topic_id
+        where["topicId"] = topic_id
     if course_id:
-        where_clause["courseId"] = course_id
+        where["courseId"] = course_id
     if resource_type:
-        where_clause["type"] = resource_type
+        where["type"] = resource_type
 
-    # Fetch from DB
-    resources = await db.resource.find_many(
-        where=where_clause,
-        order={"createdAt": "desc"},
-        take=int(limit),
+    resources, _ = await knowledge_repo.list_resources(
+        where={"userId": user_id, **where}, skip=0, take=int(limit)
     )
 
-    # Format data
     resources_data = []
     for resource in resources:
         resources_data.append(
@@ -392,8 +338,8 @@ async def handle_get_user_resources(
                 "url": resource.url or "",
                 "description": resource.description or "",
                 "type": resource.type,
-                "courseId": resource.courseId,
-                "topicId": resource.topicId,
+                "courseId": resource.course_id,
+                "topicId": resource.topic_id,
             }
         )
 
@@ -455,9 +401,11 @@ async def handle_delete_course(
         return {"status": "error", "message": "No course_id provided."}
 
     try:
-        from src.services.course_delete_service import delete_course_cascade
-
-        await delete_course_cascade(db, course_id, user_id)
+        # Verify ownership
+        course = await knowledge_repo.find_course(course_id, user_id)
+        if not course:
+            return {"status": "error", "message": "Course not found or access denied."}
+        await knowledge_repo.delete_course(course_id)
         return {
             "status": "success",
             "action": "delete_course",
@@ -573,21 +521,27 @@ async def handle_check_schedule_conflicts(
         return {"status": "error", "message": "Missing start_at or end_at"}
 
     try:
-        from datetime import datetime
+        from sqlalchemy import select, text
 
-        # Parse ISO strings with Z
         start_at = datetime.fromisoformat(start_at_str.replace("Z", "+00:00"))
         end_at = datetime.fromisoformat(end_at_str.replace("Z", "+00:00"))
 
-        # Same overlap semantics as schedule list: [block.start, block.end] intersects [start_at, end_at]
-        conflicting_blocks = await db.scheduleblock.find_many(
-            where={
-                "userId": user_id,
-                "AND": [{"startAt": {"lt": end_at}}, {"endAt": {"gt": start_at}}],
-            },
-            order={"startAt": "asc"},
-            take=20,
-        )
+        # Query overlapping blocks via raw SQL for complex AND logic
+        factory = get_session_factory()
+        async with factory() as session:
+            from src.domains.progress.db_models import ScheduleBlock
+            stmt = (
+                select(ScheduleBlock)
+                .where(
+                    ScheduleBlock.user_id == user_id,
+                    ScheduleBlock.start_at < end_at,
+                    ScheduleBlock.end_at > start_at,
+                )
+                .order_by(ScheduleBlock.start_at.asc())
+                .limit(20)
+            )
+            result = await session.execute(stmt)
+            conflicting_blocks = list(result.scalars().all())
 
         if not conflicting_blocks:
             return {
@@ -597,7 +551,7 @@ async def handle_check_schedule_conflicts(
             }
 
         conflicts = [
-            f"'{b.title}' from {b.startAt.isoformat()} to {b.endAt.isoformat()}"
+            f"'{b.title}' from {b.start_at.isoformat()} to {b.end_at.isoformat()}"
             for b in conflicting_blocks
         ]
 
@@ -605,7 +559,6 @@ async def handle_check_schedule_conflicts(
             "status": "success",
             "has_conflicts": True,
             "conflicting_schedule_blocks": conflicts,
-            # Kept for older prompt/tool consumers
             "conflicting_sessions": conflicts,
             "message": "Double-booking detected with existing calendar blocks. Suggest alternative times.",
         }
@@ -690,13 +643,12 @@ async def handle_complete_review(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle complete_review tool call. Marks the spaced-repetition review as done with SM-2 quality rating."""
-    from src.services.spaced_repetition_service import advance_review
+    from src.domains.progress.services.spaced_repetition_impl import advance_review_sqlalchemy
 
     review_item_id = args.get("review_item_id") or (context or {}).get("reviewItemId")
     if not review_item_id:
         return {"status": "error", "message": "No review item in context."}
 
-    # Quality rating from the AI (0-5), defaults to 4 ("good") for backward compat
     quality = args.get("quality", 4)
     try:
         quality = max(0, min(5, int(quality)))
@@ -706,12 +658,7 @@ async def handle_complete_review(
     score_summary = args.get("score_summary", "")
 
     try:
-        updated = await advance_review(
-            db,
-            review_item_id=review_item_id,
-            user_id=user_id,
-            quality=quality,
-        )
+        result = await advance_review_sqlalchemy(user_id, review_item_id, quality)
         is_lapse = quality < 3
         if is_lapse:
             message = (
@@ -730,13 +677,9 @@ async def handle_complete_review(
             "message": message,
             "quality": quality,
             "scoreSummary": score_summary,
-            "nextReviewAt": (
-                updated.nextReviewAt.isoformat()
-                if hasattr(updated.nextReviewAt, "isoformat")
-                else str(updated.nextReviewAt)
-            ),
-            "intervalDays": updated.intervalDays,
-            "easeFactor": updated.easeFactor,
+            "nextReviewAt": result.get("nextReviewAt", ""),
+            "intervalDays": result.get("intervalDays", 0),
+            "easeFactor": result.get("easeFactor", 2.5),
         }
     except ValueError as e:
         logger.warning("complete_review failed: %s", e)
@@ -750,66 +693,53 @@ async def handle_update_course_outline(
 ) -> dict[str, Any]:
     """
     Handle update_course_outline tool call.
-    Replaces (or creates) modules and topics for an existing course
-    based on an outline the user provided in chat (text or image).
+    Replaces (or creates) modules and topics for an existing course.
     """
     course_id = args.get("course_id") or (context or {}).get("courseId")
     modules_data = args.get("modules", [])
 
     if not course_id:
         return {"status": "error", "message": "No course_id provided."}
-
     if not modules_data:
         return {"status": "error", "message": "No modules provided in the outline."}
 
-    # Verify ownership
-    course = await db.course.find_first(
-        where={"id": course_id, "userId": user_id},
-        include={"modules": True},
-    )
+    course = await knowledge_repo.find_course_with_modules(course_id, user_id)
     if not course:
         return {"status": "error", "message": "Course not found or you don't have access."}
 
     try:
-        # Delete existing modules + topics (cascade deletes topics)
+        # Delete existing modules (cascade deletes topics)
         if course.modules:
             for existing_mod in course.modules:
-                await db.module.delete(where={"id": existing_mod.id})
+                await knowledge_repo.delete_module(existing_mod.id)
 
-        # Create new modules and topics from the outline
+        # Create new modules and topics
         total_topics = 0
         for i, mod_data in enumerate(modules_data):
             mod_title = mod_data.get("title", f"Module {i + 1}")
             topics = mod_data.get("topics", [])
 
-            module = await db.module.create(
-                data={
-                    "courseId": course_id,
-                    "title": mod_title,
-                    "order": float(i),
-                }
-            )
+            module = await knowledge_repo.create_module({
+                "courseId": course_id,
+                "title": mod_title,
+                "order": float(i),
+            })
 
             for j, topic_title in enumerate(topics):
                 title = topic_title if isinstance(topic_title, str) else str(topic_title)
-                await db.topic.create(
-                    data={
-                        "moduleId": module.id,
-                        "title": title,
-                        "order": float(j),
-                    }
-                )
+                await knowledge_repo.create_topic({
+                    "moduleId": module.id,
+                    "title": title,
+                    "order": float(j),
+                })
                 total_topics += 1
 
-        # Update course description if it was the default placeholder
+        # Update description if placeholder
         desc = course.description or ""
         if "outline pending" in desc.lower() or not desc.strip():
-            await db.course.update(
-                where={"id": course_id},
-                data={
-                    "description": f"Course with {len(modules_data)} modules and {total_topics} topics."
-                },
-            )
+            await knowledge_repo.update_course(course_id, {
+                "description": f"Course with {len(modules_data)} modules and {total_topics} topics."
+            })
 
         return {
             "status": "success",
@@ -848,20 +778,17 @@ async def handle_complete_topic_and_continue(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle complete_topic_and_continue tool call.
-    Marks the topic completed in the DB and returns an action to navigate next.
-    """
+    """Handle complete_topic_and_continue tool call."""
     topic_id = (context or {}).get("topicId")
     if topic_id:
         import asyncio
 
         async def mark_complete() -> None:
             try:
-                await db.topic.update(where={"id": topic_id}, data={"completed": True})
+                await knowledge_repo.update_topic(topic_id, {"completed": True})
             except Exception as e:
                 logger.warning(f"Failed to mark topic {topic_id} complete: {e}")
 
-        # Run DB update in background to notify client faster
         asyncio.create_task(mark_complete())
 
     return {
@@ -882,34 +809,30 @@ async def handle_get_my_profile(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle get_my_profile tool call. Returns comprehensive user profile with remembered facts."""
+    from src.domains.identity.repository import IdentityRepository
 
+    identity_repo = IdentityRepository()
     profile: dict[str, Any] = {}
 
     # Basic user info
     try:
-        user = await db.user.find_unique(
-            where={"id": user_id},
-            include={"preferences": True},
-        )
+        user = await identity_repo.find_by_id(user_id)
         if user:
             profile["name"] = user.name or "Unknown"
             profile["email"] = user.email
             profile["tier"] = user.tier
-            profile["memberSince"] = user.createdAt.strftime("%B %Y") if user.createdAt else None
+            profile["memberSince"] = user.created_at.strftime("%B %Y") if user.created_at else None
             if user.preferences:
                 profile["timezone"] = user.preferences.timezone
                 profile["language"] = user.preferences.language
-                profile["studyGoals"] = user.preferences.studyGoals
+                profile["studyGoals"] = user.preferences.study_goals
     except Exception as e:
         logger.warning(f"Failed to fetch user info for profile: {e}")
 
     # Course summary
     try:
-        courses = await db.course.find_many(
-            where={"userId": user_id, "archived": False},
-            include={"modules": {"include": {"topics": True}}},
-            order={"updatedAt": "desc"},
-            take=10,
+        courses, _ = await knowledge_repo.list_courses(
+            user_id, where={"archived": False}, skip=0, take=10
         )
         course_summaries = []
         total_topics_all = 0
@@ -940,16 +863,14 @@ async def handle_get_my_profile(
 
     # Active goals
     try:
-        goals = await db.goal.find_many(
-            where={"userId": user_id, "status": "ACTIVE"},
-            take=10,
-            order={"updatedAt": "desc"},
+        goals, _ = await progress_repo.list_goals(
+            user_id, where={"status": "ACTIVE"}, skip=0, take=10
         )
         profile["activeGoals"] = [
             {
                 "title": g.title,
                 "progress": g.progress or 0,
-                "targetDate": g.targetDate.isoformat() if g.targetDate else None,
+                "targetDate": g.target_date.isoformat() if g.target_date else None,
             }
             for g in goals
         ]
@@ -959,12 +880,12 @@ async def handle_get_my_profile(
 
     # Study streak
     try:
-        streak = await db.userstreak.find_unique(where={"userId": user_id})
+        streak = await progress_repo.get_streak(user_id)
         profile["studyStreak"] = {
-            "currentStreak": streak.currentStreak if streak else 0,
-            "longestStreak": streak.longestStreak if streak else 0,
+            "currentStreak": streak.current_streak if streak else 0,
+            "longestStreak": streak.longest_streak if streak else 0,
             "lastStudyDate": (
-                streak.lastStudyDate.isoformat() if streak and streak.lastStudyDate else None
+                streak.last_study_date.isoformat() if streak and streak.last_study_date else None
             ),
         }
     except Exception as e:
@@ -974,16 +895,13 @@ async def handle_get_my_profile(
     # Upcoming schedule (next 3 days)
     try:
         now = datetime.now(UTC)
-        schedules = await db.scheduleblock.find_many(
-            where={
-                "userId": user_id,
-                "startAt": {"gte": now, "lte": now + timedelta(days=3)},
-            },
-            order={"startAt": "asc"},
-            take=8,
-        )
+        where_sched: dict[str, Any] = {
+            "endAt": {"gte": now},
+            "startAt": {"lte": now + timedelta(days=3)},
+        }
+        blocks, _ = await progress_repo.list_blocks(user_id, where=where_sched, skip=0, take=8)
         profile["upcomingSchedule"] = [
-            {"title": s.title, "startAt": s.startAt.isoformat()} for s in schedules
+            {"title": s.title, "startAt": s.start_at.isoformat()} for s in blocks
         ]
     except Exception as e:
         logger.warning(f"Failed to fetch schedule for profile: {e}")
@@ -992,19 +910,15 @@ async def handle_get_my_profile(
     # Pending reviews
     try:
         now = datetime.now(UTC)
-        pending = await db.reviewitem.count(where={"userId": user_id, "nextReviewAt": {"lte": now}})
-        profile["pendingReviews"] = pending
+        due_reviews = await progress_repo.list_due_reviews(user_id, before=now)
+        profile["pendingReviews"] = len(due_reviews)
     except Exception as e:
         logger.warning(f"Failed to fetch reviews for profile: {e}")
         profile["pendingReviews"] = 0
 
     # Remembered facts about the user
     try:
-        facts = await db.userfact.find_many(
-            where={"userId": user_id, "isActive": True},
-            order={"updatedAt": "desc"},
-            take=30,
-        )
+        facts = await intelligence_repo.list_user_facts(user_id, active_only=True, take=30)
         profile["rememberedFacts"] = [{"category": f.category, "content": f.content} for f in facts]
     except Exception as e:
         logger.warning(f"Failed to fetch user facts for profile: {e}")
@@ -1012,13 +926,9 @@ async def handle_get_my_profile(
 
     # Achievements
     try:
-        achievements = await db.achievement.find_many(
-            where={"userId": user_id},
-            order={"unlockedAt": "desc"},
-            take=5,
-        )
+        achievements = await progress_repo.list_achievements(user_id)
         profile["recentAchievements"] = [
-            {"title": a.title, "description": a.description} for a in achievements
+            {"title": a.title, "description": a.description} for a in achievements[:5]
         ]
     except Exception as e:
         logger.warning(f"Failed to fetch achievements for profile: {e}")
@@ -1044,58 +954,41 @@ async def handle_save_user_fact(
         return {"status": "error", "message": "No fact content provided."}
 
     valid_categories = [
-        "preference",
-        "personal",
-        "academic",
-        "goal",
-        "struggle",
-        "strength",
-        "other",
+        "preference", "personal", "academic", "goal", "struggle", "strength", "other",
     ]
     if category not in valid_categories:
         category = "other"
 
     try:
-        # Check for duplicate/similar existing facts to avoid redundancy
-        existing_facts = await db.userfact.find_many(
-            where={
-                "userId": user_id,
-                "category": category,
-                "isActive": True,
-            },
-            take=20,
+        # Check for duplicate/similar existing facts
+        existing_facts = await intelligence_repo.list_user_facts(
+            user_id, category=category, active_only=True, take=20
         )
 
-        # Simple deduplication: if a very similar fact exists, update it instead
         content_lower = content.lower()
         for existing in existing_facts:
             existing_lower = existing.content.lower()
-            # If the new fact is substantially similar (>70% word overlap), update the existing one
             new_words = set(content_lower.split())
             existing_words = set(existing_lower.split())
             if new_words and existing_words:
                 overlap = len(new_words & existing_words) / max(len(new_words), len(existing_words))
                 if overlap > 0.7:
-                    await db.userfact.update(
-                        where={"id": existing.id},
-                        data={"content": content, "confidence": 0.9},
-                    )
+                    await intelligence_repo.update_user_fact(existing.id, {
+                        "content": content, "confidence": 0.9,
+                    })
                     return {
                         "status": "success",
                         "action": "update_user_fact",
                         "message": f"Updated remembered fact: {content}",
                     }
 
-        # Create new fact
-        await db.userfact.create(
-            data={
-                "userId": user_id,
-                "category": category,
-                "content": content,
-                "source": "conversation",
-                "confidence": 0.85,
-            }
-        )
+        await intelligence_repo.create_user_fact({
+            "userId": user_id,
+            "category": category,
+            "content": content,
+            "source": "conversation",
+            "confidence": 0.85,
+        })
 
         return {
             "status": "success",
@@ -1152,11 +1045,7 @@ async def handle_get_learning_insights(
 ) -> dict[str, Any]:
     """Handle get_learning_insights tool call. Returns accumulated learning patterns."""
     try:
-        insights = await db.learninginsight.find_many(
-            where={"userId": user_id, "isActive": True},
-            order={"updatedAt": "desc"},
-            take=15,
-        )
+        insights = await intelligence_repo.list_insights(user_id, active_only=True, take=15)
 
         if not insights:
             return {
@@ -1171,11 +1060,11 @@ async def handle_get_learning_insights(
 
         insights_data = [
             {
-                "type": ins.insightType,
+                "type": ins.insight_type,
                 "content": ins.content,
                 "confidence": round(ins.confidence * 100),
-                "dataPoints": ins.dataPoints,
-                "lastUpdated": ins.updatedAt.isoformat() if ins.updatedAt else None,
+                "dataPoints": ins.data_points,
+                "lastUpdated": ins.updated_at.isoformat() if ins.updated_at else None,
             }
             for ins in insights
         ]
@@ -1231,6 +1120,7 @@ async def handle_email_user(
 ) -> dict[str, Any]:
     """Handle email_user tool call. Sends an email to the user."""
     from src.services import email
+    from src.domains.identity.repository import IdentityRepository
 
     subject = args.get("subject")
     content = args.get("content")
@@ -1239,12 +1129,11 @@ async def handle_email_user(
         return {"status": "error", "message": "Subject and content are required."}
 
     try:
-        # Get user for email address and name
-        user = await db.user.find_unique(where={"id": user_id})
+        identity_repo = IdentityRepository()
+        user = await identity_repo.find_by_id(user_id)
         if not user or not user.email:
             return {"status": "error", "message": "User or user email not found."}
 
-        # Send the email
         await email.send_bulk_email(
             email=user.email,
             name=user.name,
@@ -1285,7 +1174,6 @@ async def handle_generate_document(
     if not content:
         return {"status": "error", "message": "Document content is required."}
 
-    # Default style for presentations
     if doc_format == "pptx" and style not in ("academic", "report", "minimal"):
         style = "report"
 
@@ -1298,24 +1186,27 @@ async def handle_generate_document(
             user_id=user_id,
         )
 
-        # Save document to database for sharing & tracking
+        # Save document to database via raw SQL (GeneratedDocument not yet in SQLAlchemy)
         share_id = None
         try:
-            doc_record = await db.generateddocument.create(
-                data={
-                    "userId": user_id,
-                    "title": result["title"],
-                    "format": result["format"],
-                    "style": style,
-                    "filename": result["filename"],
-                    "fileUrl": result["url"],
-                    "previewUrl": result["preview_url"],
-                    "size": result["size"],
-                    "contentType": result["content_type"],
-                    "isPublic": True,
-                }
-            )
-            share_id = doc_record.shareId
+            from sqlalchemy import text
+            factory = get_session_factory()
+            doc_id = __import__("uuid").uuid4().hex[:25]
+            async with factory() as session:
+                await session.execute(
+                    text(
+                        'INSERT INTO "GeneratedDocument" (id, "userId", title, format, style, filename, "fileUrl", "previewUrl", size, "contentType", "isPublic", "createdAt", "updatedAt") '
+                        "VALUES (:id, :uid, :title, :fmt, :style, :filename, :url, :preview, :size, :ct, true, now(), now()) RETURNING \"shareId\""
+                    ),
+                    {
+                        "id": doc_id, "uid": user_id, "title": result["title"],
+                        "fmt": result["format"], "style": style,
+                        "filename": result["filename"], "url": result["url"],
+                        "preview": result["preview_url"], "size": result["size"],
+                        "ct": result["content_type"],
+                    },
+                )
+                await session.commit()
         except Exception as e:
             logger.warning(f"Failed to save document record: {e}")
 

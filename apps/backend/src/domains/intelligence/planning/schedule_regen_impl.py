@@ -11,7 +11,9 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
-from src.core.database import db
+from src.domains.knowledge.repository import knowledge_repo
+from src.domains.progress.repository import progress_repo
+from src.shared.database import get_session_factory
 from src.config import get_settings
 from src.services.llm import new_gemini_client
 from src.services.skills.handlers import handle_create_schedule
@@ -42,45 +44,46 @@ async def regenerate_user_schedule(user_id: str) -> None:
         past_window = now - timedelta(days=30)
 
         # 1. Delete future AI-generated blocks (those without a Google Calendar link)
-        deleted = await db.scheduleblock.delete_many(
-            where={
-                "userId": user_id,
-                "startAt": {"gte": now},
-                "googleCalendarEventId": None,
-            }
-        )
+        from sqlalchemy import select, delete as sa_delete
+        from src.domains.progress.db_models import ScheduleBlock
+
+        factory = get_session_factory()
+        async with factory() as session:
+            del_stmt = sa_delete(ScheduleBlock).where(
+                ScheduleBlock.user_id == user_id,
+                ScheduleBlock.start_at >= now,
+                ScheduleBlock.google_calendar_event_id.is_(None),
+            )
+            result = await session.execute(del_stmt)
+            await session.commit()
+            deleted = result.rowcount
         logger.info(f"Deleted {deleted} future schedule blocks for user {user_id}")
 
         # 2. Gather context
-        courses = await db.course.find_many(
-            where={"userId": user_id, "archived": False},
-            take=20,
-            order={"updatedAt": "desc"},
+        courses, _ = await knowledge_repo.list_courses(
+            user_id, where={"archived": False}, skip=0, take=20
         )
 
-        goals = await db.goal.find_many(
-            where={"userId": user_id, "status": "ACTIVE"},
-            take=10,
-            order={"targetDate": "asc"},
+        goals, _ = await progress_repo.list_goals(
+            user_id, where={"status": "ACTIVE"}, skip=0, take=10
         )
 
         # Existing events that we must not overlap
-        existing_events = await db.scheduleblock.find_many(
-            where={
-                "userId": user_id,
-                "startAt": {"gte": now, "lte": future_cutoff},
-            },
-            order={"startAt": "asc"},
+        where_existing: dict = {
+            "endAt": {"gte": now},
+            "startAt": {"lte": future_cutoff},
+        }
+        existing_events, _ = await progress_repo.list_blocks(
+            user_id, where=where_existing, skip=0, take=200
         )
 
         # 3. Analyze past study behavior
-        past_blocks = await db.scheduleblock.find_many(
-            where={
-                "userId": user_id,
-                "startAt": {"gte": past_window, "lt": now},
-            },
-            order={"startAt": "desc"},
-            take=100,
+        where_past: dict = {
+            "endAt": {"gte": past_window},
+            "startAt": {"lte": now},
+        }
+        past_blocks, _ = await progress_repo.list_blocks(
+            user_id, where=where_past, skip=0, take=100
         )
 
         hour_counts: dict[int, int] = {}
@@ -90,11 +93,11 @@ async def regenerate_user_schedule(user_id: str) -> None:
         if past_blocks:
             durations = []
             for b in past_blocks:
-                start_hour = b.startAt.hour
+                start_hour = b.start_at.hour
                 hour_counts[start_hour] = hour_counts.get(start_hour, 0) + 1
-                weekday = b.startAt.weekday()
+                weekday = b.start_at.weekday()
                 day_counts[weekday] = day_counts.get(weekday, 0) + 1
-                dur = (b.endAt - b.startAt).total_seconds() / 60
+                dur = (b.end_at - b.start_at).total_seconds() / 60
                 if 15 < dur < 300:
                     durations.append(dur)
 
@@ -144,7 +147,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
 
         goal_info = (
             "\n".join(
-                f"- {g.title} (deadline: {g.targetDate.strftime('%Y-%m-%d') if g.targetDate else 'none'})"
+                f"- {g.title} (deadline: {g.target_date.strftime('%Y-%m-%d') if g.target_date else 'none'})"
                 for g in goals
             )
             or "No active goals."
@@ -152,7 +155,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
 
         busy_slots = (
             "\n".join(
-                f"- {e.title}: {e.startAt.strftime('%Y-%m-%d %H:%M')} to {e.endAt.strftime('%H:%M')}"
+                f"- {e.title}: {e.start_at.strftime('%Y-%m-%d %H:%M')} to {e.end_at.strftime('%H:%M')}"
                 for e in existing_events
             )
             or "No existing commitments."

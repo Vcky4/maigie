@@ -1,5 +1,5 @@
 ﻿"""
-Classroom lifecycle â€” create, update, delete, list.
+Classroom lifecycle — create, update, delete, list.
 """
 
 import logging
@@ -15,11 +15,9 @@ logger = logging.getLogger(__name__)
 
 async def create_classroom(*, space_id: str, user_id: str, data: dict[str, Any]) -> Any:
     """Create a Classroom within a Learning Space."""
-    # Verify membership and permission via existing service
     from src.domains.learning_spaces.services.space_impl import _require_role
-    from src.shared.database import db
 
-    await _require_role(db, space_id, user_id, min_role="TUTOR")
+    await _require_role(None, space_id, user_id, min_role="TUTOR")
 
     classroom = await classroom_repo.create_classroom({
         "circleId": space_id,
@@ -51,16 +49,14 @@ async def update_classroom(*, classroom_id: str, user_id: str, data: dict[str, A
     if not classroom:
         raise NotFoundError("Classroom", classroom_id)
 
-    # Permission check
     from src.domains.learning_spaces.services.space_impl import _require_role
-    from src.shared.database import db
 
-    await _require_role(db, classroom.circleId, user_id, min_role="TUTOR")
+    await _require_role(None, classroom.circle_id, user_id, min_role="TUTOR")
 
     update_data = {k: v for k, v in data.items() if v is not None}
     if update_data:
-        return await classroom_repo.update_classroom(classroom_id, update_data)
-    return classroom
+        await classroom_repo.update_classroom(classroom_id, update_data)
+    return await classroom_repo.find_classroom(classroom_id)
 
 
 async def delete_classroom(*, classroom_id: str, user_id: str) -> None:
@@ -70,7 +66,6 @@ async def delete_classroom(*, classroom_id: str, user_id: str) -> None:
         raise NotFoundError("Classroom", classroom_id)
 
     from src.domains.learning_spaces.services.space_impl import _require_role
-    from src.shared.database import db
 
-    await _require_role(db, classroom.circleId, user_id, min_role="ADMIN")
+    await _require_role(None, classroom.circle_id, user_id, min_role="ADMIN")
     await classroom_repo.delete_classroom(classroom_id)

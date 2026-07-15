@@ -1,6 +1,6 @@
 import logging
 
-from src.core.database import db
+from src.domains.knowledge.repository import knowledge_repo
 from src.core.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,6 @@ async def generate_course_content_task(
 ) -> None:
     """
     Background task: generate a course outline via LLM and persist modules/topics.
-
-    Previously this used a fixed 3-topic mock; it now uses the same outline path as chat-based generation.
     """
     try:
         await manager.send_to_user(
@@ -47,7 +45,6 @@ async def generate_course_content_task(
         )
 
         # Emit AI usage scoped to the course's workspace (Personal or Circle).
-        # Look up the course to determine if it belongs to a Circle.
         try:
             from src.services.usage_tracking_service import (
                 PERSONAL_USAGE_SCOPE,
@@ -55,8 +52,8 @@ async def generate_course_content_task(
                 emit_ai_usage,
             )
 
-            course_row = await db.course.find_unique(where={"id": course_id})
-            course_circle_id = getattr(course_row, "circleId", None) if course_row else None
+            course_row = await knowledge_repo.find_course(course_id, user_id)
+            course_circle_id = course_row.circle_id if course_row else None
             if course_circle_id:
                 emit_scope = build_circle_usage_scope(course_circle_id)
             else:
@@ -83,14 +80,12 @@ async def generate_course_content_task(
             module_title = (mod_data.get("title") or f"Module {i + 1}").strip()
             topics = mod_data.get("topics") or []
 
-            new_module = await db.module.create(
-                data={
-                    "courseId": course_id,
-                    "title": module_title,
-                    "order": float(i),
-                    "description": (mod_data.get("description") or "").strip() or None,
-                }
-            )
+            new_module = await knowledge_repo.create_module({
+                "courseId": course_id,
+                "title": module_title,
+                "order": float(i),
+                "description": (mod_data.get("description") or "").strip() or None,
+            })
 
             for j, top in enumerate(topics):
                 if isinstance(top, str):
@@ -99,31 +94,26 @@ async def generate_course_content_task(
                     title = str(top.get("title") or f"Topic {j + 1}").strip()
                 if not title:
                     continue
-                await db.topic.create(
-                    data={
-                        "moduleId": new_module.id,
-                        "title": title,
-                        "order": float(j),
-                        "estimatedHours": 0.5,
-                    }
-                )
+                await knowledge_repo.create_topic({
+                    "moduleId": new_module.id,
+                    "title": title,
+                    "order": float(j),
+                    "estimatedHours": 0.5,
+                })
 
         title = (outline.get("title") or "").strip() or f"Learning {topic_prompt[:80]}"
         description = (outline.get("description") or "").strip() or (
             f"A structured course on {topic_prompt[:200]}."
-            + ("…" if len(topic_prompt) > 200 else "")
+            + ("\u2026" if len(topic_prompt) > 200 else "")
         )
         diff_out = (outline.get("difficulty") or difficulty or "BEGINNER").upper()
 
-        await db.course.update(
-            where={"id": course_id},
-            data={
-                "title": title,
-                "description": description,
-                "difficulty": diff_out,
-                "isAIGenerated": True,
-            },
-        )
+        await knowledge_repo.update_course(course_id, {
+            "title": title,
+            "description": description,
+            "difficulty": diff_out,
+            "isAIGenerated": True,
+        })
 
         logger.info("AI generation complete for course %s", course_id)
         await manager.send_to_user(

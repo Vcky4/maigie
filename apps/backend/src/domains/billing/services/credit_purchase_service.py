@@ -24,7 +24,7 @@ from prisma import Prisma
 from prisma.models import User
 
 from src.config import get_settings
-from src.core.database import db
+from src.shared.database.client import db
 from src.services.audit_service import log_admin_action
 from src.services.credit_purchase_notifications import (
     CREDIT_PURCHASE_NOTIFICATION_TITLE,
