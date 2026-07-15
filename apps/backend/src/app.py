@@ -177,8 +177,11 @@ def _register_domains(app: FastAPI) -> None:
     # app.include_router(progress_router, prefix=f"{prefix}/progress", tags=["progress"])
 
     # --- Billing ---
-    # from src.domains.billing.routes import router as billing_router
-    # app.include_router(billing_router, prefix=f"{prefix}/billing", tags=["billing"])
+    from src.domains.billing.routes import router as billing_router
+    from src.domains.billing.webhooks import router as webhooks_router
+
+    app.include_router(billing_router, prefix=f"{prefix}/billing", tags=["billing"])
+    app.include_router(webhooks_router, prefix=f"{prefix}/webhooks", tags=["webhooks"])
 
     # --- Admin ---
     # from src.domains.admin.routes import router as admin_router
