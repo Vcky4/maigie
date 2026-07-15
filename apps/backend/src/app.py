@@ -281,8 +281,9 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
     # --- Learning Spaces ---
-    # from src.domains.learning_spaces.routes import router as spaces_router
-    # app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
+    from src.domains.learning_spaces.routes import router as spaces_router
+
+    app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
 
     # --- Classrooms ---
     # from src.domains.classrooms.routes import router as classrooms_router
