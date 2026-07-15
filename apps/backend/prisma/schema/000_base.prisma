@@ -1,0 +1,278 @@
+// ===========================================================================
+// BASE — Datasource, generator configuration, and shared enums.
+// All .prisma files in this directory are automatically merged by Prisma.
+// ===========================================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider                    = "prisma-client-py"
+  interface                   = "asyncio"
+  recursive_type_depth        = 5
+  enable_experimental_decimal = true
+  previewFeatures             = ["prismaSchemaFolder"]
+}
+
+// ===========================================================================
+// SHARED ENUMS (used across multiple domains)
+// ===========================================================================
+
+enum Tier {
+  FREE
+  PREMIUM_MONTHLY
+  PREMIUM_YEARLY
+  STUDY_CIRCLE_MONTHLY
+  STUDY_CIRCLE_YEARLY
+  SQUAD_MONTHLY
+  SQUAD_YEARLY
+}
+
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ActionStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum AdminStaffRole {
+  SUPER_ADMIN
+  CONTENT_MANAGER
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+  CANCELLED
+}
+
+enum ScheduleBehaviourType {
+  COMPLETED_ON_TIME
+  COMPLETED_LATE
+  SKIPPED
+  RESCHEDULED
+  AI_CREATED
+}
+
+enum ResourceType {
+  VIDEO
+  ARTICLE
+  BOOK
+  COURSE
+  DOCUMENT
+  WEBSITE
+  PODCAST
+  OTHER
+}
+
+enum InteractionType {
+  RESOURCE_CLICK
+  RESOURCE_VIEW
+  RESOURCE_BOOKMARK
+  RESOURCE_FEEDBACK
+  COURSE_VIEW
+  NOTE_CREATE
+  NOTE_UPDATE
+  GOAL_CREATE
+  GOAL_UPDATE
+  SCHEDULE_CREATE
+  SCHEDULE_UPDATE
+  CHAT_MESSAGE
+  RECOMMENDATION_REQUESTED
+  RECOMMENDATION_ACCEPTED
+  RECOMMENDATION_REJECTED
+}
+
+enum ResourceBankType {
+  TEXTBOOK
+  NOTE
+  ASSIGNMENT
+  PAST_QUESTION
+  SLIDES
+  SUMMARY
+  LAB_REPORT
+  OTHER
+}
+
+enum ResourceBankStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+  FLAGGED
+}
+
+enum ReportStatus {
+  REPORT_PENDING
+  REPORT_REVIEWED
+  REPORT_DISMISSED
+}
+
+enum ModerationReportStatus {
+  PENDING
+  UPHELD
+  DISMISSED
+}
+
+enum ReportTargetType {
+  CIRCLE
+  MEMBER
+  MESSAGE
+  RESOURCE
+  PROFILE_IMAGE
+}
+
+enum SeatTier {
+  FREE_SEAT
+  PLUS_SEAT
+}
+
+enum CircleVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+enum UsageScopeType {
+  PERSONAL
+  CIRCLE
+}
+
+enum OwnershipTransferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  CANCELLED
+}
+
+enum CircleRole {
+  OWNER
+  ADMIN
+  TUTOR
+  MEMBER
+}
+
+enum CircleInviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum CircleSessionStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CourseOutlineSatisfactionKind {
+  SATISFIED
+  NOT_SATISFIED
+  MODIFICATION_REQUESTED
+}
+
+enum LedgerLineKind {
+  INCOME
+  EXPENSE
+}
+
+enum ExamPrepStatus {
+  SETUP
+  PROCESSING
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+enum MaterialCategory {
+  TEXTBOOK
+  NOTES
+  PAST_QUESTION
+  LINK
+  SLIDE
+  OTHER
+}
+
+enum QuestionSource {
+  PAST_QUESTION
+  AI_GENERATED
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  SHORT_ANSWER
+  TRUE_FALSE
+  ESSAY
+}
+
+enum QuestionDifficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuizMode {
+  FULL_PRACTICE
+  WEAK_AREAS
+  TOPIC_FOCUS
+  PAST_PAPER_SIM
+  QUICK_REVIEW
+}
+
+enum AchievementType {
+  STUDY_TIME_MILESTONE
+  STREAK_MILESTONE
+  COURSE_COMPLETION
+  TOPIC_COMPLETION
+  GOAL_ACHIEVEMENT
+  AI_USAGE
+}
+
+enum FeedbackType {
+  BUG_REPORT
+  FEATURE_REQUEST
+  CONTENT_ISSUE
+  GENERAL_FEEDBACK
+  PERFORMANCE_ISSUE
+  UI_IMPROVEMENT
+}
+
+enum FeedbackStatus {
+  NEW
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+enum CareerApplicationStatus {
+  PENDING
+  REVIEWED
+  ACCEPTED
+  REJECTED
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}

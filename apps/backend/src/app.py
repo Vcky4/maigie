@@ -266,8 +266,10 @@ def _register_domains(app: FastAPI) -> None:
 
     # --- Identity ---
     from src.domains.identity.routes import auth_router, users_router
+    from src.domains.identity.oauth_routes import oauth_router
 
     app.include_router(auth_router, prefix=f"{prefix}/auth", tags=["auth"])
+    app.include_router(oauth_router, prefix=f"{prefix}/auth", tags=["auth"])
     app.include_router(users_router, prefix=f"{prefix}/users", tags=["users"])
 
     # --- Personal Learning ---
@@ -291,9 +293,10 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(classrooms_router, prefix=f"{prefix}/classrooms", tags=["classrooms"])
 
     # --- Intelligence ---
-    from src.domains.intelligence.routes import router as intelligence_router
+    from src.domains.intelligence.routes import register_websocket, router as intelligence_router
 
     app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
+    register_websocket(app)  # WebSocket at /api/v1/intelligence/ws
 
     # --- Progress ---
     from src.domains.progress.routes import router as progress_router

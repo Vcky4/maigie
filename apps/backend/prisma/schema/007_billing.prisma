@@ -1,0 +1,242 @@
+﻿// ===========================================================================
+// BILLING DOMAIN — Referrals, Resource Bank, Credit Purchases
+// ===========================================================================
+//  REFERRAL MODULE
+// ==========================================
+
+model ReferralReward {
+  id String @id @default(uuid())
+
+  referrerId String // User who referred someone
+  referrer   User   @relation(fields: [referrerId], references: [id], onDelete: Cascade)
+
+  referredUserId String // User who was referred
+  referredUser   User   @relation("ReferredUser", fields: [referredUserId], references: [id], onDelete: Cascade)
+
+  rewardType String // "signup" (1000 tokens) or "subscription" (500 tokens)
+  tokens     Int       @default(0) // Amount of tokens awarded
+  isClaimed  Boolean   @default(false) // Whether the reward has been claimed
+  claimedAt  DateTime? // When the reward was claimed
+  claimDate  DateTime? // The date when claimed (for daily limit tracking)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([referrerId, referredUserId, rewardType]) // One reward per referrer-referred pair per type
+  @@index([referrerId])
+  @@index([referredUserId])
+  @@index([isClaimed])
+}
+
+model ReferralRewardClaim {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rewardId           String // Reference to ReferralReward (not a relation to avoid circular dependency)
+  tokensClaimed      Int // Amount claimed
+  claimDate          DateTime // Date when claimed (for daily limit tracking)
+  dailyLimitIncrease Int      @default(0) // How much daily limit was increased
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([rewardId])
+  @@index([claimDate])
+}
+
+model AdRewardClaim {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  adType   String // e.g. "rewarded_video"
+  credits  Int // Credits earned from this ad view
+  adUnitId String? // Optional: AdMob ad unit ID for tracking
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([userId, createdAt])
+}
+
+// ==========================================
+//  RESOURCE BANK MODULE
+// ==========================================
+
+model ResourceBankItem {
+  id         String @id @default(cuid())
+  uploaderId String
+  uploader   User   @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  title          String
+  description    String?
+  type           ResourceBankType @default(OTHER)
+  universityName String
+  courseName     String?
+  courseCode     String?
+
+  status          ResourceBankStatus @default(PENDING_REVIEW)
+  moderationNotes String?
+
+  downloadCount Int @default(0)
+  viewCount     Int @default(0)
+  reportCount   Int @default(0)
+
+  // Relations
+  files      ResourceBankFile[]
+  embeddings Embedding[]
+  reports    ResourceBankReport[]
+  rewards    ResourceUploadReward[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([universityName])
+  @@index([courseCode])
+  @@index([type])
+  @@index([status])
+  @@index([uploaderId])
+  @@index([universityName, courseCode])
+  @@index([universityName, type])
+}
+
+model ResourceBankFile {
+  id                 String           @id @default(cuid())
+  resourceBankItemId String
+  resourceBankItem   ResourceBankItem @relation(fields: [resourceBankItemId], references: [id], onDelete: Cascade)
+
+  filename      String
+  url           String
+  size          Int?
+  mimeType      String?
+  extractedText String? // For RAG indexing of PDFs/docs
+
+  createdAt DateTime @default(now())
+
+  @@index([resourceBankItemId])
+}
+
+model ResourceBankReport {
+  id                 String           @id @default(cuid())
+  resourceBankItemId String
+  resourceBankItem   ResourceBankItem @relation(fields: [resourceBankItemId], references: [id], onDelete: Cascade)
+
+  reporterId String
+  reporter   User   @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  reason      String
+  description String?
+  status      ReportStatus @default(REPORT_PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([resourceBankItemId, reporterId])
+  @@index([resourceBankItemId])
+  @@index([reporterId])
+  @@index([status])
+}
+
+model ResourceUploadReward {
+  id String @id @default(uuid())
+
+  uploaderId String
+  uploader   User   @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  resourceBankItemId String
+  resourceBankItem   ResourceBankItem @relation(fields: [resourceBankItemId], references: [id], onDelete: Cascade)
+
+  tokens    Int       @default(1500)
+  isClaimed Boolean   @default(false)
+  claimedAt DateTime?
+  claimDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([uploaderId, resourceBankItemId])
+  @@index([uploaderId])
+  @@index([resourceBankItemId])
+  @@index([isClaimed])
+}
+
+model ResourceUploadRewardClaim {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  rewardId           String
+  tokensClaimed      Int
+  claimDate          DateTime
+  dailyLimitIncrease Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([rewardId])
+  @@index([claimDate])
+}
+
+// ==========================================
+//  CREDIT PURCHASE MODULE
+// ==========================================
+
+model CreditPack {
+  id           String @id @default(cuid())
+  name         String // e.g., "Starter Pack", "Value Pack", "Power Pack"
+  credits      Int // Base credit amount
+  bonusCredits Int    @default(0) // Bonus credits included
+
+  // Pricing (stored in smallest currency unit: cents for USD, kobo for NGN)
+  priceUsdCents Int // Price in USD cents
+  priceNgnKobo  Int // Price in NGN kobo
+
+  sortOrder Int     @default(0) // For ordering (lowest to highest)
+  isActive  Boolean @default(true) // Soft-disable packs
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions CreditPurchaseTransaction[]
+
+  @@index([isActive, sortOrder])
+}
+
+model CreditPurchaseTransaction {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  creditPackId String
+  creditPack   CreditPack @relation(fields: [creditPackId], references: [id])
+
+  creditsGranted Int // Total credits added (base + bonus)
+
+  // Payment details
+  amountPaid        Int // Amount in smallest currency unit
+  currency          String // "USD", "NGN", etc.
+  paymentProvider   String // "stripe" | "paystack"
+  providerReference String @unique // Stripe payment_intent ID or Paystack reference
+
+  // Session tracking
+  sessionId        String? // Stripe checkout session ID or Paystack access code
+  sessionExpiresAt DateTime? // When the payment session expires
+
+  status      String    @default("pending") // "pending", "completed", "failed", "expired"
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([userId, createdAt])
+  @@index([providerReference])
+  @@index([status])
+  @@index([sessionId])
+}
+
+// ==========================================

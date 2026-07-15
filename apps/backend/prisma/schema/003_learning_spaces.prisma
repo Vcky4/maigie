@@ -1,0 +1,378 @@
+﻿// ===========================================================================
+// LEARNING SPACES DOMAIN
+// ===========================================================================
+//  CIRCLE MODULE (Study Groups)
+// ==========================================
+
+model Circle {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  avatarUrl   String?
+  createdById String
+  maxMembers  Int     @default(5)
+  maxGroups   Int     @default(5)
+
+  // Credits & Wallet
+  credits      Int  @default(0)
+  creditsLimit Int?
+
+  // Circle Reimagining: visibility, branding, plan & seat snapshot, moderation
+  visibility                 CircleVisibility @default(PRIVATE)
+  category                   String?
+  bannerUrl                  String?
+  themeJson                  Json?
+  circlePlanActive           Boolean          @default(false)
+  circlePlanCurrentPeriodEnd DateTime?
+  seatPoolSize               Int              @default(0)
+  hiddenByModeration         Boolean          @default(false)
+  allowMemberExport          Boolean          @default(false)
+  featured                   Boolean          @default(false)
+  /// Discovery join behaviour: AUTO_JOIN | REQUEST_TO_JOIN
+  joinPolicy                 String           @default("AUTO_JOIN")
+  /// Idempotency marker for the one-time migration runner.
+  migrationMarker            String?
+
+  // Relations
+  members       CircleMember[]
+  invites       CircleInvite[]
+  notes         Note[]
+  goals         Goal[]
+  courses       Course[]
+  chatGroups    CircleChatGroup[]
+  resources     Resource[]
+  examPreps     ExamPrep[]
+  studySessions StudySession[]
+  memberStats   CircleMemberStat[]
+  groupSessions CircleSession[]
+
+  // Circle Reimagining relations
+  joinRequests       CircleJoinRequest[]
+  ownershipTransfers CircleOwnershipTransfer[]
+  subscription       CircleSubscription?
+  seatAddons         CircleSeatAddon[]
+  aiUsageRecords     AiUsageRecord[]
+
+  // Individual AI chat sessions within this circle (per paid-seat member)
+  chatSessions ChatSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdById])
+  @@index([visibility])
+  @@index([featured])
+  @@index([circlePlanActive])
+}
+
+model CircleMember {
+  id       String     @id @default(cuid())
+  circleId String
+  circle   Circle     @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     CircleRole @default(MEMBER)
+  /// Per-(User, Circle) capability tier. Independent of the user's Personal_Tier.
+  seatTier SeatTier   @default(FREE_SEAT)
+  joinedAt DateTime   @default(now())
+
+  @@unique([circleId, userId])
+  @@index([userId])
+  @@index([circleId])
+  @@index([circleId, seatTier])
+}
+
+/// Up to 5 named chat groups within a circle
+model CircleChatGroup {
+  id       String @id @default(cuid())
+  circleId String
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  name     String // e.g., "General", "Exam Prep", "Biology"
+
+  // Reuses existing ChatSession model for messages
+  chatSessionId String?      @unique
+  chatSession   ChatSession? @relation(fields: [chatSessionId], references: [id], onDelete: SetNull)
+
+  // Group permissions
+  visibility  String  @default("PUBLIC")  // PUBLIC (all circle members) or PRIVATE (only assigned members)
+  description String?
+
+  groupSessions  CircleSession[]
+  courseLinks     CircleGroupCourseLink[]
+  members        CircleChatGroupMember[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([circleId])
+}
+
+/// Members assigned to a private chat group within a circle.
+/// Only used when CircleChatGroup.visibility = "PRIVATE".
+model CircleChatGroupMember {
+  id          String @id @default(cuid())
+  chatGroupId String
+  chatGroup   CircleChatGroup @relation(fields: [chatGroupId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt    DateTime @default(now())
+
+  @@unique([chatGroupId, userId])
+  @@index([chatGroupId])
+  @@index([userId])
+}
+
+model CircleInvite {
+  id           String             @id @default(cuid())
+  circleId     String
+  circle       Circle             @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  inviterId    String // User who sent the invite
+  inviteeEmail String // Email of the person invited
+  inviteeId    String? // User ID if they're already on the platform
+  status       CircleInviteStatus @default(PENDING)
+  /// Role to assign when invite is accepted (default MEMBER)
+  role         CircleRole         @default(MEMBER)
+  /// Seat tier to assign when invite is accepted (default FREE_SEAT)
+  seatTier     SeatTier           @default(FREE_SEAT)
+  expiresAt    DateTime
+  createdAt    DateTime           @default(now())
+
+  @@unique([circleId, inviteeEmail])
+  @@index([inviteeEmail])
+  @@index([inviteeId])
+  @@index([circleId])
+}
+
+model CircleMemberStat {
+  id       String @id @default(cuid())
+  circleId String
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  contributionPoints Int   @default(0)
+  coursesCompleted   Int   @default(0)
+  notesAdded         Int   @default(0)
+  resourcesShared    Int   @default(0)
+  quizAverage        Float @default(0.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([circleId, userId])
+  @@index([circleId])
+  @@index([userId])
+}
+
+model CircleSession {
+  id       String @id @default(cuid())
+  circleId String
+  circle   Circle @relation(fields: [circleId], references: [id], onDelete: Cascade)
+
+  title       String
+  description String?
+
+  scheduledAt DateTime
+  duration    Int                 @default(60) // minutes
+  status      CircleSessionStatus @default(SCHEDULED)
+
+  // Optional linkage to a specific chat group where the session takes place
+  chatGroupId String?
+  chatGroup   CircleChatGroup? @relation(fields: [chatGroupId], references: [id], onDelete: SetNull)
+
+  // Optional linkage to a topic or goal
+  topicId String?
+  topic   Topic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  goalId  String?
+  goal    Goal?   @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([circleId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@index([chatGroupId])
+  @@index([topicId])
+  @@index([goalId])
+  @@index([createdById])
+}
+
+// ==========================================
+//  CIRCLE REIMAGINING (visibility, seats, billing, moderation, usage)
+// ==========================================
+
+/// Pending join request raised by a user against a Public_Circle whose
+/// joinPolicy is REQUEST_TO_JOIN. Auto-join Circles never produce these.
+model CircleJoinRequest {
+  id        String    @id @default(cuid())
+  circleId  String
+  circle    Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// PENDING | APPROVED | DENIED | EXPIRED
+  status    String    @default("PENDING")
+  createdAt DateTime  @default(now())
+  decidedAt DateTime?
+
+  @@unique([circleId, userId])
+  @@index([circleId, status])
+}
+
+/// Owner-initiated ownership transfer with a 7-day acceptance window.
+model CircleOwnershipTransfer {
+  id         String                  @id @default(cuid())
+  circleId   String
+  circle     Circle                  @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  fromUserId String
+  fromUser   User                    @relation("CircleOwnershipTransferFromUser", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId   String
+  toUser     User                    @relation("CircleOwnershipTransferToUser", fields: [toUserId], references: [id], onDelete: Cascade)
+  status     OwnershipTransferStatus @default(PENDING)
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime                @default(now())
+
+  @@index([circleId, status])
+  @@index([toUserId, status])
+}
+
+/// One Circle_Plan subscription per Circle. Source of truth for the Circle's
+/// plan-active state is the billing provider; this row is a cached snapshot.
+model CircleSubscription {
+  id                     String    @id @default(cuid())
+  circleId               String    @unique
+  circle                 Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  /// "STRIPE" | "PAYSTACK"
+  provider               String
+  providerSubscriptionId String
+  /// "ACTIVE" | "TRIALING" | "PAST_DUE" | "CANCELED"
+  status                 String
+  currentPeriodEnd       DateTime
+  trialEndsAt            DateTime?
+  cancelAtPeriodEnd      Boolean   @default(false)
+  /// Billing contact at creation time. Updated on ownership transfer.
+  ownerUserId            String
+  ownerUser              User      @relation("CircleSubscriptionOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  @@index([status])
+  @@index([currentPeriodEnd])
+}
+
+/// Plus_Seat_Add_On â€” one row per add-on seat. Independent of Circle_Plan.
+model CircleSeatAddon {
+  id                     String    @id @default(cuid())
+  circleId               String
+  circle                 Circle    @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  /// "STRIPE" | "PAYSTACK"
+  provider               String
+  providerSubscriptionId String
+  /// "ACTIVE" | "CANCELED_AT_PERIOD_END" | "CANCELED"
+  status                 String
+  currentPeriodEnd       DateTime
+  /// Currently-assigned member, or null when the seat is unassigned.
+  assignedToUserId       String?
+  assignedToUser         User?     @relation("CircleSeatAddonAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  /// Actor who purchased the add-on (Owner or Admin).
+  purchasedByUserId      String
+  purchasedByUser        User      @relation("CircleSeatAddonPurchaser", fields: [purchasedByUserId], references: [id], onDelete: Cascade)
+  purchasedAt            DateTime  @default(now())
+  canceledAt             DateTime?
+  assignedAt             DateTime?
+
+  @@index([circleId, status])
+  @@index([circleId, assignedAt])
+  @@index([assignedToUserId])
+  @@index([purchasedByUserId])
+}
+
+/// Per-AI-call usage record scoped to either the Personal_Workspace or a
+/// specific Circle_Workspace. Used for quota counters and per-member analytics.
+model AiUsageRecord {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// 'personal' or 'circle:{circle_id}'.
+  usageScope   String
+  /// Populated only when usageScope is 'circle:{circle_id}'.
+  circleId     String?
+  circle       Circle?  @relation(fields: [circleId], references: [id], onDelete: SetNull)
+  /// Provider-side identifiers and cost facts (kept generic; emitters fill them in).
+  provider     String?
+  model        String?
+  feature      String?
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  requestCount Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  @@index([userId, usageScope])
+  @@index([circleId, userId])
+  @@index([userId, createdAt])
+  @@index([circleId, createdAt])
+}
+
+/// User-submitted moderation report against a Public_Circle, member, message,
+/// resource, or profile image.
+model Report {
+  id          String           @id @default(cuid())
+  reporterId  String
+  reporter    User             @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType  ReportTargetType
+  targetId    String
+  reasonCode  String
+  description String?
+  status      ModerationReportStatus     @default(PENDING)
+  decidedById String?
+  decidedBy   User?            @relation("ReportDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt   DateTime?
+  createdAt   DateTime         @default(now())
+
+  @@index([targetType, status])
+  @@index([reporterId, createdAt])
+  @@index([status])
+}
+
+/// One row per migration runner invocation. Per-entity idempotency markers
+/// live on `Circle.migrationMarker` (and equivalents on other migrated
+/// entities) so re-runs can skip completed entities.
+model MigrationRun {
+  id         String    @id @default(cuid())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  reportJson Json?
+  /// "RUNNING" | "COMPLETED" | "FAILED"
+  status     String    @default("RUNNING")
+}
+
+// ==========================================
+//  CIRCLE COURSE-GROUP LINKS
+// ==========================================
+
+/// Links a course (with its modules, topics, resources, notes) to a chat group.
+/// When linked, the AI uses the course content as context for that group's conversations.
+model CircleGroupCourseLink {
+  id          String @id @default(cuid())
+  circleId    String
+  chatGroupId String
+  chatGroup   CircleChatGroup @relation(fields: [chatGroupId], references: [id], onDelete: Cascade)
+  courseId     String
+  course      Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  
+  createdById String
+  createdBy   User   @relation("CircleGroupCourseLinkCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  
+  @@unique([chatGroupId, courseId])
+  @@index([circleId])
+  @@index([chatGroupId])
+  @@index([courseId])
+}
+
+// ==========================================

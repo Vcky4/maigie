@@ -211,3 +211,29 @@ async def update_model_preference(body: models.ModelPreferenceUpdate, current_us
     return models.ModelPreferenceResponse(
         capability=pref.capability, provider=pref.provider, modelId=pref.modelId
     )
+
+
+# ===========================================================================
+# WebSocket (Streaming Chat)
+# ===========================================================================
+
+
+def register_websocket(app):
+    """Register the WebSocket chat endpoint on the FastAPI app.
+
+    Called from src/app.py after the intelligence router is included.
+    The WebSocket needs direct app access (not a sub-router) because
+    WebSocket routes have different lifecycle requirements.
+
+    Usage in app.py:
+        from src.domains.intelligence.routes import register_websocket
+        register_websocket(app)
+    """
+    from src.shared.database import db
+
+    from .conversation.websocket_handler import register_chat_websocket_routes
+
+    # Create a dedicated router for the WebSocket
+    ws_router = APIRouter(prefix="/api/v1/intelligence", tags=["intelligence"])
+    register_chat_websocket_routes(ws_router, db)
+    app.include_router(ws_router)

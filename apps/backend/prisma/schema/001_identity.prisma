@@ -1,0 +1,265 @@
+// ===========================================================================
+// IDENTITY DOMAIN — User, Authentication, Preferences, OAuth
+// ===========================================================================
+
+model User {
+  id             String          @id @default(uuid())
+  email          String          @unique
+  passwordHash   String?
+  name           String?
+  provider       String?
+  providerId     String?
+  tier           Tier            @default(FREE)
+  role           UserRole        @default(USER)
+  adminStaffRole AdminStaffRole?
+  isActive       Boolean         @default(true)
+  isOnboarded    Boolean         @default(false)
+
+  // Verification
+  verificationCode          String?
+  verificationCodeExpiresAt DateTime?
+  passwordResetCode         String?
+  passwordResetExpiresAt    DateTime?
+
+  // Billing (Stripe)
+  stripeCustomerId               String?   @unique
+  stripeSubscriptionId           String?   @unique
+  stripeSubscriptionStatus       String?
+  stripePriceId                  String?
+  subscriptionCurrentPeriodStart DateTime?
+  subscriptionCurrentPeriodEnd   DateTime?
+
+  // Billing (Paystack)
+  paystackCustomerCode     String? @unique
+  paystackSubscriptionCode String? @unique
+  paymentProvider          String?
+
+  // Billing (Google Play)
+  googlePlayPurchaseToken String? @unique
+  googlePlayProductId     String?
+
+  // Credits
+  creditsUsed        Int       @default(0)
+  creditsPeriodStart DateTime?
+  creditsPeriodEnd   DateTime?
+  creditsSoftCap     Int?
+  creditsHardCap     Int?
+  purchasedCreditsBalance Int @default(0)
+  creditsUsedToday  Int       @default(0)
+  creditsDailyLimit Int?
+  lastDailyReset    DateTime?
+
+  // Feature usage (FREE tier)
+  fileUploadsCount              Int       @default(0)
+  fileUploadsPeriodStart        DateTime?
+  summaryGenerationsCount       Int       @default(0)
+  summaryGenerationsPeriodStart DateTime?
+
+  // Google Calendar
+  googleCalendarAccessToken    String?
+  googleCalendarRefreshToken   String?
+  googleCalendarTokenExpiresAt DateTime?
+  googleCalendarSyncEnabled    Boolean   @default(false)
+  googleCalendarId             String?
+
+  // Referral
+  referredByCode String?
+  referralCode   String? @unique
+
+  // Account deletion
+  accountDeletionRequestedAt      DateTime?
+  accountDeletionScheduledFor     DateTime?
+  accountDeletionCancelToken      String?
+  accountDeletionReminder30SentAt DateTime?
+  accountDeletionReminder7SentAt  DateTime?
+  accountDeletionLastCancelledAt  DateTime?
+
+  // Profile
+  profileImageUrl    String?
+  profileImageStatus String?
+
+  // Activity tracking
+  lastSeenAt       DateTime?
+  lastSeenPlatform String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Relations ---
+  preferences             UserPreferences?
+  limitReachedEmailLogs   LimitReachedEmailLog[]
+  courses                 Course[]
+  notes                   Note[]
+  editedNotes             Note[]                  @relation("NoteLastEditedBy")
+  noteHistories           NoteHistory[]
+  resources               Resource[]
+  goals                   Goal[]
+  schedules               ScheduleBlock[]
+  reviewItems             ReviewItem[]
+  scheduleBehaviourLogs   ScheduleBehaviourLog[]
+  userInteractionMemories UserInteractionMemory[]
+  userFacts               UserFact[]
+  chatSessions            ChatSession[]
+  chatMessages            ChatMessage[]
+  studySessions           StudySession[]
+  userStreak              UserStreak?
+  achievements            Achievement[]
+  feedback                Feedback[]
+  courseOutlineSatisfactions CourseOutlineSatisfaction[]
+  referralRewards         ReferralReward[]
+  referralRewardClaim     ReferralRewardClaim[]
+  referredByRewards       ReferralReward[]      @relation("ReferredUser")
+  adRewardClaims          AdRewardClaim[]
+  creditPurchaseTransactions CreditPurchaseTransaction[]
+  auditLogs               AuditLog[] @relation("AdminAuditLogs")
+  ledgerLines             LedgerLine[]
+  examPreps               ExamPrep[]
+  examQuizSessions        ExamQuizSession[]
+  resourceBankItems       ResourceBankItem[]
+  resourceBankReports     ResourceBankReport[]
+  resourceUploadRewards   ResourceUploadReward[]
+  resourceUploadRewardClaims ResourceUploadRewardClaim[]
+  circleMembers           CircleMember[]
+  circleStats             CircleMemberStat[]
+  circleSessions          CircleSession[]
+  circleChatGroupMembers  CircleChatGroupMember[]
+  circleJoinRequests      CircleJoinRequest[]
+  circleOwnershipTransfersFrom CircleOwnershipTransfer[] @relation("CircleOwnershipTransferFromUser")
+  circleOwnershipTransfersTo   CircleOwnershipTransfer[] @relation("CircleOwnershipTransferToUser")
+  circleSubscriptionsAsOwner   CircleSubscription[]      @relation("CircleSubscriptionOwner")
+  circleSeatAddonsPurchased    CircleSeatAddon[]         @relation("CircleSeatAddonPurchaser")
+  circleSeatAddonsAssigned     CircleSeatAddon[]         @relation("CircleSeatAddonAssignee")
+  reportsSubmitted        Report[]                  @relation("ReportReporter")
+  reportsDecided          Report[]                  @relation("ReportDecider")
+  aiUsageRecords          AiUsageRecord[]
+  conversationSummaries   ConversationSummary[]
+  aiAgentTasks            AIAgentTask[]
+  learningInsights        LearningInsight[]
+  oauthClients            OAuthClient[]
+  oauthCodes              OAuthCode[]
+  oauthTokens             OAuthToken[]
+  userUploads             UserUpload[]
+  circleGroupCourseLinks  CircleGroupCourseLink[] @relation("CircleGroupCourseLinkCreator")
+  modelPreferences        ModelPreference[]
+  deviceTokens            DeviceToken[]
+  topicProgress           UserTopicProgress[]
+  generatedDocuments      GeneratedDocument[]
+
+  @@index([lastSeenAt])
+}
+
+model UserPreferences {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  theme         String  @default("light")
+  language      String  @default("en")
+  notifications Boolean @default(true)
+  studyGoals    Json?
+
+  timezone              String  @default("UTC")
+  emailMorningSchedule  Boolean @default(true)
+  emailScheduleReminder Boolean @default(true)
+  emailWeeklyTips       Boolean @default(true)
+  pushScheduleReminder  Boolean @default(true)
+  pushStudyTips         Boolean @default(true)
+}
+
+model LimitReachedEmailLog {
+  id        String   @id @default(cuid())
+  userId    String
+  periodEnd DateTime
+  sentAt    DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, periodEnd])
+  @@index([userId])
+}
+
+model OAuthClient {
+  id           String  @id @default(uuid())
+  clientId     String  @unique
+  clientSecret String?
+  clientName   String
+  redirectUris String[]
+  clientUri    String?
+  logoUri      String?
+  tokenEndpointAuthMethod String   @default("none")
+  grantTypes              String[] @default(["authorization_code", "refresh_token"])
+  responseTypes           String[] @default(["code"])
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  codes  OAuthCode[]
+  tokens OAuthToken[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clientId])
+}
+
+model OAuthCode {
+  id        String      @id @default(uuid())
+  code      String      @unique
+  clientId  String
+  client    OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  redirectUri         String
+  scope               String?
+  codeChallenge       String?
+  codeChallengeMethod String?
+  expiresAt           DateTime
+  isUsed              Boolean @default(false)
+  createdAt           DateTime @default(now())
+
+  @@index([code])
+  @@index([clientId])
+  @@index([userId])
+}
+
+model OAuthToken {
+  id           String  @id @default(uuid())
+  accessToken  String  @unique
+  refreshToken String? @unique
+  clientId     String
+  client       OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+  userId       String
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope        String?
+  accessTokenExpiresAt  DateTime
+  refreshTokenExpiresAt DateTime?
+  createdAt             DateTime @default(now())
+
+  @@index([accessToken])
+  @@index([refreshToken])
+  @@index([clientId])
+  @@index([userId])
+}
+
+model DeviceToken {
+  id        String         @id @default(cuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String         @unique
+  platform  DevicePlatform
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([token])
+}
+
+model ModelPreference {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  capability String
+  provider   String
+  modelId    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, capability])
+  @@index([userId])
+}

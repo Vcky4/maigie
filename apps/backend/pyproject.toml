@@ -122,3 +122,5 @@ profile = "black"
 
 [tool.prisma]
 seed = "python prisma/seed.py"
+# Multi-file schema: Prisma merges all .prisma files in this directory
+schema = "prisma/schema"
