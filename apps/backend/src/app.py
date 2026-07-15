@@ -82,10 +82,34 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
-        description="Maigie — Intelligent Learning Environment API",
+        description=(
+            "# Maigie API\n\n"
+            "The backend for the **Maigie Intelligent Learning Environment**.\n\n"
+            "Maigie helps people and organisations continuously develop capability "
+            "through personal learning, collaborative Learning Spaces, intelligent "
+            "recommendations, and adaptive progress tracking.\n\n"
+            "## Domains\n\n"
+            "| Domain | Description |\n"
+            "|--------|-------------|\n"
+            "| **Identity** | Authentication, user profiles, preferences |\n"
+            "| **Knowledge** | Courses, modules, topics, resources |\n"
+            "| **Personal Learning** | Notes, exam prep, documents, study mode |\n"
+            "| **Learning Spaces** | Collaborative environments (membership, seats) |\n"
+            "| **Classrooms** | Structured learning within Spaces (sessions, discussions) |\n"
+            "| **Intelligence** | AI conversations, memory, recommendations |\n"
+            "| **Progress** | Analytics, streaks, spaced repetition, achievements |\n"
+            "| **Billing** | Subscriptions, credits, plans, referrals |\n"
+            "| **Admin** | Platform administration |\n\n"
+            "## Authentication\n\n"
+            "All authenticated endpoints require a `Bearer` token in the `Authorization` header.\n"
+            "Obtain tokens via `POST /api/v1/auth/login/json` or the OAuth flow.\n"
+        ),
         lifespan=lifespan,
+        # Swagger UI: always available in dev, hidden in production
         docs_url="/docs" if settings.DEBUG else None,
-        redoc_url="/redoc" if settings.DEBUG else None,
+        # ReDoc: always available (public API reference)
+        redoc_url="/redoc",
+        openapi_tags=_openapi_tags(),
     )
 
     # --- Exception Handlers ---
@@ -133,6 +157,100 @@ def create_app() -> FastAPI:
 
 
 # ---------------------------------------------------------------------------
+# OpenAPI Tag Metadata
+# ---------------------------------------------------------------------------
+
+
+def _openapi_tags() -> list[dict]:
+    """Tag descriptions shown in ReDoc/Swagger grouped by domain."""
+    return [
+        {
+            "name": "auth",
+            "description": (
+                "**Identity Domain** — Registration, login, email verification, "
+                "password management, OAuth, and token refresh."
+            ),
+        },
+        {
+            "name": "users",
+            "description": (
+                "**Identity Domain** — User profile, preferences, "
+                "account deletion lifecycle."
+            ),
+        },
+        {
+            "name": "knowledge",
+            "description": (
+                "**Knowledge Domain** — Courses, modules, topics, resources, "
+                "and the resource bank. Knowledge is reusable and evolves over time."
+            ),
+        },
+        {
+            "name": "personal-learning",
+            "description": (
+                "**Personal Learning Domain** — The learner's private environment: "
+                "notes, exam preparation, document generation, study mode."
+            ),
+        },
+        {
+            "name": "learning-spaces",
+            "description": (
+                "**Learning Spaces Domain** — Collaborative learning environments. "
+                "Membership, roles (Owner, Admin, Educator, Learner), and space settings."
+            ),
+        },
+        {
+            "name": "classrooms",
+            "description": (
+                "**Classrooms Domain** — Structured learning within a Space: "
+                "sessions, discussions, assignments, and assigned courses."
+            ),
+        },
+        {
+            "name": "intelligence",
+            "description": (
+                "**Intelligence Domain** — AI conversations, voice, memory, "
+                "recommendations, and the cognitive layer (Observe → Remember → "
+                "Reason → Plan → Act)."
+            ),
+        },
+        {
+            "name": "progress",
+            "description": (
+                "**Progress Domain** — Analytics, streaks, achievements, "
+                "spaced repetition, goals, and study schedules. "
+                "Measures Activity → Progress → Achievement."
+            ),
+        },
+        {
+            "name": "billing",
+            "description": (
+                "**Billing Domain** — Subscriptions (Stripe, Paystack, Google Play), "
+                "credit packs, referral rewards, ad rewards, and plan catalog."
+            ),
+        },
+        {
+            "name": "webhooks",
+            "description": (
+                "**Billing Domain** — Payment provider webhook receivers "
+                "(Stripe, Paystack, Google Play RTDN). Not called by clients."
+            ),
+        },
+        {
+            "name": "admin",
+            "description": (
+                "**Admin Domain** — Platform administration, content management, "
+                "staff operations. Requires staff role."
+            ),
+        },
+        {
+            "name": "system",
+            "description": "Health checks and infrastructure status.",
+        },
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Domain Registration
 # ---------------------------------------------------------------------------
 
@@ -157,8 +275,9 @@ def _register_domains(app: FastAPI) -> None:
     # app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
     # --- Knowledge ---
-    # from src.domains.knowledge.routes import router as knowledge_router
-    # app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
+    from src.domains.knowledge.routes import router as knowledge_router
+
+    app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
     # --- Learning Spaces ---
     # from src.domains.learning_spaces.routes import router as spaces_router
