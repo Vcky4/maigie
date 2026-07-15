@@ -1,31 +1,9 @@
-﻿// ===========================================================================
+// ===========================================================================
 // ADMIN DOMAIN — Feedback, CMS, Audit, Ledger, System Config
 // ===========================================================================
 // ==========================================
 //  FEEDBACK MODULE
 // ==========================================
-
-enum FeedbackType {
-  BUG_REPORT
-  FEATURE_REQUEST
-  GENERAL_FEEDBACK
-  UI_UX_FEEDBACK
-  PERFORMANCE_ISSUE
-  OTHER
-}
-
-enum FeedbackStatus {
-  PENDING
-  REVIEWED
-  RESOLVED
-  ARCHIVED
-}
-
-enum CareerApplicationStatus {
-  NEW
-  REVIEWED
-  ARCHIVED
-}
 
 model Feedback {
   id String @id @default(cuid())

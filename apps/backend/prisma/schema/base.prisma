@@ -258,6 +258,7 @@ enum FeedbackType {
 }
 
 enum FeedbackStatus {
+  PENDING
   NEW
   REVIEWING
   RESOLVED
@@ -265,6 +266,7 @@ enum FeedbackStatus {
 }
 
 enum CareerApplicationStatus {
+  NEW
   PENDING
   REVIEWED
   ACCEPTED

@@ -1,4 +1,4 @@
-﻿// ===========================================================================
+// ===========================================================================
 // INTELLIGENCE DOMAIN — Conversations, Messages, AI Actions, Memory, Agents
 // ===========================================================================
 // ==========================================
@@ -157,20 +157,6 @@ model LlmCostRecord {
 // ==========================================
 //  MODEL PREFERENCES (Multi-Model Support)
 // ==========================================
-
-model ModelPreference {
-  id         String   @id @default(cuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  capability String // "chat", "vision", "structured_output", "embedding"
-  provider   String // "gemini", "openai", "anthropic"
-  modelId    String // e.g. "gpt-4o-mini", "claude-sonnet-4-20250514"
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@unique([userId, capability])
-  @@index([userId])
-}
 
 // ==========================================
 //  USER MEMORY & PERSONALIZATION MODULE

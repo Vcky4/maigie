@@ -1,4 +1,4 @@
-﻿// ===========================================================================
+// ===========================================================================
 // PROGRESS DOMAIN — Resources, Goals, Schedule, Spaced Repetition, Analytics
 // ===========================================================================
 // ==========================================
@@ -278,15 +278,6 @@ model UserStreak {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
-}
-
-enum AchievementType {
-  STUDY_TIME_MILESTONE // e.g., "Studied 100 hours"
-  STREAK_MILESTONE // e.g., "7 day streak"
-  COURSE_COMPLETION // e.g., "Completed first course"
-  GOAL_ACHIEVEMENT // e.g., "Completed 10 goals"
-  TOPIC_COMPLETION // e.g., "Completed 50 topics"
-  AI_USAGE // e.g., "Sent 100 AI messages"
 }
 
 model Achievement {
