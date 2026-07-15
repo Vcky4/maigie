@@ -291,8 +291,9 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(classrooms_router, prefix=f"{prefix}/classrooms", tags=["classrooms"])
 
     # --- Intelligence ---
-    # from src.domains.intelligence.routes import router as intelligence_router
-    # app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
+    from src.domains.intelligence.routes import router as intelligence_router
+
+    app.include_router(intelligence_router, prefix=f"{prefix}/intelligence", tags=["intelligence"])
 
     # --- Progress ---
     # from src.domains.progress.routes import router as progress_router
