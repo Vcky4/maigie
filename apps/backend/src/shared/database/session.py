@@ -75,6 +75,8 @@ async def connect_db() -> None:
         max_overflow=10,
         pool_pre_ping=True,
         pool_recycle=300,
+        # Disable prepared statement caching for pgbouncer compatibility
+        connect_args={"prepared_statement_cache_size": 0, "statement_cache_size": 0},
     )
 
     _session_factory = async_sessionmaker(

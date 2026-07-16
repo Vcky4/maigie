@@ -169,15 +169,15 @@ class UserResponse(BaseModel):
     name: str | None = None
     tier: str
     role: str
-    isActive: bool
-    isOnboarded: bool = False
-    adminStaffRole: str | None = None
+    isActive: bool = Field(validation_alias="is_active")
+    isOnboarded: bool = Field(default=False, validation_alias="is_onboarded")
+    adminStaffRole: str | None = Field(default=None, validation_alias="admin_staff_role")
     preferences: UserPreferencesResponse | None = None
-    paymentProvider: str | None = None
-    subscriptionCurrentPeriodEnd: datetime | None = None
+    paymentProvider: str | None = Field(default=None, validation_alias="payment_provider")
+    subscriptionCurrentPeriodEnd: datetime | None = Field(default=None, validation_alias="subscription_current_period_end")
     pendingDeletion: PendingDeletionResponse | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
     @field_serializer("adminStaffRole")
     def serialize_admin_staff_role(self, v, _info):
