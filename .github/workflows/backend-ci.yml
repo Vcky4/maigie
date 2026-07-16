@@ -500,10 +500,7 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss --skip-generate &&
-                    python prisma/seed.py &&
-                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    alembic upgrade head || echo 'Migration skipped' && uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
               worker:
@@ -552,7 +549,7 @@ jobs:
             # Start preview environment (this will create fresh database)
             docker-compose up -d
 
-            # Give containers time to start (prisma db push + seed + uvicorn startup)
+            # Give containers time to start (alembic + uvicorn startup)
             echo "Waiting for containers to initialize..."
             sleep 30
             echo "Container status:"
@@ -1026,9 +1023,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss --skip-generate &&
-                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    alembic upgrade head || echo 'Migration skipped' && uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
             volumes:
@@ -1443,10 +1438,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss --skip-generate &&
-                    python prisma/seed.py &&
-                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    alembic upgrade head || echo 'Migration skipped' && uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
             volumes:

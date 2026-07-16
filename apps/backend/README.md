@@ -4,7 +4,7 @@ FastAPI backend application for Maigie, the AI-powered academic operating system
 
 ## Architecture Overview
 
-Maigie's backend is built on **FastAPI** and uses **Prisma (PostgreSQL)** for the data layer. It features a robust **Agentic AI** architecture powered by Google Gemini, capable of long-term memory, proactive planning, and executing background tasks via **Celery**.
+Maigie's backend is built on **FastAPI** and uses **SQLAlchemy (PostgreSQL)** for the data layer. It features a robust **Agentic AI** architecture powered by Google Gemini, capable of long-term memory, proactive planning, and executing background tasks via **Celery**.
 
 ### Core Pillars
 

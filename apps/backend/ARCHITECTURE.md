@@ -34,7 +34,7 @@ apps/backend/src/
 │   │   ├── jwt.py                      # Token creation/validation
 │   │   └── oauth.py                    # Google OAuth, OAuth 2.1 provider
 │   │
-│   ├── database/                       # Prisma client lifecycle
+│   ├── database/                       # SQLAlchemy async engine
 │   │   ├── __init__.py
 │   │   └── client.py                   # connect_db(), disconnect_db(), get_db()
 │   │
@@ -66,7 +66,7 @@ apps/backend/src/
 │   │   ├── models.py                   # Pydantic request/response schemas
 │   │   ├── routes.py                   # /api/v1/auth/*, /api/v1/users/*
 │   │   ├── services.py                # Auth logic, user management
-│   │   ├── repository.py              # Prisma queries for User, Preferences
+│   │   ├── repository.py              # SQLAlchemy queries for User, Preferences
 │   │   └── events.py                  # UserRegistered, UserOnboarded, etc.
 │   │
 │   ├── personal_learning/             # The learner's private environment
@@ -312,7 +312,7 @@ async def update_streak(data):
 
 ## Data Access Pattern
 
-Each domain owns a `repository.py` that encapsulates all Prisma queries for that domain.
+Each domain owns a `repository.py` that encapsulates all SQLAlchemy queries for that domain.
 
 ```python
 # domains/knowledge/repository.py

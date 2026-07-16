@@ -27,8 +27,7 @@ RUN apt-get update && apt-get install -y libpq-dev curl libatomic1 postgresql-cl
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY . .
-RUN prisma generate
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
-CMD ["sh", "-c", "prisma db push --accept-data-loss 2>&1 || echo '[WARN] prisma db push failed - schema may need manual sync'; exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head 2>&1 || echo '[WARN] alembic upgrade failed'; exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]

@@ -52,7 +52,7 @@ async def get_or_create_referral_code(user: User, db_client: Any | None = None) 
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Referral code string
@@ -90,7 +90,7 @@ async def track_referral_signup(
     Args:
         referred_user: User who signed up
         referral_code: Referral code used during signup
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Referrer User object if found, None otherwise
@@ -154,7 +154,7 @@ async def track_referral_subscription(referred_user: User, db_client: Any | None
 
     Args:
         referred_user: User who subscribed (must have referredByCode set)
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
     """
     if db_client is None:
         db_client = db
@@ -208,7 +208,7 @@ async def get_claimable_rewards(user: User, db_client: Any | None = None) -> lis
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         List of claimable reward dictionaries
@@ -247,7 +247,7 @@ async def claim_referral_reward(
     Args:
         user: User model instance
         reward_id: ID of the reward to claim
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Dictionary with claim details
@@ -326,7 +326,7 @@ async def get_daily_limit_increase(user: User, db_client: Any | None = None) -> 
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Total daily limit increase in tokens
@@ -358,7 +358,7 @@ async def get_referral_stats(user: User, db_client: Any | None = None) -> dict:
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Dictionary with referral statistics
