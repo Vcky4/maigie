@@ -73,6 +73,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             "schedule.*": {"queue": "heavy"},
             "exam_prep.*": {"queue": "heavy"},
             "resources.*": {"queue": "heavy"},
+            "learning.*": {"queue": "heavy"},
         },
         # Task time limits
         task_time_limit=300,  # Hard time limit (5 minutes) — override per-task for lightweight
@@ -133,6 +134,18 @@ except Exception as e:
     logger.exception("Failed to import Celery task modules: %s", e)
     # Celery boot logs can miss python logger output early; print ensures visibility.
     print(f"[celery_app] Failed to import Celery task modules: {e}")
+
+# Personal learning domain tasks (self-registering via @celery_app.task)
+try:
+    from src.domains.personal_learning import tasks as _learning_tasks  # noqa: F401
+
+    # Merge personal-learning beat schedule into the app
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_learning_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to import personal learning task modules: %s", e)
+    print(f"[celery_app] Failed to import personal learning task modules: {e}")
 
 
 def get_celery_app() -> Celery:

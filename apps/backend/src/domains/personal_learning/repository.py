@@ -1353,6 +1353,45 @@ class PersonalLearningRepository:
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 
+    # -----------------------------------------------------------------------
+    # Background task helpers
+    # -----------------------------------------------------------------------
+
+    async def list_active_profiles(self) -> list[LearningProfile]:
+        """Return all LearningProfiles (active learners)."""
+        async with await self._session() as session:
+            stmt = select(LearningProfile)
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def list_declining_engagement_profiles(
+        self, min_declining_days: int = 3
+    ) -> list[LearningProfile]:
+        """Return profiles with dropout_risk above threshold (proxy for declining engagement).
+
+        A more sophisticated implementation would track daily activity counts,
+        but for now we use the cached dropout_risk score computed by the
+        behaviour analysis task (> 0.5 indicates declining engagement).
+        """
+        async with await self._session() as session:
+            stmt = select(LearningProfile).where(
+                LearningProfile.dropout_risk.isnot(None),
+                LearningProfile.dropout_risk > 0.5,
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def increment_maturity_days(self, user_id: str) -> None:
+        """Increment maturity_days counter for a learner's profile."""
+        async with await self._session() as session:
+            stmt = (
+                update(LearningProfile)
+                .where(LearningProfile.user_id == user_id)
+                .values(maturity_days=LearningProfile.maturity_days + 1)
+            )
+            await session.execute(stmt)
+            await session.commit()
+
 
 # Singleton
 personal_learning_repo = PersonalLearningRepository()

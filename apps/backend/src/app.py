@@ -272,10 +272,9 @@ def _register_domains(app: FastAPI) -> None:
     app.include_router(oauth_router, prefix=f"{prefix}/auth", tags=["auth"])
     app.include_router(users_router, prefix=f"{prefix}/users", tags=["users"])
 
-    # --- Domains below pending SQLAlchemy migration ---
-    # Uncomment each as its repository is rewritten to use SQLAlchemy.
-    # from src.domains.personal_learning.routes import router as learning_router
-    # app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
+    # --- Personal Learning (migrated to SQLAlchemy) ---
+    from src.domains.personal_learning.routes import router as learning_router
+    app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
     # --- Knowledge (migrated to SQLAlchemy) ---
     from src.domains.knowledge.routes import router as knowledge_router

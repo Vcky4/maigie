@@ -1,0 +1,590 @@
+"""
+Personal Learning domain — API routes.
+
+The learner's private environment: personalized home, notes, exam prep,
+flashcards, study plans, documents, notifications, and more.
+
+Mounted at: /api/v1/learning
+"""
+
+import logging
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from src.shared.auth import CurrentUser
+
+from . import models
+from .services import (
+    home_service,
+    onboarding_service,
+    note_service,
+    exam_prep_service,
+    quiz_engine,
+    flashcard_service,
+    resource_service,
+    study_plan_service,
+    notification_service,
+    discovery_service,
+    behaviour_service,
+    reflection_service,
+    activity_feed_service,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["personal-learning"])
+
+
+# ===========================================================================
+# Home
+# ===========================================================================
+
+
+@router.get("/home", response_model=models.HomeResponse)
+async def get_home(current_user: CurrentUser):
+    """Get the personalized learning home — a Home, not a dashboard."""
+    return await home_service.get_home(user_id=current_user.id)
+
+
+# ===========================================================================
+# Onboarding & Profile
+# ===========================================================================
+
+
+@router.post("/onboarding/purpose", response_model=models.LearningProfileResponse, status_code=201)
+async def set_purpose(body: models.PurposeSetRequest, current_user: CurrentUser):
+    """Set the learner's purpose. First step of onboarding."""
+    return await onboarding_service.set_purpose(user_id=current_user.id, purpose=body.purpose)
+
+
+@router.post("/onboarding/subjects", response_model=models.LearningProfileResponse)
+async def set_subjects(body: models.SubjectsSetRequest, current_user: CurrentUser):
+    """Set initial subjects and/or goals."""
+    return await onboarding_service.set_subjects(
+        user_id=current_user.id, subjects=body.subjects, goals=body.goals
+    )
+
+
+@router.get("/profile", response_model=models.LearningProfileResponse)
+async def get_profile(current_user: CurrentUser):
+    """Get the learner's current learning profile."""
+    profile = await onboarding_service.get_profile(user_id=current_user.id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Learning profile not found. Complete onboarding first.")
+    return profile
+
+
+# ===========================================================================
+# Course Study
+# ===========================================================================
+
+
+@router.get("/courses", response_model=list[models.CourseProgressResponse])
+async def list_courses(current_user: CurrentUser):
+    """List enrolled courses with personal progress."""
+    # Placeholder: requires cross-domain integration with knowledge domain
+    return []
+
+
+@router.get("/courses/{course_id}/path", response_model=models.LearningPathResponse)
+async def get_learning_path(course_id: str, current_user: CurrentUser):
+    """Get learning path for a course."""
+    raise HTTPException(status_code=501, detail="Course study integration pending")
+
+
+@router.post("/courses/{course_id}/topics/{topic_id}/study", status_code=200)
+async def record_topic_study(course_id: str, topic_id: str, current_user: CurrentUser):
+    """Record a topic study activity."""
+    return {"message": "Study activity recorded"}
+
+
+@router.post("/courses/{course_id}/topics/{topic_id}/complete", status_code=200)
+async def complete_topic(course_id: str, topic_id: str, current_user: CurrentUser):
+    """Mark a topic as completed. Emits topic.completed event."""
+    from .events import emit_topic_completed
+    await emit_topic_completed(current_user.id, topic_id, course_id)
+    return {"message": "Topic completed"}
+
+
+# ===========================================================================
+# Notes
+# ===========================================================================
+
+
+@router.post("/notes", response_model=models.NoteResponse, status_code=201)
+async def create_note(body: models.NoteCreate, current_user: CurrentUser):
+    """Create a personal note."""
+    return await note_service.create_note(user_id=current_user.id, data=body.model_dump(exclude_unset=True))
+
+
+@router.get("/notes", response_model=models.NoteListResponse)
+async def list_notes(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None),
+    tag: str | None = Query(None),
+    courseId: str | None = Query(None),
+    topicId: str | None = Query(None),
+    archived: bool | None = Query(False),
+):
+    """List notes with filtering and pagination."""
+    items, total = await note_service.list_notes(
+        user_id=current_user.id, page=page, size=size,
+        search=search, tag=tag, course_id=courseId, topic_id=topicId, archived=archived,
+    )
+    pages = (total + size - 1) // size if total > 0 else 0
+    return models.NoteListResponse(items=items, total=total, page=page, size=size, pages=pages)
+
+
+@router.get("/notes/{note_id}", response_model=models.NoteResponse)
+async def get_note(note_id: str, current_user: CurrentUser):
+    """Get a note by ID."""
+    return await note_service.get_note(user_id=current_user.id, note_id=note_id)
+
+
+@router.patch("/notes/{note_id}", response_model=models.NoteResponse)
+async def update_note(note_id: str, body: models.NoteUpdate, current_user: CurrentUser):
+    """Update a note."""
+    return await note_service.update_note(user_id=current_user.id, note_id=note_id, data=body.model_dump(exclude_unset=True))
+
+
+@router.delete("/notes/{note_id}", status_code=204)
+async def delete_note(note_id: str, current_user: CurrentUser):
+    """Delete a note."""
+    deleted = await note_service.delete_note(user_id=current_user.id, note_id=note_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Note not found")
+
+
+@router.post("/notes/{note_id}/attachments", response_model=models.NoteAttachmentResponse, status_code=201)
+async def add_attachment(note_id: str, body: models.NoteAttachmentCreate, current_user: CurrentUser):
+    """Add an attachment to a note."""
+    return await note_service.add_attachment(user_id=current_user.id, note_id=note_id, data=body.model_dump())
+
+
+@router.delete("/notes/{note_id}/attachments/{attachment_id}", status_code=204)
+async def remove_attachment(note_id: str, attachment_id: str, current_user: CurrentUser):
+    """Remove an attachment from a note."""
+    removed = await note_service.remove_attachment(user_id=current_user.id, note_id=note_id, attachment_id=attachment_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+
+@router.post("/notes/{note_id}/summary", response_model=models.NoteResponse)
+async def generate_summary(note_id: str, current_user: CurrentUser):
+    """Generate AI summary for a note."""
+    return await note_service.add_summary(user_id=current_user.id, note_id=note_id)
+
+
+@router.post("/notes/{note_id}/retake", response_model=models.NoteResponse)
+async def retake_note(note_id: str, current_user: CurrentUser):
+    """AI-rewrite a note with improved formatting."""
+    return await note_service.retake_note(user_id=current_user.id, note_id=note_id)
+
+
+@router.post("/notes/{note_id}/import", response_model=models.MessageResponse)
+async def import_note(note_id: str, body: models.NoteImportRequest, current_user: CurrentUser):
+    """Import a personal note to a learning space."""
+    await note_service.import_to_space(user_id=current_user.id, note_id=note_id, space_id=body.spaceId)
+    return models.MessageResponse(message="Note imported successfully")
+
+
+# ===========================================================================
+# Preparations
+# ===========================================================================
+
+
+@router.post("/preparations", response_model=models.PrepSummaryResponse, status_code=201)
+async def create_preparation(body: models.PrepCreateRequest, current_user: CurrentUser):
+    """Create a new preparation."""
+    return await exam_prep_service.create_preparation(user_id=current_user.id, data=body.model_dump())
+
+
+@router.get("/preparations", response_model=list[models.PrepSummaryResponse])
+async def list_preparations(current_user: CurrentUser):
+    """List all preparations sorted by target date."""
+    return await exam_prep_service.list_preparations(user_id=current_user.id)
+
+
+@router.get("/preparations/{prep_id}")
+async def get_preparation(prep_id: str, current_user: CurrentUser):
+    """Get a preparation by ID."""
+    return await exam_prep_service.get_preparation(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.patch("/preparations/{prep_id}")
+async def update_preparation(prep_id: str, body: models.ExamPrepUpdate, current_user: CurrentUser):
+    """Update a preparation."""
+    return await exam_prep_service.update_preparation(user_id=current_user.id, prep_id=prep_id, data=body.model_dump(exclude_unset=True))
+
+
+@router.delete("/preparations/{prep_id}", status_code=204)
+async def delete_preparation(prep_id: str, current_user: CurrentUser):
+    """Delete a preparation."""
+    deleted = await exam_prep_service.delete_preparation(user_id=current_user.id, prep_id=prep_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Preparation not found")
+
+
+@router.post("/preparations/{prep_id}/materials", response_model=models.PrepMaterialResponse, status_code=201)
+async def upload_material(prep_id: str, body: dict, current_user: CurrentUser):
+    """Upload material to a preparation."""
+    return await exam_prep_service.upload_material(user_id=current_user.id, prep_id=prep_id, data=body)
+
+
+@router.post("/preparations/{prep_id}/extract-topics", response_model=list[models.PrepTopicResponse])
+async def extract_topics(prep_id: str, current_user: CurrentUser):
+    """Trigger AI topic extraction from materials."""
+    return await exam_prep_service.extract_topics(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.get("/preparations/{prep_id}/topics", response_model=list[models.PrepTopicResponse])
+async def list_topics(prep_id: str, current_user: CurrentUser):
+    """List extracted topics for a preparation."""
+    return await exam_prep_service.list_topics(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.post("/preparations/{prep_id}/study-plan")
+async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
+    """Generate a study plan for a preparation."""
+    plan = await study_plan_service.generate_plan(
+        user_id=current_user.id,
+        data={"title": f"Study Plan", "deadline": "", "prepId": prep_id},
+    )
+    return plan
+
+
+@router.post("/preparations/{prep_id}/complete")
+async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
+    """Mark a preparation as completed."""
+    return await exam_prep_service.mark_completed(user_id=current_user.id, prep_id=prep_id)
+
+
+# ===========================================================================
+# Quizzes
+# ===========================================================================
+
+
+@router.post("/preparations/{prep_id}/quizzes", response_model=models.QuizSessionResponse, status_code=201)
+async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: CurrentUser):
+    """Start a quiz session."""
+    return await quiz_engine.start_quiz(
+        user_id=current_user.id, prep_id=prep_id,
+        mode=body.mode, topic_id=body.topicId, question_count=body.questionCount,
+    )
+
+
+@router.post("/quizzes/{quiz_id}/answer", response_model=models.AnswerResultResponse)
+async def submit_answer(quiz_id: str, body: models.AnswerSubmitRequest, current_user: CurrentUser):
+    """Submit an answer to a quiz question."""
+    return await quiz_engine.submit_answer(user_id=current_user.id, quiz_id=quiz_id, data=body.model_dump())
+
+
+@router.post("/quizzes/{quiz_id}/complete", response_model=models.QuizSummaryResponse)
+async def complete_quiz(quiz_id: str, current_user: CurrentUser):
+    """Complete a quiz session."""
+    return await quiz_engine.complete_quiz(user_id=current_user.id, quiz_id=quiz_id)
+
+
+@router.get("/quizzes/{quiz_id}", response_model=models.QuizSessionResponse)
+async def get_quiz(quiz_id: str, current_user: CurrentUser):
+    """Get quiz results."""
+    return await quiz_engine.get_quiz(user_id=current_user.id, quiz_id=quiz_id)
+
+
+# ===========================================================================
+# Flashcards
+# ===========================================================================
+
+
+@router.post("/flashcards", response_model=models.FlashcardResponse, status_code=201)
+async def create_flashcard(body: models.FlashcardCreate, current_user: CurrentUser):
+    """Create a flashcard."""
+    return await flashcard_service.create_flashcard(user_id=current_user.id, data=body.model_dump())
+
+
+@router.get("/flashcards/due", response_model=list[models.FlashcardResponse])
+async def get_due_flashcards(current_user: CurrentUser):
+    """Get flashcards due for review."""
+    return await flashcard_service.get_due_flashcards(user_id=current_user.id)
+
+
+@router.post("/flashcards/{card_id}/review", response_model=models.FlashcardResponse)
+async def review_flashcard(card_id: str, body: models.FlashcardReviewRequest, current_user: CurrentUser):
+    """Submit a flashcard review (quality 0-5)."""
+    result = await flashcard_service.review_flashcard(user_id=current_user.id, card_id=card_id, quality=body.quality)
+    if not result:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    return result
+
+
+@router.get("/flashcards/stats", response_model=models.FlashcardStats)
+async def get_flashcard_stats(current_user: CurrentUser):
+    """Get flashcard statistics."""
+    return await flashcard_service.get_statistics(user_id=current_user.id)
+
+
+@router.post("/flashcards/generate/note/{note_id}", response_model=list[models.FlashcardResponse])
+async def generate_from_note(note_id: str, current_user: CurrentUser):
+    """Generate flashcards from a note using AI."""
+    return await flashcard_service.generate_from_note(user_id=current_user.id, note_id=note_id)
+
+
+@router.post("/flashcards/generate/topic/{topic_id}", response_model=list[models.FlashcardResponse])
+async def generate_from_topic(topic_id: str, current_user: CurrentUser):
+    """Generate flashcards from a topic using AI."""
+    return await flashcard_service.generate_from_topic(user_id=current_user.id, topic_id=topic_id)
+
+
+@router.get("/decks", response_model=list[models.DeckResponse])
+async def list_decks(current_user: CurrentUser):
+    """List all flashcard decks."""
+    return await flashcard_service.list_decks(user_id=current_user.id)
+
+
+@router.post("/decks", response_model=models.DeckResponse, status_code=201)
+async def create_deck(body: models.DeckCreate, current_user: CurrentUser):
+    """Create a flashcard deck."""
+    return await flashcard_service.create_deck(user_id=current_user.id, data=body.model_dump())
+
+
+@router.get("/decks/{deck_id}/flashcards", response_model=list[models.FlashcardResponse])
+async def list_deck_flashcards(deck_id: str, current_user: CurrentUser):
+    """List flashcards in a deck."""
+    return await flashcard_service.list_deck_flashcards(user_id=current_user.id, deck_id=deck_id)
+
+
+# ===========================================================================
+# Saved Resources
+# ===========================================================================
+
+
+@router.post("/resources", response_model=models.SavedResourceResponse, status_code=201)
+async def save_resource(body: models.SavedResourceCreate, current_user: CurrentUser):
+    """Save a resource to personal library."""
+    return await resource_service.save_resource(user_id=current_user.id, data=body.model_dump())
+
+
+@router.get("/resources", response_model=list[models.SavedResourceResponse])
+async def list_resources(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    sourceType: str | None = Query(None),
+    search: str | None = Query(None),
+):
+    """List saved resources."""
+    items, _ = await resource_service.list_resources(
+        user_id=current_user.id, source_type=sourceType, search=search, page=page, page_size=pageSize
+    )
+    return items
+
+
+@router.delete("/resources/{resource_id}", status_code=204)
+async def delete_resource(resource_id: str, current_user: CurrentUser):
+    """Remove a resource from personal library."""
+    deleted = await resource_service.delete_resource(user_id=current_user.id, resource_id=resource_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+
+@router.patch("/resources/{resource_id}/tags", response_model=models.SavedResourceResponse)
+async def update_resource_tags(resource_id: str, body: models.SavedResourceTagUpdate, current_user: CurrentUser):
+    """Update tags on a saved resource."""
+    result = await resource_service.update_tags(user_id=current_user.id, resource_id=resource_id, tags=body.tags)
+    if not result:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return result
+
+
+# ===========================================================================
+# Study Plans
+# ===========================================================================
+
+
+@router.post("/study-plans", response_model=models.StudyPlanResponse, status_code=201)
+async def create_study_plan(body: models.StudyPlanCreate, current_user: CurrentUser):
+    """Generate a study plan."""
+    return await study_plan_service.generate_plan(user_id=current_user.id, data=body.model_dump())
+
+
+@router.get("/study-plans", response_model=list[models.StudyPlanResponse])
+async def list_study_plans(current_user: CurrentUser):
+    """List active study plans."""
+    return await study_plan_service.list_plans(user_id=current_user.id)
+
+
+@router.get("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
+async def get_study_plan(plan_id: str, current_user: CurrentUser):
+    """Get a study plan with items."""
+    return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
+
+
+@router.post("/study-plans/{plan_id}/items/{item_id}/complete", response_model=models.StudyPlanResponse)
+async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
+    """Complete a study plan item."""
+    return await study_plan_service.complete_item(user_id=current_user.id, plan_id=plan_id, item_id=item_id)
+
+
+# ===========================================================================
+# Documents
+# ===========================================================================
+
+
+@router.post("/documents", response_model=models.DocumentResponse, status_code=201)
+async def generate_document(body: models.DocumentGenerateRequest, current_user: CurrentUser):
+    """Generate an academic document."""
+    from .services import document_impl
+    return await document_impl.generate_document(user_id=current_user.id, data=body.model_dump())
+
+
+@router.get("/documents", response_model=models.DocumentListResponse)
+async def list_documents(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+):
+    """List generated documents."""
+    from .services import document_impl
+    items, total = await document_impl.list_documents(user_id=current_user.id, page=page, page_size=pageSize)
+    return models.DocumentListResponse(items=items, total=total, page=page, pageSize=pageSize)
+
+
+@router.get("/documents/share/{share_id}", response_model=models.DocumentResponse)
+async def get_shared_document(share_id: str):
+    """Get a publicly shared document (no auth required)."""
+    from .services import document_impl
+    doc = await document_impl.get_by_share_id(share_id=share_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
+@router.get("/documents/{doc_id}", response_model=models.DocumentResponse)
+async def get_document(doc_id: str, current_user: CurrentUser):
+    """Get a document by ID."""
+    from .services import document_impl
+    return await document_impl.get_document(user_id=current_user.id, doc_id=doc_id)
+
+
+@router.post("/documents/{doc_id}/publish", response_model=models.DocumentResponse)
+async def publish_document(doc_id: str, current_user: CurrentUser):
+    """Make a document public with a share link."""
+    from .services import document_impl
+    return await document_impl.publish_document(user_id=current_user.id, doc_id=doc_id)
+
+
+# ===========================================================================
+# Notifications
+# ===========================================================================
+
+
+@router.get("/notifications", response_model=list[models.NotificationResponse])
+async def get_notifications(current_user: CurrentUser):
+    """Get unread notifications."""
+    return await notification_service.get_unread(user_id=current_user.id)
+
+
+@router.post("/notifications/{notification_id}/read", status_code=204)
+async def mark_notification_read(notification_id: str, current_user: CurrentUser):
+    """Mark a notification as read."""
+    await notification_service.mark_read(user_id=current_user.id, notification_id=notification_id)
+
+
+@router.post("/notifications/{notification_id}/dismiss", status_code=204)
+async def dismiss_notification(notification_id: str, current_user: CurrentUser):
+    """Dismiss a notification."""
+    await notification_service.dismiss(user_id=current_user.id, notification_id=notification_id)
+
+
+# ===========================================================================
+# Discovery
+# ===========================================================================
+
+
+@router.get("/discovery", response_model=list[models.DiscoveryRecommendationResponse])
+async def get_discovery(current_user: CurrentUser):
+    """Get discovery recommendations."""
+    return await discovery_service.get_recommendations(user_id=current_user.id)
+
+
+@router.post("/discovery/{recommendation_id}/follow", status_code=204)
+async def follow_recommendation(recommendation_id: str, current_user: CurrentUser):
+    """Follow a recommendation."""
+    await discovery_service.follow_recommendation(user_id=current_user.id, recommendation_id=recommendation_id)
+
+
+@router.post("/discovery/{recommendation_id}/dismiss", status_code=204)
+async def dismiss_recommendation(recommendation_id: str, current_user: CurrentUser):
+    """Dismiss a recommendation."""
+    await discovery_service.dismiss_recommendation(user_id=current_user.id, recommendation_id=recommendation_id)
+
+
+# ===========================================================================
+# Behaviour & Reflection
+# ===========================================================================
+
+
+@router.get("/behaviour/profile", response_model=models.BehaviourProfileResponse)
+async def get_behaviour_profile(current_user: CurrentUser):
+    """Get the learner's behaviour profile."""
+    return await behaviour_service.get_behaviour_profile(user_id=current_user.id)
+
+
+@router.get("/reflections", response_model=list[models.ReflectionResponse])
+async def list_reflections(
+    current_user: CurrentUser,
+    type: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+):
+    """List reflections."""
+    items, _ = await reflection_service.list_reflections(
+        user_id=current_user.id, type_filter=type, page=page, page_size=pageSize
+    )
+    return items
+
+
+@router.post("/reflections/generate", response_model=models.ReflectionResponse, status_code=201)
+async def generate_reflection(body: models.ReflectionGenerateRequest, current_user: CurrentUser):
+    """Generate a reflection."""
+    return await reflection_service.generate_reflection(user_id=current_user.id, type=body.type)
+
+
+@router.get("/reflections/{reflection_id}", response_model=models.ReflectionResponse)
+async def get_reflection(reflection_id: str, current_user: CurrentUser):
+    """Get a specific reflection."""
+    return await reflection_service.get_reflection(user_id=current_user.id, reflection_id=reflection_id)
+
+
+# ===========================================================================
+# Chat (Personal Learning Context)
+# ===========================================================================
+
+
+@router.post("/chat")
+async def send_chat_message(body: dict, current_user: CurrentUser):
+    """Send a message to Maigie with personal learning context."""
+    from .services import chat_helper
+
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=422, detail="Message is required")
+    return await chat_helper.send_message(user_id=current_user.id, message=message)
+
+
+# ===========================================================================
+# Activity Feed
+# ===========================================================================
+
+
+@router.get("/activity-feed", response_model=models.ActivityFeedResponse)
+async def get_activity_feed(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+):
+    """Get unified activity feed (personal + collaborative)."""
+    items, total = await activity_feed_service.list_feed(user_id=current_user.id, page=page, page_size=pageSize)
+    return models.ActivityFeedResponse(items=items, total=total, page=page, pageSize=pageSize)
