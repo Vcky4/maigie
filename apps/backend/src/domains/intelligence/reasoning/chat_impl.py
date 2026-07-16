@@ -84,12 +84,15 @@ async def get_or_create_onboarding_session(user_id: str, db: Any = None):
 
     # Create a dedicated onboarding session
     from src.domains.intelligence.repository import intelligence_repo
-    onboarding_session = await intelligence_repo.create_chat_session({
-        "userId": user_id,
-        "title": "Onboarding",
-        "isActive": False,
-        "isSpaceRoom": False,
-        "sessionType": "onboarding",
-    })
+
+    onboarding_session = await intelligence_repo.create_chat_session(
+        {
+            "userId": user_id,
+            "title": "Onboarding",
+            "isActive": False,
+            "isSpaceRoom": False,
+            "sessionType": "onboarding",
+        }
+    )
 
     return onboarding_session

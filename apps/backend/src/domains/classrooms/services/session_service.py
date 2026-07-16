@@ -19,24 +19,29 @@ async def create_session(*, space_id: str, user_id: str, data: dict[str, Any]) -
 
     await _require_role(None, space_id, user_id, min_role="TUTOR")
 
-    session = await classroom_repo.create_session({
-        "spaceId": space_id,
-        "title": data["title"],
-        "description": data.get("description"),
-        "scheduledAt": data["scheduledAt"],
-        "duration": data.get("duration", 60),
-        "chatGroupId": data.get("classroomId"),
-        "topicId": data.get("topicId"),
-        "goalId": data.get("goalId"),
-        "createdById": user_id,
-        "status": "SCHEDULED",
-    })
+    session = await classroom_repo.create_session(
+        {
+            "spaceId": space_id,
+            "title": data["title"],
+            "description": data.get("description"),
+            "scheduledAt": data["scheduledAt"],
+            "duration": data.get("duration", 60),
+            "chatGroupId": data.get("classroomId"),
+            "topicId": data.get("topicId"),
+            "goalId": data.get("goalId"),
+            "createdById": user_id,
+            "status": "SCHEDULED",
+        }
+    )
 
-    await emit("classroom.session_started", {
-        "space_id": space_id,
-        "session_id": session.id,
-        "user_id": user_id,
-    })
+    await emit(
+        "classroom.session_started",
+        {
+            "space_id": space_id,
+            "session_id": session.id,
+            "user_id": user_id,
+        },
+    )
     return session
 
 

@@ -109,9 +109,11 @@ async def cancel_subscription(current_user: CurrentUser):
     return models.CancelSubscriptionResponse(
         status=result["status"],
         cancel_at_period_end=result["cancel_at_period_end"],
-        current_period_end=result["current_period_end"].isoformat()
-        if hasattr(result["current_period_end"], "isoformat")
-        else str(result["current_period_end"]),
+        current_period_end=(
+            result["current_period_end"].isoformat()
+            if hasattr(result["current_period_end"], "isoformat")
+            else str(result["current_period_end"])
+        ),
     )
 
 

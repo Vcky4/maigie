@@ -18,4 +18,6 @@ async def emit_member_left(user_id: str, space_id: str) -> None:
 
 
 async def emit_role_changed(user_id: str, space_id: str, new_role: str) -> None:
-    await emit("space.role_changed", {"user_id": user_id, "space_id": space_id, "new_role": new_role})
+    await emit(
+        "space.role_changed", {"user_id": user_id, "space_id": space_id, "new_role": new_role}
+    )

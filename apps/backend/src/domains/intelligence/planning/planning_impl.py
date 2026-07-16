@@ -533,14 +533,14 @@ async def check_plan_progress(user_id: str, course_id: str | None = None) -> dic
         }
         if course_id:
             where_blocks["courseId"] = course_id
-        blocks, scheduled = await progress_repo.list_blocks(user_id, where=where_blocks, skip=0, take=200)
+        blocks, scheduled = await progress_repo.list_blocks(
+            user_id, where=where_blocks, skip=0, take=200
+        )
 
         if scheduled > 0:
             # Rough adherence: compare to total (exact completed_logs requires behaviour log count)
             results["schedule_adherence"] = 100  # placeholder; real impl needs behaviour log query
-            results["suggestions"].append(
-                f"{scheduled} study blocks were scheduled this week."
-            )
+            results["suggestions"].append(f"{scheduled} study blocks were scheduled this week.")
 
         return results
 

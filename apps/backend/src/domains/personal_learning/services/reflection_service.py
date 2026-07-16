@@ -61,17 +61,29 @@ async def generate_reflection(*, user_id: str, type: str) -> Any:
         f"3. ACHIEVEMENTS: What milestones were reached (streaks, completions, goals met)\n\n"
         f"Return a JSON object with:\n"
         f"- 'summary': 2-3 paragraph narrative reflection (encouraging, specific)\n"
-        f"- 'activitiesLayer': {{\"topics_studied\": int, \"sessions_completed\": int, \"notes_created\": int, \"total_minutes\": float}}\n"
-        f"- 'progressLayer': {{\"concepts_mastered\": int, \"consistency_change\": str, \"retention_score\": str}}\n"
-        f"- 'achievementsLayer': {{\"milestones\": [str], \"streak_days\": int}}\n"
+        f'- \'activitiesLayer\': {{"topics_studied": int, "sessions_completed": int, "notes_created": int, "total_minutes": float}}\n'
+        f'- \'progressLayer\': {{"concepts_mastered": int, "consistency_change": str, "retention_score": str}}\n'
+        f'- \'achievementsLayer\': {{"milestones": [str], "streak_days": int}}\n'
         f"- 'recommendations': [str] (2-4 prescriptive next steps)\n\n"
         f"Return ONLY the JSON object."
     )
 
     # Default layers if LLM fails (Req 12.3: all three layers always present)
-    activities_layer = {"topics_studied": 0, "sessions_completed": 0, "notes_created": 0, "total_minutes": 0.0}
-    progress_layer = {"concepts_mastered": 0, "consistency_change": "stable", "retention_score": "N/A"}
-    achievements_layer = {"milestones": [], "streak_days": getattr(profile, "maturity_days", 0) or 0}
+    activities_layer = {
+        "topics_studied": 0,
+        "sessions_completed": 0,
+        "notes_created": 0,
+        "total_minutes": 0.0,
+    }
+    progress_layer = {
+        "concepts_mastered": 0,
+        "consistency_change": "stable",
+        "retention_score": "N/A",
+    }
+    achievements_layer = {
+        "milestones": [],
+        "streak_days": getattr(profile, "maturity_days", 0) or 0,
+    }
     summary = f"Your {type} learning reflection is ready. Keep going!"
     recommendations = None
 
@@ -88,17 +100,19 @@ async def generate_reflection(*, user_id: str, type: str) -> Any:
         logger.warning(f"LLM reflection generation failed for user {user_id}: {e}")
 
     # Store the reflection
-    reflection = await repo.create_reflection({
-        "userId": user_id,
-        "type": type,
-        "periodStart": period_start,
-        "periodEnd": period_end,
-        "summary": summary,
-        "activitiesLayer": activities_layer,
-        "progressLayer": progress_layer,
-        "achievementsLayer": achievements_layer,
-        "recommendations": recommendations,
-    })
+    reflection = await repo.create_reflection(
+        {
+            "userId": user_id,
+            "type": type,
+            "periodStart": period_start,
+            "periodEnd": period_end,
+            "summary": summary,
+            "activitiesLayer": activities_layer,
+            "progressLayer": progress_layer,
+            "achievementsLayer": achievements_layer,
+            "recommendations": recommendations,
+        }
+    )
 
     return reflection
 

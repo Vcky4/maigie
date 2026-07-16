@@ -64,14 +64,16 @@ async def start_quiz(
     count = question_count or min(len(target_topics) * 2, 20)
 
     # Create quiz session
-    quiz_session = await repo.create_quiz_session({
-        "userId": user_id,
-        "prepId": prep_id,
-        "mode": mode,
-        "topicId": topic_id,
-        "status": "IN_PROGRESS",
-        "totalQuestions": count,
-    })
+    quiz_session = await repo.create_quiz_session(
+        {
+            "userId": user_id,
+            "prepId": prep_id,
+            "mode": mode,
+            "topicId": topic_id,
+            "status": "IN_PROGRESS",
+            "totalQuestions": count,
+        }
+    )
 
     # Generate questions via LLM
     topics_text = "\n".join([f"- {t.title}: {t.description or ''}" for t in target_topics])
@@ -104,16 +106,18 @@ async def start_quiz(
         topic_title = q.get("topicTitle", "").lower()
         matched_topic_id = topic_map.get(topic_title)
 
-        await repo.create_quiz_question({
-            "quizSessionId": quiz_session.id,
-            "prepTopicId": matched_topic_id,
-            "questionText": q["questionText"],
-            "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
-            "options": q.get("options"),
-            "correctAnswer": q.get("correctAnswer", ""),
-            "explanation": q.get("explanation"),
-            "orderIndex": idx,
-        })
+        await repo.create_quiz_question(
+            {
+                "quizSessionId": quiz_session.id,
+                "prepTopicId": matched_topic_id,
+                "questionText": q["questionText"],
+                "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
+                "options": q.get("options"),
+                "correctAnswer": q.get("correctAnswer", ""),
+                "explanation": q.get("explanation"),
+                "orderIndex": idx,
+            }
+        )
 
     # Update total questions to actual generated count
     actual_count = min(len(questions_data), count)
@@ -154,13 +158,15 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     is_correct = user_answer.strip().lower() == question.correct_answer.strip().lower()
 
     # Record the answer
-    await repo.create_quiz_answer({
-        "quizSessionId": quiz_id,
-        "questionId": question_id,
-        "userAnswer": user_answer,
-        "isCorrect": is_correct,
-        "timeTakenSeconds": time_taken,
-    })
+    await repo.create_quiz_answer(
+        {
+            "quizSessionId": quiz_id,
+            "questionId": question_id,
+            "userAnswer": user_answer,
+            "isCorrect": is_correct,
+            "timeTakenSeconds": time_taken,
+        }
+    )
 
     # Update quiz correct count
     if is_correct:
@@ -179,7 +185,9 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     }
 
 
-async def complete_quiz(*, user_id: str, quiz_id: str, duration_seconds: int | None = None) -> dict[str, Any]:
+async def complete_quiz(
+    *, user_id: str, quiz_id: str, duration_seconds: int | None = None
+) -> dict[str, Any]:
     """
     Complete a quiz session.
 
@@ -195,12 +203,15 @@ async def complete_quiz(*, user_id: str, quiz_id: str, duration_seconds: int | N
     score_pct = (correct / total) * 100 if total > 0 else 0.0
 
     # Update quiz session
-    await repo.update_quiz_session(quiz_id, {
-        "status": "COMPLETED",
-        "scorePercentage": round(score_pct, 1),
-        "durationSeconds": duration_seconds,
-        "completedAt": now,
-    })
+    await repo.update_quiz_session(
+        quiz_id,
+        {
+            "status": "COMPLETED",
+            "scorePercentage": round(score_pct, 1),
+            "durationSeconds": duration_seconds,
+            "completedAt": now,
+        },
+    )
 
     # Compute per-topic breakdown
     answers = await repo.list_quiz_answers(quiz_id)
@@ -294,13 +305,15 @@ async def _compute_topic_breakdown(quiz_id: str, answers: list[Any]) -> list[dic
         total = data["total"]
         correct = data["correct"]
         score = (correct / total * 100) if total > 0 else 0
-        breakdown.append({
-            "topicId": tid,
-            "title": data["title"],
-            "total": total,
-            "correct": correct,
-            "score": round(score, 1),
-        })
+        breakdown.append(
+            {
+                "topicId": tid,
+                "title": data["title"],
+                "total": total,
+                "correct": correct,
+                "score": round(score, 1),
+            }
+        )
 
     return breakdown
 
@@ -310,5 +323,7 @@ def _suggest_next_step(weak_areas: list[str]) -> str | None:
     if not weak_areas:
         return "Great job! All topics are well covered. Try a Full Practice quiz next time."
     if len(weak_areas) == 1:
-        return f"Focus on reviewing: {weak_areas[0]}. Try a Topic Focus quiz to strengthen this area."
+        return (
+            f"Focus on reviewing: {weak_areas[0]}. Try a Topic Focus quiz to strengthen this area."
+        )
     return f"Review these topics: {', '.join(weak_areas[:3])}. Try a Weak Areas quiz to improve."

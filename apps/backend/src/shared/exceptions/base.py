@@ -101,7 +101,9 @@ class DeprecatedPlanError(MaigieError):
 class TaskError(Exception):
     """Base exception for background task errors."""
 
-    def __init__(self, message: str, task_id: str | None = None, details: dict[str, Any] | None = None):
+    def __init__(
+        self, message: str, task_id: str | None = None, details: dict[str, Any] | None = None
+    ):
         self.message = message
         self.task_id = task_id
         self.details = details or {}
@@ -111,13 +113,16 @@ class TaskError(Exception):
 class TaskRetryError(TaskError):
     """Task should be retried."""
 
-    def __init__(self, message: str = "Task should be retried", retry_after: int | None = None, **kwargs):
+    def __init__(
+        self, message: str = "Task should be retried", retry_after: int | None = None, **kwargs
+    ):
         self.retry_after = retry_after
         super().__init__(message, **kwargs)
 
 
 class TaskFailedError(TaskError):
     """Task has permanently failed."""
+
     pass
 
 

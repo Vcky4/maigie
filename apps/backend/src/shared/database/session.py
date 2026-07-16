@@ -131,9 +131,7 @@ async def check_db_health() -> dict:
         return {"status": "disconnected", "type": "postgresql"}
     try:
         async with _engine.connect() as conn:
-            await conn.execute(
-                __import__("sqlalchemy").text("SELECT 1")
-            )
+            await conn.execute(__import__("sqlalchemy").text("SELECT 1"))
         return {"status": "healthy", "type": "postgresql", "engine": "sqlalchemy"}
     except Exception as e:
         logger.error(f"DB health check failed: {e}")

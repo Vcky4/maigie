@@ -238,9 +238,7 @@ async def get_claimable_rewards(user: User, db_client: Any | None = None) -> lis
     ]
 
 
-async def claim_referral_reward(
-    user: User, reward_id: str, db_client: Any | None = None
-) -> dict:
+async def claim_referral_reward(user: User, reward_id: str, db_client: Any | None = None) -> dict:
     """
     Claim a referral reward. This increases the user's daily limit for the current day.
 

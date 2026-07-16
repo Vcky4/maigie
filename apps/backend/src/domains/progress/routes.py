@@ -40,13 +40,17 @@ async def start_session(
         course_id=data.get("courseId"),
         topic_id=data.get("topicId"),
     )
-    return models.SessionResponse(sessionId=result["sessionId"], startTime=result["startTime"], message=result.get("message"))
+    return models.SessionResponse(
+        sessionId=result["sessionId"], startTime=result["startTime"], message=result.get("message")
+    )
 
 
 @router.post("/sessions/{session_id}/stop", response_model=models.SessionResponse)
 async def stop_session(session_id: str, current_user: CurrentUser):
     """Stop a study session."""
-    result = await analytics_service.stop_study_session(session_id=session_id, user_id=current_user.id)
+    result = await analytics_service.stop_study_session(
+        session_id=session_id, user_id=current_user.id
+    )
     return models.SessionResponse(
         sessionId=result["sessionId"],
         startTime="",
@@ -105,13 +109,17 @@ async def list_goals(
     )
     skip = (page - 1) * pageSize
     items = [_to_goal_response(g) for g in goals]
-    return models.GoalListResponse(goals=items, total=total, page=page, pageSize=pageSize, hasMore=(skip + pageSize) < total)
+    return models.GoalListResponse(
+        goals=items, total=total, page=page, pageSize=pageSize, hasMore=(skip + pageSize) < total
+    )
 
 
 @router.post("/goals", response_model=models.GoalResponse, status_code=201)
 async def create_goal(body: models.GoalCreate, current_user: CurrentUser):
     """Create a goal."""
-    goal = await goal_service.create_goal(user_id=current_user.id, data=body.model_dump(exclude_unset=True))
+    goal = await goal_service.create_goal(
+        user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
     return _to_goal_response(goal)
 
 
@@ -125,14 +133,20 @@ async def get_goal(goal_id: str, current_user: CurrentUser):
 @router.patch("/goals/{goal_id}", response_model=models.GoalResponse)
 async def update_goal(goal_id: str, body: models.GoalUpdate, current_user: CurrentUser):
     """Update a goal."""
-    goal = await goal_service.update_goal(goal_id=goal_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True))
+    goal = await goal_service.update_goal(
+        goal_id=goal_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
     return _to_goal_response(goal)
 
 
 @router.post("/goals/{goal_id}/progress", response_model=models.GoalResponse)
-async def record_goal_progress(goal_id: str, body: models.GoalProgressUpdate, current_user: CurrentUser):
+async def record_goal_progress(
+    goal_id: str, body: models.GoalProgressUpdate, current_user: CurrentUser
+):
     """Record progress on a goal."""
-    goal = await goal_service.record_progress(goal_id=goal_id, user_id=current_user.id, progress=body.progress)
+    goal = await goal_service.record_progress(
+        goal_id=goal_id, user_id=current_user.id, progress=body.progress
+    )
     return _to_goal_response(goal)
 
 
@@ -143,16 +157,22 @@ async def delete_goal(goal_id: str, current_user: CurrentUser):
 
 
 @router.post("/goals/{goal_id}/regenerate-plan", response_model=models.GoalRegeneratePlanResponse)
-async def regenerate_goal_plan(goal_id: str, body: models.GoalRegeneratePlanRequest, current_user: CurrentUser):
+async def regenerate_goal_plan(
+    goal_id: str, body: models.GoalRegeneratePlanRequest, current_user: CurrentUser
+):
     """Regenerate AI study plan for a goal."""
     result = await goal_service.regenerate_plan(
-        user_id=current_user.id, goal_id=goal_id, duration_weeks=body.duration_weeks, request=body.request
+        user_id=current_user.id,
+        goal_id=goal_id,
+        duration_weeks=body.duration_weeks,
+        request=body.request,
     )
     if result.get("status") != "success":
         code = status.HTTP_429_TOO_MANY_REQUESTS if result.get("rate_limited") else 500
         raise HTTPException(status_code=code, detail=result.get("message", "Failed"))
     return models.GoalRegeneratePlanResponse(
-        status="success", goal_id=goal_id,
+        status="success",
+        goal_id=goal_id,
         deleted_schedule_blocks=result.get("deleted_schedule_blocks", 0),
         created_schedule_blocks=result.get("created_schedule_blocks", 0),
         target_date=result.get("target_date"),
@@ -189,7 +209,11 @@ async def list_schedule(
     skip = (page - 1) * pageSize
     items = [_to_block_response(b) for b in blocks]
     return models.StudyBlockListResponse(
-        schedules=items, total=total, page=page, pageSize=pageSize, hasMore=(skip + pageSize) < total
+        schedules=items,
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        hasMore=(skip + pageSize) < total,
     )
 
 
@@ -203,7 +227,9 @@ async def create_block(body: models.StudyBlockCreate, current_user: CurrentUser)
 @router.put("/schedule/{block_id}", response_model=models.StudyBlockResponse)
 async def update_block(block_id: str, body: models.StudyBlockUpdate, current_user: CurrentUser):
     """Update a study block."""
-    block = await schedule_service.update_block(block_id=block_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True))
+    block = await schedule_service.update_block(
+        block_id=block_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
     return _to_block_response(block)
 
 
@@ -241,7 +267,9 @@ async def list_due_reviews(current_user: CurrentUser):
 
 
 @router.post("/reviews/{review_id}/submit")
-async def submit_review(review_id: str, body: models.ReviewQualityRequest, current_user: CurrentUser):
+async def submit_review(
+    review_id: str, body: models.ReviewQualityRequest, current_user: CurrentUser
+):
     """Submit review quality for spaced repetition (SM-2 algorithm)."""
     from src.domains.progress.services.spaced_repetition_impl import advance_review_sqlalchemy
 
@@ -284,7 +312,9 @@ def _to_block_response(block) -> models.StudyBlockResponse:
         goalId=block.goal_id,
         reviewItemId=block.review_item_id,
         googleCalendarEventId=block.google_calendar_event_id,
-        googleCalendarSyncedAt=block.google_calendar_synced_at.isoformat() if block.google_calendar_synced_at else None,
+        googleCalendarSyncedAt=(
+            block.google_calendar_synced_at.isoformat() if block.google_calendar_synced_at else None
+        ),
         createdAt=block.created_at.isoformat(),
         updatedAt=block.updated_at.isoformat(),
     )

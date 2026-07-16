@@ -80,12 +80,14 @@ async def generate_course_content_task(
             module_title = (mod_data.get("title") or f"Module {i + 1}").strip()
             topics = mod_data.get("topics") or []
 
-            new_module = await knowledge_repo.create_module({
-                "courseId": course_id,
-                "title": module_title,
-                "order": float(i),
-                "description": (mod_data.get("description") or "").strip() or None,
-            })
+            new_module = await knowledge_repo.create_module(
+                {
+                    "courseId": course_id,
+                    "title": module_title,
+                    "order": float(i),
+                    "description": (mod_data.get("description") or "").strip() or None,
+                }
+            )
 
             for j, top in enumerate(topics):
                 if isinstance(top, str):
@@ -94,12 +96,14 @@ async def generate_course_content_task(
                     title = str(top.get("title") or f"Topic {j + 1}").strip()
                 if not title:
                     continue
-                await knowledge_repo.create_topic({
-                    "moduleId": new_module.id,
-                    "title": title,
-                    "order": float(j),
-                    "estimatedHours": 0.5,
-                })
+                await knowledge_repo.create_topic(
+                    {
+                        "moduleId": new_module.id,
+                        "title": title,
+                        "order": float(j),
+                        "estimatedHours": 0.5,
+                    }
+                )
 
         title = (outline.get("title") or "").strip() or f"Learning {topic_prompt[:80]}"
         description = (outline.get("description") or "").strip() or (
@@ -108,12 +112,15 @@ async def generate_course_content_task(
         )
         diff_out = (outline.get("difficulty") or difficulty or "BEGINNER").upper()
 
-        await knowledge_repo.update_course(course_id, {
-            "title": title,
-            "description": description,
-            "difficulty": diff_out,
-            "isAIGenerated": True,
-        })
+        await knowledge_repo.update_course(
+            course_id,
+            {
+                "title": title,
+                "description": description,
+                "difficulty": diff_out,
+                "isAIGenerated": True,
+            },
+        )
 
         logger.info("AI generation complete for course %s", course_id)
         await manager.send_to_user(

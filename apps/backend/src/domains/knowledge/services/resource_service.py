@@ -100,9 +100,7 @@ async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]
     }
 
 
-async def record_interaction(
-    *, user_id: str, resource_id: str, interaction_type: str
-) -> None:
+async def record_interaction(*, user_id: str, resource_id: str, interaction_type: str) -> None:
     """Record a user interaction with a resource."""
     resource = await knowledge_repo.find_resource(resource_id, user_id)
     if not resource:
@@ -127,7 +125,9 @@ async def delete_resource(*, user_id: str, resource_id: str) -> None:
     await knowledge_repo.delete_resource(resource_id)
 
 
-async def recommend_resources(*, user_id: str, query: str, limit: int = 5, context: dict | None = None) -> dict[str, Any]:
+async def recommend_resources(
+    *, user_id: str, query: str, limit: int = 5, context: dict | None = None
+) -> dict[str, Any]:
     """Generate AI-powered resource recommendations via RAG."""
     from src.domains.intelligence.memory.memory_service import get_memory_context
 
@@ -145,9 +145,11 @@ async def recommend_resources(*, user_id: str, query: str, limit: int = 5, conte
     )
 
     import json
+
     raw = await generate_content(prompt, max_tokens=1500, temperature=0.3)
     try:
         import re
+
         match = re.search(r"\[.*\]", raw, re.DOTALL)
         recommendations = json.loads(match.group(0)) if match else []
     except Exception:

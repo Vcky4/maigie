@@ -167,7 +167,9 @@ def _compute_dropout_risk(sessions: list[Any]) -> float:
     # Check for growing gaps
     gaps = []
     for i in range(1, len(sorted_sessions)):
-        gap = (sorted_sessions[i].start_time - sorted_sessions[i - 1].start_time).total_seconds() / 3600
+        gap = (
+            sorted_sessions[i].start_time - sorted_sessions[i - 1].start_time
+        ).total_seconds() / 3600
         gaps.append(gap)
 
     gap_growing = False

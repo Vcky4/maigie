@@ -174,7 +174,9 @@ class UserResponse(BaseModel):
     adminStaffRole: str | None = Field(default=None, validation_alias="admin_staff_role")
     preferences: UserPreferencesResponse | None = None
     paymentProvider: str | None = Field(default=None, validation_alias="payment_provider")
-    subscriptionCurrentPeriodEnd: datetime | None = Field(default=None, validation_alias="subscription_current_period_end")
+    subscriptionCurrentPeriodEnd: datetime | None = Field(
+        default=None, validation_alias="subscription_current_period_end"
+    )
     pendingDeletion: PendingDeletionResponse | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

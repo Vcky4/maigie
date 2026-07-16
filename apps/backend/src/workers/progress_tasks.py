@@ -82,7 +82,9 @@ def daily_credit_reset_task():
         factory = get_session_factory()
         async with factory() as session:
             await session.execute(
-                text('UPDATE "User" SET "creditsUsedToday" = 0 WHERE "creditsUsedToday" > 0 AND role = \'USER\'')
+                text(
+                    'UPDATE "User" SET "creditsUsedToday" = 0 WHERE "creditsUsedToday" > 0 AND role = \'USER\''
+                )
             )
             await session.commit()
         logger.info("Daily credit reset complete")

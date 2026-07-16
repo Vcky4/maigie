@@ -69,14 +69,16 @@ class UserMemoryService:
                 except Exception as e:
                     clean_metadata = {"error": "Invalid metadata format", "details": str(e)}
 
-            interaction = await intelligence_repo.create_interaction({
-                "userId": str(user_id),
-                "interactionType": interaction_type,
-                "entityType": entity_type,
-                "entityId": str(entity_id) if entity_id else None,
-                "metadata": clean_metadata,
-                "importance": float(importance),
-            })
+            interaction = await intelligence_repo.create_interaction(
+                {
+                    "userId": str(user_id),
+                    "interactionType": interaction_type,
+                    "entityType": entity_type,
+                    "entityId": str(entity_id) if entity_id else None,
+                    "metadata": clean_metadata,
+                    "importance": float(importance),
+                }
+            )
             return interaction.id
 
         except Exception as e:
@@ -112,7 +114,9 @@ class UserMemoryService:
 
             for interaction in recent_interactions:
                 interaction_type = interaction.interaction_type
-                interaction_counts[interaction_type] = interaction_counts.get(interaction_type, 0) + 1
+                interaction_counts[interaction_type] = (
+                    interaction_counts.get(interaction_type, 0) + 1
+                )
 
                 entity_type = interaction.entity_type
                 entity_id = interaction.entity_id
@@ -318,13 +322,15 @@ class UserMemoryService:
             ID of the created fact
         """
         try:
-            fact = await intelligence_repo.create_user_fact({
-                "userId": user_id,
-                "category": category,
-                "content": content,
-                "source": source,
-                "confidence": confidence,
-            })
+            fact = await intelligence_repo.create_user_fact(
+                {
+                    "userId": user_id,
+                    "category": category,
+                    "content": content,
+                    "source": source,
+                    "confidence": confidence,
+                }
+            )
             return fact.id
         except Exception as e:
             print(f"Error saving user fact: {e}")

@@ -46,7 +46,9 @@ async def get_note(db: Any = None, note_id: str = "", user_id: str = ""):
     return await personal_learning_repo.find_note(note_id, user_id)
 
 
-async def update_note(db: Any = None, note_id: str = "", user_id: str = "", data: NoteUpdate = None):
+async def update_note(
+    db: Any = None, note_id: str = "", user_id: str = "", data: NoteUpdate = None
+):
     """Update a note."""
     existing_note = await personal_learning_repo.find_note(note_id, user_id)
     if not existing_note or existing_note.user_id != user_id:
@@ -131,21 +133,27 @@ async def list_notes(
     return notes, total
 
 
-async def add_attachment(db: Any = None, note_id: str = "", user_id: str = "", data: NoteAttachmentCreate = None):
+async def add_attachment(
+    db: Any = None, note_id: str = "", user_id: str = "", data: NoteAttachmentCreate = None
+):
     """Add an attachment to a note."""
     existing_note = await personal_learning_repo.find_note(note_id, user_id)
     if not existing_note or existing_note.user_id != user_id:
         return None
 
-    return await personal_learning_repo.create_attachment({
-        "noteId": note_id,
-        "filename": data.filename,
-        "url": data.url,
-        "size": data.size,
-    })
+    return await personal_learning_repo.create_attachment(
+        {
+            "noteId": note_id,
+            "filename": data.filename,
+            "url": data.url,
+            "size": data.size,
+        }
+    )
 
 
-async def remove_attachment(db: Any = None, note_id: str = "", attachment_id: str = "", user_id: str = "") -> bool:
+async def remove_attachment(
+    db: Any = None, note_id: str = "", attachment_id: str = "", user_id: str = ""
+) -> bool:
     """Remove an attachment from a note."""
     attachment = await personal_learning_repo.find_attachment(attachment_id, note_id)
     if not attachment:
@@ -160,7 +168,9 @@ async def remove_attachment(db: Any = None, note_id: str = "", attachment_id: st
     return True
 
 
-async def import_note_to_space(db: Any = None, note_id: str = "", space_id: str = "", user_id: str = ""):
+async def import_note_to_space(
+    db: Any = None, note_id: str = "", space_id: str = "", user_id: str = ""
+):
     """Import a personal note to a space by creating a copy."""
     # Verify the note belongs to the user and is personal
     factory = get_session_factory()
@@ -176,18 +186,21 @@ async def import_note_to_space(db: Any = None, note_id: str = "", space_id: str 
 
     # Verify membership
     from src.domains.learning_spaces.repository import space_repo
+
     member = await space_repo.find_member(space_id, user_id)
     if not member:
         raise ValueError("User is not a member of the space")
 
     # Create copy
-    new_note = await personal_learning_repo.create_note({
-        "title": original.title,
-        "content": original.content,
-        "userId": user_id,
-        "spaceId": space_id,
-        "summary": original.summary,
-    })
+    new_note = await personal_learning_repo.create_note(
+        {
+            "title": original.title,
+            "content": original.content,
+            "userId": user_id,
+            "spaceId": space_id,
+            "summary": original.summary,
+        }
+    )
 
     # Copy tags
     if original.tags:
@@ -196,11 +209,13 @@ async def import_note_to_space(db: Any = None, note_id: str = "", space_id: str 
     # Copy attachments
     if original.attachments:
         for att in original.attachments:
-            await personal_learning_repo.create_attachment({
-                "noteId": new_note.id,
-                "filename": att.filename,
-                "url": att.url,
-                "size": att.size,
-            })
+            await personal_learning_repo.create_attachment(
+                {
+                    "noteId": new_note.id,
+                    "filename": att.filename,
+                    "url": att.url,
+                    "size": att.size,
+                }
+            )
 
     return await personal_learning_repo.find_note(new_note.id, user_id)

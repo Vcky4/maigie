@@ -17,6 +17,7 @@ async def create_block(*, user_id: str, data: dict[str, Any]) -> Any:
     # Sync to Google Calendar if connected
     try:
         from src.integrations.google_calendar import sync_schedule_block
+
         await sync_schedule_block(user_id, block.id)
     except Exception as e:
         logger.debug(f"Calendar sync skipped: {e}")
@@ -24,9 +25,14 @@ async def create_block(*, user_id: str, data: dict[str, Any]) -> Any:
 
 
 async def list_blocks(
-    *, user_id: str, start_date=None, end_date=None,
-    course_id: str | None = None, goal_id: str | None = None,
-    page: int = 1, page_size: int = 50,
+    *,
+    user_id: str,
+    start_date=None,
+    end_date=None,
+    course_id: str | None = None,
+    goal_id: str | None = None,
+    page: int = 1,
+    page_size: int = 50,
 ) -> tuple[list, int]:
     where: dict[str, Any] = {}
     if course_id:

@@ -90,15 +90,17 @@ async def generate_recommendations(*, user_id: str) -> int:
     count = 0
     for rec in recs_data:
         if isinstance(rec, dict) and "title" in rec:
-            await repo.create_recommendation({
-                "userId": user_id,
-                "itemType": rec.get("itemType", "topic"),
-                "itemId": rec.get("itemId", rec.get("title", "")),
-                "title": rec["title"],
-                "reason": rec.get("reason", "Relevant to your current learning"),
-                "relevanceScore": min(max(float(rec.get("relevanceScore", 0.5)), 0.0), 1.0),
-                "status": "ACTIVE",
-            })
+            await repo.create_recommendation(
+                {
+                    "userId": user_id,
+                    "itemType": rec.get("itemType", "topic"),
+                    "itemId": rec.get("itemId", rec.get("title", "")),
+                    "title": rec["title"],
+                    "reason": rec.get("reason", "Relevant to your current learning"),
+                    "relevanceScore": min(max(float(rec.get("relevanceScore", 0.5)), 0.0), 1.0),
+                    "status": "ACTIVE",
+                }
+            )
             count += 1
 
     return count

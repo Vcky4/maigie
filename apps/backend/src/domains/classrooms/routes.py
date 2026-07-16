@@ -27,7 +27,9 @@ router = APIRouter(tags=["classrooms"])
 # ===========================================================================
 
 
-@router.post("/spaces/{space_id}/classrooms", response_model=models.ClassroomResponse, status_code=201)
+@router.post(
+    "/spaces/{space_id}/classrooms", response_model=models.ClassroomResponse, status_code=201
+)
 async def create_classroom(space_id: str, body: models.ClassroomCreate, current_user: CurrentUser):
     """Create a Classroom within a Learning Space (EDUCATOR+ role)."""
     result = await classroom_service.create_classroom(
@@ -51,7 +53,9 @@ async def get_classroom(classroom_id: str, current_user: CurrentUser):
 
 
 @router.put("/{classroom_id}", response_model=models.ClassroomResponse)
-async def update_classroom(classroom_id: str, body: models.ClassroomUpdate, current_user: CurrentUser):
+async def update_classroom(
+    classroom_id: str, body: models.ClassroomUpdate, current_user: CurrentUser
+):
     """Update Classroom settings (EDUCATOR+ role)."""
     result = await classroom_service.update_classroom(
         classroom_id=classroom_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
@@ -91,7 +95,9 @@ async def list_sessions(
 
 
 @router.get("/spaces/{space_id}/sessions/upcoming", response_model=list[models.SessionResponse])
-async def upcoming_sessions(space_id: str, current_user: CurrentUser, limit: int = Query(10, ge=1, le=50)):
+async def upcoming_sessions(
+    space_id: str, current_user: CurrentUser, limit: int = Query(10, ge=1, le=50)
+):
     """List upcoming sessions."""
     sessions = await session_service.list_upcoming(space_id=space_id, limit=limit)
     return [_to_session_response(s) for s in sessions]
@@ -112,7 +118,9 @@ async def delete_session(session_id: str, current_user: CurrentUser):
     await session_service.delete_session(session_id=session_id, user_id=current_user.id)
 
 
-@router.get("/spaces/{space_id}/sessions/suggestions", response_model=models.SessionSuggestionResponse)
+@router.get(
+    "/spaces/{space_id}/sessions/suggestions", response_model=models.SessionSuggestionResponse
+)
 async def suggest_sessions(space_id: str, current_user: CurrentUser):
     """Get AI-suggested sessions for the Space."""
     suggestions = await session_service.suggest_sessions(space_id=space_id, user_id=current_user.id)

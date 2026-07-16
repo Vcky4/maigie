@@ -76,9 +76,8 @@ async def delete_course_cascade(db: Any, course_id: str, user_id: str) -> None:
 
         # Use OR for multiple conditions
         from sqlalchemy import or_
-        await session.execute(
-            delete(ScheduleBlock).where(or_(*sb_conditions))
-        )
+
+        await session.execute(delete(ScheduleBlock).where(or_(*sb_conditions)))
 
         # 3. Delete goals
         if goal_ids:

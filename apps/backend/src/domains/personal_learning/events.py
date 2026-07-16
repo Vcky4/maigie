@@ -25,96 +25,119 @@ async def emit_note_created(
     course_id: str | None = None,
     topic_id: str | None = None,
 ) -> None:
-    await emit("personal_learning.note_created", {
-        "user_id": user_id,
-        "note_id": note_id,
-        "title": title,
-        "course_id": course_id,
-        "topic_id": topic_id,
-    })
+    await emit(
+        "personal_learning.note_created",
+        {
+            "user_id": user_id,
+            "note_id": note_id,
+            "title": title,
+            "course_id": course_id,
+            "topic_id": topic_id,
+        },
+    )
 
 
 async def emit_topic_studied(
     user_id: str, topic_id: str, course_id: str, duration_seconds: int
 ) -> None:
-    await emit("personal_learning.topic_studied", {
-        "user_id": user_id,
-        "topic_id": topic_id,
-        "course_id": course_id,
-        "duration_seconds": duration_seconds,
-    })
+    await emit(
+        "personal_learning.topic_studied",
+        {
+            "user_id": user_id,
+            "topic_id": topic_id,
+            "course_id": course_id,
+            "duration_seconds": duration_seconds,
+        },
+    )
 
 
 async def emit_topic_completed(user_id: str, topic_id: str, course_id: str) -> None:
-    await emit("personal_learning.topic_completed", {
-        "user_id": user_id,
-        "topic_id": topic_id,
-        "course_id": course_id,
-    })
+    await emit(
+        "personal_learning.topic_completed",
+        {
+            "user_id": user_id,
+            "topic_id": topic_id,
+            "course_id": course_id,
+        },
+    )
 
 
 async def emit_quiz_completed(
     user_id: str, prep_id: str, quiz_id: str, score: float, weak_topics: list[str]
 ) -> None:
-    await emit("personal_learning.quiz_completed", {
-        "user_id": user_id,
-        "prep_id": prep_id,
-        "quiz_id": quiz_id,
-        "score": score,
-        "weak_topics": weak_topics,
-    })
+    await emit(
+        "personal_learning.quiz_completed",
+        {
+            "user_id": user_id,
+            "prep_id": prep_id,
+            "quiz_id": quiz_id,
+            "score": score,
+            "weak_topics": weak_topics,
+        },
+    )
 
 
 async def emit_study_session_ended(
     user_id: str, session_id: str, duration: float, context: dict | None = None
 ) -> None:
-    await emit("personal_learning.study_session_ended", {
-        "user_id": user_id,
-        "session_id": session_id,
-        "duration": duration,
-        "context": context,
-    })
+    await emit(
+        "personal_learning.study_session_ended",
+        {
+            "user_id": user_id,
+            "session_id": session_id,
+            "duration": duration,
+            "context": context,
+        },
+    )
 
 
 async def emit_flashcard_reviewed(
     user_id: str, card_id: str, quality: int, deck_id: str | None = None
 ) -> None:
-    await emit("personal_learning.flashcard_reviewed", {
-        "user_id": user_id,
-        "card_id": card_id,
-        "quality": quality,
-        "deck_id": deck_id,
-    })
+    await emit(
+        "personal_learning.flashcard_reviewed",
+        {
+            "user_id": user_id,
+            "card_id": card_id,
+            "quality": quality,
+            "deck_id": deck_id,
+        },
+    )
 
 
-async def emit_preparation_completed(
-    user_id: str, prep_id: str, subject: str
-) -> None:
-    await emit("personal_learning.preparation_completed", {
-        "user_id": user_id,
-        "prep_id": prep_id,
-        "subject": subject,
-    })
+async def emit_preparation_completed(user_id: str, prep_id: str, subject: str) -> None:
+    await emit(
+        "personal_learning.preparation_completed",
+        {
+            "user_id": user_id,
+            "prep_id": prep_id,
+            "subject": subject,
+        },
+    )
 
 
 async def emit_milestone_reached(
     user_id: str, milestone_type: str, milestone_value: int | str
 ) -> None:
-    await emit("personal_learning.milestone_reached", {
-        "user_id": user_id,
-        "milestone_type": milestone_type,
-        "milestone_value": milestone_value,
-    })
+    await emit(
+        "personal_learning.milestone_reached",
+        {
+            "user_id": user_id,
+            "milestone_type": milestone_type,
+            "milestone_value": milestone_value,
+        },
+    )
 
 
-async def emit_study_plan_item_completed(
-    user_id: str, plan_id: str, item_id: str
-) -> None:
-    await emit("personal_learning.study_plan_item_completed", {
-        "user_id": user_id,
-        "plan_id": plan_id,
-        "item_id": item_id,
-    })
+async def emit_study_plan_item_completed(user_id: str, plan_id: str, item_id: str) -> None:
+    await emit(
+        "personal_learning.study_plan_item_completed",
+        {
+            "user_id": user_id,
+            "plan_id": plan_id,
+            "item_id": item_id,
+        },
+    )
 
 
 # ===========================================================================

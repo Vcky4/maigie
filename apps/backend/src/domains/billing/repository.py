@@ -44,6 +44,7 @@ class BillingRepository:
 
     async def update_subscription(self, user_id: str, data: dict[str, Any]) -> User:
         from src.domains.identity.repository import IdentityRepository
+
         repo = IdentityRepository()
         return await repo.update(user_id, data)
 
@@ -92,6 +93,7 @@ class BillingRepository:
 
     async def update_credits(self, user_id: str, data: dict[str, Any]) -> User:
         from src.domains.identity.repository import IdentityRepository
+
         repo = IdentityRepository()
         return await repo.update(user_id, data)
 
@@ -103,7 +105,9 @@ class BillingRepository:
             if not user:
                 raise ValueError(f"User {user_id} not found")
             new_balance = max(0, (user.purchased_credits_balance or 0) + amount)
-            upd = update(User).where(User.id == user_id).values(purchased_credits_balance=new_balance)
+            upd = (
+                update(User).where(User.id == user_id).values(purchased_credits_balance=new_balance)
+            )
             await session.execute(upd)
             await session.commit()
         return await self.get_user_billing(user_id)
@@ -136,8 +140,10 @@ class BillingRepository:
         self, user_id: str, *, skip: int = 0, take: int = 20
     ) -> tuple[list[CreditPurchaseTransaction], int]:
         async with await self._session() as session:
-            count_stmt = select(func.count()).select_from(CreditPurchaseTransaction).where(
-                CreditPurchaseTransaction.user_id == user_id
+            count_stmt = (
+                select(func.count())
+                .select_from(CreditPurchaseTransaction)
+                .where(CreditPurchaseTransaction.user_id == user_id)
             )
             total = (await session.execute(count_stmt)).scalar() or 0
 
@@ -151,7 +157,9 @@ class BillingRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
 
-    async def find_transaction_by_reference(self, provider_reference: str) -> CreditPurchaseTransaction | None:
+    async def find_transaction_by_reference(
+        self, provider_reference: str
+    ) -> CreditPurchaseTransaction | None:
         async with await self._session() as session:
             stmt = select(CreditPurchaseTransaction).where(
                 CreditPurchaseTransaction.provider_reference == provider_reference
@@ -161,7 +169,11 @@ class BillingRepository:
 
     async def update_transaction(self, txn_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
-            stmt = update(CreditPurchaseTransaction).where(CreditPurchaseTransaction.id == txn_id).values(**data)
+            stmt = (
+                update(CreditPurchaseTransaction)
+                .where(CreditPurchaseTransaction.id == txn_id)
+                .values(**data)
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -181,7 +193,9 @@ class BillingRepository:
 
     async def find_pack(self, pack_id: str) -> CreditPack | None:
         async with await self._session() as session:
-            stmt = select(CreditPack).where(CreditPack.id == pack_id, CreditPack.is_active == True)  # noqa: E712
+            stmt = select(CreditPack).where(
+                CreditPack.id == pack_id, CreditPack.is_active == True
+            )  # noqa: E712
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
@@ -232,9 +246,13 @@ class BillingRepository:
 
     async def count_ads_today(self, user_id: str, today_start: datetime) -> int:
         async with await self._session() as session:
-            stmt = select(func.count()).select_from(AdRewardClaim).where(
-                AdRewardClaim.user_id == user_id,
-                AdRewardClaim.created_at >= today_start,
+            stmt = (
+                select(func.count())
+                .select_from(AdRewardClaim)
+                .where(
+                    AdRewardClaim.user_id == user_id,
+                    AdRewardClaim.created_at >= today_start,
+                )
             )
             return (await session.execute(stmt)).scalar() or 0
 

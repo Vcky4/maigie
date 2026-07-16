@@ -80,7 +80,9 @@ async def summarize_conversation(session_id: str, user_id: str) -> dict | None:
     """
     try:
         # Fetch messages for the session
-        messages = await intelligence_repo.find_messages(session_id, take=50, order_asc=True, review_item_id=None)
+        messages = await intelligence_repo.find_messages(
+            session_id, take=50, order_asc=True, review_item_id=None
+        )
 
         # Only summarize if there are enough messages
         user_msgs = [m for m in messages if m.role == "USER"]
@@ -128,14 +130,16 @@ Output only valid JSON, no markdown."""
                 "emotional_tone": "neutral",
             }
 
-        record = await intelligence_repo.create_summary({
-            "userId": user_id,
-            "sessionId": session_id,
-            "summary": result.get("summary", "Conversation summary unavailable."),
-            "keyTopics": result.get("key_topics", []),
-            "actionsTaken": actions_taken,
-            "emotionalTone": result.get("emotional_tone"),
-        })
+        record = await intelligence_repo.create_summary(
+            {
+                "userId": user_id,
+                "sessionId": session_id,
+                "summary": result.get("summary", "Conversation summary unavailable."),
+                "keyTopics": result.get("key_topics", []),
+                "actionsTaken": actions_taken,
+                "emotionalTone": result.get("emotional_tone"),
+            }
+        )
         logger.info("Created conversation summary for session %s", session_id)
         return record
 
@@ -217,13 +221,16 @@ async def get_user_learning_profile(user_id: str) -> str:
             parts.append("Known about user: " + "; ".join(fact_strs))
 
         # Key insights
-        insights = await intelligence_repo.list_insights(user_id, active_only=True, min_confidence=0.6, take=5)
+        insights = await intelligence_repo.list_insights(
+            user_id, active_only=True, min_confidence=0.6, take=5
+        )
         if insights:
             insight_strs = [f"{i.insight_type}: {i.content}" for i in insights]
             parts.append("Learning patterns: " + "; ".join(insight_strs))
 
         # Study streak
         from src.domains.progress.repository import progress_repo
+
         streak = await progress_repo.get_streak(user_id)
         if streak and streak.current_streak > 0:
             parts.append(f"Current study streak: {streak.current_streak} days")
@@ -288,7 +295,7 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
                     "optimal_time",
                     {
                         "content": f"Most productive study time is in the {time_label} (around {peak_hour}:00). "
-                                   f"{len(sessions)} sessions in last 30 days.",
+                        f"{len(sessions)} sessions in last 30 days.",
                         "confidence": min(0.5 + len(sessions) * 0.02, 0.95),
                         "dataPoints": len(sessions),
                     },
@@ -303,7 +310,7 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
                     "study_pattern",
                     {
                         "content": f"Average study session lasts {avg_duration:.0f} minutes. "
-                                   f"Total study time: {total_duration:.0f} minutes in last 30 days.",
+                        f"Total study time: {total_duration:.0f} minutes in last 30 days.",
                         "confidence": min(0.5 + len(sessions) * 0.02, 0.9),
                         "dataPoints": len(sessions),
                     },
@@ -343,7 +350,9 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
         # 3. Review performance (spaced repetition)
         reviews = await progress_repo.list_all_reviews(user_id)
         # Filter to those reviewed in last 30 days
-        recent_reviews = [r for r in reviews if r.last_reviewed_at and r.last_reviewed_at >= thirty_days_ago]
+        recent_reviews = [
+            r for r in reviews if r.last_reviewed_at and r.last_reviewed_at >= thirty_days_ago
+        ]
         if len(recent_reviews) >= 3:
             avg_quality = sum(r.last_quality for r in recent_reviews if r.last_quality >= 0) / max(
                 1, sum(1 for r in recent_reviews if r.last_quality >= 0)
@@ -365,7 +374,7 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
                     "strategy_effectiveness",
                     {
                         "content": f"Review sessions show difficulty with recall (avg quality {avg_quality:.1f}/5, "
-                                   f"{lapse_count} lapses). Consider shorter review intervals.",
+                        f"{lapse_count} lapses). Consider shorter review intervals.",
                         "confidence": 0.75,
                         "dataPoints": len(recent_reviews),
                     },

@@ -193,18 +193,20 @@ async def initiate_purchase(
         provider_reference = paystack_result["reference"]
 
     # Create pending transaction record
-    await billing_repo.create_purchase_transaction({
-        "userId": user.id,
-        "creditPackId": pack.id,
-        "creditsGranted": total_credits,
-        "amountPaid": amount,
-        "currency": currency,
-        "paymentProvider": payment_provider,
-        "providerReference": provider_reference,
-        "sessionId": session_id,
-        "sessionExpiresAt": expires_at,
-        "status": "pending",
-    })
+    await billing_repo.create_purchase_transaction(
+        {
+            "userId": user.id,
+            "creditPackId": pack.id,
+            "creditsGranted": total_credits,
+            "amountPaid": amount,
+            "currency": currency,
+            "paymentProvider": payment_provider,
+            "providerReference": provider_reference,
+            "sessionId": session_id,
+            "sessionExpiresAt": expires_at,
+            "status": "pending",
+        }
+    )
 
     return {
         "sessionUrl": session_url,
@@ -261,23 +263,33 @@ async def fulfill_purchase(
 
     # Update transaction status to completed
     now = datetime.now(UTC)
-    await billing_repo.update_transaction(transaction.id, {
-        "status": "completed",
-        "completed_at": now,
-    })
+    await billing_repo.update_transaction(
+        transaction.id,
+        {
+            "status": "completed",
+            "completed_at": now,
+        },
+    )
 
     # Atomically increment user's purchased credits balance
     # Get current balance and add
     user_before = await identity_repo.find_by_id(transaction.user_id)
     current_balance = (user_before.purchased_credits_balance or 0) if user_before else 0
-    updated_user = await identity_repo.update(transaction.user_id, {
-        "purchasedCreditsBalance": current_balance + transaction.credits_granted,
-    })
+    updated_user = await identity_repo.update(
+        transaction.user_id,
+        {
+            "purchasedCreditsBalance": current_balance + transaction.credits_granted,
+        },
+    )
 
     # Emit real-time balance update via WebSocket to all connected clients
     new_balance = updated_user.purchased_credits_balance if updated_user else 0
     # Load pack name from transaction's credit_pack relation
-    pack = await billing_repo.find_pack(transaction.credit_pack_id) if transaction.credit_pack_id else None
+    pack = (
+        await billing_repo.find_pack(transaction.credit_pack_id)
+        if transaction.credit_pack_id
+        else None
+    )
     pack_name = pack.name if pack else "Credit Pack"
 
     try:
@@ -462,9 +474,12 @@ async def admin_adjust_balance(
         )
 
     # Atomically update the balance
-    updated_user = await identity_repo.update(target_user_id, {
-        "purchasedCreditsBalance": current_balance + amount,
-    })
+    updated_user = await identity_repo.update(
+        target_user_id,
+        {
+            "purchasedCreditsBalance": current_balance + amount,
+        },
+    )
 
     # Create audit log entry
     try:

@@ -76,9 +76,7 @@ async def emit(event_name: str, data: dict[str, Any] | None = None) -> None:
     await asyncio.gather(*tasks)
 
 
-async def _safe_dispatch(
-    handler: EventHandler, event_name: str, data: dict[str, Any]
-) -> None:
+async def _safe_dispatch(handler: EventHandler, event_name: str, data: dict[str, Any]) -> None:
     """Execute a handler with error isolation."""
     try:
         await handler(data)

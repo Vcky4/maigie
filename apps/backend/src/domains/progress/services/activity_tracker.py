@@ -54,11 +54,14 @@ async def _update_streak(user_id: str, today) -> None:
 
     if streak is None:
         # First time: create streak record
-        await progress_repo.upsert_streak(user_id, {
-            "currentStreak": 1,
-            "longestStreak": 1,
-            "lastStudyDate": today_dt,
-        })
+        await progress_repo.upsert_streak(
+            user_id,
+            {
+                "currentStreak": 1,
+                "longestStreak": 1,
+                "lastStudyDate": today_dt,
+            },
+        )
         return
 
     last_study = streak.last_study_date.date() if streak.last_study_date else None
@@ -71,15 +74,21 @@ async def _update_streak(user_id: str, today) -> None:
         # Consecutive day: increment streak
         new_streak = streak.current_streak + 1
         new_longest = max(streak.longest_streak, new_streak)
-        await progress_repo.upsert_streak(user_id, {
-            "currentStreak": new_streak,
-            "longestStreak": new_longest,
-            "lastStudyDate": today_dt,
-        })
+        await progress_repo.upsert_streak(
+            user_id,
+            {
+                "currentStreak": new_streak,
+                "longestStreak": new_longest,
+                "lastStudyDate": today_dt,
+            },
+        )
     else:
         # Streak broken (missed a day or more): reset to 1
-        await progress_repo.upsert_streak(user_id, {
-            "currentStreak": 1,
-            "longestStreak": max(streak.longest_streak, 1),
-            "lastStudyDate": today_dt,
-        })
+        await progress_repo.upsert_streak(
+            user_id,
+            {
+                "currentStreak": 1,
+                "longestStreak": max(streak.longest_streak, 1),
+                "lastStudyDate": today_dt,
+            },
+        )

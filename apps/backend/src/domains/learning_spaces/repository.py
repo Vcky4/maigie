@@ -63,7 +63,11 @@ class LearningSpaceRepository:
         async with await self._session() as session:
             stmt = (
                 select(SpaceMember)
-                .options(selectinload(SpaceMember.space).selectinload(Space.members).selectinload(SpaceMember.user))
+                .options(
+                    selectinload(SpaceMember.space)
+                    .selectinload(Space.members)
+                    .selectinload(SpaceMember.user)
+                )
                 .where(SpaceMember.user_id == user_id)
                 .order_by(SpaceMember.joined_at.desc())
             )
@@ -135,7 +139,11 @@ class LearningSpaceRepository:
 
     async def count_members(self, space_id: str) -> int:
         async with await self._session() as session:
-            stmt = select(func.count()).select_from(SpaceMember).where(SpaceMember.space_id == space_id)
+            stmt = (
+                select(func.count())
+                .select_from(SpaceMember)
+                .where(SpaceMember.space_id == space_id)
+            )
             return (await session.execute(stmt)).scalar() or 0
 
     async def count_plus_seats(self, space_id: str) -> int:
@@ -270,6 +278,7 @@ class LearningSpaceRepository:
 
     async def list_upcoming_sessions(self, space_id: str, *, limit: int = 10) -> list[SpaceSession]:
         from datetime import UTC
+
         now = datetime.now(UTC)
         async with await self._session() as session:
             stmt = (
@@ -387,7 +396,9 @@ class LearningSpaceRepository:
         return {self._INVITE_MAP.get(k, k): v for k, v in data.items() if k in self._INVITE_MAP}
 
     def _map_chat_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._CHAT_GROUP_MAP.get(k, k): v for k, v in data.items() if k in self._CHAT_GROUP_MAP}
+        return {
+            self._CHAT_GROUP_MAP.get(k, k): v for k, v in data.items() if k in self._CHAT_GROUP_MAP
+        }
 
     def _map_space_session(self, data: dict[str, Any]) -> dict[str, Any]:
         return {self._SESSION_MAP.get(k, k): v for k, v in data.items() if k in self._SESSION_MAP}

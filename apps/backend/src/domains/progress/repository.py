@@ -152,7 +152,9 @@ class ProgressRepository:
             await session.execute(stmt)
             await session.commit()
         async with await self._session() as session:
-            result = await session.execute(select(ScheduleBlock).where(ScheduleBlock.id == block_id))
+            result = await session.execute(
+                select(ScheduleBlock).where(ScheduleBlock.id == block_id)
+            )
             return result.scalar_one()
 
     async def delete_block(self, block_id: str) -> None:
@@ -164,7 +166,11 @@ class ProgressRepository:
     async def delete_blocks_for_goal(self, goal_id: str) -> int:
         """Delete all schedule blocks linked to a goal. Returns count deleted."""
         async with await self._session() as session:
-            count_stmt = select(func.count()).select_from(ScheduleBlock).where(ScheduleBlock.goal_id == goal_id)
+            count_stmt = (
+                select(func.count())
+                .select_from(ScheduleBlock)
+                .where(ScheduleBlock.goal_id == goal_id)
+            )
             count = (await session.execute(count_stmt)).scalar() or 0
             stmt = delete(ScheduleBlock).where(ScheduleBlock.goal_id == goal_id)
             await session.execute(stmt)
@@ -282,7 +288,9 @@ class ProgressRepository:
     # Review Items (Spaced Repetition)
     # -----------------------------------------------------------------------
 
-    async def list_due_reviews(self, user_id: str, *, before: datetime | None = None) -> list[ReviewItem]:
+    async def list_due_reviews(
+        self, user_id: str, *, before: datetime | None = None
+    ) -> list[ReviewItem]:
         async with await self._session() as session:
             conditions = [ReviewItem.user_id == user_id]
             if before:
@@ -330,7 +338,9 @@ class ProgressRepository:
             await session.commit()
         async with await self._session() as session:
             result = await session.execute(
-                select(ReviewItem).options(selectinload(ReviewItem.topic)).where(ReviewItem.id == review_id)
+                select(ReviewItem)
+                .options(selectinload(ReviewItem.topic))
+                .where(ReviewItem.id == review_id)
             )
             return result.scalar_one()
 
@@ -466,25 +476,51 @@ class ProgressRepository:
     }
 
     def _map_goal_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._GOAL_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._GOAL_FIELD_MAP}
+        return {
+            self._GOAL_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._GOAL_FIELD_MAP
+        }
 
     def _map_block_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._BLOCK_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._BLOCK_FIELD_MAP}
+        return {
+            self._BLOCK_FIELD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._BLOCK_FIELD_MAP
+        }
 
     def _map_session_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._SESSION_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._SESSION_FIELD_MAP}
+        return {
+            self._SESSION_FIELD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._SESSION_FIELD_MAP
+        }
 
     def _map_streak_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._STREAK_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._STREAK_FIELD_MAP}
+        return {
+            self._STREAK_FIELD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._STREAK_FIELD_MAP
+        }
 
     def _map_review_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._REVIEW_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._REVIEW_FIELD_MAP}
+        return {
+            self._REVIEW_FIELD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._REVIEW_FIELD_MAP
+        }
 
     def _map_achievement_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._ACHIEVEMENT_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._ACHIEVEMENT_FIELD_MAP}
+        return {
+            self._ACHIEVEMENT_FIELD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._ACHIEVEMENT_FIELD_MAP
+        }
 
     def _map_behaviour_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._BEHAVIOUR_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._BEHAVIOUR_FIELD_MAP}
+        return {
+            self._BEHAVIOUR_FIELD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._BEHAVIOUR_FIELD_MAP
+        }
 
     def _to_goal_attr(self, col_name: str) -> str:
         return self._GOAL_FIELD_MAP.get(col_name, col_name)

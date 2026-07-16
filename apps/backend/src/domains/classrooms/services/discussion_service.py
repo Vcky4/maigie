@@ -52,18 +52,21 @@ async def get_classroom_messages(
 
     # Fetch user names via identity
     from src.domains.identity.repository import IdentityRepository
+
     identity_repo = IdentityRepository()
 
     result_list = []
     for m in messages:
         user = await identity_repo.find_by_id(m.user_id)
-        result_list.append({
-            "id": m.id,
-            "userId": m.user_id,
-            "userName": user.name if user else None,
-            "content": m.content,
-            "replyToId": m.reply_to_message_id,
-            "createdAt": m.created_at,
-        })
+        result_list.append(
+            {
+                "id": m.id,
+                "userId": m.user_id,
+                "userName": user.name if user else None,
+                "content": m.content,
+                "replyToId": m.reply_to_message_id,
+                "createdAt": m.created_at,
+            }
+        )
 
     return result_list

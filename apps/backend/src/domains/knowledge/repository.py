@@ -87,7 +87,9 @@ class KnowledgeRepository:
 
     async def update_course(self, course_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
-            stmt = update(Course).where(Course.id == course_id).values(**self._map_course_data(data))
+            stmt = (
+                update(Course).where(Course.id == course_id).values(**self._map_course_data(data))
+            )
             await session.execute(stmt)
             await session.commit()
 
@@ -100,7 +102,11 @@ class KnowledgeRepository:
     async def count_courses(self, where: dict[str, Any]) -> int:
         async with await self._session() as session:
             conditions = self._build_course_conditions(where)
-            stmt = select(func.count()).select_from(Course).where(*conditions) if conditions else select(func.count()).select_from(Course)
+            stmt = (
+                select(func.count()).select_from(Course).where(*conditions)
+                if conditions
+                else select(func.count()).select_from(Course)
+            )
             return (await session.execute(stmt)).scalar() or 0
 
     # -----------------------------------------------------------------------
@@ -231,7 +237,11 @@ class KnowledgeRepository:
         async with await self._session() as session:
             conditions = self._build_resource_conditions(where)
 
-            count_stmt = select(func.count()).select_from(Resource).where(*conditions) if conditions else select(func.count()).select_from(Resource)
+            count_stmt = (
+                select(func.count()).select_from(Resource).where(*conditions)
+                if conditions
+                else select(func.count()).select_from(Resource)
+            )
             total = (await session.execute(count_stmt)).scalar() or 0
 
             stmt = select(Resource).where(*conditions).offset(skip).limit(take)

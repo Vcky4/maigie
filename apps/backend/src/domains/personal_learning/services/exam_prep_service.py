@@ -49,7 +49,9 @@ async def list_preparations(*, user_id: str) -> list[Any]:
     """
     preps = await repo.list_exam_preps(user_id)
     # Sort by exam_date (target date)
-    preps.sort(key=lambda p: p.exam_date if p.exam_date else datetime.max.replace(tzinfo=timezone.utc))
+    preps.sort(
+        key=lambda p: p.exam_date if p.exam_date else datetime.max.replace(tzinfo=timezone.utc)
+    )
     return preps
 
 
@@ -123,10 +125,9 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
 
     # Gather material text
     materials = await repo.list_prep_materials(prep_id)
-    material_text = "\n\n".join([
-        f"[{m.filename}]: {m.extracted_text or ''}"
-        for m in materials if m.extracted_text
-    ])
+    material_text = "\n\n".join(
+        [f"[{m.filename}]: {m.extracted_text or ''}" for m in materials if m.extracted_text]
+    )
 
     if not material_text:
         material_text = f"Subject: {prep.subject}\nDescription: {prep.description or ''}"
@@ -153,14 +154,16 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
     created_topics = []
     for idx, topic in enumerate(topics_data):
         if isinstance(topic, dict) and "title" in topic:
-            prep_topic = await repo.create_prep_topic({
-                "prepId": prep_id,
-                "title": topic["title"],
-                "description": topic.get("description"),
-                "estimatedMinutes": topic.get("estimatedMinutes", 30),
-                "orderIndex": idx,
-                "status": "NOT_STARTED",
-            })
+            prep_topic = await repo.create_prep_topic(
+                {
+                    "prepId": prep_id,
+                    "title": topic["title"],
+                    "description": topic.get("description"),
+                    "estimatedMinutes": topic.get("estimatedMinutes", 30),
+                    "orderIndex": idx,
+                    "status": "NOT_STARTED",
+                }
+            )
             created_topics.append(prep_topic)
 
     return created_topics

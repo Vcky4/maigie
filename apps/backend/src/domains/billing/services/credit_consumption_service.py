@@ -229,10 +229,13 @@ async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None
         )
 
     if needs_daily_reset:
-        updated_user = await identity_repo.update(user.id, {
-            "creditsUsedToday": 0,
-            "lastDailyReset": today_midnight,
-        })
+        updated_user = await identity_repo.update(
+            user.id,
+            {
+                "creditsUsedToday": 0,
+                "lastDailyReset": today_midnight,
+            },
+        )
         logger.info(f"Reset daily credits for user {user.id}")
         return updated_user
 
@@ -513,12 +516,11 @@ async def consume_credits(
         # Increment space credits using raw SQLAlchemy
         from sqlalchemy import update as sa_update
         from src.domains.learning_spaces.db_models import Space
+
         factory = get_session_factory()
         async with factory() as session:
             stmt = (
-                sa_update(Space)
-                .where(Space.id == space_id)
-                .values(credits=Space.credits + credits)
+                sa_update(Space).where(Space.id == space_id).values(credits=Space.credits + credits)
             )
             await session.execute(stmt)
             await session.commit()
@@ -572,9 +574,12 @@ async def consume_credits(
         if purchased_balance >= credits:
             # Consume entirely from purchased credits
             new_purchased_balance = purchased_balance - credits
-            updated_user = await identity_repo.update(user.id, {
-                "purchasedCreditsBalance": new_purchased_balance,
-            })
+            updated_user = await identity_repo.update(
+                user.id,
+                {
+                    "purchasedCreditsBalance": new_purchased_balance,
+                },
+            )
             new_purchased_balance = updated_user.purchased_credits_balance or 0
             notice = (
                 f"Daily limit reached. {credits:,} credits consumed from purchased balance. "
@@ -720,9 +725,12 @@ async def consume_credits(
     # Case 4: Subscription exhausted, purchased credits cover entirely
     if remaining_subscription == 0 and purchased_balance >= credits:
         new_purchased_balance = purchased_balance - credits
-        updated_user = await identity_repo.update(user.id, {
-            "purchasedCreditsBalance": new_purchased_balance,
-        })
+        updated_user = await identity_repo.update(
+            user.id,
+            {
+                "purchasedCreditsBalance": new_purchased_balance,
+            },
+        )
         new_purchased_balance = updated_user.purchased_credits_balance or 0
 
         notice = (
@@ -849,7 +857,9 @@ async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
         "soft_cap": soft_cap,
         "usage_percentage": round(usage_percentage, 2),
         "soft_cap_percentage": round(soft_cap_percentage, 2),
-        "period_start": user.credits_period_start.isoformat() if user.credits_period_start else None,
+        "period_start": (
+            user.credits_period_start.isoformat() if user.credits_period_start else None
+        ),
         "period_end": user.credits_period_end.isoformat() if user.credits_period_end else None,
         "is_soft_cap_reached": soft_cap > 0 and credits_used >= soft_cap,
         "is_hard_cap_reached": hard_cap > 0 and credits_used >= hard_cap,

@@ -4,14 +4,15 @@ Prisma created custom PostgreSQL enum types for columns like tier, role, status,
 SQLAlchemy models use plain String/VARCHAR so we need to convert these columns.
 
 Revision ID: 001_drop_prisma_enums
-Revises: 
+Revises:
 Create Date: 2026-07-16
 """
+
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers
-revision = '001_drop_prisma_enums'
+revision = "001_drop_prisma_enums"
 down_revision = None
 branch_labels = None
 depends_on = None
@@ -75,7 +76,8 @@ def upgrade() -> None:
     """Convert ALL enum columns to VARCHAR by querying pg_catalog for enum types,
     then dropping them."""
     # Nuclear option: find ALL columns using enum types and convert them
-    op.execute("""
+    op.execute(
+        """
         DO $$
         DECLARE
             r RECORD;
@@ -97,10 +99,12 @@ def upgrade() -> None:
                 );
             END LOOP;
         END $$;
-    """)
+    """
+    )
 
     # Now drop ALL enum types
-    op.execute("""
+    op.execute(
+        """
         DO $$
         DECLARE
             r RECORD;
@@ -115,7 +119,8 @@ def upgrade() -> None:
                 EXECUTE format('DROP TYPE IF EXISTS %I CASCADE', r.typname);
             END LOOP;
         END $$;
-    """)
+    """
+    )
 
 
 def downgrade() -> None:

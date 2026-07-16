@@ -319,11 +319,11 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 if context and context.get("sessionId"):
                     requested_session_id = context.get("sessionId")
                     try:
-                        pinned = await intelligence_repo.find_chat_session(
-                            requested_session_id
-                        )
+                        pinned = await intelligence_repo.find_chat_session(requested_session_id)
                         if pinned:
-                            pinned_circle_group = await _get_circle_group_for_session(None, pinned.id)
+                            pinned_circle_group = await _get_circle_group_for_session(
+                                None, pinned.id
+                            )
                             if pinned_circle_group:
                                 if _is_circle_member(pinned_circle_group, user.id):
                                     session = pinned
@@ -376,7 +376,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     llm_user_text = _strip_maigie_mention(user_text)
 
                 # 3.2.0 Check Retroactive Onboarding Need
-                is_onboarded = getattr(user, "isOnboarded", False) or getattr(user, "is_onboarded", False)
+                is_onboarded = getattr(user, "isOnboarded", False) or getattr(
+                    user, "is_onboarded", False
+                )
                 if not is_onboarded:
                     try:
                         identity_repo = IdentityRepository()
@@ -550,12 +552,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 if reply_to_message_id:
                     factory = get_session_factory()
                     async with factory() as sa_session:
-                        stmt = (
-                            select(ChatMessage)
-                            .where(
-                                ChatMessage.id == reply_to_message_id,
-                                ChatMessage.session_id == session.id,
-                            )
+                        stmt = select(ChatMessage).where(
+                            ChatMessage.id == reply_to_message_id,
+                            ChatMessage.session_id == session.id,
                         )
                         result = await sa_session.execute(stmt)
                         reply_target_message = result.scalar_one_or_none()
@@ -642,7 +641,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 ),
                                 "userId": user.id,
                                 "userName": getattr(user, "name", None),
-                                "replyToMessageId": getattr(user_message, "reply_to_message_id", None),
+                                "replyToMessageId": getattr(
+                                    user_message, "reply_to_message_id", None
+                                ),
                                 "replyToMessage": _serialize_reply_preview(reply_target_message),
                             },
                         },
@@ -711,7 +712,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # 4.2 Onboarding router: for new users, run a guided flow instead of LLM chat.
                 # Re-read `isOnboarded` from DB each iteration because the WS `user` object
                 # was fetched at connection time and becomes stale after onboarding completes.
-                is_onboarded = getattr(user, "isOnboarded", False) or getattr(user, "is_onboarded", False)
+                is_onboarded = getattr(user, "isOnboarded", False) or getattr(
+                    user, "is_onboarded", False
+                )
                 if not is_onboarded:
                     try:
                         identity_repo = IdentityRepository()
@@ -941,6 +944,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             # Use raw SQLAlchemy for review item with nested includes
                             from src.domains.progress.db_models import ReviewItem
                             from src.domains.personal_learning.db_models import Note as NoteModel
+
                             factory = get_session_factory()
                             async with factory() as sa_session:
                                 stmt = select(ReviewItem).where(
@@ -951,8 +955,17 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 review = result.scalar_one_or_none()
                                 # Eagerly load related topic/module/course
                                 if review:
-                                    from src.domains.knowledge.db_models import Topic, Module, Course
-                                    topic_stmt = select(Topic).where(Topic.id == review.topic_id) if review.topic_id else None
+                                    from src.domains.knowledge.db_models import (
+                                        Topic,
+                                        Module,
+                                        Course,
+                                    )
+
+                                    topic_stmt = (
+                                        select(Topic).where(Topic.id == review.topic_id)
+                                        if review.topic_id
+                                        else None
+                                    )
                                     topic = None
                                     if topic_stmt is not None:
                                         topic_result = await sa_session.execute(topic_stmt)
@@ -960,11 +973,15 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     module = None
                                     course = None
                                     if topic and topic.module_id:
-                                        mod_stmt = select(Module).where(Module.id == topic.module_id)
+                                        mod_stmt = select(Module).where(
+                                            Module.id == topic.module_id
+                                        )
                                         mod_result = await sa_session.execute(mod_stmt)
                                         module = mod_result.scalar_one_or_none()
                                     if module and module.course_id:
-                                        course_stmt = select(Course).where(Course.id == module.course_id)
+                                        course_stmt = select(Course).where(
+                                            Course.id == module.course_id
+                                        )
                                         course_result = await sa_session.execute(course_stmt)
                                         course = course_result.scalar_one_or_none()
 
@@ -998,15 +1015,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 if module and course:
                                     enriched_context["courseId"] = course.id
                                     enriched_context["courseTitle"] = course.title
-                                    enriched_context["courseDescription"] = (
-                                        course.description or ""
-                                    )
+                                    enriched_context["courseDescription"] = course.description or ""
                                     enriched_context["moduleTitle"] = module.title
                         # Fetch note details if noteId is provided
                         elif context.get("noteId"):
                             note_id = context["noteId"]
                             from src.domains.personal_learning.db_models import Note as NoteModel
                             from src.domains.knowledge.db_models import Topic, Module, Course
+
                             factory = get_session_factory()
                             note = None
                             async with factory() as sa_session:
@@ -1025,11 +1041,15 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         t_result = await sa_session.execute(t_stmt)
                                         note_topic = t_result.scalar_one_or_none()
                                     if note_topic and note_topic.module_id:
-                                        m_stmt = select(Module).where(Module.id == note_topic.module_id)
+                                        m_stmt = select(Module).where(
+                                            Module.id == note_topic.module_id
+                                        )
                                         m_result = await sa_session.execute(m_stmt)
                                         note_module = m_result.scalar_one_or_none()
                                     if note_module and note_module.course_id:
-                                        c_stmt = select(Course).where(Course.id == note_module.course_id)
+                                        c_stmt = select(Course).where(
+                                            Course.id == note_module.course_id
+                                        )
                                         c_result = await sa_session.execute(c_stmt)
                                         note_course = c_result.scalar_one_or_none()
                                     if not note_topic and note.course_id:
@@ -1043,6 +1063,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
                                 )
                                 from src.domains.knowledge.db_models import Topic, Module, Course
+
                                 factory = get_session_factory()
                                 async with factory() as sa_session:
                                     t_stmt = select(Topic).where(Topic.id == note_id)
@@ -1055,7 +1076,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         m_result = await sa_session.execute(m_stmt)
                                         topic_module = m_result.scalar_one_or_none()
                                     if topic_module and topic_module.course_id:
-                                        c_stmt = select(Course).where(Course.id == topic_module.course_id)
+                                        c_stmt = select(Course).where(
+                                            Course.id == topic_module.course_id
+                                        )
                                         c_result = await sa_session.execute(c_stmt)
                                         topic_course = c_result.scalar_one_or_none()
                                 if topic:
@@ -1069,9 +1092,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         enriched_context["moduleTitle"] = topic_module.title
                                         if topic_course:
                                             enriched_context["courseId"] = topic_course.id
-                                            enriched_context["courseTitle"] = (
-                                                topic_course.title
-                                            )
+                                            enriched_context["courseTitle"] = topic_course.title
                                             enriched_context["courseDescription"] = (
                                                 topic_course.description or ""
                                             )
@@ -1089,15 +1110,21 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                             note_course = None
                                             note_direct_course = None
                                             if note and note.topic_id:
-                                                tt_stmt = select(Topic).where(Topic.id == note.topic_id)
+                                                tt_stmt = select(Topic).where(
+                                                    Topic.id == note.topic_id
+                                                )
                                                 tt_result = await sa_session.execute(tt_stmt)
                                                 note_topic = tt_result.scalar_one_or_none()
                                             if note_topic and note_topic.module_id:
-                                                mm_stmt = select(Module).where(Module.id == note_topic.module_id)
+                                                mm_stmt = select(Module).where(
+                                                    Module.id == note_topic.module_id
+                                                )
                                                 mm_result = await sa_session.execute(mm_stmt)
                                                 note_module = mm_result.scalar_one_or_none()
                                             if note_module and note_module.course_id:
-                                                cc_stmt = select(Course).where(Course.id == note_module.course_id)
+                                                cc_stmt = select(Course).where(
+                                                    Course.id == note_module.course_id
+                                                )
                                                 cc_result = await sa_session.execute(cc_stmt)
                                                 note_course = cc_result.scalar_one_or_none()
                                         enriched_context["noteId"] = ln.id
@@ -1114,12 +1141,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     if note_module:
                                         enriched_context["moduleTitle"] = note_module.title
                                         if note_course:
-                                            enriched_context["courseId"] = (
-                                                note_course.id
-                                            )
-                                            enriched_context["courseTitle"] = (
-                                                note_course.title
-                                            )
+                                            enriched_context["courseId"] = note_course.id
+                                            enriched_context["courseTitle"] = note_course.title
                                             enriched_context["courseDescription"] = (
                                                 note_course.description or ""
                                             )
@@ -1138,6 +1161,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             enriched_context["topicId"] = topic_id
                             from src.domains.knowledge.db_models import Topic, Module, Course
                             from src.domains.personal_learning.db_models import Note as NoteModel
+
                             factory = get_session_factory()
                             async with factory() as sa_session:
                                 t_stmt = select(Topic).where(Topic.id == topic_id)
@@ -1150,7 +1174,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                     m_result = await sa_session.execute(m_stmt)
                                     topic_module = m_result.scalar_one_or_none()
                                 if topic_module and topic_module.course_id:
-                                    c_stmt = select(Course).where(Course.id == topic_module.course_id)
+                                    c_stmt = select(Course).where(
+                                        Course.id == topic_module.course_id
+                                    )
                                     c_result = await sa_session.execute(c_stmt)
                                     topic_course = c_result.scalar_one_or_none()
                             if topic:
@@ -1168,7 +1194,10 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 async with factory() as sa_session:
                                     notes_stmt = (
                                         select(NoteModel)
-                                        .where(NoteModel.topic_id == topic_id, NoteModel.user_id == user.id)
+                                        .where(
+                                            NoteModel.topic_id == topic_id,
+                                            NoteModel.user_id == user.id,
+                                        )
                                         .order_by(NoteModel.updated_at.asc())
                                     )
                                     notes_result = await sa_session.execute(notes_stmt)
@@ -1196,6 +1225,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # Fetch course details if courseId is provided (and not already fetched)
                         elif context.get("courseId") and not enriched_context.get("courseTitle"):
                             from src.domains.knowledge.db_models import Course
+
                             factory = get_session_factory()
                             async with factory() as sa_session:
                                 c_stmt = select(Course).where(Course.id == context["courseId"])
@@ -1463,9 +1493,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             scope=PERSONAL_SCOPE,
                             personal_tier=(str(user.tier) if getattr(user, "tier", None) else None),
                         )
-                    model_preference = await _get_user_model_preference(
-                        user.id, capability="chat"
-                    )
+                    model_preference = await _get_user_model_preference(user.id, capability="chat")
 
                     # Route through the multi-provider LLM router
                     llm_router = get_llm_router()

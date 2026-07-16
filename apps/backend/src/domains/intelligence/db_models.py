@@ -14,8 +14,15 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, Integer, Numeric, String, Text,
-    ForeignKey, Index,
+    Boolean,
+    DateTime,
+    Float,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    ForeignKey,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -31,24 +38,40 @@ from src.shared.database.base import Base, TimestampMixin
 class ChatSession(Base, TimestampMixin):
     __tablename__ = "ChatSession"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    is_active: Mapped[bool] = mapped_column("isActive", Boolean, default=True, server_default="true")
-    is_space_room: Mapped[bool] = mapped_column("isSpaceRoom", Boolean, default=False, server_default="false")
-    session_type: Mapped[str] = mapped_column("sessionType", String, default="general", server_default="general")
+    is_active: Mapped[bool] = mapped_column(
+        "isActive", Boolean, default=True, server_default="true"
+    )
+    is_space_room: Mapped[bool] = mapped_column(
+        "isSpaceRoom", Boolean, default=False, server_default="false"
+    )
+    session_type: Mapped[str] = mapped_column(
+        "sessionType", String, default="general", server_default="general"
+    )
 
     # Context links
     space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
     course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    exam_prep_id: Mapped[Optional[str]] = mapped_column("examPrepId", String, nullable=True, index=True)
+    exam_prep_id: Mapped[Optional[str]] = mapped_column(
+        "examPrepId", String, nullable=True, index=True
+    )
     note_id: Mapped[Optional[str]] = mapped_column("noteId", String, nullable=True, index=True)
 
     # Relationships
-    messages: Mapped[list["ChatMessage"]] = relationship("ChatMessage", back_populates="session", lazy="noload")
-    conversation_summaries: Mapped[list["ConversationSummary"]] = relationship("ConversationSummary", back_populates="session", lazy="noload")
+    messages: Mapped[list["ChatMessage"]] = relationship(
+        "ChatMessage", back_populates="session", lazy="noload"
+    )
+    conversation_summaries: Mapped[list["ConversationSummary"]] = relationship(
+        "ConversationSummary", back_populates="session", lazy="noload"
+    )
 
     __table_args__ = (
         Index("ChatSession_isSpaceRoom_idx", "isSpaceRoom"),
@@ -69,15 +92,29 @@ class ChatSession(Base, TimestampMixin):
 class ChatMessage(Base):
     __tablename__ = "ChatMessage"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    session_id: Mapped[str] = mapped_column("sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    session_id: Mapped[str] = mapped_column(
+        "sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     # Review threading
-    review_item_id: Mapped[Optional[str]] = mapped_column("reviewItemId", String, nullable=True, index=True)
+    review_item_id: Mapped[Optional[str]] = mapped_column(
+        "reviewItemId", String, nullable=True, index=True
+    )
 
     # Reply threading
-    reply_to_message_id: Mapped[Optional[str]] = mapped_column("replyToMessageId", String, ForeignKey("ChatMessage.id", ondelete="SET NULL"), nullable=True, index=True)
+    reply_to_message_id: Mapped[Optional[str]] = mapped_column(
+        "replyToMessageId",
+        String,
+        ForeignKey("ChatMessage.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     role: Mapped[str] = mapped_column(String, nullable=False)  # USER, ASSISTANT, SYSTEM
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -101,13 +138,16 @@ class ChatMessage(Base):
     revenue_usd: Mapped[Optional[float]] = mapped_column("revenueUsd", Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        "createdAt", DateTime(timezone=True),
+        "createdAt",
+        DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     # Relationships
     session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="messages")
-    actions: Mapped[list["AIActionLog"]] = relationship("AIActionLog", back_populates="message", lazy="noload")
+    actions: Mapped[list["AIActionLog"]] = relationship(
+        "AIActionLog", back_populates="message", lazy="noload"
+    )
 
     __table_args__ = (
         Index("ChatMessage_sessionId_reviewItemId_idx", "sessionId", "reviewItemId"),
@@ -126,8 +166,12 @@ class ChatMessage(Base):
 class AIActionLog(Base):
     __tablename__ = "AIActionLog"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    message_id: Mapped[str] = mapped_column("messageId", String, ForeignKey("ChatMessage.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    message_id: Mapped[str] = mapped_column(
+        "messageId", String, ForeignKey("ChatMessage.id", ondelete="CASCADE"), index=True
+    )
 
     action_type: Mapped[str] = mapped_column("actionType", String, nullable=False)
     action_data: Mapped[dict] = mapped_column("actionData", JSON, nullable=False)
@@ -135,7 +179,8 @@ class AIActionLog(Base):
     error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        "createdAt", DateTime(timezone=True),
+        "createdAt",
+        DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
@@ -151,7 +196,9 @@ class AIActionLog(Base):
 class LlmCostRecord(Base):
     __tablename__ = "LlmCostRecord"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
     user_id: Mapped[str] = mapped_column("userId", String, index=True)
     user_tier: Mapped[str] = mapped_column("userTier", String, nullable=False)
     provider: Mapped[str] = mapped_column(String, nullable=False)
@@ -161,7 +208,8 @@ class LlmCostRecord(Base):
     cost_usd: Mapped[Decimal] = mapped_column("costUsd", Numeric(12, 6), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
-        "createdAt", DateTime(timezone=True),
+        "createdAt",
+        DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
@@ -180,8 +228,12 @@ class LlmCostRecord(Base):
 class UserInteractionMemory(Base):
     __tablename__ = "UserInteractionMemory"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     interaction_type: Mapped[str] = mapped_column("interactionType", String, nullable=False)
     entity_type: Mapped[str] = mapped_column("entityType", String, nullable=False)
@@ -191,7 +243,8 @@ class UserInteractionMemory(Base):
     importance: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
 
     created_at: Mapped[datetime] = mapped_column(
-        "createdAt", DateTime(timezone=True),
+        "createdAt",
+        DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
@@ -210,15 +263,23 @@ class UserInteractionMemory(Base):
 class UserFact(Base, TimestampMixin):
     __tablename__ = "UserFact"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     category: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    source: Mapped[str] = mapped_column(String, default="conversation", server_default="conversation")
+    source: Mapped[str] = mapped_column(
+        String, default="conversation", server_default="conversation"
+    )
 
     confidence: Mapped[float] = mapped_column(Float, default=0.8, server_default="0.8")
-    is_active: Mapped[bool] = mapped_column("isActive", Boolean, default=True, server_default="true")
+    is_active: Mapped[bool] = mapped_column(
+        "isActive", Boolean, default=True, server_default="true"
+    )
 
     __table_args__ = (
         Index("UserFact_userId_category_idx", "userId", "category"),
@@ -234,26 +295,35 @@ class UserFact(Base, TimestampMixin):
 class ConversationSummary(Base):
     __tablename__ = "ConversationSummary"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
-    session_id: Mapped[str] = mapped_column("sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    session_id: Mapped[str] = mapped_column(
+        "sessionId", String, ForeignKey("ChatSession.id", ondelete="CASCADE"), index=True
+    )
 
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     key_topics: Mapped[Optional[list]] = mapped_column("keyTopics", ARRAY(String), nullable=True)
-    actions_taken: Mapped[Optional[list]] = mapped_column("actionsTaken", ARRAY(String), nullable=True)
+    actions_taken: Mapped[Optional[list]] = mapped_column(
+        "actionsTaken", ARRAY(String), nullable=True
+    )
     emotional_tone: Mapped[Optional[str]] = mapped_column("emotionalTone", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        "createdAt", DateTime(timezone=True),
+        "createdAt",
+        DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
     # Relationships
-    session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="conversation_summaries")
-
-    __table_args__ = (
-        Index("ConversationSummary_userId_createdAt_idx", "userId", "createdAt"),
+    session: Mapped["ChatSession"] = relationship(
+        "ChatSession", back_populates="conversation_summaries"
     )
+
+    __table_args__ = (Index("ConversationSummary_userId_createdAt_idx", "userId", "createdAt"),)
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +334,12 @@ class ConversationSummary(Base):
 class AIAgentTask(Base, TimestampMixin):
     __tablename__ = "AIAgentTask"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     task_type: Mapped[str] = mapped_column("taskType", String, nullable=False)
     status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
@@ -273,9 +347,15 @@ class AIAgentTask(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     action_data: Mapped[Optional[dict]] = mapped_column("actionData", JSON, nullable=True)
-    scheduled_at: Mapped[datetime] = mapped_column("scheduledAt", DateTime(timezone=True), nullable=False)
-    sent_at: Mapped[Optional[datetime]] = mapped_column("sentAt", DateTime(timezone=True), nullable=True)
-    dismissed_at: Mapped[Optional[datetime]] = mapped_column("dismissedAt", DateTime(timezone=True), nullable=True)
+    scheduled_at: Mapped[datetime] = mapped_column(
+        "scheduledAt", DateTime(timezone=True), nullable=False
+    )
+    sent_at: Mapped[Optional[datetime]] = mapped_column(
+        "sentAt", DateTime(timezone=True), nullable=True
+    )
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+        "dismissedAt", DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("AIAgentTask_userId_status_idx", "userId", "status"),
@@ -291,8 +371,12 @@ class AIAgentTask(Base, TimestampMixin):
 class LearningInsight(Base, TimestampMixin):
     __tablename__ = "LearningInsight"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     insight_type: Mapped[str] = mapped_column("insightType", String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -300,7 +384,9 @@ class LearningInsight(Base, TimestampMixin):
     data_points: Mapped[int] = mapped_column("dataPoints", Integer, default=1, server_default="1")
     metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
 
-    is_active: Mapped[bool] = mapped_column("isActive", Boolean, default=True, server_default="true")
+    is_active: Mapped[bool] = mapped_column(
+        "isActive", Boolean, default=True, server_default="true"
+    )
 
     __table_args__ = (
         Index("LearningInsight_userId_insightType_idx", "userId", "insightType"),
@@ -316,8 +402,12 @@ class LearningInsight(Base, TimestampMixin):
 class UserUpload(Base):
     __tablename__ = "UserUpload"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
 
     url: Mapped[str] = mapped_column(String, nullable=False)
     filename: Mapped[str] = mapped_column(String, nullable=False)
@@ -328,10 +418,9 @@ class UserUpload(Base):
     chat_message_id: Mapped[Optional[str]] = mapped_column("chatMessageId", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        "createdAt", DateTime(timezone=True),
+        "createdAt",
+        DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
 
-    __table_args__ = (
-        Index("UserUpload_userId_createdAt_idx", "userId", "createdAt"),
-    )
+    __table_args__ = (Index("UserUpload_userId_createdAt_idx", "userId", "createdAt"),)

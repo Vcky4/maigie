@@ -95,7 +95,11 @@ async def get_messages(
 
     factory = get_session_factory()
     async with factory() as session:
-        count_stmt = select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == session_id)
+        count_stmt = (
+            select(func.count())
+            .select_from(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+        )
         total = (await session.execute(count_stmt)).scalar() or 0
 
         conditions = [ChatMessage.session_id == session_id]

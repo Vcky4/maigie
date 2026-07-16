@@ -28,14 +28,16 @@ async def record(
     Context dict indicates source: {"source": "personal"|"collaborative", ...}
     """
     now = datetime.now(timezone.utc)
-    return await repo.create_feed_entry({
-        "userId": user_id,
-        "activityType": activity_type,
-        "title": title,
-        "description": description,
-        "context": context,
-        "occurredAt": now,
-    })
+    return await repo.create_feed_entry(
+        {
+            "userId": user_id,
+            "activityType": activity_type,
+            "title": title,
+            "description": description,
+            "context": context,
+            "occurredAt": now,
+        }
+    )
 
 
 async def list_feed(*, user_id: str, page: int = 1, page_size: int = 20) -> tuple[list[Any], int]:

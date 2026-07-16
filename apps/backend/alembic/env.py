@@ -21,14 +21,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Load .env
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from src.shared.database.base import Base
 
 # Import all domain models so Alembic can see them for autogenerate
 from src.domains.identity.db_models import (  # noqa: F401
-    User, UserPreferences, OAuthClient, OAuthCode, OAuthToken,
-    DeviceToken, ModelPreference, LimitReachedEmailLog,
+    User,
+    UserPreferences,
+    OAuthClient,
+    OAuthCode,
+    OAuthToken,
+    DeviceToken,
+    ModelPreference,
+    LimitReachedEmailLog,
 )
 
 # Alembic Config object

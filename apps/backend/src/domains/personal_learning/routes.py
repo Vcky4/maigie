@@ -70,7 +70,9 @@ async def get_profile(current_user: CurrentUser):
     """Get the learner's current learning profile."""
     profile = await onboarding_service.get_profile(user_id=current_user.id)
     if not profile:
-        raise HTTPException(status_code=404, detail="Learning profile not found. Complete onboarding first.")
+        raise HTTPException(
+            status_code=404, detail="Learning profile not found. Complete onboarding first."
+        )
     return profile
 
 
@@ -102,6 +104,7 @@ async def record_topic_study(course_id: str, topic_id: str, current_user: Curren
 async def complete_topic(course_id: str, topic_id: str, current_user: CurrentUser):
     """Mark a topic as completed. Emits topic.completed event."""
     from .events import emit_topic_completed
+
     await emit_topic_completed(current_user.id, topic_id, course_id)
     return {"message": "Topic completed"}
 
@@ -114,7 +117,9 @@ async def complete_topic(course_id: str, topic_id: str, current_user: CurrentUse
 @router.post("/notes", response_model=models.NoteResponse, status_code=201)
 async def create_note(body: models.NoteCreate, current_user: CurrentUser):
     """Create a personal note."""
-    return await note_service.create_note(user_id=current_user.id, data=body.model_dump(exclude_unset=True))
+    return await note_service.create_note(
+        user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
 
 
 @router.get("/notes", response_model=models.NoteListResponse)
@@ -130,8 +135,14 @@ async def list_notes(
 ):
     """List notes with filtering and pagination."""
     items, total = await note_service.list_notes(
-        user_id=current_user.id, page=page, size=size,
-        search=search, tag=tag, course_id=courseId, topic_id=topicId, archived=archived,
+        user_id=current_user.id,
+        page=page,
+        size=size,
+        search=search,
+        tag=tag,
+        course_id=courseId,
+        topic_id=topicId,
+        archived=archived,
     )
     pages = (total + size - 1) // size if total > 0 else 0
     return models.NoteListResponse(items=items, total=total, page=page, size=size, pages=pages)
@@ -146,7 +157,9 @@ async def get_note(note_id: str, current_user: CurrentUser):
 @router.patch("/notes/{note_id}", response_model=models.NoteResponse)
 async def update_note(note_id: str, body: models.NoteUpdate, current_user: CurrentUser):
     """Update a note."""
-    return await note_service.update_note(user_id=current_user.id, note_id=note_id, data=body.model_dump(exclude_unset=True))
+    return await note_service.update_note(
+        user_id=current_user.id, note_id=note_id, data=body.model_dump(exclude_unset=True)
+    )
 
 
 @router.delete("/notes/{note_id}", status_code=204)
@@ -157,16 +170,24 @@ async def delete_note(note_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Note not found")
 
 
-@router.post("/notes/{note_id}/attachments", response_model=models.NoteAttachmentResponse, status_code=201)
-async def add_attachment(note_id: str, body: models.NoteAttachmentCreate, current_user: CurrentUser):
+@router.post(
+    "/notes/{note_id}/attachments", response_model=models.NoteAttachmentResponse, status_code=201
+)
+async def add_attachment(
+    note_id: str, body: models.NoteAttachmentCreate, current_user: CurrentUser
+):
     """Add an attachment to a note."""
-    return await note_service.add_attachment(user_id=current_user.id, note_id=note_id, data=body.model_dump())
+    return await note_service.add_attachment(
+        user_id=current_user.id, note_id=note_id, data=body.model_dump()
+    )
 
 
 @router.delete("/notes/{note_id}/attachments/{attachment_id}", status_code=204)
 async def remove_attachment(note_id: str, attachment_id: str, current_user: CurrentUser):
     """Remove an attachment from a note."""
-    removed = await note_service.remove_attachment(user_id=current_user.id, note_id=note_id, attachment_id=attachment_id)
+    removed = await note_service.remove_attachment(
+        user_id=current_user.id, note_id=note_id, attachment_id=attachment_id
+    )
     if not removed:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
@@ -186,7 +207,9 @@ async def retake_note(note_id: str, current_user: CurrentUser):
 @router.post("/notes/{note_id}/import", response_model=models.MessageResponse)
 async def import_note(note_id: str, body: models.NoteImportRequest, current_user: CurrentUser):
     """Import a personal note to a learning space."""
-    await note_service.import_to_space(user_id=current_user.id, note_id=note_id, space_id=body.spaceId)
+    await note_service.import_to_space(
+        user_id=current_user.id, note_id=note_id, space_id=body.spaceId
+    )
     return models.MessageResponse(message="Note imported successfully")
 
 
@@ -198,7 +221,9 @@ async def import_note(note_id: str, body: models.NoteImportRequest, current_user
 @router.post("/preparations", response_model=models.PrepSummaryResponse, status_code=201)
 async def create_preparation(body: models.PrepCreateRequest, current_user: CurrentUser):
     """Create a new preparation."""
-    return await exam_prep_service.create_preparation(user_id=current_user.id, data=body.model_dump())
+    return await exam_prep_service.create_preparation(
+        user_id=current_user.id, data=body.model_dump()
+    )
 
 
 @router.get("/preparations", response_model=list[models.PrepSummaryResponse])
@@ -216,7 +241,9 @@ async def get_preparation(prep_id: str, current_user: CurrentUser):
 @router.patch("/preparations/{prep_id}")
 async def update_preparation(prep_id: str, body: models.ExamPrepUpdate, current_user: CurrentUser):
     """Update a preparation."""
-    return await exam_prep_service.update_preparation(user_id=current_user.id, prep_id=prep_id, data=body.model_dump(exclude_unset=True))
+    return await exam_prep_service.update_preparation(
+        user_id=current_user.id, prep_id=prep_id, data=body.model_dump(exclude_unset=True)
+    )
 
 
 @router.delete("/preparations/{prep_id}", status_code=204)
@@ -227,13 +254,19 @@ async def delete_preparation(prep_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Preparation not found")
 
 
-@router.post("/preparations/{prep_id}/materials", response_model=models.PrepMaterialResponse, status_code=201)
+@router.post(
+    "/preparations/{prep_id}/materials", response_model=models.PrepMaterialResponse, status_code=201
+)
 async def upload_material(prep_id: str, body: dict, current_user: CurrentUser):
     """Upload material to a preparation."""
-    return await exam_prep_service.upload_material(user_id=current_user.id, prep_id=prep_id, data=body)
+    return await exam_prep_service.upload_material(
+        user_id=current_user.id, prep_id=prep_id, data=body
+    )
 
 
-@router.post("/preparations/{prep_id}/extract-topics", response_model=list[models.PrepTopicResponse])
+@router.post(
+    "/preparations/{prep_id}/extract-topics", response_model=list[models.PrepTopicResponse]
+)
 async def extract_topics(prep_id: str, current_user: CurrentUser):
     """Trigger AI topic extraction from materials."""
     return await exam_prep_service.extract_topics(user_id=current_user.id, prep_id=prep_id)
@@ -266,19 +299,26 @@ async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
 # ===========================================================================
 
 
-@router.post("/preparations/{prep_id}/quizzes", response_model=models.QuizSessionResponse, status_code=201)
+@router.post(
+    "/preparations/{prep_id}/quizzes", response_model=models.QuizSessionResponse, status_code=201
+)
 async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: CurrentUser):
     """Start a quiz session."""
     return await quiz_engine.start_quiz(
-        user_id=current_user.id, prep_id=prep_id,
-        mode=body.mode, topic_id=body.topicId, question_count=body.questionCount,
+        user_id=current_user.id,
+        prep_id=prep_id,
+        mode=body.mode,
+        topic_id=body.topicId,
+        question_count=body.questionCount,
     )
 
 
 @router.post("/quizzes/{quiz_id}/answer", response_model=models.AnswerResultResponse)
 async def submit_answer(quiz_id: str, body: models.AnswerSubmitRequest, current_user: CurrentUser):
     """Submit an answer to a quiz question."""
-    return await quiz_engine.submit_answer(user_id=current_user.id, quiz_id=quiz_id, data=body.model_dump())
+    return await quiz_engine.submit_answer(
+        user_id=current_user.id, quiz_id=quiz_id, data=body.model_dump()
+    )
 
 
 @router.post("/quizzes/{quiz_id}/complete", response_model=models.QuizSummaryResponse)
@@ -311,9 +351,13 @@ async def get_due_flashcards(current_user: CurrentUser):
 
 
 @router.post("/flashcards/{card_id}/review", response_model=models.FlashcardResponse)
-async def review_flashcard(card_id: str, body: models.FlashcardReviewRequest, current_user: CurrentUser):
+async def review_flashcard(
+    card_id: str, body: models.FlashcardReviewRequest, current_user: CurrentUser
+):
     """Submit a flashcard review (quality 0-5)."""
-    result = await flashcard_service.review_flashcard(user_id=current_user.id, card_id=card_id, quality=body.quality)
+    result = await flashcard_service.review_flashcard(
+        user_id=current_user.id, card_id=card_id, quality=body.quality
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Flashcard not found")
     return result
@@ -376,7 +420,11 @@ async def list_resources(
 ):
     """List saved resources."""
     items, _ = await resource_service.list_resources(
-        user_id=current_user.id, source_type=sourceType, search=search, page=page, page_size=pageSize
+        user_id=current_user.id,
+        source_type=sourceType,
+        search=search,
+        page=page,
+        page_size=pageSize,
     )
     return items
 
@@ -384,15 +432,21 @@ async def list_resources(
 @router.delete("/resources/{resource_id}", status_code=204)
 async def delete_resource(resource_id: str, current_user: CurrentUser):
     """Remove a resource from personal library."""
-    deleted = await resource_service.delete_resource(user_id=current_user.id, resource_id=resource_id)
+    deleted = await resource_service.delete_resource(
+        user_id=current_user.id, resource_id=resource_id
+    )
     if not deleted:
         raise HTTPException(status_code=404, detail="Resource not found")
 
 
 @router.patch("/resources/{resource_id}/tags", response_model=models.SavedResourceResponse)
-async def update_resource_tags(resource_id: str, body: models.SavedResourceTagUpdate, current_user: CurrentUser):
+async def update_resource_tags(
+    resource_id: str, body: models.SavedResourceTagUpdate, current_user: CurrentUser
+):
     """Update tags on a saved resource."""
-    result = await resource_service.update_tags(user_id=current_user.id, resource_id=resource_id, tags=body.tags)
+    result = await resource_service.update_tags(
+        user_id=current_user.id, resource_id=resource_id, tags=body.tags
+    )
     if not result:
         raise HTTPException(status_code=404, detail="Resource not found")
     return result
@@ -421,10 +475,14 @@ async def get_study_plan(plan_id: str, current_user: CurrentUser):
     return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
 
 
-@router.post("/study-plans/{plan_id}/items/{item_id}/complete", response_model=models.StudyPlanResponse)
+@router.post(
+    "/study-plans/{plan_id}/items/{item_id}/complete", response_model=models.StudyPlanResponse
+)
 async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
     """Complete a study plan item."""
-    return await study_plan_service.complete_item(user_id=current_user.id, plan_id=plan_id, item_id=item_id)
+    return await study_plan_service.complete_item(
+        user_id=current_user.id, plan_id=plan_id, item_id=item_id
+    )
 
 
 # ===========================================================================
@@ -436,6 +494,7 @@ async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUs
 async def generate_document(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """Generate an academic document."""
     from .services import document_impl
+
     return await document_impl.generate_document(user_id=current_user.id, data=body.model_dump())
 
 
@@ -447,7 +506,10 @@ async def list_documents(
 ):
     """List generated documents."""
     from .services import document_impl
-    items, total = await document_impl.list_documents(user_id=current_user.id, page=page, page_size=pageSize)
+
+    items, total = await document_impl.list_documents(
+        user_id=current_user.id, page=page, page_size=pageSize
+    )
     return models.DocumentListResponse(items=items, total=total, page=page, pageSize=pageSize)
 
 
@@ -455,6 +517,7 @@ async def list_documents(
 async def get_shared_document(share_id: str):
     """Get a publicly shared document (no auth required)."""
     from .services import document_impl
+
     doc = await document_impl.get_by_share_id(share_id=share_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -465,6 +528,7 @@ async def get_shared_document(share_id: str):
 async def get_document(doc_id: str, current_user: CurrentUser):
     """Get a document by ID."""
     from .services import document_impl
+
     return await document_impl.get_document(user_id=current_user.id, doc_id=doc_id)
 
 
@@ -472,6 +536,7 @@ async def get_document(doc_id: str, current_user: CurrentUser):
 async def publish_document(doc_id: str, current_user: CurrentUser):
     """Make a document public with a share link."""
     from .services import document_impl
+
     return await document_impl.publish_document(user_id=current_user.id, doc_id=doc_id)
 
 
@@ -512,13 +577,17 @@ async def get_discovery(current_user: CurrentUser):
 @router.post("/discovery/{recommendation_id}/follow", status_code=204)
 async def follow_recommendation(recommendation_id: str, current_user: CurrentUser):
     """Follow a recommendation."""
-    await discovery_service.follow_recommendation(user_id=current_user.id, recommendation_id=recommendation_id)
+    await discovery_service.follow_recommendation(
+        user_id=current_user.id, recommendation_id=recommendation_id
+    )
 
 
 @router.post("/discovery/{recommendation_id}/dismiss", status_code=204)
 async def dismiss_recommendation(recommendation_id: str, current_user: CurrentUser):
     """Dismiss a recommendation."""
-    await discovery_service.dismiss_recommendation(user_id=current_user.id, recommendation_id=recommendation_id)
+    await discovery_service.dismiss_recommendation(
+        user_id=current_user.id, recommendation_id=recommendation_id
+    )
 
 
 # ===========================================================================
@@ -555,7 +624,9 @@ async def generate_reflection(body: models.ReflectionGenerateRequest, current_us
 @router.get("/reflections/{reflection_id}", response_model=models.ReflectionResponse)
 async def get_reflection(reflection_id: str, current_user: CurrentUser):
     """Get a specific reflection."""
-    return await reflection_service.get_reflection(user_id=current_user.id, reflection_id=reflection_id)
+    return await reflection_service.get_reflection(
+        user_id=current_user.id, reflection_id=reflection_id
+    )
 
 
 # ===========================================================================
@@ -586,5 +657,7 @@ async def get_activity_feed(
     pageSize: int = Query(20, ge=1, le=100),
 ):
     """Get unified activity feed (personal + collaborative)."""
-    items, total = await activity_feed_service.list_feed(user_id=current_user.id, page=page, page_size=pageSize)
+    items, total = await activity_feed_service.list_feed(
+        user_id=current_user.id, page=page, page_size=pageSize
+    )
     return models.ActivityFeedResponse(items=items, total=total, page=page, pageSize=pageSize)

@@ -50,13 +50,15 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
         prep_topics = await repo.list_prep_topics(prep_id)
         for t in prep_topics:
             if t.status != "MASTERED":
-                topics_to_plan.append({
-                    "title": t.title,
-                    "estimatedMinutes": t.estimated_minutes or 30,
-                    "topicId": None,
-                    "prepTopicId": t.id,
-                    "type": "STUDY",
-                })
+                topics_to_plan.append(
+                    {
+                        "title": t.title,
+                        "estimatedMinutes": t.estimated_minutes or 30,
+                        "topicId": None,
+                        "prepTopicId": t.id,
+                        "type": "STUDY",
+                    }
+                )
 
     if not topics_to_plan:
         # Generate generic plan items from goal description via LLM
@@ -74,30 +76,34 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     all_items = sorted(plan_items + review_items, key=lambda x: x["scheduledDate"])
 
     # Create plan
-    plan = await repo.create_study_plan({
-        "userId": user_id,
-        "title": title,
-        "goalDescription": goal_description,
-        "deadline": deadline,
-        "prepId": prep_id,
-        "status": "ACTIVE",
-        "totalItems": len(all_items),
-        "completedItems": 0,
-    })
+    plan = await repo.create_study_plan(
+        {
+            "userId": user_id,
+            "title": title,
+            "goalDescription": goal_description,
+            "deadline": deadline,
+            "prepId": prep_id,
+            "status": "ACTIVE",
+            "totalItems": len(all_items),
+            "completedItems": 0,
+        }
+    )
 
     # Create plan items
     for item in all_items:
-        await repo.create_plan_item({
-            "planId": plan.id,
-            "title": item["title"],
-            "description": item.get("description"),
-            "scheduledDate": item["scheduledDate"],
-            "estimatedMinutes": item.get("estimatedMinutes", 30),
-            "itemType": item.get("type", "STUDY"),
-            "topicId": item.get("topicId"),
-            "prepTopicId": item.get("prepTopicId"),
-            "status": "PENDING",
-        })
+        await repo.create_plan_item(
+            {
+                "planId": plan.id,
+                "title": item["title"],
+                "description": item.get("description"),
+                "scheduledDate": item["scheduledDate"],
+                "estimatedMinutes": item.get("estimatedMinutes", 30),
+                "itemType": item.get("type", "STUDY"),
+                "topicId": item.get("topicId"),
+                "prepTopicId": item.get("prepTopicId"),
+                "status": "PENDING",
+            }
+        )
 
     return await repo.get_study_plan(plan.id, user_id)
 
@@ -130,10 +136,13 @@ async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
         raise NotFoundError("StudyPlan", plan_id)
 
     now = datetime.now(timezone.utc)
-    await repo.update_plan_item(item_id, {
-        "status": "COMPLETED",
-        "completedAt": now,
-    })
+    await repo.update_plan_item(
+        item_id,
+        {
+            "status": "COMPLETED",
+            "completedAt": now,
+        },
+    )
 
     # Update plan completion count
     new_completed = (plan.completed_items or 0) + 1
@@ -158,10 +167,7 @@ async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
 
     # Check if behind schedule and redistribute if needed (Req 7.5)
     items = await repo.list_plan_items(plan_id)
-    pending_past_due = [
-        i for i in items
-        if i.status == "PENDING" and i.scheduled_date < now
-    ]
+    pending_past_due = [i for i in items if i.status == "PENDING" and i.scheduled_date < now]
     if len(pending_past_due) > 2:
         await _redistribute_plan(plan_id, user_id)
 
@@ -231,15 +237,17 @@ def _distribute_items(
         actual_day = day_index % days_available
         scheduled = start + timedelta(days=actual_day + 1)
 
-        items.append({
-            "title": topic["title"],
-            "description": topic.get("description"),
-            "scheduledDate": scheduled,
-            "estimatedMinutes": est_minutes,
-            "type": topic.get("type", "STUDY"),
-            "topicId": topic.get("topicId"),
-            "prepTopicId": topic.get("prepTopicId"),
-        })
+        items.append(
+            {
+                "title": topic["title"],
+                "description": topic.get("description"),
+                "scheduledDate": scheduled,
+                "estimatedMinutes": est_minutes,
+                "type": topic.get("type", "STUDY"),
+                "topicId": topic.get("topicId"),
+                "prepTopicId": topic.get("prepTopicId"),
+            }
+        )
 
         daily_minutes_used += est_minutes
         if daily_minutes_used >= max_daily_minutes:
@@ -267,14 +275,16 @@ def _add_review_items(
         # Don't schedule reviews past the plan end
         plan_end = start + timedelta(days=days_available)
         if review_date <= plan_end:
-            reviews.append({
-                "title": f"Review: {item['title']}",
-                "scheduledDate": review_date,
-                "estimatedMinutes": 15,
-                "type": "REVIEW",
-                "topicId": item.get("topicId"),
-                "prepTopicId": item.get("prepTopicId"),
-            })
+            reviews.append(
+                {
+                    "title": f"Review: {item['title']}",
+                    "scheduledDate": review_date,
+                    "estimatedMinutes": 15,
+                    "type": "REVIEW",
+                    "topicId": item.get("topicId"),
+                    "prepTopicId": item.get("prepTopicId"),
+                }
+            )
 
     return reviews
 

@@ -108,12 +108,14 @@ async def add_attachment(*, user_id: str, note_id: str, data: dict[str, Any]) ->
     note = await repo.find_note(note_id, user_id)
     if not note:
         raise NotFoundError("Note", note_id)
-    return await repo.create_attachment({
-        "noteId": note_id,
-        "filename": data["filename"],
-        "url": data["url"],
-        "size": data.get("size"),
-    })
+    return await repo.create_attachment(
+        {
+            "noteId": note_id,
+            "filename": data["filename"],
+            "url": data["url"],
+            "size": data.get("size"),
+        }
+    )
 
 
 async def remove_attachment(*, user_id: str, note_id: str, attachment_id: str) -> bool:

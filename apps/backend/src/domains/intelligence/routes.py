@@ -84,17 +84,13 @@ async def get_messages(
 @router.delete("/conversations/{session_id}", status_code=204)
 async def delete_conversation(session_id: str, current_user: CurrentUser):
     """Delete a conversation and its messages."""
-    await conversation_service.delete_conversation(
-        session_id=session_id, user_id=current_user.id
-    )
+    await conversation_service.delete_conversation(session_id=session_id, user_id=current_user.id)
 
 
 @router.post("/conversations/{session_id}/archive", status_code=204)
 async def archive_conversation(session_id: str, current_user: CurrentUser):
     """Archive a conversation (soft delete)."""
-    await conversation_service.archive_conversation(
-        session_id=session_id, user_id=current_user.id
-    )
+    await conversation_service.archive_conversation(session_id=session_id, user_id=current_user.id)
 
 
 # ===========================================================================
@@ -161,9 +157,7 @@ async def get_memory_context(current_user: CurrentUser):
 
 
 @router.get("/recommendations", response_model=list[models.RecommendationResponse])
-async def get_recommendations(
-    current_user: CurrentUser, limit: int = Query(5, ge=1, le=20)
-):
+async def get_recommendations(current_user: CurrentUser, limit: int = Query(5, ge=1, le=20)):
     """Get proactive learning recommendations."""
     recs = await planning_service.get_recommendations(user_id=current_user.id, limit=limit)
     return recs

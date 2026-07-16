@@ -90,7 +90,12 @@ class IntelligenceRepository:
     # -----------------------------------------------------------------------
 
     async def find_messages(
-        self, session_id: str, *, take: int = 50, order_asc: bool = True, review_item_id: str | None = None
+        self,
+        session_id: str,
+        *,
+        take: int = 50,
+        order_asc: bool = True,
+        review_item_id: str | None = None,
     ) -> list[ChatMessage]:
         async with await self._session() as session:
             conditions = [ChatMessage.session_id == session_id]
@@ -141,7 +146,9 @@ class IntelligenceRepository:
             await session.refresh(log)
             return log
 
-    async def find_action_logs(self, *, session_id: str | None = None, message_id: str | None = None) -> list[AIActionLog]:
+    async def find_action_logs(
+        self, *, session_id: str | None = None, message_id: str | None = None
+    ) -> list[AIActionLog]:
         async with await self._session() as session:
             if message_id:
                 stmt = select(AIActionLog).where(AIActionLog.message_id == message_id)
@@ -161,7 +168,9 @@ class IntelligenceRepository:
     # Conversation Summaries
     # -----------------------------------------------------------------------
 
-    async def find_summary_by_session(self, session_id: str, user_id: str) -> ConversationSummary | None:
+    async def find_summary_by_session(
+        self, session_id: str, user_id: str
+    ) -> ConversationSummary | None:
         async with await self._session() as session:
             stmt = select(ConversationSummary).where(
                 ConversationSummary.session_id == session_id,
@@ -203,17 +212,20 @@ class IntelligenceRepository:
             if category:
                 conditions.append(UserFact.category == category)
             stmt = (
-                select(UserFact)
-                .where(*conditions)
-                .order_by(UserFact.updated_at.desc())
-                .limit(take)
+                select(UserFact).where(*conditions).order_by(UserFact.updated_at.desc()).limit(take)
             )
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    async def find_user_fact(self, user_id: str, category: str, content_like: str | None = None) -> UserFact | None:
+    async def find_user_fact(
+        self, user_id: str, category: str, content_like: str | None = None
+    ) -> UserFact | None:
         async with await self._session() as session:
-            conditions = [UserFact.user_id == user_id, UserFact.category == category, UserFact.is_active == True]  # noqa: E712
+            conditions = [
+                UserFact.user_id == user_id,
+                UserFact.category == category,
+                UserFact.is_active == True,
+            ]  # noqa: E712
             stmt = select(UserFact).where(*conditions).limit(1)
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
@@ -244,7 +256,12 @@ class IntelligenceRepository:
     # -----------------------------------------------------------------------
 
     async def list_insights(
-        self, user_id: str, *, active_only: bool = True, min_confidence: float | None = None, take: int = 10
+        self,
+        user_id: str,
+        *,
+        active_only: bool = True,
+        min_confidence: float | None = None,
+        take: int = 10,
     ) -> list[LearningInsight]:
         async with await self._session() as session:
             conditions = [LearningInsight.user_id == user_id]
@@ -308,7 +325,12 @@ class IntelligenceRepository:
             return interaction
 
     async def list_interactions(
-        self, user_id: str, *, interaction_type: str | None = None, entity_type: str | None = None, take: int = 100
+        self,
+        user_id: str,
+        *,
+        interaction_type: str | None = None,
+        entity_type: str | None = None,
+        take: int = 100,
     ) -> list[UserInteractionMemory]:
         async with await self._session() as session:
             conditions = [UserInteractionMemory.user_id == user_id]
@@ -329,7 +351,9 @@ class IntelligenceRepository:
     # AI Agent Tasks (Nudges)
     # -----------------------------------------------------------------------
 
-    async def list_pending_tasks(self, user_id: str, *, before: datetime | None = None, take: int = 5) -> list[AIAgentTask]:
+    async def list_pending_tasks(
+        self, user_id: str, *, before: datetime | None = None, take: int = 5
+    ) -> list[AIAgentTask]:
         async with await self._session() as session:
             conditions = [AIAgentTask.user_id == user_id, AIAgentTask.status == "pending"]
             if before:
@@ -509,31 +533,49 @@ class IntelligenceRepository:
     }
 
     def _map_chat_session(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._CHAT_SESSION_MAP.get(k, k): v for k, v in data.items() if k in self._CHAT_SESSION_MAP}
+        return {
+            self._CHAT_SESSION_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._CHAT_SESSION_MAP
+        }
 
     def _map_message(self, data: dict[str, Any]) -> dict[str, Any]:
         return {self._MESSAGE_MAP.get(k, k): v for k, v in data.items() if k in self._MESSAGE_MAP}
 
     def _map_action_log(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._ACTION_LOG_MAP.get(k, k): v for k, v in data.items() if k in self._ACTION_LOG_MAP}
+        return {
+            self._ACTION_LOG_MAP.get(k, k): v for k, v in data.items() if k in self._ACTION_LOG_MAP
+        }
 
     def _map_summary(self, data: dict[str, Any]) -> dict[str, Any]:
         return {self._SUMMARY_MAP.get(k, k): v for k, v in data.items() if k in self._SUMMARY_MAP}
 
     def _map_user_fact(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._USER_FACT_MAP.get(k, k): v for k, v in data.items() if k in self._USER_FACT_MAP}
+        return {
+            self._USER_FACT_MAP.get(k, k): v for k, v in data.items() if k in self._USER_FACT_MAP
+        }
 
     def _map_insight(self, data: dict[str, Any]) -> dict[str, Any]:
         return {self._INSIGHT_MAP.get(k, k): v for k, v in data.items() if k in self._INSIGHT_MAP}
 
     def _map_interaction(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._INTERACTION_MAP.get(k, k): v for k, v in data.items() if k in self._INTERACTION_MAP}
+        return {
+            self._INTERACTION_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._INTERACTION_MAP
+        }
 
     def _map_agent_task(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._AGENT_TASK_MAP.get(k, k): v for k, v in data.items() if k in self._AGENT_TASK_MAP}
+        return {
+            self._AGENT_TASK_MAP.get(k, k): v for k, v in data.items() if k in self._AGENT_TASK_MAP
+        }
 
     def _map_cost_record(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._COST_RECORD_MAP.get(k, k): v for k, v in data.items() if k in self._COST_RECORD_MAP}
+        return {
+            self._COST_RECORD_MAP.get(k, k): v
+            for k, v in data.items()
+            if k in self._COST_RECORD_MAP
+        }
 
     def _map_upload(self, data: dict[str, Any]) -> dict[str, Any]:
         return {self._UPLOAD_MAP.get(k, k): v for k, v in data.items() if k in self._UPLOAD_MAP}

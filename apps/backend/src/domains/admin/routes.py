@@ -66,12 +66,32 @@ async def admin_stats(admin_user: StaffUser):
 
     factory = get_session_factory()
     async with factory() as session:
-        total_users = (await session.execute(select(func.count()).select_from(User).where(User.role == "USER"))).scalar() or 0
-        active_users = (await session.execute(select(func.count()).select_from(User).where(User.role == "USER", User.is_active == True))).scalar() or 0
-        premium_users = (await session.execute(select(func.count()).select_from(User).where(User.tier.in_(["PREMIUM_MONTHLY", "PREMIUM_YEARLY"])))).scalar() or 0
-        total_courses = (await session.execute(select(func.count()).select_from(Course))).scalar() or 0
-        total_spaces = (await session.execute(select(func.count()).select_from(Space))).scalar() or 0
-        total_messages = (await session.execute(select(func.count()).select_from(ChatMessage))).scalar() or 0
+        total_users = (
+            await session.execute(select(func.count()).select_from(User).where(User.role == "USER"))
+        ).scalar() or 0
+        active_users = (
+            await session.execute(
+                select(func.count())
+                .select_from(User)
+                .where(User.role == "USER", User.is_active == True)
+            )
+        ).scalar() or 0
+        premium_users = (
+            await session.execute(
+                select(func.count())
+                .select_from(User)
+                .where(User.tier.in_(["PREMIUM_MONTHLY", "PREMIUM_YEARLY"]))
+            )
+        ).scalar() or 0
+        total_courses = (
+            await session.execute(select(func.count()).select_from(Course))
+        ).scalar() or 0
+        total_spaces = (
+            await session.execute(select(func.count()).select_from(Space))
+        ).scalar() or 0
+        total_messages = (
+            await session.execute(select(func.count()).select_from(ChatMessage))
+        ).scalar() or 0
 
     return models.AdminStatsResponse(
         totalUsers=total_users,
@@ -125,6 +145,7 @@ async def list_users(
 async def deactivate_user(user_id: str, admin_user: SuperAdminUser):
     """Deactivate a user account (super admin only)."""
     from src.domains.identity.repository import IdentityRepository
+
     repo = IdentityRepository()
     user = await repo.find_by_id(user_id)
     if not user:
@@ -137,6 +158,7 @@ async def deactivate_user(user_id: str, admin_user: SuperAdminUser):
 async def activate_user(user_id: str, admin_user: SuperAdminUser):
     """Reactivate a user account (super admin only)."""
     from src.domains.identity.repository import IdentityRepository
+
     repo = IdentityRepository()
     user = await repo.find_by_id(user_id)
     if not user:
@@ -149,6 +171,7 @@ async def activate_user(user_id: str, admin_user: SuperAdminUser):
 async def update_staff_role(body: models.StaffRoleUpdateRequest, admin_user: SuperAdminUser):
     """Update a user's admin staff role (super admin only)."""
     from src.domains.identity.repository import IdentityRepository
+
     repo = IdentityRepository()
     user = await repo.find_by_id(body.userId)
     if not user:

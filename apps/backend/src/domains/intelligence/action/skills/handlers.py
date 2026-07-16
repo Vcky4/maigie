@@ -125,9 +125,7 @@ async def handle_get_user_courses(
     if not include_archived:
         where["archived"] = False
 
-    courses, _ = await knowledge_repo.list_courses(
-        user_id, where=where, skip=0, take=int(limit)
-    )
+    courses, _ = await knowledge_repo.list_courses(user_id, where=where, skip=0, take=int(limit))
 
     # Format data
     courses_data = []
@@ -222,9 +220,7 @@ async def handle_get_user_schedule(
     if course_id:
         where["courseId"] = course_id
 
-    blocks, _ = await progress_repo.list_blocks(
-        user_id, where=where, skip=0, take=int(limit)
-    )
+    blocks, _ = await progress_repo.list_blocks(user_id, where=where, skip=0, take=int(limit))
 
     schedules_data = []
     for schedule in blocks:
@@ -264,6 +260,7 @@ async def handle_get_user_notes(
 
     # Notes not yet migrated to SQLAlchemy — query directly via session
     from sqlalchemy import select, text
+
     try:
         factory = get_session_factory()
         async with factory() as session:
@@ -530,6 +527,7 @@ async def handle_check_schedule_conflicts(
         factory = get_session_factory()
         async with factory() as session:
             from src.domains.progress.db_models import ScheduleBlock
+
             stmt = (
                 select(ScheduleBlock)
                 .where(
@@ -719,27 +717,34 @@ async def handle_update_course_outline(
             mod_title = mod_data.get("title", f"Module {i + 1}")
             topics = mod_data.get("topics", [])
 
-            module = await knowledge_repo.create_module({
-                "courseId": course_id,
-                "title": mod_title,
-                "order": float(i),
-            })
+            module = await knowledge_repo.create_module(
+                {
+                    "courseId": course_id,
+                    "title": mod_title,
+                    "order": float(i),
+                }
+            )
 
             for j, topic_title in enumerate(topics):
                 title = topic_title if isinstance(topic_title, str) else str(topic_title)
-                await knowledge_repo.create_topic({
-                    "moduleId": module.id,
-                    "title": title,
-                    "order": float(j),
-                })
+                await knowledge_repo.create_topic(
+                    {
+                        "moduleId": module.id,
+                        "title": title,
+                        "order": float(j),
+                    }
+                )
                 total_topics += 1
 
         # Update description if placeholder
         desc = course.description or ""
         if "outline pending" in desc.lower() or not desc.strip():
-            await knowledge_repo.update_course(course_id, {
-                "description": f"Course with {len(modules_data)} modules and {total_topics} topics."
-            })
+            await knowledge_repo.update_course(
+                course_id,
+                {
+                    "description": f"Course with {len(modules_data)} modules and {total_topics} topics."
+                },
+            )
 
         return {
             "status": "success",
@@ -954,7 +959,13 @@ async def handle_save_user_fact(
         return {"status": "error", "message": "No fact content provided."}
 
     valid_categories = [
-        "preference", "personal", "academic", "goal", "struggle", "strength", "other",
+        "preference",
+        "personal",
+        "academic",
+        "goal",
+        "struggle",
+        "strength",
+        "other",
     ]
     if category not in valid_categories:
         category = "other"
@@ -973,22 +984,28 @@ async def handle_save_user_fact(
             if new_words and existing_words:
                 overlap = len(new_words & existing_words) / max(len(new_words), len(existing_words))
                 if overlap > 0.7:
-                    await intelligence_repo.update_user_fact(existing.id, {
-                        "content": content, "confidence": 0.9,
-                    })
+                    await intelligence_repo.update_user_fact(
+                        existing.id,
+                        {
+                            "content": content,
+                            "confidence": 0.9,
+                        },
+                    )
                     return {
                         "status": "success",
                         "action": "update_user_fact",
                         "message": f"Updated remembered fact: {content}",
                     }
 
-        await intelligence_repo.create_user_fact({
-            "userId": user_id,
-            "category": category,
-            "content": content,
-            "source": "conversation",
-            "confidence": 0.85,
-        })
+        await intelligence_repo.create_user_fact(
+            {
+                "userId": user_id,
+                "category": category,
+                "content": content,
+                "source": "conversation",
+                "confidence": 0.85,
+            }
+        )
 
         return {
             "status": "success",
@@ -1190,19 +1207,25 @@ async def handle_generate_document(
         share_id = None
         try:
             from sqlalchemy import text
+
             factory = get_session_factory()
             doc_id = __import__("uuid").uuid4().hex[:25]
             async with factory() as session:
                 await session.execute(
                     text(
                         'INSERT INTO "GeneratedDocument" (id, "userId", title, format, style, filename, "fileUrl", "previewUrl", size, "contentType", "isPublic", "createdAt", "updatedAt") '
-                        "VALUES (:id, :uid, :title, :fmt, :style, :filename, :url, :preview, :size, :ct, true, now(), now()) RETURNING \"shareId\""
+                        'VALUES (:id, :uid, :title, :fmt, :style, :filename, :url, :preview, :size, :ct, true, now(), now()) RETURNING "shareId"'
                     ),
                     {
-                        "id": doc_id, "uid": user_id, "title": result["title"],
-                        "fmt": result["format"], "style": style,
-                        "filename": result["filename"], "url": result["url"],
-                        "preview": result["preview_url"], "size": result["size"],
+                        "id": doc_id,
+                        "uid": user_id,
+                        "title": result["title"],
+                        "fmt": result["format"],
+                        "style": style,
+                        "filename": result["filename"],
+                        "url": result["url"],
+                        "preview": result["preview_url"],
+                        "size": result["size"],
                         "ct": result["content_type"],
                     },
                 )

@@ -13,7 +13,14 @@ from ..repository import space_repo
 logger = logging.getLogger(__name__)
 
 
-async def invite_members(*, space_id: str, user_id: str, emails: list[str], role: str | None = None, seat_tier: str | None = None) -> list[Any]:
+async def invite_members(
+    *,
+    space_id: str,
+    user_id: str,
+    emails: list[str],
+    role: str | None = None,
+    seat_tier: str | None = None,
+) -> list[Any]:
     """Invite users to a Learning Space by email."""
     from src.domains.learning_spaces.services.space_impl import invite_members as _invite
     from src.domains.learning_spaces.models import InviteRequest
@@ -28,7 +35,9 @@ async def accept_invite(*, invite_id: str, user_id: str) -> Any:
 
     result = await _accept(None, invite_id, user_id)
     if result:
-        await emit("space.member_joined", {"user_id": user_id, "space_id": result.get("spaceId", "")})
+        await emit(
+            "space.member_joined", {"user_id": user_id, "space_id": result.get("spaceId", "")}
+        )
     return result
 
 
@@ -40,16 +49,21 @@ async def leave_space(*, space_id: str, user_id: str) -> None:
     await emit("space.member_left", {"user_id": user_id, "space_id": space_id})
 
 
-async def update_member_role(*, space_id: str, user_id: str, target_user_id: str, new_role: str) -> Any:
+async def update_member_role(
+    *, space_id: str, user_id: str, target_user_id: str, new_role: str
+) -> Any:
     """Update a member's role within the space."""
     from src.domains.learning_spaces.services.space_impl import update_member_role as _update
 
     result = await _update(None, space_id, user_id, target_user_id, new_role)
-    await emit("space.role_changed", {
-        "space_id": space_id,
-        "user_id": target_user_id,
-        "new_role": new_role,
-    })
+    await emit(
+        "space.role_changed",
+        {
+            "space_id": space_id,
+            "user_id": target_user_id,
+            "new_role": new_role,
+        },
+    )
     return result
 
 

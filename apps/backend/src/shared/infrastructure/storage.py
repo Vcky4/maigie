@@ -19,12 +19,16 @@ class StorageClient:
     clean interface that domains can use without knowing the provider.
     """
 
-    def __init__(self, api_key: str | None = None, storage_zone: str | None = None, hostname: str = ""):
+    def __init__(
+        self, api_key: str | None = None, storage_zone: str | None = None, hostname: str = ""
+    ):
         self.api_key = api_key
         self.storage_zone = storage_zone
         self.hostname = hostname
 
-    async def upload(self, path: str, content: bytes, content_type: str = "application/octet-stream") -> str:
+    async def upload(
+        self, path: str, content: bytes, content_type: str = "application/octet-stream"
+    ) -> str:
         """Upload a file and return its public URL.
 
         Args:

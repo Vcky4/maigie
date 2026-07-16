@@ -29,9 +29,7 @@ def reset_credit_periods_task():
         async with factory() as session:
             # Find users whose credit period has ended
             stmt = (
-                select(User)
-                .where(User.credits_period_end <= now, User.credits_used > 0)
-                .limit(500)
+                select(User).where(User.credits_period_end <= now, User.credits_used > 0).limit(500)
             )
             result = await session.execute(stmt)
             users = list(result.scalars().all())

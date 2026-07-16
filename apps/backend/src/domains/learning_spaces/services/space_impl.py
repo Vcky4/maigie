@@ -111,9 +111,9 @@ async def create_space_impl(db: Any, user_id: str, user_tier: str, data: SpaceCr
     factory = get_session_factory()
     async with factory() as session:
         result = await session.execute(
-            select(func.count()).select_from(SpaceMember).where(
-                SpaceMember.user_id == user_id, SpaceMember.role == "OWNER"
-            )
+            select(func.count())
+            .select_from(SpaceMember)
+            .where(SpaceMember.user_id == user_id, SpaceMember.role == "OWNER")
         )
         membership_count = result.scalar() or 0
 
@@ -292,9 +292,9 @@ async def invite_members(db: Any, space_id: str, user_id: str, data: InviteReque
     factory = get_session_factory()
     async with factory() as session:
         result = await session.execute(
-            select(func.count()).select_from(SpaceInvite).where(
-                SpaceInvite.space_id == space_id, SpaceInvite.status == "PENDING"
-            )
+            select(func.count())
+            .select_from(SpaceInvite)
+            .where(SpaceInvite.space_id == space_id, SpaceInvite.status == "PENDING")
         )
         pending_invites = result.scalar() or 0
 
@@ -336,9 +336,9 @@ async def invite_members(db: Any, space_id: str, user_id: str, data: InviteReque
         if invitee_user:
             async with factory() as session:
                 result = await session.execute(
-                    select(func.count()).select_from(SpaceMember).where(
-                        SpaceMember.user_id == invitee_user.id
-                    )
+                    select(func.count())
+                    .select_from(SpaceMember)
+                    .where(SpaceMember.user_id == invitee_user.id)
                 )
                 invitee_space_count = result.scalar() or 0
             if invitee_space_count >= MAX_SPACES_PER_USER:
@@ -417,6 +417,7 @@ async def cancel_invite(db: Any, space_id: str, invite_id: str, user_id: str):
 
     # Delete invite via raw SQLAlchemy (no delete_invite in repo)
     from sqlalchemy import delete
+
     factory = get_session_factory()
     async with factory() as session:
         stmt = delete(SpaceInvite).where(SpaceInvite.id == invite_id)
@@ -479,9 +480,7 @@ async def accept_invite(db: Any, space_id: str, invite_id: str, user_id: str):
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(SpaceMember).where(
-                    SpaceMember.user_id == user_id
-                )
+                select(func.count()).select_from(SpaceMember).where(SpaceMember.user_id == user_id)
             )
             user_space_count = result.scalar() or 0
         if user_space_count >= MAX_SPACES_PER_USER:
@@ -626,7 +625,9 @@ async def create_chat_group(db: Any, space_id: str, user_id: str, data: ChatGrou
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(SpaceSeatAddon).where(
+                select(func.count())
+                .select_from(SpaceSeatAddon)
+                .where(
                     SpaceSeatAddon.space_id == space_id,
                     SpaceSeatAddon.status.in_(["ACTIVE", "TRIALING"]),
                 )
@@ -784,9 +785,7 @@ async def delete_chat_group(db: Any, space_id: str, group_id: str, user_id: str)
 # --- Space-scoped resources ---
 
 
-async def list_space_notes(
-    db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20
-):
+async def list_space_notes(db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20):
     """List notes shared in a space."""
     await _verify_membership(db, space_id, user_id)
 
@@ -813,9 +812,7 @@ async def list_space_notes(
     return notes, total
 
 
-async def list_space_goals(
-    db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20
-):
+async def list_space_goals(db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20):
     """List goals shared in a space."""
     await _verify_membership(db, space_id, user_id)
 
@@ -842,9 +839,7 @@ async def list_space_goals(
     return goals, total
 
 
-async def list_space_courses(
-    db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20
-):
+async def list_space_courses(db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20):
     """List courses shared in a space."""
     await _verify_membership(db, space_id, user_id)
 
@@ -945,7 +940,9 @@ async def import_to_space(db: Any, space_id: str, user_id: str, data: ImportRequ
             result = await session.execute(select(Resource).where(Resource.id == resource_id))
             resource = result.scalar_one_or_none()
             if resource and resource.user_id == user_id and not resource.space_id:
-                stmt = sa_update(Resource).where(Resource.id == resource_id).values(space_id=space_id)
+                stmt = (
+                    sa_update(Resource).where(Resource.id == resource_id).values(space_id=space_id)
+                )
                 await session.execute(stmt)
                 await session.commit()
                 imported_stats["resources"] += 1
@@ -997,10 +994,12 @@ async def export_from_space(
     from sqlalchemy import text
     from src.domains.knowledge.db_models import Course
     from src.domains.progress.db_models import Goal
+
     factory = get_session_factory()
 
     if resource_type == "note":
         import uuid as _uuid
+
         async with factory() as session:
             result = await session.execute(
                 text('SELECT * FROM "Note" WHERE id = :nid'),
@@ -1094,7 +1093,9 @@ async def create_group_session(db: Any, space_id: str, user_id: str, data: Sessi
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(SpaceSeatAddon).where(
+                select(func.count())
+                .select_from(SpaceSeatAddon)
+                .where(
                     SpaceSeatAddon.space_id == space_id,
                     SpaceSeatAddon.status.in_(["ACTIVE", "TRIALING"]),
                 )
@@ -1210,10 +1211,7 @@ async def suggest_group_sessions(db: Any, space_id: str, user_id: str) -> list[d
         recent_courses = list(courses_result.scalars().all())
 
         goals_result = await session.execute(
-            select(Goal)
-            .where(Goal.space_id == space_id)
-            .order_by(Goal.updated_at.desc())
-            .limit(3)
+            select(Goal).where(Goal.space_id == space_id).order_by(Goal.updated_at.desc()).limit(3)
         )
         recent_goals = list(goals_result.scalars().all())
 

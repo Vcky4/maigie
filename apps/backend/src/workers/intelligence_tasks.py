@@ -59,8 +59,6 @@ def recommend_resources_task(user_id: str, query: str, limit: int = 5):
 
     loop = asyncio.new_event_loop()
     try:
-        loop.run_until_complete(
-            recommend_resources(user_id=user_id, query=query, limit=limit)
-        )
+        loop.run_until_complete(recommend_resources(user_id=user_id, query=query, limit=limit))
     finally:
         loop.close()

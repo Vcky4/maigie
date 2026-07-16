@@ -76,15 +76,15 @@ class ClassroomRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_sessions(self, space_id: str, *, classroom_id: str | None = None) -> list[SpaceSession]:
+    async def list_sessions(
+        self, space_id: str, *, classroom_id: str | None = None
+    ) -> list[SpaceSession]:
         async with await self._session() as session:
             conditions = [SpaceSession.space_id == space_id]
             if classroom_id:
                 conditions.append(SpaceSession.chat_group_id == classroom_id)
             stmt = (
-                select(SpaceSession)
-                .where(*conditions)
-                .order_by(SpaceSession.scheduled_at.desc())
+                select(SpaceSession).where(*conditions).order_by(SpaceSession.scheduled_at.desc())
             )
             result = await session.execute(stmt)
             return list(result.scalars().all())
@@ -178,7 +178,9 @@ class ClassroomRepository:
     }
 
     def _map_classroom(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._CLASSROOM_MAP.get(k, k): v for k, v in data.items() if k in self._CLASSROOM_MAP}
+        return {
+            self._CLASSROOM_MAP.get(k, k): v for k, v in data.items() if k in self._CLASSROOM_MAP
+        }
 
     def _map_session(self, data: dict[str, Any]) -> dict[str, Any]:
         return {self._SESSION_MAP.get(k, k): v for k, v in data.items() if k in self._SESSION_MAP}

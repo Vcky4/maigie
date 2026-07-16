@@ -17,8 +17,14 @@ async def create_goal(*, user_id: str, data: dict[str, Any]) -> Any:
 
 
 async def list_goals(
-    *, user_id: str, status: str | None = None, space_id: str | None = None,
-    page: int = 1, page_size: int = 20, sort_by: str = "createdAt", sort_order: str = "desc",
+    *,
+    user_id: str,
+    status: str | None = None,
+    space_id: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    sort_by: str = "createdAt",
+    sort_order: str = "desc",
 ) -> tuple[list, int]:
     where: dict[str, Any] = {}
     if status:
@@ -28,7 +34,9 @@ async def list_goals(
     else:
         where["spaceId"] = None
     skip = (page - 1) * page_size
-    return await progress_repo.list_goals(user_id, where=where, skip=skip, take=page_size, order={sort_by: sort_order})
+    return await progress_repo.list_goals(
+        user_id, where=where, skip=skip, take=page_size, order={sort_by: sort_order}
+    )
 
 
 async def get_goal(*, goal_id: str, user_id: str) -> Any:
@@ -59,6 +67,11 @@ async def delete_goal(*, goal_id: str, user_id: str) -> None:
     await progress_repo.delete_goal(goal_id)
 
 
-async def regenerate_plan(*, user_id: str, goal_id: str, duration_weeks: int = 4, request: str | None = None) -> dict[str, Any]:
+async def regenerate_plan(
+    *, user_id: str, goal_id: str, duration_weeks: int = 4, request: str | None = None
+) -> dict[str, Any]:
     from src.domains.intelligence.planning.planning_impl import regenerate_goal_plan
-    return await regenerate_goal_plan(user_id=user_id, goal_id=goal_id, duration_weeks=duration_weeks, request=request)
+
+    return await regenerate_goal_plan(
+        user_id=user_id, goal_id=goal_id, duration_weeks=duration_weeks, request=request
+    )

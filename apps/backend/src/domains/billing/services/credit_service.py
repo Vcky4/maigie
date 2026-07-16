@@ -48,7 +48,9 @@ async def get_purchase_history(
     *, user_id: str, page: int = 1, page_size: int = 20
 ) -> dict[str, Any]:
     """Get paginated purchase history."""
-    from src.domains.billing.services.credit_purchase_service import get_purchase_history as _history
+    from src.domains.billing.services.credit_purchase_service import (
+        get_purchase_history as _history,
+    )
 
     return await _history(user_id=user_id, page=page, page_size=page_size)
 
@@ -89,7 +91,9 @@ async def get_ad_stats(user_id: str) -> dict[str, Any]:
     }
 
 
-async def claim_ad_reward(*, user_id: str, ad_type: str, ad_unit_id: str | None = None) -> dict[str, Any]:
+async def claim_ad_reward(
+    *, user_id: str, ad_type: str, ad_unit_id: str | None = None
+) -> dict[str, Any]:
     """Claim credits for watching a rewarded ad."""
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -100,17 +104,23 @@ async def claim_ad_reward(*, user_id: str, ad_type: str, ad_unit_id: str | None 
 
     credits = AD_REWARD_CREDITS
 
-    await billing_repo.create_ad_claim({
-        "userId": user_id,
-        "adType": ad_type,
-        "credits": credits,
-        "adUnitId": ad_unit_id,
-    })
+    await billing_repo.create_ad_claim(
+        {
+            "userId": user_id,
+            "adType": ad_type,
+            "credits": credits,
+            "adUnitId": ad_unit_id,
+        }
+    )
 
     ads_watched = ads_today + 1
-    logger.info(f"User {user_id} earned {credits} credits from ad ({ads_watched}/{MAX_ADS_PER_DAY})")
+    logger.info(
+        f"User {user_id} earned {credits} credits from ad ({ads_watched}/{MAX_ADS_PER_DAY})"
+    )
 
-    await emit("billing.credits_purchased", {"user_id": user_id, "credits": credits, "source": "ad"})
+    await emit(
+        "billing.credits_purchased", {"user_id": user_id, "credits": credits, "source": "ad"}
+    )
 
     return {
         "credited": credits,

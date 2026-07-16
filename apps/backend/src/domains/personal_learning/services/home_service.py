@@ -169,9 +169,7 @@ async def _compute_todays_focus(
     }
 
 
-def _build_progress_summary(
-    profile: Any | None, flashcard_stats: dict
-) -> dict[str, Any]:
+def _build_progress_summary(profile: Any | None, flashcard_stats: dict) -> dict[str, Any]:
     """
     Build progress summary from profile and stats.
 
@@ -247,9 +245,7 @@ async def _get_schedule_blocks(user_id: str) -> list[dict[str, Any]]:
     return blocks
 
 
-def _build_recommendations(
-    recommendations: list, is_onboarding: bool
-) -> list[dict[str, Any]]:
+def _build_recommendations(recommendations: list, is_onboarding: bool) -> list[dict[str, Any]]:
     """
     Build recommendation list. Empty list when none available (never null).
 

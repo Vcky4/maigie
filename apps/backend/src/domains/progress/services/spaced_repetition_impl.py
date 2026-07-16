@@ -145,16 +145,18 @@ async def create_review_item_for_topic(user_id: str, topic_id: str) -> Any | Non
         return None
     now = datetime.now(UTC)
     next_review = now + timedelta(days=GRADUATING_INTERVAL_DAYS)
-    return await progress_repo.create_review_item({
-        "userId": user_id,
-        "topicId": topic_id,
-        "nextReviewAt": next_review,
-        "intervalDays": GRADUATING_INTERVAL_DAYS,
-        "repetitionCount": 0,
-        "easeFactor": INITIAL_EASE_FACTOR,
-        "lastQuality": -1,
-        "lapseCount": 0,
-    })
+    return await progress_repo.create_review_item(
+        {
+            "userId": user_id,
+            "topicId": topic_id,
+            "nextReviewAt": next_review,
+            "intervalDays": GRADUATING_INTERVAL_DAYS,
+            "repetitionCount": 0,
+            "easeFactor": INITIAL_EASE_FACTOR,
+            "lastQuality": -1,
+            "lapseCount": 0,
+        }
+    )
 
 
 async def create_schedule_block_for_review(review) -> Any | None:
@@ -218,22 +220,24 @@ async def advance_review_sqlalchemy(
     else:
         behaviour = "COMPLETED_ON_TIME"
 
-    await progress_repo.create_behaviour_log({
-        "userId": user_id,
-        "behaviourType": behaviour,
-        "entityType": "review",
-        "entityId": review_item_id,
-        "scheduledAt": review.next_review_at,
-        "actualAt": now,
-        "metadata": {
-            "topicId": review.topic_id,
-            "topicTitle": review.topic.title if review.topic else "",
-            "quality": quality,
-            "previousEaseFactor": review.ease_factor,
-            "previousInterval": review.interval_days,
-            "previousRepetitionCount": review.repetition_count,
-        },
-    })
+    await progress_repo.create_behaviour_log(
+        {
+            "userId": user_id,
+            "behaviourType": behaviour,
+            "entityType": "review",
+            "entityId": review_item_id,
+            "scheduledAt": review.next_review_at,
+            "actualAt": now,
+            "metadata": {
+                "topicId": review.topic_id,
+                "topicTitle": review.topic.title if review.topic else "",
+                "quality": quality,
+                "previousEaseFactor": review.ease_factor,
+                "previousInterval": review.interval_days,
+                "previousRepetitionCount": review.repetition_count,
+            },
+        }
+    )
 
     # ── SM-2 computation ────────────────────────────────────────────────
     new_interval, new_ef, new_rep_count = compute_sm2(
@@ -256,15 +260,18 @@ async def advance_review_sqlalchemy(
     new_lapse_count = review.lapse_count + (1 if is_lapse else 0)
 
     next_review_at = now + timedelta(days=new_interval)
-    updated = await progress_repo.update_review(review_item_id, {
-        "lastReviewedAt": now,
-        "repetitionCount": new_rep_count,
-        "intervalDays": new_interval,
-        "easeFactor": new_ef,
-        "lastQuality": quality,
-        "lapseCount": new_lapse_count,
-        "nextReviewAt": next_review_at,
-    })
+    updated = await progress_repo.update_review(
+        review_item_id,
+        {
+            "lastReviewedAt": now,
+            "repetitionCount": new_rep_count,
+            "intervalDays": new_interval,
+            "easeFactor": new_ef,
+            "lastQuality": quality,
+            "lapseCount": new_lapse_count,
+            "nextReviewAt": next_review_at,
+        },
+    )
 
     # Unlink the old schedule block (set reviewItemId to None)
     if review.schedule_block:
@@ -353,15 +360,17 @@ async def ensure_review_item_for_completed_topic(user_id: str, topic_id: str) ->
     review = await create_review_item_for_topic(user_id, topic_id)
     if review:
         await create_schedule_block_for_review(review)
-        await progress_repo.create_behaviour_log({
-            "userId": user_id,
-            "behaviourType": "AI_CREATED",
-            "entityType": "schedule_block",
-            "entityId": None,
-            "scheduledAt": review.next_review_at,
-            "actualAt": None,
-            "metadata": {"topicId": topic_id, "source": "topic_completed"},
-        })
+        await progress_repo.create_behaviour_log(
+            {
+                "userId": user_id,
+                "behaviourType": "AI_CREATED",
+                "entityType": "schedule_block",
+                "entityId": None,
+                "scheduledAt": review.next_review_at,
+                "actualAt": None,
+                "metadata": {"topicId": topic_id, "source": "topic_completed"},
+            }
+        )
     return review
 
 
@@ -378,17 +387,30 @@ async def create_review_item(db, user_id: str, topic_id: str) -> Any | None:
 
 async def advance_review(db, review_item_id: str, user_id: str, quality: int = 4, **kwargs) -> Any:
     """Legacy wrapper — ignores db arg, delegates to advance_review_sqlalchemy."""
-    return await advance_review_sqlalchemy(user_id, review_item_id, quality, actual_at=kwargs.get("actual_at"))
+    return await advance_review_sqlalchemy(
+        user_id, review_item_id, quality, actual_at=kwargs.get("actual_at")
+    )
 
 
-async def log_behaviour(db, user_id: str, behaviour_type: str, entity_type: str, entity_id: str | None = None, scheduled_at=None, actual_at=None, metadata=None) -> Any:
+async def log_behaviour(
+    db,
+    user_id: str,
+    behaviour_type: str,
+    entity_type: str,
+    entity_id: str | None = None,
+    scheduled_at=None,
+    actual_at=None,
+    metadata=None,
+) -> Any:
     """Legacy wrapper — ignores db arg, uses repository."""
-    return await progress_repo.create_behaviour_log({
-        "userId": user_id,
-        "behaviourType": behaviour_type,
-        "entityType": entity_type,
-        "entityId": entity_id,
-        "scheduledAt": scheduled_at,
-        "actualAt": actual_at,
-        "metadata": metadata,
-    })
+    return await progress_repo.create_behaviour_log(
+        {
+            "userId": user_id,
+            "behaviourType": behaviour_type,
+            "entityType": entity_type,
+            "entityId": entity_id,
+            "scheduledAt": scheduled_at,
+            "actualAt": actual_at,
+            "metadata": metadata,
+        }
+    )

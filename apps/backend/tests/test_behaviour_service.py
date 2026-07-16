@@ -95,8 +95,7 @@ class TestComputeConsistencyScore:
     def test_sessions_every_day_for_30_days(self):
         now = datetime.now(timezone.utc)
         sessions = [
-            FakeSession(start_time=now - timedelta(days=i), duration=30.0)
-            for i in range(30)
+            FakeSession(start_time=now - timedelta(days=i), duration=30.0) for i in range(30)
         ]
         score = _compute_consistency_score(sessions)
         assert score == 100.0
@@ -114,8 +113,7 @@ class TestComputeConsistencyScore:
         now = datetime.now(timezone.utc)
         # All sessions are older than 30 days
         sessions = [
-            FakeSession(start_time=now - timedelta(days=40 + i), duration=30.0)
-            for i in range(10)
+            FakeSession(start_time=now - timedelta(days=40 + i), duration=30.0) for i in range(10)
         ]
         score = _compute_consistency_score(sessions)
         assert score == 0.0
@@ -148,8 +146,7 @@ class TestComputeDropoutRisk:
     def test_no_risk_consistent_sessions(self):
         now = datetime.now(timezone.utc)
         sessions = [
-            FakeSession(start_time=now - timedelta(days=i), duration=30.0)
-            for i in range(5)
+            FakeSession(start_time=now - timedelta(days=i), duration=30.0) for i in range(5)
         ]
         risk = _compute_dropout_risk(sessions)
         # Consistent duration and even gaps — should be low risk

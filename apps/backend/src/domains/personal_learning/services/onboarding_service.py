@@ -29,13 +29,17 @@ async def set_purpose(*, user_id: str, purpose: str) -> Any:
         return await repo.update_profile(user_id, {"purpose": purpose})
 
     # Create new profile
-    return await repo.create_profile({
-        "userId": user_id,
-        "purpose": purpose,
-    })
+    return await repo.create_profile(
+        {
+            "userId": user_id,
+            "purpose": purpose,
+        }
+    )
 
 
-async def set_subjects(*, user_id: str, subjects: list[str] | None = None, goals: str | None = None) -> Any:
+async def set_subjects(
+    *, user_id: str, subjects: list[str] | None = None, goals: str | None = None
+) -> Any:
     """
     Set initial subjects and/or goals for the learner.
 
@@ -98,7 +102,10 @@ async def is_onboarding(*, user_id: str) -> bool:
 
 async def update_quiet_hours(*, user_id: str, start: str | None, end: str | None) -> Any:
     """Update quiet hours preferences."""
-    return await repo.update_profile(user_id, {
-        "quietHoursStart": start,
-        "quietHoursEnd": end,
-    })
+    return await repo.update_profile(
+        user_id,
+        {
+            "quietHoursStart": start,
+            "quietHoursEnd": end,
+        },
+    )

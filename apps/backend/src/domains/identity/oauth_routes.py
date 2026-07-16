@@ -25,7 +25,12 @@ from src.config import get_settings, Settings
 from src.shared.auth import create_access_token, create_refresh_token
 from src.shared.auth.oauth_providers import GoogleIdTokenVerifier, OAuthProviderFactory
 
-from .models import NativeGoogleCallbackRequest, OAuthAuthorizeResponse, OAuthUserInfo, TokenResponse
+from .models import (
+    NativeGoogleCallbackRequest,
+    OAuthAuthorizeResponse,
+    OAuthUserInfo,
+    TokenResponse,
+)
 from .services import get_or_create_oauth_user
 
 logger = logging.getLogger(__name__)
@@ -188,15 +193,21 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request)
                 raise HTTPException(status_code=404, detail="User not found")
 
             expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
-            await identity_repo.update(calendar_user_id, {
-                "googleCalendarAccessToken": access_token,
-                "googleCalendarRefreshToken": refresh_token_oauth,
-                "googleCalendarTokenExpiresAt": expires_at,
-                "googleCalendarSyncEnabled": True,
-            })
+            await identity_repo.update(
+                calendar_user_id,
+                {
+                    "googleCalendarAccessToken": access_token,
+                    "googleCalendarRefreshToken": refresh_token_oauth,
+                    "googleCalendarTokenExpiresAt": expires_at,
+                    "googleCalendarSyncEnabled": True,
+                },
+            )
 
             # Create Maigie calendar
-            from src.integrations.google_calendar import create_maigie_calendar, sync_existing_schedules
+            from src.integrations.google_calendar import (
+                create_maigie_calendar,
+                sync_existing_schedules,
+            )
 
             calendar_id = await create_maigie_calendar(calendar_user_id)
 
@@ -207,13 +218,15 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request)
             except Exception as e:
                 logger.warning(f"Schedule sync failed: {e}")
 
-            return JSONResponse(content={
-                "status": "success",
-                "message": "Google Calendar connected successfully",
-                "sync_enabled": True,
-                "calendar_id": calendar_id,
-                "synced_schedules": sync_results.get("success_count", 0),
-            })
+            return JSONResponse(
+                content={
+                    "status": "success",
+                    "message": "Google Calendar connected successfully",
+                    "sync_enabled": True,
+                    "calendar_id": calendar_id,
+                    "synced_schedules": sync_results.get("success_count", 0),
+                }
+            )
 
         # Regular OAuth login flow
         user_info = await oauth_provider.get_user_info(access_token)

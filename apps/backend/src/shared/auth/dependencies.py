@@ -151,22 +151,16 @@ _STAFF_ROLES = frozenset({"SUPER_ADMIN", "CONTENT_MANAGER"})
 async def get_staff_user(current_user: CurrentUser) -> User:
     """Require the user to be platform staff (SUPER_ADMIN or CONTENT_MANAGER)."""
     if current_user.role != "ADMIN":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required")
     if _get_staff_role(current_user) not in _STAFF_ROLES:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Staff access required")
     return current_user
 
 
 async def get_super_admin_user(current_user: CurrentUser) -> User:
     """Require SUPER_ADMIN role (users, billing, staff management)."""
     if current_user.role != "ADMIN":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     if _get_staff_role(current_user) != "SUPER_ADMIN":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Super admin access required"

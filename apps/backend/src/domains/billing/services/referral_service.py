@@ -23,13 +23,17 @@ async def get_referral_stats(user: User) -> dict[str, Any]:
 
 async def get_claimable_rewards(user: User) -> list[dict[str, Any]]:
     """Get all claimable referral rewards."""
-    from src.domains.billing.services.referral_rewards_service import get_claimable_rewards as _claimable
+    from src.domains.billing.services.referral_rewards_service import (
+        get_claimable_rewards as _claimable,
+    )
 
     return await _claimable(user)
 
 
 async def claim_reward(user: User, reward_id: str) -> dict[str, Any]:
     """Claim a referral reward (increases daily credit limit)."""
-    from src.domains.billing.services.referral_rewards_service import claim_referral_reward as _claim
+    from src.domains.billing.services.referral_rewards_service import (
+        claim_referral_reward as _claim,
+    )
 
     return await _claim(user, reward_id)

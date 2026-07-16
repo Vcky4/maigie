@@ -27,6 +27,7 @@ Revision ID: 002_rename_circle_to_space
 Revises: 001_drop_prisma_enums
 Create Date: 2026-07-16
 """
+
 from alembic import op
 
 revision = "002_rename_circle_to_space"
@@ -168,7 +169,8 @@ def upgrade() -> None:
         # Find and drop existing FK constraint
         # PostgreSQL FK naming convention: {table}_{column}_fkey
         old_fk_name = f"{table}_{col}_fkey"
-        op.execute(f"""
+        op.execute(
+            f"""
             DO $$
             BEGIN
                 IF EXISTS (
@@ -179,11 +181,13 @@ def upgrade() -> None:
                     ALTER TABLE "{table}" DROP CONSTRAINT "{old_fk_name}";
                 END IF;
             END $$;
-        """)
+        """
+        )
         # Also try the old table/column naming pattern
         # Prisma uses: {OldTable}_{oldColumn}_fkey
         old_table = table  # already renamed
-        op.execute(f"""
+        op.execute(
+            f"""
             DO $$
             DECLARE
                 fk_name TEXT;
@@ -201,7 +205,8 @@ def upgrade() -> None:
                     EXECUTE format('ALTER TABLE "%s" DROP CONSTRAINT "%s"', '{table}', fk_name);
                 END IF;
             END $$;
-        """)
+        """
+        )
         # Create new FK
         on_delete = "CASCADE" if table != "Note" else "SET NULL"
         nullable = "TRUE" if table == "Note" else "FALSE"
@@ -219,7 +224,8 @@ def downgrade() -> None:
     # Reverse FK updates
     for table, col, ref_table in reversed(FK_UPDATES):
         fk_name = f"{table}_{col}_fkey"
-        op.execute(f"""
+        op.execute(
+            f"""
             DO $$
             DECLARE
                 fk_name TEXT;
@@ -237,7 +243,8 @@ def downgrade() -> None:
                     EXECUTE format('ALTER TABLE "%s" DROP CONSTRAINT "%s"', '{table}', fk_name);
                 END IF;
             END $$;
-        """)
+        """
+        )
         # Determine old table name for FK target
         old_ref = "Circle" if ref_table == "Space" else "CircleChatGroup"
         old_col = "circleId" if col == "spaceId" else col

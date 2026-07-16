@@ -277,7 +277,9 @@ class PersonalLearningRepository:
         async with await self._session() as session:
             mapped = self._map_document(data)
             if mapped:
-                stmt = update(GeneratedDocument).where(GeneratedDocument.id == doc_id).values(**mapped)
+                stmt = (
+                    update(GeneratedDocument).where(GeneratedDocument.id == doc_id).values(**mapped)
+                )
                 await session.execute(stmt)
                 await session.commit()
 
@@ -362,7 +364,6 @@ class PersonalLearningRepository:
                 conditions.append(Note.title.ilike(f"%{contains}%"))
         return conditions
 
-
     # -----------------------------------------------------------------------
     # Flashcards
     # -----------------------------------------------------------------------
@@ -418,9 +419,7 @@ class PersonalLearningRepository:
 
             # Total count
             total_stmt = (
-                select(func.count())
-                .select_from(Flashcard)
-                .where(Flashcard.user_id == user_id)
+                select(func.count()).select_from(Flashcard).where(Flashcard.user_id == user_id)
             )
             total = (await session.execute(total_stmt)).scalar() or 0
 
@@ -447,9 +446,8 @@ class PersonalLearningRepository:
             mastered_count = (await session.execute(mastered_stmt)).scalar() or 0
 
             # Average ease factor
-            avg_ease_stmt = (
-                select(func.avg(Flashcard.ease_factor))
-                .where(Flashcard.user_id == user_id)
+            avg_ease_stmt = select(func.avg(Flashcard.ease_factor)).where(
+                Flashcard.user_id == user_id
             )
             avg_ease_factor = (await session.execute(avg_ease_stmt)).scalar() or 2.5
 
@@ -560,9 +558,7 @@ class PersonalLearningRepository:
                 conditions.append(SavedResource.title.ilike(f"%{search}%"))
 
             # Count
-            count_stmt = (
-                select(func.count()).select_from(SavedResource).where(*conditions)
-            )
+            count_stmt = select(func.count()).select_from(SavedResource).where(*conditions)
             total = (await session.execute(count_stmt)).scalar() or 0
 
             # Items
@@ -682,9 +678,7 @@ class PersonalLearningRepository:
 
         async with await self._session() as session:
             stmt = (
-                update(LearningProfile)
-                .where(LearningProfile.user_id == user_id)
-                .values(**mapped)
+                update(LearningProfile).where(LearningProfile.user_id == user_id).values(**mapped)
             )
             await session.execute(stmt)
             await session.commit()
@@ -804,11 +798,7 @@ class PersonalLearningRepository:
             values: dict[str, Any] = {"status": status}
             if delivered_at is not None:
                 values["delivered_at"] = delivered_at
-            stmt = (
-                update(Notification)
-                .where(Notification.id == notification_id)
-                .values(**values)
-            )
+            stmt = update(Notification).where(Notification.id == notification_id).values(**values)
             await session.execute(stmt)
             await session.commit()
 
@@ -941,10 +931,7 @@ class PersonalLearningRepository:
 
     async def list_quiz_answers(self, quiz_id: str) -> list[QuizAnswer]:
         async with await self._session() as session:
-            stmt = (
-                select(QuizAnswer)
-                .where(QuizAnswer.quiz_session_id == quiz_id)
-            )
+            stmt = select(QuizAnswer).where(QuizAnswer.quiz_session_id == quiz_id)
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
@@ -1020,7 +1007,6 @@ class PersonalLearningRepository:
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 
-
     # -----------------------------------------------------------------------
     # Study Plans
     # -----------------------------------------------------------------------
@@ -1062,11 +1048,7 @@ class PersonalLearningRepository:
 
     async def update_plan_status(self, plan_id: str, status: str) -> None:
         async with await self._session() as session:
-            stmt = (
-                update(StudyPlan)
-                .where(StudyPlan.id == plan_id)
-                .values(status=status)
-            )
+            stmt = update(StudyPlan).where(StudyPlan.id == plan_id).values(status=status)
             await session.execute(stmt)
             await session.commit()
 
@@ -1167,9 +1149,7 @@ class PersonalLearningRepository:
                 conditions.append(Reflection.type == type_filter)
 
             # Count
-            count_stmt = (
-                select(func.count()).select_from(Reflection).where(*conditions)
-            )
+            count_stmt = select(func.count()).select_from(Reflection).where(*conditions)
             total = (await session.execute(count_stmt)).scalar() or 0
 
             # Items
@@ -1269,13 +1249,10 @@ class PersonalLearningRepository:
     async def delete_old_recommendations(self, user_id: str) -> None:
         async with await self._session() as session:
             cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-            stmt = (
-                delete(DiscoveryRecommendation)
-                .where(
-                    DiscoveryRecommendation.user_id == user_id,
-                    DiscoveryRecommendation.status == "ACTIVE",
-                    DiscoveryRecommendation.created_at < cutoff,
-                )
+            stmt = delete(DiscoveryRecommendation).where(
+                DiscoveryRecommendation.user_id == user_id,
+                DiscoveryRecommendation.status == "ACTIVE",
+                DiscoveryRecommendation.created_at < cutoff,
             )
             await session.execute(stmt)
             await session.commit()
@@ -1320,9 +1297,7 @@ class PersonalLearningRepository:
             conditions = [ActivityFeedEntry.user_id == user_id]
 
             # Count
-            count_stmt = (
-                select(func.count()).select_from(ActivityFeedEntry).where(*conditions)
-            )
+            count_stmt = select(func.count()).select_from(ActivityFeedEntry).where(*conditions)
             total = (await session.execute(count_stmt)).scalar() or 0
 
             # Items

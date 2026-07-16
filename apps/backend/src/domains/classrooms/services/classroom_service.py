@@ -19,14 +19,19 @@ async def create_classroom(*, space_id: str, user_id: str, data: dict[str, Any])
 
     await _require_role(None, space_id, user_id, min_role="TUTOR")
 
-    classroom = await classroom_repo.create_classroom({
-        "spaceId": space_id,
-        "name": data["name"],
-        "visibility": data.get("visibility", "PUBLIC"),
-        "description": data.get("description"),
-    })
+    classroom = await classroom_repo.create_classroom(
+        {
+            "spaceId": space_id,
+            "name": data["name"],
+            "visibility": data.get("visibility", "PUBLIC"),
+            "description": data.get("description"),
+        }
+    )
 
-    await emit("classroom.created", {"space_id": space_id, "classroom_id": classroom.id, "user_id": user_id})
+    await emit(
+        "classroom.created",
+        {"space_id": space_id, "classroom_id": classroom.id, "user_id": user_id},
+    )
     return classroom
 
 

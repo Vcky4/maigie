@@ -154,14 +154,17 @@ async def verify_subscription(
     start_dt = datetime.fromtimestamp(start_time_millis / 1000, tz=timezone.utc)
 
     identity_repo = IdentityRepository()
-    await identity_repo.update(user_id, {
-        "tier": new_tier,
-        "googlePlayPurchaseToken": purchase_token,
-        "googlePlayProductId": f"{product_id}:{base_plan_id}",
-        "subscriptionCurrentPeriodStart": start_dt,
-        "subscriptionCurrentPeriodEnd": expiry_dt,
-        "paymentProvider": "google_play",
-    })
+    await identity_repo.update(
+        user_id,
+        {
+            "tier": new_tier,
+            "googlePlayPurchaseToken": purchase_token,
+            "googlePlayProductId": f"{product_id}:{base_plan_id}",
+            "subscriptionCurrentPeriodStart": start_dt,
+            "subscriptionCurrentPeriodEnd": expiry_dt,
+            "paymentProvider": "google_play",
+        },
+    )
 
     logger.info(
         f"User {user_id} verified Google Play subscription: "
@@ -266,26 +269,32 @@ async def verify_product_purchase(
     factory = get_session_factory()
     from sqlalchemy import select as sa_select
     from src.domains.identity.db_models import User as UserModel
+
     async with factory() as session:
         result_q = await session.execute(sa_select(UserModel).where(UserModel.id == user_id))
         user_obj = result_q.scalar_one_or_none()
         current_balance = (user_obj.purchased_credits_balance or 0) if user_obj else 0
-    updated_user = await identity_repo.update(user_id, {
-        "purchasedCreditsBalance": current_balance + credits_to_grant,
-    })
+    updated_user = await identity_repo.update(
+        user_id,
+        {
+            "purchasedCreditsBalance": current_balance + credits_to_grant,
+        },
+    )
 
     # Record the transaction
-    await billing_repo.create_purchase_transaction({
-        "userId": user_id,
-        "creditPackId": None,
-        "creditsGranted": credits_to_grant,
-        "amountPaid": 0,  # Actual price is managed by Google Play
-        "currency": "USD",
-        "paymentProvider": "google_play",
-        "providerReference": purchase_token,
-        "status": "completed",
-        "completedAt": datetime.now(timezone.utc),
-    })
+    await billing_repo.create_purchase_transaction(
+        {
+            "userId": user_id,
+            "creditPackId": None,
+            "creditsGranted": credits_to_grant,
+            "amountPaid": 0,  # Actual price is managed by Google Play
+            "currency": "USD",
+            "paymentProvider": "google_play",
+            "providerReference": purchase_token,
+            "status": "completed",
+            "completedAt": datetime.now(timezone.utc),
+        }
+    )
 
     new_balance = updated_user.purchased_credits_balance if updated_user else 0
     logger.info(

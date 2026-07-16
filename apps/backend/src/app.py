@@ -174,8 +174,7 @@ def _openapi_tags() -> list[dict]:
         {
             "name": "users",
             "description": (
-                "**Identity Domain** — User profile, preferences, "
-                "account deletion lifecycle."
+                "**Identity Domain** — User profile, preferences, " "account deletion lifecycle."
             ),
         },
         {
@@ -274,10 +273,12 @@ def _register_domains(app: FastAPI) -> None:
 
     # --- Personal Learning (migrated to SQLAlchemy) ---
     from src.domains.personal_learning.routes import router as learning_router
+
     app.include_router(learning_router, prefix=f"{prefix}/learning", tags=["personal-learning"])
 
     # --- Knowledge (migrated to SQLAlchemy) ---
     from src.domains.knowledge.routes import router as knowledge_router
+
     app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
     # from src.domains.learning_spaces.routes import router as spaces_router
@@ -291,6 +292,7 @@ def _register_domains(app: FastAPI) -> None:
 
     # --- Progress (migrated to SQLAlchemy) ---
     from src.domains.progress.routes import router as progress_router
+
     app.include_router(progress_router, prefix=f"{prefix}/progress", tags=["progress"])
 
     # --- Billing (pending SQLAlchemy migration) ---

@@ -555,14 +555,17 @@ async def create_checkout_session(
                     f"{user.stripe_subscription_id}. Clearing stale reference."
                 )
                 identity_repo = IdentityRepository()
-                await identity_repo.update(user.id, {
-                    "stripeSubscriptionId": None,
-                    "stripeSubscriptionStatus": None,
-                    "stripePriceId": None,
-                    "tier": "FREE",
-                    "subscriptionCurrentPeriodStart": None,
-                    "subscriptionCurrentPeriodEnd": None,
-                })
+                await identity_repo.update(
+                    user.id,
+                    {
+                        "stripeSubscriptionId": None,
+                        "stripeSubscriptionStatus": None,
+                        "stripePriceId": None,
+                        "tier": "FREE",
+                        "subscriptionCurrentPeriodStart": None,
+                        "subscriptionCurrentPeriodEnd": None,
+                    },
+                )
                 user.stripe_subscription_id = None
                 # Fall through to create new checkout below
             else:
@@ -623,10 +626,13 @@ async def create_checkout_session(
                 "Clearing stale reference."
             )
             identity_repo = IdentityRepository()
-            await identity_repo.update(user.id, {
-                "stripeSubscriptionId": None,
-                "stripeSubscriptionStatus": None,
-            })
+            await identity_repo.update(
+                user.id,
+                {
+                    "stripeSubscriptionId": None,
+                    "stripeSubscriptionStatus": None,
+                },
+            )
             user.stripe_subscription_id = None
     else:
         # Also check Stripe directly in case database is out of sync
@@ -645,13 +651,13 @@ async def create_checkout_session(
                 )
 
                 # Perform full synchronization from Stripe
-                updated_user = await update_user_subscription_from_stripe(
-                    active_subscription.id
-                )
+                updated_user = await update_user_subscription_from_stripe(active_subscription.id)
                 if not updated_user:
                     # Fallback to manual ID update if standard sync fails
                     identity_repo = IdentityRepository()
-                    await identity_repo.update(user.id, {"stripeSubscriptionId": active_subscription.id})
+                    await identity_repo.update(
+                        user.id, {"stripeSubscriptionId": active_subscription.id}
+                    )
                     user.stripe_subscription_id = active_subscription.id
                 else:
                     user = updated_user
@@ -773,9 +779,12 @@ async def cancel_subscription(user: User) -> dict:
 
     # Update user subscription status
     identity_repo = IdentityRepository()
-    await identity_repo.update(user.id, {
-        "stripeSubscriptionStatus": subscription.status,
-    })
+    await identity_repo.update(
+        user.id,
+        {
+            "stripeSubscriptionStatus": subscription.status,
+        },
+    )
 
     return {
         "status": subscription.status,
@@ -929,15 +938,18 @@ async def update_user_subscription_from_stripe(
             is_new_period = True
 
         # Update user subscription data
-        updated_user = await identity_repo.update(user.id, {
-            "stripeSubscriptionId": sub_id,
-            "stripeSubscriptionStatus": sub_status,
-            "stripePriceId": price_id,
-            "tier": tier,
-            "paymentProvider": "stripe",
-            "subscriptionCurrentPeriodStart": period_start_dt,
-            "subscriptionCurrentPeriodEnd": period_end_dt,
-        })
+        updated_user = await identity_repo.update(
+            user.id,
+            {
+                "stripeSubscriptionId": sub_id,
+                "stripeSubscriptionStatus": sub_status,
+                "stripePriceId": price_id,
+                "tier": tier,
+                "paymentProvider": "stripe",
+                "subscriptionCurrentPeriodStart": period_start_dt,
+                "subscriptionCurrentPeriodEnd": period_end_dt,
+            },
+        )
 
         # Reset credits if this is a new billing period
         if is_new_period and period_start_dt and period_end_dt:
@@ -1012,12 +1024,15 @@ async def handle_subscription_webhook(
         if customer_id:
             user = await billing_repo.find_user_by_stripe_customer(customer_id)
             if user:
-                await identity_repo.update(user.id, {
-                    "tier": "FREE",
-                    "stripeSubscriptionStatus": "canceled",
-                    "stripeSubscriptionId": None,
-                    "stripePriceId": None,
-                    "subscriptionCurrentPeriodStart": None,
-                    "subscriptionCurrentPeriodEnd": None,
-                })
+                await identity_repo.update(
+                    user.id,
+                    {
+                        "tier": "FREE",
+                        "stripeSubscriptionStatus": "canceled",
+                        "stripeSubscriptionId": None,
+                        "stripePriceId": None,
+                        "subscriptionCurrentPeriodStart": None,
+                        "subscriptionCurrentPeriodEnd": None,
+                    },
+                )
                 logger.info(f"Subscription canceled for user: {user.id}")

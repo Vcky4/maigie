@@ -317,11 +317,14 @@ async def link_referral(*, user: User, referral_code: str) -> dict:
     try:
         from src.shared.events import emit
 
-        await emit("billing.referral_linked", {
-            "user_id": user.id,
-            "referral_code": code,
-            "referrer_id": referrer.id,
-        })
+        await emit(
+            "billing.referral_linked",
+            {
+                "user_id": user.id,
+                "referral_code": code,
+                "referrer_id": referrer.id,
+            },
+        )
     except Exception as e:
         logger.error(f"Error tracking referral: {e}")
 

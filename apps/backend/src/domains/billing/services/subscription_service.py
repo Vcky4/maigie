@@ -77,7 +77,9 @@ async def cancel_subscription(*, user: User) -> dict[str, Any]:
 
         result = await cancel_paystack_subscription(user=user)
     else:
-        from src.domains.billing.services.stripe_service import cancel_subscription as _stripe_cancel
+        from src.domains.billing.services.stripe_service import (
+            cancel_subscription as _stripe_cancel,
+        )
 
         result = await _stripe_cancel(user=user)
 

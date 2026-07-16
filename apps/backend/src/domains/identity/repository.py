@@ -44,9 +44,7 @@ class IdentityRepository:
 
     async def find_by_oauth(self, provider: str, provider_id: str) -> User | None:
         async with await self._get_session() as session:
-            stmt = select(User).where(
-                User.provider == provider, User.provider_id == provider_id
-            )
+            stmt = select(User).where(User.provider == provider, User.provider_id == provider_id)
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
@@ -138,30 +136,42 @@ class IdentityRepository:
 
     async def activate_user(self, user_id: str) -> User:
         """Activate user and clear verification codes."""
-        return await self.update(user_id, {
-            "isActive": True,
-            "verificationCode": None,
-            "verificationCodeExpiresAt": None,
-        })
+        return await self.update(
+            user_id,
+            {
+                "isActive": True,
+                "verificationCode": None,
+                "verificationCodeExpiresAt": None,
+            },
+        )
 
     async def set_verification_code(self, user_id: str, code: str, expires_at: datetime) -> User:
-        return await self.update(user_id, {
-            "verificationCode": code,
-            "verificationCodeExpiresAt": expires_at,
-        })
+        return await self.update(
+            user_id,
+            {
+                "verificationCode": code,
+                "verificationCodeExpiresAt": expires_at,
+            },
+        )
 
     async def set_password_reset_code(self, user_id: str, code: str, expires_at: datetime) -> User:
-        return await self.update(user_id, {
-            "passwordResetCode": code,
-            "passwordResetExpiresAt": expires_at,
-        })
+        return await self.update(
+            user_id,
+            {
+                "passwordResetCode": code,
+                "passwordResetExpiresAt": expires_at,
+            },
+        )
 
     async def clear_password_reset(self, user_id: str, new_password_hash: str) -> User:
-        return await self.update(user_id, {
-            "passwordHash": new_password_hash,
-            "passwordResetCode": None,
-            "passwordResetExpiresAt": None,
-        })
+        return await self.update(
+            user_id,
+            {
+                "passwordHash": new_password_hash,
+                "passwordResetCode": None,
+                "passwordResetExpiresAt": None,
+            },
+        )
 
     async def update_password(self, user_id: str, new_password_hash: str) -> User:
         return await self.update(user_id, {"passwordHash": new_password_hash})
@@ -208,23 +218,29 @@ class IdentityRepository:
         scheduled_for: datetime,
         cancel_token: str,
     ) -> User:
-        return await self.update(user_id, {
-            "accountDeletionRequestedAt": requested_at,
-            "accountDeletionScheduledFor": scheduled_for,
-            "accountDeletionCancelToken": cancel_token,
-            "accountDeletionReminder30SentAt": None,
-            "accountDeletionReminder7SentAt": None,
-        })
+        return await self.update(
+            user_id,
+            {
+                "accountDeletionRequestedAt": requested_at,
+                "accountDeletionScheduledFor": scheduled_for,
+                "accountDeletionCancelToken": cancel_token,
+                "accountDeletionReminder30SentAt": None,
+                "accountDeletionReminder7SentAt": None,
+            },
+        )
 
     async def cancel_deletion(self, user_id: str, cancelled_at: datetime) -> User:
-        return await self.update(user_id, {
-            "accountDeletionRequestedAt": None,
-            "accountDeletionScheduledFor": None,
-            "accountDeletionCancelToken": None,
-            "accountDeletionReminder30SentAt": None,
-            "accountDeletionReminder7SentAt": None,
-            "accountDeletionLastCancelledAt": cancelled_at,
-        })
+        return await self.update(
+            user_id,
+            {
+                "accountDeletionRequestedAt": None,
+                "accountDeletionScheduledFor": None,
+                "accountDeletionCancelToken": None,
+                "accountDeletionReminder30SentAt": None,
+                "accountDeletionReminder7SentAt": None,
+                "accountDeletionLastCancelledAt": cancelled_at,
+            },
+        )
 
     # -----------------------------------------------------------------------
     # Activity tracking
@@ -275,6 +291,7 @@ class IdentityRepository:
             if attr_name == key and "_" not in key and len(key) > 1:
                 # Simple camelCase → snake_case
                 import re
+
                 attr_name = re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
             result[attr_name] = value
         return result

@@ -48,21 +48,25 @@ async def create_notification(
 
     # Check quiet hours — if scheduled during quiet hours, queue for later
     status = "PENDING"
-    if profile and _is_during_quiet_hours(scheduled_at, profile.quiet_hours_start, profile.quiet_hours_end):
+    if profile and _is_during_quiet_hours(
+        scheduled_at, profile.quiet_hours_start, profile.quiet_hours_end
+    ):
         status = "QUEUED"
         # Reschedule to after quiet hours end
         scheduled_at = _reschedule_after_quiet_hours(scheduled_at, profile.quiet_hours_end)
 
-    notification = await repo.create_notification({
-        "userId": user_id,
-        "type": type,
-        "title": title,
-        "body": body,
-        "priority": priority,
-        "actionData": action_data,
-        "scheduledAt": scheduled_at,
-        "status": status,
-    })
+    notification = await repo.create_notification(
+        {
+            "userId": user_id,
+            "type": type,
+            "title": title,
+            "body": body,
+            "priority": priority,
+            "actionData": action_data,
+            "scheduledAt": scheduled_at,
+            "status": status,
+        }
+    )
 
     return notification
 
@@ -117,7 +121,9 @@ async def deliver_pending() -> int:
         profile = await repo.get_profile_by_user(notification.user_id)
         now = datetime.now(timezone.utc)
 
-        if profile and _is_during_quiet_hours(now, profile.quiet_hours_start, profile.quiet_hours_end):
+        if profile and _is_during_quiet_hours(
+            now, profile.quiet_hours_start, profile.quiet_hours_end
+        ):
             # Still in quiet hours, skip for now
             continue
 

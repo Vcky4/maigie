@@ -37,6 +37,7 @@ async def generate_ai_course(
     """Trigger AI course generation (returns immediately, updates via WebSocket)."""
     # TODO: Re-enable when AI course generation is migrated
     from fastapi import HTTPException as _HTTPException
+
     raise _HTTPException(status_code=501, detail="AI course generation pending migration")
 
     user_id = current_user.id
@@ -57,17 +58,21 @@ async def generate_ai_course(
 
     # Consume credits
     credits_needed = CREDIT_COSTS["ai_course_generation"]
-    await consume_credits(current_user, credits_needed, operation="ai_course_generation", db_client=db)
+    await consume_credits(
+        current_user, credits_needed, operation="ai_course_generation", db_client=db
+    )
 
     # Create placeholder
-    placeholder = await knowledge_repo.create_course({
-        "userId": user_id,
-        "title": f"Learning {body.topic}",
-        "description": "Waiting for AI generation...",
-        "difficulty": body.difficulty.value.upper(),
-        "isAIGenerated": True,
-        "progress": 0.0,
-    })
+    placeholder = await knowledge_repo.create_course(
+        {
+            "userId": user_id,
+            "title": f"Learning {body.topic}",
+            "description": "Waiting for AI generation...",
+            "difficulty": body.difficulty.value.upper(),
+            "isAIGenerated": True,
+            "progress": 0.0,
+        }
+    )
 
     # Background task
     background_tasks.add_task(
@@ -124,23 +129,27 @@ async def list_courses(
 
     items = []
     for c in courses:
-        progress, total_topics, completed_topics = await course_service.calculate_course_progress(c.id)
-        items.append(models.CourseListItem(
-            id=c.id,
-            userId=c.userId,
-            title=c.title,
-            description=c.description,
-            difficulty=c.difficulty,
-            targetDate=c.targetDate,
-            isAIGenerated=c.isAIGenerated,
-            archived=c.archived,
-            progress=progress,
-            totalTopics=total_topics,
-            completedTopics=completed_topics,
-            moduleCount=len(c.modules) if c.modules else 0,
-            createdAt=c.createdAt,
-            updatedAt=c.updatedAt,
-        ))
+        progress, total_topics, completed_topics = await course_service.calculate_course_progress(
+            c.id
+        )
+        items.append(
+            models.CourseListItem(
+                id=c.id,
+                userId=c.userId,
+                title=c.title,
+                description=c.description,
+                difficulty=c.difficulty,
+                targetDate=c.targetDate,
+                isAIGenerated=c.isAIGenerated,
+                archived=c.archived,
+                progress=progress,
+                totalTopics=total_topics,
+                completedTopics=completed_topics,
+                moduleCount=len(c.modules) if c.modules else 0,
+                createdAt=c.createdAt,
+                updatedAt=c.updatedAt,
+            )
+        )
 
     return models.CourseListResponse(
         courses=items, total=total, page=page, pageSize=pageSize, hasMore=(skip + pageSize) < total
@@ -179,11 +188,13 @@ async def get_course(course_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Course not found")
 
     modules = []
-    for m in (course.modules or []):
+    for m in course.modules or []:
         enriched = course_service.calculate_module_progress(m)
         modules.append(models.ModuleResponse(**enriched))
 
-    progress, total_topics, completed_topics = await course_service.calculate_course_progress(course_id)
+    progress, total_topics, completed_topics = await course_service.calculate_course_progress(
+        course_id
+    )
     outline_recorded = await knowledge_repo.has_outline_satisfaction(current_user.id, course_id)
 
     return models.CourseResponse(
@@ -233,12 +244,14 @@ async def record_outline_satisfaction(
 ):
     """Record learner reaction to AI-generated outline (KPI)."""
     await course_service.check_course_ownership(course_id, current_user.id)
-    await knowledge_repo.record_outline_satisfaction({
-        "userId": current_user.id,
-        "courseId": course_id,
-        "kind": body.kind,
-        "feedback": body.feedback,
-    })
+    await knowledge_repo.record_outline_satisfaction(
+        {
+            "userId": current_user.id,
+            "courseId": course_id,
+            "kind": body.kind,
+            "feedback": body.feedback,
+        }
+    )
     return {"status": "ok"}
 
 
@@ -251,12 +264,14 @@ async def record_outline_satisfaction(
 async def create_module(course_id: str, body: models.ModuleCreate, current_user: CurrentUser):
     """Add a module to a course."""
     await course_service.check_course_ownership(course_id, current_user.id)
-    module = await knowledge_repo.create_module({
-        "courseId": course_id,
-        "title": body.title,
-        "order": body.order,
-        "description": body.description,
-    })
+    module = await knowledge_repo.create_module(
+        {
+            "courseId": course_id,
+            "title": body.title,
+            "order": body.order,
+            "description": body.description,
+        }
+    )
     enriched = course_service.calculate_module_progress(module)
     return models.ModuleResponse(**enriched)
 
@@ -302,13 +317,15 @@ async def create_topic(
     module, _ = await course_service.check_module_ownership(module_id, current_user.id)
     if module.courseId != course_id:
         raise HTTPException(status_code=400, detail="Module does not belong to this course")
-    topic = await knowledge_repo.create_topic({
-        "moduleId": module_id,
-        "title": body.title,
-        "order": body.order,
-        "content": body.content,
-        "estimatedHours": body.estimatedHours,
-    })
+    topic = await knowledge_repo.create_topic(
+        {
+            "moduleId": module_id,
+            "title": body.title,
+            "order": body.order,
+            "content": body.content,
+            "estimatedHours": body.estimatedHours,
+        }
+    )
     return models.TopicResponse.model_validate(topic, from_attributes=True)
 
 
@@ -347,9 +364,7 @@ async def update_topic(
 
 
 @router.delete("/courses/{course_id}/modules/{module_id}/topics/{topic_id}", status_code=204)
-async def delete_topic(
-    course_id: str, module_id: str, topic_id: str, current_user: CurrentUser
-):
+async def delete_topic(course_id: str, module_id: str, topic_id: str, current_user: CurrentUser):
     """Delete a topic."""
     topic, module, _ = await course_service.check_topic_ownership(topic_id, current_user.id)
     if topic.moduleId != module_id or module.courseId != course_id:
@@ -458,7 +473,9 @@ async def create_resource(body: models.ResourceCreate, current_user: CurrentUser
 
 
 @router.post("/resources/recommend", response_model=models.ResourceRecommendationResponse)
-async def recommend_resources(body: models.ResourceRecommendationRequest, current_user: CurrentUser):
+async def recommend_resources(
+    body: models.ResourceRecommendationRequest, current_user: CurrentUser
+):
     """Get AI-recommended resources via RAG."""
     result = await resource_service.recommend_resources(
         user_id=current_user.id, query=body.query, limit=body.limit, context=body.context
@@ -467,9 +484,7 @@ async def recommend_resources(body: models.ResourceRecommendationRequest, curren
 
 
 @router.post("/resources/{resource_id}/interact")
-async def record_interaction(
-    resource_id: str, interaction_type: str, current_user: CurrentUser
-):
+async def record_interaction(resource_id: str, interaction_type: str, current_user: CurrentUser):
     """Record a user interaction with a resource."""
     await resource_service.record_interaction(
         user_id=current_user.id, resource_id=resource_id, interaction_type=interaction_type

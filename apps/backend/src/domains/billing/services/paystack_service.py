@@ -468,9 +468,7 @@ async def verify_paystack_transaction(
     return updated
 
 
-async def handle_paystack_webhook(
-    event: str, payload: dict, db_client: Any | None = None
-) -> None:
+async def handle_paystack_webhook(event: str, payload: dict, db_client: Any | None = None) -> None:
     """
     Handle Paystack webhook events for subscriptions.
 
