@@ -12,7 +12,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 
 from src.shared.auth import StaffUser, SuperAdminUser
-from src.shared.database import check_db_health, db
+from src.shared.database import check_db_health, get_session_factory
 from src.shared.infrastructure import cache
 
 from . import models
@@ -57,14 +57,20 @@ async def admin_health(admin_user: StaffUser):
 @router.get("/stats", response_model=models.AdminStatsResponse)
 async def admin_stats(admin_user: StaffUser):
     """Platform statistics overview."""
-    total_users = await db.user.count(where={"role": "USER"})
-    active_users = await db.user.count(where={"role": "USER", "isActive": True})
-    premium_users = await db.user.count(
-        where={"tier": {"in": ["PREMIUM_MONTHLY", "PREMIUM_YEARLY"]}}
-    )
-    total_courses = await db.course.count()
-    total_spaces = await db.circle.count()
-    total_messages = await db.chatmessage.count()
+    from sqlalchemy import select, func
+    from src.domains.identity.db_models import User
+    from src.domains.knowledge.db_models import Course
+    from src.domains.learning_spaces.db_models import Circle
+    from src.domains.intelligence.db_models import ChatMessage
+
+    factory = get_session_factory()
+    async with factory() as session:
+        total_users = (await session.execute(select(func.count()).select_from(User).where(User.role == "USER"))).scalar() or 0
+        active_users = (await session.execute(select(func.count()).select_from(User).where(User.role == "USER", User.is_active == True))).scalar() or 0
+        premium_users = (await session.execute(select(func.count()).select_from(User).where(User.tier.in_(["PREMIUM_MONTHLY", "PREMIUM_YEARLY"])))).scalar() or 0
+        total_courses = (await session.execute(select(func.count()).select_from(Course))).scalar() or 0
+        total_spaces = (await session.execute(select(func.count()).select_from(Circle))).scalar() or 0
+        total_messages = (await session.execute(select(func.count()).select_from(ChatMessage))).scalar() or 0
 
     return models.AdminStatsResponse(
         totalUsers=total_users,

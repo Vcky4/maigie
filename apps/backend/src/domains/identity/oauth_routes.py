@@ -247,7 +247,5 @@ async def oauth_callback(provider: str, code: str, state: str, request: Request)
     except Exception as e:
         if "DataError" in type(e).__name__:
             raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-        raise
-    except Exception as e:
         logger.error(f"OAuth callback error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"OAuth callback failed: {type(e).__name__}")

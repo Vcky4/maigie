@@ -15,7 +15,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import Response
 
 from src.config import Settings, get_settings
-from src.shared.database import db
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +55,7 @@ async def stripe_webhook(
     try:
         from src.domains.billing.services.stripe_service import handle_subscription_webhook
 
-        await handle_subscription_webhook(event, db)
+        await handle_subscription_webhook(event, None)
     except Exception as e:
         logger.error(f"Error handling Stripe webhook: {e}", exc_info=True)
         # Return 200 to prevent Stripe from retrying (we log the error)
@@ -95,7 +94,7 @@ async def paystack_webhook(
         event = json.loads(body)
         from src.domains.billing.services.paystack_service import handle_paystack_webhook
 
-        await handle_paystack_webhook(event, db)
+        await handle_paystack_webhook(event, None)
     except Exception as e:
         logger.error(f"Error handling Paystack webhook: {e}", exc_info=True)
 

@@ -1,5 +1,5 @@
 ﻿"""
-Memory service â€” long-term context for Intelligence.
+Memory service — long-term context for Intelligence.
 
 Manages conversation summaries, user facts, and interaction history.
 Memory allows Intelligence to understand learners over time rather
@@ -9,7 +9,7 @@ than starting from zero in every conversation.
 import logging
 from typing import Any
 
-from src.shared.database import db
+from ..repository import intelligence_repo
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +27,14 @@ async def get_memory_context(user_id: str) -> dict[str, Any]:
 
 async def get_user_facts(user_id: str) -> list[dict[str, Any]]:
     """Get all learned facts about a user."""
-    facts = await db.userfact.find_many(
-        where={"userId": user_id},
-        order={"importance": "desc"},
-    )
+    facts = await intelligence_repo.list_user_facts(user_id, active_only=True, take=50)
     return [
         {
             "id": f.id,
-            "fact": f.fact,
-            "category": getattr(f, "category", None),
-            "importance": getattr(f, "importance", 0.5),
-            "createdAt": f.createdAt,
+            "fact": f.content,
+            "category": f.category,
+            "importance": f.confidence,
+            "createdAt": f.created_at,
         }
         for f in facts
     ]
@@ -45,18 +42,14 @@ async def get_user_facts(user_id: str) -> list[dict[str, Any]]:
 
 async def get_conversation_summaries(user_id: str, *, limit: int = 10) -> list[dict[str, Any]]:
     """Get recent conversation summaries for context."""
-    summaries = await db.conversationsummary.find_many(
-        where={"userId": user_id},
-        order={"createdAt": "desc"},
-        take=limit,
-    )
+    summaries = await intelligence_repo.list_summaries(user_id, take=limit)
     return [
         {
             "id": s.id,
-            "sessionId": s.sessionId,
+            "sessionId": s.session_id,
             "summary": s.summary,
-            "keyTopics": getattr(s, "keyTopics", []),
-            "createdAt": s.createdAt,
+            "keyTopics": s.key_topics or [],
+            "createdAt": s.created_at,
         }
         for s in summaries
     ]

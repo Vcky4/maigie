@@ -8,8 +8,13 @@ Messages flow through the reasoning layer for AI responses.
 import logging
 from typing import Any
 
-from src.shared.database import db
+from sqlalchemy import select, update, delete, func
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.shared.database import get_session_factory
 from src.shared.exceptions import NotFoundError
+from src.domains.intelligence.db_models import ChatSession, ChatMessage
+from src.domains.intelligence.repository import intelligence_repo
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +40,7 @@ async def create_conversation(*, user_id: str, data: dict[str, Any]) -> Any:
     if data.get("circleId"):
         create_data["circleId"] = data["circleId"]
 
-    return await db.chatsession.create(data=create_data)
+    return await intelligence_repo.create_chat_session(create_data)
 
 
 async def list_conversations(
@@ -47,31 +52,37 @@ async def list_conversations(
     circle_id: str | None = None,
 ) -> tuple[list, int]:
     """List conversations for a user."""
-    where: dict[str, Any] = {"userId": user_id, "isActive": True}
-    if session_type:
-        where["sessionType"] = session_type
-    if circle_id:
-        where["circleId"] = circle_id
-    else:
-        where["circleId"] = None
-        where["isCircleRoom"] = False
+    factory = get_session_factory()
+    async with factory() as session:
+        conditions = [ChatSession.user_id == user_id, ChatSession.is_active == True]  # noqa: E712
+        if session_type:
+            conditions.append(ChatSession.session_type == session_type)
+        if circle_id:
+            conditions.append(ChatSession.circle_id == circle_id)
+        else:
+            conditions.append(ChatSession.circle_id.is_(None))
+            conditions.append(ChatSession.is_circle_room == False)  # noqa: E712
 
-    total = await db.chatsession.count(where=where)
-    sessions = await db.chatsession.find_many(
-        where=where,
-        order={"updatedAt": "desc"},
-        skip=(page - 1) * page_size,
-        take=page_size,
-    )
-    return sessions, total
+        count_stmt = select(func.count()).select_from(ChatSession).where(*conditions)
+        total = (await session.execute(count_stmt)).scalar() or 0
+
+        stmt = (
+            select(ChatSession)
+            .where(*conditions)
+            .order_by(ChatSession.updated_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        result = await session.execute(stmt)
+        sessions_list = list(result.scalars().all())
+
+    return sessions_list, total
 
 
 async def get_conversation(*, session_id: str, user_id: str) -> Any:
     """Get a conversation. Verifies ownership."""
-    session = await db.chatsession.find_first(
-        where={"id": session_id, "userId": user_id}
-    )
-    if not session:
+    session = await intelligence_repo.find_chat_session(session_id)
+    if not session or session.user_id != user_id:
         raise NotFoundError("Conversation", session_id)
     return session
 
@@ -82,27 +93,38 @@ async def get_messages(
     """Get messages in a conversation."""
     await get_conversation(session_id=session_id, user_id=user_id)
 
-    where: dict[str, Any] = {"sessionId": session_id}
-    if before:
-        where["id"] = {"lt": before}
+    factory = get_session_factory()
+    async with factory() as session:
+        count_stmt = select(func.count()).select_from(ChatMessage).where(ChatMessage.session_id == session_id)
+        total = (await session.execute(count_stmt)).scalar() or 0
 
-    total = await db.chatmessage.count(where={"sessionId": session_id})
-    messages = await db.chatmessage.find_many(
-        where=where,
-        order={"createdAt": "desc"},
-        take=limit,
-    )
-    return list(reversed(messages)), total
+        conditions = [ChatMessage.session_id == session_id]
+        if before:
+            conditions.append(ChatMessage.id < before)
+
+        stmt = (
+            select(ChatMessage)
+            .where(*conditions)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        messages = list(reversed(result.scalars().all()))
+
+    return messages, total
 
 
 async def archive_conversation(*, session_id: str, user_id: str) -> None:
     """Archive (soft-delete) a conversation."""
-    session = await get_conversation(session_id=session_id, user_id=user_id)
-    await db.chatsession.update(where={"id": session_id}, data={"isActive": False})
+    await get_conversation(session_id=session_id, user_id=user_id)
+    await intelligence_repo.update_chat_session(session_id, {"isActive": False})
 
 
 async def delete_conversation(*, session_id: str, user_id: str) -> None:
     """Permanently delete a conversation and its messages."""
     await get_conversation(session_id=session_id, user_id=user_id)
-    await db.chatmessage.delete_many(where={"sessionId": session_id})
-    await db.chatsession.delete(where={"id": session_id})
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(delete(ChatMessage).where(ChatMessage.session_id == session_id))
+        await session.execute(delete(ChatSession).where(ChatSession.id == session_id))
+        await session.commit()

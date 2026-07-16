@@ -11,7 +11,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from prisma import Client as PrismaClient
+
 from src.shared.auth import CurrentUser
 
 from . import models

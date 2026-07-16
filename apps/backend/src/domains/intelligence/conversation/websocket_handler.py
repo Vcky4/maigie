@@ -12,9 +12,10 @@ import json
 import logging
 from datetime import UTC, datetime
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
-from prisma import Json, Prisma
 
 from src.config import settings
 from src.core.cache import cache
@@ -138,7 +139,7 @@ _ERROR_CATEGORY_MESSAGES: dict[str, str] = {
 
 
 async def _get_user_model_preference(
-    db: Prisma, user_id: str, capability: str = "chat"
+    db: Any, user_id: str, capability: str = "chat"
 ) -> tuple[str, str] | None:
     """Fetch the user's model preference for a given capability from the DB.
 
@@ -155,7 +156,7 @@ async def _get_user_model_preference(
     return None
 
 
-def register_chat_websocket_routes(router: APIRouter, db: Prisma):
+def register_chat_websocket_routes(router: APIRouter, db: Any):
     """Register ``/ws``; returns ``get_current_user_ws`` for the voice upload route."""
 
     async def get_current_user_ws(token: str = Query(...)):
@@ -471,7 +472,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                                     "modelName": model_name,
                                 }
                                 if greeting_components:
-                                    greeting_data["componentData"] = Json(greeting_components)
+                                    greeting_data["componentData"] = greeting_components
                                 await db.chatmessage.create(data=greeting_data)
 
                                 # Send final plain-text message (deduped by frontend)
@@ -756,7 +757,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                             "modelName": "onboarding",
                         }
                         if onboarding_components:
-                            onboarding_data["componentData"] = Json(onboarding_components)
+                            onboarding_data["componentData"] = onboarding_components
                         await db.chatmessage.create(data=onboarding_data)
 
                         # Send credit limit error first if present (triggers upgrade modal)
@@ -1455,7 +1456,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                         data={
                             "messageId": user_message.id,
                             "actionType": action_type,
-                            "actionData": Json(action_data) if action_data else Json({}),
+                            "actionData": action_data if action_data else {},
                             "status": (
                                 "SUCCESS" if action_result.get("status") == "success" else "FAILED"
                             ),
@@ -1762,7 +1763,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Prisma):
                 if ai_reply_target_id:
                     create_data["replyToMessageId"] = ai_reply_target_id
                 if all_components:
-                    create_data["componentData"] = Json(all_components)
+                    create_data["componentData"] = all_components
                 if suggestion_text:
                     create_data["suggestionText"] = suggestion_text
 
