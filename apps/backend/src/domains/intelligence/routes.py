@@ -177,12 +177,19 @@ async def get_recommendations(
 @router.get("/models/preferences", response_model=list[models.ModelPreferenceResponse])
 async def get_model_preferences(current_user: CurrentUser):
     """Get user's AI model preferences."""
-    from src.shared.database import db
+    from sqlalchemy import select
+    from src.domains.identity.db_models import ModelPreference
+    from src.shared.database import get_session_factory
 
-    prefs = await db.modelpreference.find_many(where={"userId": current_user.id})
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(ModelPreference).where(ModelPreference.user_id == current_user.id)
+        result = await session.execute(stmt)
+        prefs = list(result.scalars().all())
+
     return [
         models.ModelPreferenceResponse(
-            capability=p.capability, provider=p.provider, modelId=p.modelId
+            capability=p.capability, provider=p.provider, modelId=p.model_id
         )
         for p in prefs
     ]
@@ -191,25 +198,47 @@ async def get_model_preferences(current_user: CurrentUser):
 @router.put("/models/preferences", response_model=models.ModelPreferenceResponse)
 async def update_model_preference(body: models.ModelPreferenceUpdate, current_user: CurrentUser):
     """Update preferred AI model for a capability."""
-    from src.shared.database import db
+    from sqlalchemy import select, update as sa_update
+    from src.domains.identity.db_models import ModelPreference
+    from src.shared.database import get_session_factory
 
-    pref = await db.modelpreference.upsert(
-        where={"userId_capability": {"userId": current_user.id, "capability": body.capability}},
-        data={
-            "create": {
-                "userId": current_user.id,
-                "capability": body.capability,
-                "provider": body.provider,
-                "modelId": body.modelId,
-            },
-            "update": {
-                "provider": body.provider,
-                "modelId": body.modelId,
-            },
-        },
-    )
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(ModelPreference).where(
+            ModelPreference.user_id == current_user.id,
+            ModelPreference.capability == body.capability,
+        )
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            upd = (
+                sa_update(ModelPreference)
+                .where(ModelPreference.id == existing.id)
+                .values(provider=body.provider, model_id=body.modelId)
+            )
+            await session.execute(upd)
+        else:
+            new_pref = ModelPreference(
+                user_id=current_user.id,
+                capability=body.capability,
+                provider=body.provider,
+                model_id=body.modelId,
+            )
+            session.add(new_pref)
+        await session.commit()
+
+    # Fetch the final state
+    async with factory() as session:
+        stmt = select(ModelPreference).where(
+            ModelPreference.user_id == current_user.id,
+            ModelPreference.capability == body.capability,
+        )
+        result = await session.execute(stmt)
+        pref = result.scalar_one_or_none()
+
     return models.ModelPreferenceResponse(
-        capability=pref.capability, provider=pref.provider, modelId=pref.modelId
+        capability=pref.capability, provider=pref.provider, modelId=pref.model_id
     )
 
 

@@ -141,18 +141,31 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
     # Build context
     context_parts = [f"Title: {note.title}"]
     if note.topicId:
-        from src.shared.database import db
+        from sqlalchemy import select as sa_select
+        from src.domains.knowledge.db_models import Topic, Module, Course
+        from src.shared.database import get_session_factory
 
-        topic = await db.topic.find_unique(
-            where={"id": note.topicId},
-            include={"module": {"include": {"course": True}}},
-        )
+        factory = get_session_factory()
+        async with factory() as session:
+            stmt = sa_select(Topic).where(Topic.id == note.topicId)
+            result = await session.execute(stmt)
+            topic = result.scalar_one_or_none()
+            topic_module = None
+            topic_course = None
+            if topic and topic.module_id:
+                mod_stmt = sa_select(Module).where(Module.id == topic.module_id)
+                mod_result = await session.execute(mod_stmt)
+                topic_module = mod_result.scalar_one_or_none()
+            if topic_module and topic_module.course_id:
+                course_stmt = sa_select(Course).where(Course.id == topic_module.course_id)
+                course_result = await session.execute(course_stmt)
+                topic_course = course_result.scalar_one_or_none()
         if topic:
             context_parts.append(f"Topic: {topic.title}")
-            if topic.module:
-                context_parts.append(f"Module: {topic.module.title}")
-                if topic.module.course:
-                    context_parts.append(f"Course: {topic.module.course.title}")
+            if topic_module:
+                context_parts.append(f"Module: {topic_module.title}")
+                if topic_course:
+                    context_parts.append(f"Course: {topic_course.title}")
 
     cleaned = re.sub(
         r"\s*<<<ACTION_START>>>.*?<<<ACTION_END>>>\s*", "", note.content, flags=re.DOTALL
@@ -204,6 +217,5 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
 async def import_to_space(*, user_id: str, note_id: str, space_id: str) -> Any:
     """Import a personal note into a Learning Space."""
     from src.domains.personal_learning.services.note_impl import import_note_to_circle
-    from src.shared.database import db
 
-    return await import_note_to_circle(db, note_id, space_id, user_id)
+    return await import_note_to_circle(None, note_id, space_id, user_id)

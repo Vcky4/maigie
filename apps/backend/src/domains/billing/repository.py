@@ -116,7 +116,7 @@ class BillingRepository:
         async with await self._session() as session:
             txn = CreditPurchaseTransaction(
                 user_id=data["userId"],
-                credit_pack_id=data["creditPackId"],
+                credit_pack_id=data.get("creditPackId"),
                 credits_granted=data["creditsGranted"],
                 amount_paid=data["amountPaid"],
                 currency=data["currency"],
@@ -125,6 +125,7 @@ class BillingRepository:
                 session_id=data.get("sessionId"),
                 session_expires_at=data.get("sessionExpiresAt"),
                 status=data.get("status", "pending"),
+                completed_at=data.get("completedAt"),
             )
             session.add(txn)
             await session.commit()

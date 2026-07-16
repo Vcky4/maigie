@@ -16,8 +16,11 @@ from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+from src.domains.identity.repository import IdentityRepository
+from src.domains.billing.repository import billing_repo
+from src.shared.database import get_session_factory
+
 from ..config import get_settings
-from ..core.database import db
 
 logger = logging.getLogger(__name__)
 
@@ -150,17 +153,15 @@ async def verify_subscription(
     start_time_millis = int(result.get("startTimeMillis", 0))
     start_dt = datetime.fromtimestamp(start_time_millis / 1000, tz=timezone.utc)
 
-    await db.user.update(
-        where={"id": user_id},
-        data={
-            "tier": new_tier,
-            "googlePlayPurchaseToken": purchase_token,
-            "googlePlayProductId": f"{product_id}:{base_plan_id}",
-            "subscriptionCurrentPeriodStart": start_dt,
-            "subscriptionCurrentPeriodEnd": expiry_dt,
-            "paymentProvider": "google_play",
-        },
-    )
+    identity_repo = IdentityRepository()
+    await identity_repo.update(user_id, {
+        "tier": new_tier,
+        "googlePlayPurchaseToken": purchase_token,
+        "googlePlayProductId": f"{product_id}:{base_plan_id}",
+        "subscriptionCurrentPeriodStart": start_dt,
+        "subscriptionCurrentPeriodEnd": expiry_dt,
+        "paymentProvider": "google_play",
+    })
 
     logger.info(
         f"User {user_id} verified Google Play subscription: "
@@ -215,10 +216,8 @@ async def verify_product_purchase(
     package_name = settings.GOOGLE_PLAY_PACKAGE_NAME
 
     # Check if this token was already consumed (idempotency)
-    existing = await db.creditpurchasetransaction.find_first(
-        where={"providerReference": purchase_token, "status": "COMPLETED"}
-    )
-    if existing:
+    existing = await billing_repo.find_transaction_by_reference(purchase_token)
+    if existing and existing.status == "COMPLETED":
         raise ValueError("This purchase has already been fulfilled")
 
     try:
@@ -263,27 +262,32 @@ async def verify_product_purchase(
         logger.warning(f"Failed to consume product (may already be consumed): {e}")
 
     # Grant credits to user
-    updated_user = await db.user.update(
-        where={"id": user_id},
-        data={
-            "purchasedCreditsBalance": {"increment": credits_to_grant},
-        },
-    )
+    identity_repo = IdentityRepository()
+    factory = get_session_factory()
+    from sqlalchemy import select as sa_select
+    from src.domains.identity.db_models import User as UserModel
+    async with factory() as session:
+        result_q = await session.execute(sa_select(UserModel).where(UserModel.id == user_id))
+        user_obj = result_q.scalar_one_or_none()
+        current_balance = (user_obj.purchased_credits_balance or 0) if user_obj else 0
+    updated_user = await identity_repo.update(user_id, {
+        "purchasedCreditsBalance": current_balance + credits_to_grant,
+    })
 
     # Record the transaction
-    await db.creditpurchasetransaction.create(
-        data={
-            "userId": user_id,
-            "creditsGranted": credits_to_grant,
-            "amountPaid": 0,  # Actual price is managed by Google Play
-            "currency": "USD",
-            "status": "COMPLETED",
-            "providerReference": purchase_token,
-            "completedAt": datetime.now(timezone.utc),
-        }
-    )
+    await billing_repo.create_purchase_transaction({
+        "userId": user_id,
+        "creditPackId": None,
+        "creditsGranted": credits_to_grant,
+        "amountPaid": 0,  # Actual price is managed by Google Play
+        "currency": "USD",
+        "paymentProvider": "google_play",
+        "providerReference": purchase_token,
+        "status": "completed",
+        "completedAt": datetime.now(timezone.utc),
+    })
 
-    new_balance = updated_user.purchasedCreditsBalance if updated_user else 0
+    new_balance = updated_user.purchased_credits_balance if updated_user else 0
     logger.info(
         f"User {user_id} purchased {credits_to_grant} credits via Google Play "
         f"(product={product_id}), new balance={new_balance}"
@@ -322,7 +326,7 @@ async def handle_rtdn_notification(message_data: dict) -> None:
         return
 
     # Find the user with this purchase token
-    user = await db.user.find_first(where={"googlePlayPurchaseToken": purchase_token})
+    user = await billing_repo.find_user_by_google_play_token(purchase_token)
 
     if not user:
         logger.warning(
@@ -340,10 +344,8 @@ async def handle_rtdn_notification(message_data: dict) -> None:
 
     if notification_type in CANCEL_TYPES:
         # Downgrade user to FREE
-        await db.user.update(
-            where={"id": user.id},
-            data={"tier": "FREE"},
-        )
+        identity_repo = IdentityRepository()
+        await identity_repo.update(user.id, {"tier": "FREE"})
         logger.info(f"RTDN: Downgraded user {user.id} to FREE (type={notification_type})")
 
     elif notification_type in ACTIVE_TYPES:

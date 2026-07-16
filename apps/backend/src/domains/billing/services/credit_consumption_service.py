@@ -19,10 +19,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from src.domains.identity.db_models import User
+from sqlalchemy import select
+
+from src.domains.identity.db_models import User, LimitReachedEmailLog
+from src.domains.identity.repository import IdentityRepository
+from src.domains.learning_spaces.repository import space_repo
+from src.shared.database import get_session_factory
 
 from src.config import Settings, get_settings
-from src.shared.database.client import db
 from src.services.email import send_limit_reached_email
 from src.services.referral_service import get_daily_limit_increase
 from src.utils.exceptions import SubscriptionLimitError
@@ -174,7 +178,8 @@ async def initialize_user_credits(
         )  # Set to midnight UTC
 
     # Update user with credit limits and reset usage
-    updated_user = await db.user.update(where={"id": user.id}, data=update_data)
+    identity_repo = IdentityRepository()
+    updated_user = await identity_repo.update(user.id, update_data)
 
     logger.info(
         f"Initialized credits for user {user.id} (tier: {tier_str}): "
@@ -191,13 +196,12 @@ async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Updated User object
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     tier_str = str(user.tier) if user.tier else "FREE"
     if tier_str != "FREE":
@@ -210,7 +214,7 @@ async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None
     # Check if daily reset is needed
     needs_daily_reset = False
 
-    last_reset = user.lastDailyReset
+    last_reset = user.last_daily_reset
     if last_reset and last_reset.tzinfo:
         last_reset = last_reset.replace(tzinfo=None)
 
@@ -221,17 +225,14 @@ async def reset_daily_credits_if_needed(user: User, db_client: Any | None = None
         needs_daily_reset = True
         logger.info(
             f"Daily credit reset needed for user {user.id}. "
-            f"Last reset: {user.lastDailyReset}, Today: {today_midnight}"
+            f"Last reset: {user.last_daily_reset}, Today: {today_midnight}"
         )
 
     if needs_daily_reset:
-        updated_user = await db_client.user.update(
-            where={"id": user.id},
-            data={
-                "creditsUsedToday": 0,
-                "lastDailyReset": today_midnight,
-            },
-        )
+        updated_user = await identity_repo.update(user.id, {
+            "creditsUsedToday": 0,
+            "lastDailyReset": today_midnight,
+        })
         logger.info(f"Reset daily credits for user {user.id}")
         return updated_user
 
@@ -249,20 +250,19 @@ async def ensure_credit_period(user: User, db_client: Any | None = None) -> User
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Updated User object with valid credit period
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     now = datetime.utcnow()
     tier_str = str(user.tier) if user.tier else "FREE"
 
     # Sync any user with outdated stored limits to current tier limits (e.g. 50k -> 75k, 200k -> 300k)
     current_limits = await get_credit_limits(tier_str)
-    stored_hard = user.creditsHardCap or 0
+    stored_hard = user.credits_hard_cap or 0
     if stored_hard < current_limits["hard_cap"]:
         update_data = {
             "creditsHardCap": current_limits["hard_cap"],
@@ -270,7 +270,7 @@ async def ensure_credit_period(user: User, db_client: Any | None = None) -> User
         }
         if tier_str == "FREE" and "daily_limit" in current_limits:
             update_data["creditsDailyLimit"] = current_limits["daily_limit"]
-        user = await db_client.user.update(where={"id": user.id}, data=update_data)
+        user = await identity_repo.update(user.id, update_data)
         logger.info(
             f"Synced user {user.id} ({tier_str}) limits to current: hard_cap={current_limits['hard_cap']}"
             + (f", daily_limit={current_limits.get('daily_limit')}" if tier_str == "FREE" else "")
@@ -279,24 +279,24 @@ async def ensure_credit_period(user: User, db_client: Any | None = None) -> User
     # Check if period needs to be initialized or reset
     needs_reset = False
 
-    current_period_end = user.creditsPeriodEnd
+    current_period_end = user.credits_period_end
     if current_period_end and current_period_end.tzinfo:
         current_period_end = current_period_end.replace(tzinfo=None)
 
-    if current_period_end is None or user.creditsPeriodStart is None:
+    if current_period_end is None or user.credits_period_start is None:
         needs_reset = True
     elif current_period_end <= now:
         # Period has expired, reset credits
         needs_reset = True
         logger.info(
             f"Credit period expired for user {user.id}. "
-            f"Period end: {user.creditsPeriodEnd}, Now: {now}"
+            f"Period end: {user.credits_period_end}, Now: {now}"
         )
 
     if needs_reset:
         # Determine new period start/end based on subscription period if available
-        period_start = user.subscriptionCurrentPeriodStart
-        period_end = user.subscriptionCurrentPeriodEnd
+        period_start = user.subscription_current_period_start
+        period_end = user.subscription_current_period_end
 
         # Handle timezone awareness for period_start
         if period_start and period_start.tzinfo:
@@ -332,7 +332,7 @@ async def check_credit_availability(
     Args:
         user: User model instance
         credits_needed: Number of credits required (raw tokens - multiplier will be applied)
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
         circle_id: Optional ID of the circle to check credits for
 
     Returns:
@@ -340,47 +340,46 @@ async def check_credit_availability(
         - is_available: True if credits can be consumed, False if all credits exhausted
         - warning_or_notice_message: Optional warning/notice message
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     # Apply token multiplier to get actual credits that will be consumed
     credits_needed = apply_token_multiplier(credits_needed)
 
     # Check circle credits if circle_id is provided
     if circle_id:
-        circle = await db_client.circle.find_unique(where={"id": circle_id})
+        circle = await space_repo.find_space_basic(circle_id)
         if not circle:
             raise ValueError(f"Circle {circle_id} not found")
 
         # In a circle context, limits might be defined per circle. For now, checking if limit exists
-        if circle.creditsLimit and circle.credits + credits_needed > circle.creditsLimit:
+        if circle.credits_limit and circle.credits + credits_needed > circle.credits_limit:
             return False, "Circle credit limit reached."
         return True, None
 
     # Ensure credit period is active
-    user = await ensure_credit_period(user, db_client)
+    user = await ensure_credit_period(user)
 
     # Reset daily credits if needed (for FREE tier)
-    user = await reset_daily_credits_if_needed(user, db_client)
+    user = await reset_daily_credits_if_needed(user)
 
     # Refresh user from database to get latest creditsUsed
-    user = await db_client.user.find_unique(where={"id": user.id})
+    user = await identity_repo.find_by_id(user.id)
     if not user:
         raise ValueError(f"User {user.id} not found")
 
     tier_str = str(user.tier) if user.tier else "FREE"
-    hard_cap = user.creditsHardCap or 0
-    soft_cap = user.creditsSoftCap or 0
-    credits_used = user.creditsUsed or 0
-    purchased_balance = user.purchasedCreditsBalance or 0
+    hard_cap = user.credits_hard_cap or 0
+    soft_cap = user.credits_soft_cap or 0
+    credits_used = user.credits_used or 0
+    purchased_balance = user.purchased_credits_balance or 0
 
     # For FREE tier, check daily limit first
     if tier_str == "FREE":
-        daily_limit = user.creditsDailyLimit or 0
-        credits_used_today = user.creditsUsedToday or 0
+        daily_limit = user.credits_daily_limit or 0
+        credits_used_today = user.credits_used_today or 0
 
         # Get daily limit increase from claimed referral rewards
-        referral_increase = await get_daily_limit_increase(user, db_client)
+        referral_increase = await get_daily_limit_increase(user)
         effective_daily_limit = daily_limit + referral_increase
 
         # Check daily limit
@@ -486,7 +485,7 @@ async def consume_credits(
         user: User model instance
         credits: Number of credits to consume (raw tokens - multiplier will be applied)
         operation: Description of the operation (for logging)
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
         circle_id: Optional ID of the circle to consume credits from
 
     Returns:
@@ -495,8 +494,7 @@ async def consume_credits(
     Raises:
         SubscriptionLimitError: If all credits (subscription + purchased) are exhausted
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     # Apply token multiplier to reduce credits charged
     credits = apply_token_multiplier(credits)
@@ -504,7 +502,7 @@ async def consume_credits(
     # Handle circle consumption (unchanged behavior)
     if circle_id:
         is_available, warning_message = await check_credit_availability(
-            user, credits, db_client, circle_id
+            user, credits, circle_id=circle_id
         )
         if not is_available:
             raise SubscriptionLimitError(
@@ -512,9 +510,18 @@ async def consume_credits(
                 detail=f"This operation requires {credits} credits, which exceeds the circle's limit.",
             )
 
-        await db_client.circle.update(
-            where={"id": circle_id}, data={"credits": {"increment": credits}}
-        )
+        # Increment circle credits using raw SQLAlchemy
+        from sqlalchemy import update as sa_update
+        from src.domains.learning_spaces.db_models import Circle
+        factory = get_session_factory()
+        async with factory() as session:
+            stmt = (
+                sa_update(Circle)
+                .where(Circle.id == circle_id)
+                .values(credits=Circle.credits + credits)
+            )
+            await session.execute(stmt)
+            await session.commit()
         logger.info(f"Consumed {credits} credits for circle {circle_id} (operation: {operation})")
         return CreditConsumptionResult(
             user=user,
@@ -524,25 +531,25 @@ async def consume_credits(
             purchased_deducted=0,
             warning=None,
             notice=None,
-            purchased_balance_remaining=user.purchasedCreditsBalance or 0,
+            purchased_balance_remaining=user.purchased_credits_balance or 0,
         )
 
     # Ensure credit period is active
-    user = await ensure_credit_period(user, db_client)
+    user = await ensure_credit_period(user)
 
     # Reset daily credits if needed (for FREE tier)
-    user = await reset_daily_credits_if_needed(user, db_client)
+    user = await reset_daily_credits_if_needed(user)
 
     # Refresh user from database to get latest state
-    user = await db_client.user.find_unique(where={"id": user.id})
+    user = await identity_repo.find_by_id(user.id)
     if not user:
         raise ValueError("User not found after refresh")
 
     tier_str = str(user.tier) if user.tier else "FREE"
-    hard_cap = user.creditsHardCap or 0
-    soft_cap = user.creditsSoftCap or 0
-    credits_used = user.creditsUsed or 0
-    purchased_balance = user.purchasedCreditsBalance or 0
+    hard_cap = user.credits_hard_cap or 0
+    soft_cap = user.credits_soft_cap or 0
+    credits_used = user.credits_used or 0
+    purchased_balance = user.purchased_credits_balance or 0
     remaining_subscription = max(0, hard_cap - credits_used)
 
     # Determine consumption strategy
@@ -550,11 +557,11 @@ async def consume_credits(
 
     # For FREE tier, check daily limit first
     if tier_str == "FREE":
-        daily_limit = user.creditsDailyLimit or 0
-        credits_used_today = user.creditsUsedToday or 0
+        daily_limit = user.credits_daily_limit or 0
+        credits_used_today = user.credits_used_today or 0
 
         # Get daily limit increase from claimed referral rewards
-        referral_increase = await get_daily_limit_increase(user, db_client)
+        referral_increase = await get_daily_limit_increase(user)
         effective_daily_limit = daily_limit + referral_increase
 
         if effective_daily_limit > 0 and credits_used_today + credits > effective_daily_limit:
@@ -564,11 +571,11 @@ async def consume_credits(
     if daily_limit_hit:
         if purchased_balance >= credits:
             # Consume entirely from purchased credits
-            updated_user = await db_client.user.update(
-                where={"id": user.id},
-                data={"purchasedCreditsBalance": {"decrement": credits}},
-            )
-            new_purchased_balance = updated_user.purchasedCreditsBalance or 0
+            new_purchased_balance = purchased_balance - credits
+            updated_user = await identity_repo.update(user.id, {
+                "purchasedCreditsBalance": new_purchased_balance,
+            })
+            new_purchased_balance = updated_user.purchased_credits_balance or 0
             notice = (
                 f"Daily limit reached. {credits:,} credits consumed from purchased balance. "
                 f"Remaining purchased credits: {new_purchased_balance:,}."
@@ -619,15 +626,15 @@ async def consume_credits(
     # Case 2: Subscription credits are sufficient
     if remaining_subscription >= credits:
         # Standard subscription-only consumption
-        update_data = {"creditsUsed": {"increment": credits}}
+        update_data = {"creditsUsed": credits_used + credits}
         if tier_str == "FREE":
-            update_data["creditsUsedToday"] = {"increment": credits}
+            update_data["creditsUsedToday"] = (user.credits_used_today or 0) + credits
 
-        updated_user = await db_client.user.update(where={"id": user.id}, data=update_data)
+        updated_user = await identity_repo.update(user.id, update_data)
 
         # Check for 80% soft cap warning
         warning_message = None
-        new_credits_used = updated_user.creditsUsed or 0
+        new_credits_used = updated_user.credits_used or 0
         if soft_cap > 0 and new_credits_used >= soft_cap:
             new_remaining = hard_cap - new_credits_used
             warning_message = (
@@ -638,7 +645,7 @@ async def consume_credits(
 
         # Check FREE tier daily 80% warning
         if tier_str == "FREE" and not warning_message:
-            new_daily_used = updated_user.creditsUsedToday or 0
+            new_daily_used = updated_user.credits_used_today or 0
             daily_soft_cap = int(effective_daily_limit * 0.8)
             if daily_soft_cap > 0 and new_daily_used >= daily_soft_cap:
                 daily_remaining = effective_daily_limit - new_daily_used
@@ -651,9 +658,9 @@ async def consume_credits(
         logger.info(
             f"Consumed {credits} subscription credits for user {user.id} "
             f"(operation: {operation}). "
-            f"Total used: {updated_user.creditsUsed}/{updated_user.creditsHardCap}"
+            f"Total used: {updated_user.credits_used}/{updated_user.credits_hard_cap}"
             + (
-                f", Daily used: {updated_user.creditsUsedToday}/{updated_user.creditsDailyLimit}"
+                f", Daily used: {updated_user.credits_used_today}/{updated_user.credits_daily_limit}"
                 if tier_str == "FREE"
                 else ""
             )
@@ -667,28 +674,26 @@ async def consume_credits(
             purchased_deducted=0,
             warning=warning_message,
             notice=None,
-            purchased_balance_remaining=updated_user.purchasedCreditsBalance or 0,
+            purchased_balance_remaining=updated_user.purchased_credits_balance or 0,
         )
 
     # Case 3: Subscription partially covers - split consumption
     if remaining_subscription > 0 and purchased_balance >= (credits - remaining_subscription):
         shortfall = credits - remaining_subscription
 
-        # Atomic transaction: consume remaining subscription + deduct from purchased
-        async with db_client.tx() as tx:
-            # Set subscription credits to hard cap (fully consumed)
-            await tx.user.update(
-                where={"id": user.id},
-                data={
-                    "creditsUsed": hard_cap,
-                    "purchasedCreditsBalance": {"decrement": shortfall},
-                    **({"creditsUsedToday": {"increment": credits}} if tier_str == "FREE" else {}),
-                },
-            )
+        # Update: consume remaining subscription + deduct from purchased
+        update_data = {
+            "creditsUsed": hard_cap,
+            "purchasedCreditsBalance": purchased_balance - shortfall,
+        }
+        if tier_str == "FREE":
+            update_data["creditsUsedToday"] = (user.credits_used_today or 0) + credits
 
-        # Refresh user after transaction
-        updated_user = await db_client.user.find_unique(where={"id": user.id})
-        new_purchased_balance = updated_user.purchasedCreditsBalance or 0
+        await identity_repo.update(user.id, update_data)
+
+        # Refresh user after update
+        updated_user = await identity_repo.find_by_id(user.id)
+        new_purchased_balance = updated_user.purchased_credits_balance or 0
 
         notice = (
             f"Subscription credits exhausted. {shortfall:,} credits consumed from purchased balance. "
@@ -714,11 +719,11 @@ async def consume_credits(
 
     # Case 4: Subscription exhausted, purchased credits cover entirely
     if remaining_subscription == 0 and purchased_balance >= credits:
-        updated_user = await db_client.user.update(
-            where={"id": user.id},
-            data={"purchasedCreditsBalance": {"decrement": credits}},
-        )
-        new_purchased_balance = updated_user.purchasedCreditsBalance or 0
+        new_purchased_balance = purchased_balance - credits
+        updated_user = await identity_repo.update(user.id, {
+            "purchasedCreditsBalance": new_purchased_balance,
+        })
+        new_purchased_balance = updated_user.purchased_credits_balance or 0
 
         notice = (
             f"Subscription credits exhausted. {credits:,} credits consumed from purchased balance. "
@@ -745,20 +750,29 @@ async def consume_credits(
     # Case 5: Both subscription and purchased credits insufficient
     # Send limit-reached email for FREE tier (once per period)
     if tier_str == "FREE":
-        period_end = user.creditsPeriodEnd
+        period_end = user.credits_period_end
         if period_end:
             try:
-                existing = await db_client.limitreachedemaillog.find_first(
-                    where={"userId": user.id, "periodEnd": period_end}
-                )
+                factory = get_session_factory()
+                async with factory() as session:
+                    stmt = select(LimitReachedEmailLog).where(
+                        LimitReachedEmailLog.user_id == user.id,
+                        LimitReachedEmailLog.period_end == period_end,
+                    )
+                    result = await session.execute(stmt)
+                    existing = result.scalar_one_or_none()
                 if not existing:
                     await send_limit_reached_email(
                         email=user.email,
                         name=user.name or None,
                     )
-                    await db_client.limitreachedemaillog.create(
-                        data={"userId": user.id, "periodEnd": period_end}
-                    )
+                    async with factory() as session:
+                        log_entry = LimitReachedEmailLog(
+                            user_id=user.id,
+                            period_end=period_end,
+                        )
+                        session.add(log_entry)
+                        await session.commit()
             except Exception as e:
                 logger.warning(f"Failed to send limit reached email to {user.id}: {e}")
 
@@ -799,30 +813,29 @@ async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
 
     Args:
         user: User model instance
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Dictionary with credit usage information including purchased credits
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     # Ensure credit period is active
-    user = await ensure_credit_period(user, db_client)
+    user = await ensure_credit_period(user)
 
     # Reset daily credits if needed (for FREE tier)
-    user = await reset_daily_credits_if_needed(user, db_client)
+    user = await reset_daily_credits_if_needed(user)
 
     # Refresh user from database
-    user = await db_client.user.find_unique(where={"id": user.id})
+    user = await identity_repo.find_by_id(user.id)
     if not user:
         raise ValueError(f"User {user.id} not found")
 
     tier_str = str(user.tier) if user.tier else "FREE"
-    credits_used = user.creditsUsed or 0
-    hard_cap = user.creditsHardCap or 0
-    soft_cap = user.creditsSoftCap or 0
-    purchased_balance = user.purchasedCreditsBalance or 0
+    credits_used = user.credits_used or 0
+    hard_cap = user.credits_hard_cap or 0
+    soft_cap = user.credits_soft_cap or 0
+    purchased_balance = user.purchased_credits_balance or 0
 
     usage_percentage = (credits_used / hard_cap * 100) if hard_cap > 0 else 0
     soft_cap_percentage = (soft_cap / hard_cap * 100) if hard_cap > 0 else 0
@@ -836,8 +849,8 @@ async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
         "soft_cap": soft_cap,
         "usage_percentage": round(usage_percentage, 2),
         "soft_cap_percentage": round(soft_cap_percentage, 2),
-        "period_start": user.creditsPeriodStart.isoformat() if user.creditsPeriodStart else None,
-        "period_end": user.creditsPeriodEnd.isoformat() if user.creditsPeriodEnd else None,
+        "period_start": user.credits_period_start.isoformat() if user.credits_period_start else None,
+        "period_end": user.credits_period_end.isoformat() if user.credits_period_end else None,
         "is_soft_cap_reached": soft_cap > 0 and credits_used >= soft_cap,
         "is_hard_cap_reached": hard_cap > 0 and credits_used >= hard_cap,
         "purchased_credits_balance": purchased_balance,
@@ -846,8 +859,8 @@ async def get_credit_usage(user: User, db_client: Any | None = None) -> dict:
 
     # Add daily usage info for FREE tier
     if tier_str == "FREE":
-        credits_used_today = user.creditsUsedToday or 0
-        daily_limit = user.creditsDailyLimit or 0
+        credits_used_today = user.credits_used_today or 0
+        daily_limit = user.credits_daily_limit or 0
         daily_usage_percentage = (credits_used_today / daily_limit * 100) if daily_limit > 0 else 0
         is_daily_limit_reached = daily_limit > 0 and credits_used_today >= daily_limit
         result.update(
@@ -881,14 +894,11 @@ async def reset_credits_for_period_start(
         user: User model instance
         period_start: Start of new period
         period_end: End of new period
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Updated User object
     """
-    if db_client is None:
-        db_client = db
-
     logger.info(
         f"Resetting credits for user {user.id} - new period: {period_start} to {period_end}"
     )

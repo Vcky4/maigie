@@ -24,9 +24,11 @@ import httpx
 import stripe
 
 from src.domains.identity.db_models import User
+from src.domains.identity.repository import IdentityRepository
+from src.domains.billing.repository import billing_repo
 
 from src.config import get_settings
-from src.shared.database.client import db
+from src.shared.database import get_session_factory
 from src.services.audit_service import log_admin_action
 from src.services.credit_purchase_notifications import (
     CREDIT_PURCHASE_NOTIFICATION_TITLE,
@@ -74,22 +76,16 @@ async def get_credit_packs(user: User, db_client: Any | None = None) -> list[dic
 
     Args:
         user: The authenticated user requesting the catalog.
-        db_client: Optional Prisma client (defaults to global db).
+        db_client: Optional (kept for backward compat, ignored).
 
     Returns:
         List of credit pack dicts with pricing in the user's currency.
     """
-    if db_client is None:
-        db_client = db
-
     # Fetch active packs ordered by sortOrder (lowest to highest)
-    packs = await db_client.creditpack.find_many(
-        where={"isActive": True},
-        order={"sortOrder": "asc"},
-    )
+    packs = await billing_repo.list_active_packs()
 
     # Determine currency based on user's payment provider
-    payment_provider = getattr(user, "paymentProvider", None)
+    payment_provider = getattr(user, "payment_provider", None)
     if payment_provider == "paystack":
         currency = "NGN"
     else:
@@ -99,18 +95,18 @@ async def get_credit_packs(user: User, db_client: Any | None = None) -> list[dic
     result = []
     for pack in packs:
         if currency == "NGN":
-            price = pack.priceNgnKobo
+            price = pack.price_ngn_kobo
         else:
-            price = pack.priceUsdCents
+            price = pack.price_usd_cents
 
-        total_credits = pack.credits + pack.bonusCredits
+        total_credits = pack.credits + pack.bonus_credits
 
         result.append(
             {
                 "id": pack.id,
                 "name": pack.name,
                 "credits": pack.credits,
-                "bonusCredits": pack.bonusCredits,
+                "bonusCredits": pack.bonus_credits,
                 "totalCredits": total_credits,
                 "price": price,
                 "currency": currency,
@@ -138,7 +134,7 @@ async def initiate_purchase(
         pack_id: ID of the credit pack to purchase.
         success_url: URL to redirect after successful payment.
         cancel_url: URL to redirect if payment is cancelled.
-        db_client: Optional Prisma client (defaults to global db).
+        db_client: Optional (kept for backward compat, ignored).
 
     Returns:
         Dict with sessionUrl, sessionId, and expiresAt.
@@ -147,26 +143,23 @@ async def initiate_purchase(
         ResourceNotFoundError: If pack_id doesn't exist or is inactive.
         ValueError: If payment provider is not configured.
     """
-    if db_client is None:
-        db_client = db
-
     settings = get_settings()
 
     # Validate the credit pack exists and is active
-    pack = await db_client.creditpack.find_first(where={"id": pack_id, "isActive": True})
+    pack = await billing_repo.find_pack(pack_id)
     if not pack:
         raise ResourceNotFoundError("CreditPack", pack_id)
 
     # Determine payment provider and currency
-    payment_provider = getattr(user, "paymentProvider", None) or "stripe"
+    payment_provider = getattr(user, "payment_provider", None) or "stripe"
     if payment_provider == "paystack":
         currency = "NGN"
-        amount = pack.priceNgnKobo
+        amount = pack.price_ngn_kobo
     else:
         currency = "USD"
-        amount = pack.priceUsdCents
+        amount = pack.price_usd_cents
 
-    total_credits = pack.credits + pack.bonusCredits
+    total_credits = pack.credits + pack.bonus_credits
     expires_at = datetime.now(UTC) + timedelta(minutes=30)
 
     if payment_provider == "stripe":
@@ -200,20 +193,18 @@ async def initiate_purchase(
         provider_reference = paystack_result["reference"]
 
     # Create pending transaction record
-    await db_client.creditpurchasetransaction.create(
-        data={
-            "userId": user.id,
-            "creditPackId": pack.id,
-            "creditsGranted": total_credits,
-            "amountPaid": amount,
-            "currency": currency,
-            "paymentProvider": payment_provider,
-            "providerReference": provider_reference,
-            "sessionId": session_id,
-            "sessionExpiresAt": expires_at,
-            "status": "pending",
-        }
-    )
+    await billing_repo.create_purchase_transaction({
+        "userId": user.id,
+        "creditPackId": pack.id,
+        "creditsGranted": total_credits,
+        "amountPaid": amount,
+        "currency": currency,
+        "paymentProvider": payment_provider,
+        "providerReference": provider_reference,
+        "sessionId": session_id,
+        "sessionExpiresAt": expires_at,
+        "status": "pending",
+    })
 
     return {
         "sessionUrl": session_url,
@@ -237,20 +228,16 @@ async def fulfill_purchase(
         provider_reference: The payment provider's unique reference
             (Stripe payment_intent ID or Paystack reference).
         provider: Payment provider name ("stripe" or "paystack").
-        db_client: Optional Prisma client (defaults to global db).
+        db_client: Optional (kept for backward compat, ignored).
 
     Returns:
         True if credits were granted (first-time fulfillment).
         False if already completed (duplicate webhook).
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     # Find the transaction by provider reference
-    transaction = await db_client.creditpurchasetransaction.find_first(
-        where={"providerReference": provider_reference},
-        include={"creditPack": True},
-    )
+    transaction = await billing_repo.find_transaction_by_reference(provider_reference)
 
     if not transaction:
         logger.warning(
@@ -274,54 +261,53 @@ async def fulfill_purchase(
 
     # Update transaction status to completed
     now = datetime.now(UTC)
-    await db_client.creditpurchasetransaction.update(
-        where={"id": transaction.id},
-        data={
-            "status": "completed",
-            "completedAt": now,
-        },
-    )
+    await billing_repo.update_transaction(transaction.id, {
+        "status": "completed",
+        "completed_at": now,
+    })
 
     # Atomically increment user's purchased credits balance
-    updated_user = await db_client.user.update(
-        where={"id": transaction.userId},
-        data={
-            "purchasedCreditsBalance": {"increment": transaction.creditsGranted},
-        },
-    )
+    # Get current balance and add
+    user_before = await identity_repo.find_by_id(transaction.user_id)
+    current_balance = (user_before.purchased_credits_balance or 0) if user_before else 0
+    updated_user = await identity_repo.update(transaction.user_id, {
+        "purchasedCreditsBalance": current_balance + transaction.credits_granted,
+    })
 
     # Emit real-time balance update via WebSocket to all connected clients
-    new_balance = updated_user.purchasedCreditsBalance if updated_user else 0
-    pack_name = transaction.creditPack.name if transaction.creditPack else "Credit Pack"
+    new_balance = updated_user.purchased_credits_balance if updated_user else 0
+    # Load pack name from transaction's credit_pack relation
+    pack = await billing_repo.find_pack(transaction.credit_pack_id) if transaction.credit_pack_id else None
+    pack_name = pack.name if pack else "Credit Pack"
 
     try:
         from src.services.ws_event_bus import publish_ws_event
 
         await publish_ws_event(
-            user_id=transaction.userId,
+            user_id=transaction.user_id,
             payload={
                 "type": "credit_balance_update",
                 "purchasedCreditsBalance": new_balance,
-                "creditsGranted": transaction.creditsGranted,
+                "creditsGranted": transaction.credits_granted,
                 "packName": pack_name,
             },
         )
     except Exception as e:
         # Don't fail the fulfillment if WebSocket notification fails
         logger.error(
-            f"Failed to emit WebSocket balance update for user {transaction.userId}: {e}",
+            f"Failed to emit WebSocket balance update for user {transaction.user_id}: {e}",
             exc_info=True,
         )
 
     # Send purchase confirmation notifications
 
     notification_data = CreditPurchaseNotificationData(
-        credits_granted=transaction.creditsGranted,
+        credits_granted=transaction.credits_granted,
         pack_name=pack_name,
         new_balance=new_balance,
-        amount_paid=transaction.amountPaid,
+        amount_paid=transaction.amount_paid,
         currency=transaction.currency,
-        user_id=transaction.userId,
+        user_id=transaction.user_id,
         user_email=getattr(updated_user, "email", None),
         user_name=getattr(updated_user, "name", None),
     )
@@ -329,7 +315,7 @@ async def fulfill_purchase(
     # Send push notification
     try:
         await send_push_notification(
-            user_id=transaction.userId,
+            user_id=transaction.user_id,
             title=CREDIT_PURCHASE_NOTIFICATION_TITLE,
             body=format_push_notification_body(notification_data),
             data=format_push_notification_payload(notification_data),
@@ -337,7 +323,7 @@ async def fulfill_purchase(
     except Exception as e:
         # Don't fail the fulfillment if notification fails
         logger.error(
-            f"Failed to send purchase push notification for user {transaction.userId}: {e}",
+            f"Failed to send purchase push notification for user {transaction.user_id}: {e}",
             exc_info=True,
         )
 
@@ -347,13 +333,13 @@ async def fulfill_purchase(
     except Exception as e:
         # Don't fail the fulfillment if email fails
         logger.error(
-            f"Failed to send purchase receipt email for user {transaction.userId}: {e}",
+            f"Failed to send purchase receipt email for user {transaction.user_id}: {e}",
             exc_info=True,
         )
 
     logger.info(
         f"Fulfilled purchase: transaction={transaction.id}, "
-        f"user={transaction.userId}, credits={transaction.creditsGranted}, "
+        f"user={transaction.user_id}, credits={transaction.credits_granted}, "
         f"provider={provider}"
     )
     return True
@@ -372,7 +358,7 @@ async def get_purchase_history(
         page: Page number (1-indexed). Defaults to 1.
         page_size: Number of items per page. Must be between 1 and 100.
             Defaults to 20.
-        db_client: Optional Prisma client (defaults to global db).
+        db_client: Optional (kept for backward compat, ignored).
 
     Returns:
         Dict with items, total, page, pageSize, and totalPages.
@@ -380,9 +366,6 @@ async def get_purchase_history(
     Raises:
         ValidationError: If page_size is out of range.
     """
-    if db_client is None:
-        db_client = db
-
     # Validate page_size
     if page_size < 1 or page_size > 100:
         raise ValidationError(
@@ -394,38 +377,32 @@ async def get_purchase_history(
     if page < 1:
         page = 1
 
-    # Get total count
-    total = await db_client.creditpurchasetransaction.count(where={"userId": user_id})
-
     # Calculate pagination
-    total_pages = math.ceil(total / page_size) if total > 0 else 0
     skip = (page - 1) * page_size
 
-    # Fetch transactions ordered by createdAt desc
-    transactions = await db_client.creditpurchasetransaction.find_many(
-        where={"userId": user_id},
-        order={"createdAt": "desc"},
-        skip=skip,
-        take=page_size,
-        include={"creditPack": True},
+    # Fetch transactions and total count
+    transactions, total = await billing_repo.get_purchase_history(
+        user_id, skip=skip, take=page_size
     )
+
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
 
     # Format response items
     items = []
     for txn in transactions:
-        pack_name = txn.creditPack.name if txn.creditPack else "Unknown Pack"
+        pack_name = txn.credit_pack.name if txn.credit_pack else "Unknown Pack"
         items.append(
             {
                 "id": txn.id,
-                "creditPackId": txn.creditPackId,
+                "creditPackId": txn.credit_pack_id,
                 "creditPackName": pack_name,
-                "creditsGranted": txn.creditsGranted,
-                "amountPaid": txn.amountPaid,
+                "creditsGranted": txn.credits_granted,
+                "amountPaid": txn.amount_paid,
                 "currency": txn.currency,
-                "priceFormatted": _format_price(txn.amountPaid, txn.currency),
+                "priceFormatted": _format_price(txn.amount_paid, txn.currency),
                 "status": txn.status,
-                "completedAt": txn.completedAt.isoformat() if txn.completedAt else None,
-                "createdAt": txn.createdAt.isoformat(),
+                "completedAt": txn.completed_at.isoformat() if txn.completed_at else None,
+                "createdAt": txn.created_at.isoformat(),
             }
         )
 
@@ -456,7 +433,7 @@ async def admin_adjust_balance(
         target_user_id: ID of the user whose balance is being adjusted.
         amount: Adjustment amount (positive = grant, negative = deduct).
         reason: Admin-provided reason for the adjustment.
-        db_client: Optional Prisma client (defaults to global db).
+        db_client: Optional (kept for backward compat, ignored).
 
     Returns:
         The updated User model.
@@ -465,16 +442,15 @@ async def admin_adjust_balance(
         ResourceNotFoundError: If target user doesn't exist.
         ValidationError: If adjustment would result in negative balance.
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     # Validate target user exists
-    target_user = await db_client.user.find_unique(where={"id": target_user_id})
+    target_user = await identity_repo.find_by_id(target_user_id)
     if not target_user:
         raise ResourceNotFoundError("User", target_user_id)
 
     # Validate adjustment won't result in negative balance
-    current_balance = target_user.purchasedCreditsBalance or 0
+    current_balance = target_user.purchased_credits_balance or 0
     if amount < 0 and abs(amount) > current_balance:
         raise ValidationError(
             message=(
@@ -486,12 +462,9 @@ async def admin_adjust_balance(
         )
 
     # Atomically update the balance
-    updated_user = await db_client.user.update(
-        where={"id": target_user_id},
-        data={
-            "purchasedCreditsBalance": {"increment": amount},
-        },
-    )
+    updated_user = await identity_repo.update(target_user_id, {
+        "purchasedCreditsBalance": current_balance + amount,
+    })
 
     # Create audit log entry
     try:
@@ -506,7 +479,6 @@ async def admin_adjust_balance(
                 "previous_balance": current_balance,
                 "new_balance": current_balance + amount,
             },
-            db_client=db_client,
         )
     except Exception as e:
         # Log but don't fail the adjustment if audit logging fails
@@ -620,7 +592,7 @@ async def _create_stripe_checkout_session(
                         "name": f"{pack.name} - {total_credits:,} Credits",
                         "description": (
                             f"{pack.credits:,} credits"
-                            + (f" + {pack.bonusCredits:,} bonus" if pack.bonusCredits > 0 else "")
+                            + (f" + {pack.bonus_credits:,} bonus" if pack.bonus_credits > 0 else "")
                         ),
                     },
                     "unit_amount": amount,

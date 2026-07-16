@@ -20,22 +20,32 @@ def reset_credit_periods_task():
     async def _reset():
         from datetime import UTC, datetime
 
-        from src.shared.database import db
+        from sqlalchemy import select, update
+        from src.domains.identity.db_models import User
+        from src.shared.database import get_session_factory
 
         now = datetime.now(UTC)
-        # Find users whose credit period has ended
-        users = await db.user.find_many(
-            where={
-                "creditsPeriodEnd": {"lte": now},
-                "creditsUsed": {"gt": 0},
-            },
-            take=500,
-        )
-        for user in users:
-            await db.user.update(
-                where={"id": user.id},
-                data={"creditsUsed": 0, "creditsPeriodStart": now},
+        factory = get_session_factory()
+        async with factory() as session:
+            # Find users whose credit period has ended
+            stmt = (
+                select(User)
+                .where(User.credits_period_end <= now, User.credits_used > 0)
+                .limit(500)
             )
+            result = await session.execute(stmt)
+            users = list(result.scalars().all())
+
+            for user in users:
+                upd = (
+                    update(User)
+                    .where(User.id == user.id)
+                    .values(credits_used=0, credits_period_start=now)
+                )
+                await session.execute(upd)
+
+            await session.commit()
+
         if users:
             logger.info(f"Reset credit periods for {len(users)} users")
 
@@ -54,23 +64,32 @@ def check_expired_trials_task():
     async def _check():
         from datetime import UTC, datetime
 
-        from src.shared.database import db
+        from sqlalchemy import select, update
+        from src.domains.identity.db_models import User
+        from src.shared.database import get_session_factory
 
         now = datetime.now(UTC)
-        # Find premium users whose subscription period ended
-        expired = await db.user.find_many(
-            where={
-                "tier": {"not": "FREE"},
-                "subscriptionCurrentPeriodEnd": {"lt": now},
-                "stripeSubscriptionStatus": {"in": ["canceled", "unpaid", "past_due"]},
-            },
-            take=200,
-        )
-        for user in expired:
-            await db.user.update(
-                where={"id": user.id},
-                data={"tier": "FREE"},
+        factory = get_session_factory()
+        async with factory() as session:
+            # Find premium users whose subscription period ended
+            stmt = (
+                select(User)
+                .where(
+                    User.tier != "FREE",
+                    User.subscription_current_period_end < now,
+                    User.stripe_subscription_status.in_(["canceled", "unpaid", "past_due"]),
+                )
+                .limit(200)
             )
+            result = await session.execute(stmt)
+            expired = list(result.scalars().all())
+
+            for user in expired:
+                upd = update(User).where(User.id == user.id).values(tier="FREE")
+                await session.execute(upd)
+
+            await session.commit()
+
         if expired:
             logger.info(f"Downgraded {len(expired)} expired subscriptions to FREE")
 
@@ -89,28 +108,41 @@ def process_account_deletions_task():
     async def _process():
         from datetime import UTC, datetime
 
-        from src.shared.database import db
+        from sqlalchemy import select, update
+        from src.domains.identity.db_models import User
+        from src.shared.database import get_session_factory
 
         now = datetime.now(UTC)
-        # Find users whose deletion date has passed
-        ready = await db.user.find_many(
-            where={
-                "accountDeletionScheduledFor": {"lte": now},
-                "accountDeletionRequestedAt": {"not": None},
-            },
-            take=50,
-        )
-        for user in ready:
-            # Deactivate and anonymize (actual data purge is a separate job)
-            await db.user.update(
-                where={"id": user.id},
-                data={
-                    "isActive": False,
-                    "email": f"deleted_{user.id}@maigie.com",
-                    "name": None,
-                    "passwordHash": None,
-                },
+        factory = get_session_factory()
+        async with factory() as session:
+            # Find users whose deletion date has passed
+            stmt = (
+                select(User)
+                .where(
+                    User.account_deletion_scheduled_for <= now,
+                    User.account_deletion_requested_at.isnot(None),
+                )
+                .limit(50)
             )
+            result = await session.execute(stmt)
+            ready = list(result.scalars().all())
+
+            for user in ready:
+                # Deactivate and anonymize (actual data purge is a separate job)
+                upd = (
+                    update(User)
+                    .where(User.id == user.id)
+                    .values(
+                        is_active=False,
+                        email=f"deleted_{user.id}@maigie.com",
+                        name=None,
+                        password_hash=None,
+                    )
+                )
+                await session.execute(upd)
+
+            await session.commit()
+
         if ready:
             logger.info(f"Processed {len(ready)} account deletions")
 

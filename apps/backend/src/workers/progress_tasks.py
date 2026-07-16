@@ -34,22 +34,32 @@ def check_streaks_task():
     async def _reset_broken_streaks():
         from datetime import UTC, datetime, timedelta
 
-        from src.shared.database import db
+        from sqlalchemy import select, update
+        from src.domains.progress.db_models import UserStreak
+        from src.shared.database import get_session_factory
 
         yesterday = datetime.now(UTC) - timedelta(days=1)
-        # Find streaks where lastStudyDate is older than yesterday
-        # and currentStreak > 0 — those are broken
-        broken = await db.userstreak.find_many(
-            where={
-                "currentStreak": {"gt": 0},
-                "lastStudyDate": {"lt": yesterday},
-            }
-        )
-        for streak in broken:
-            await db.userstreak.update(
-                where={"userId": streak.userId},
-                data={"currentStreak": 0},
+        factory = get_session_factory()
+        async with factory() as session:
+            # Find streaks where lastStudyDate is older than yesterday
+            # and currentStreak > 0 — those are broken
+            stmt = select(UserStreak).where(
+                UserStreak.current_streak > 0,
+                UserStreak.last_study_date < yesterday,
             )
+            result = await session.execute(stmt)
+            broken = list(result.scalars().all())
+
+            for streak in broken:
+                upd = (
+                    update(UserStreak)
+                    .where(UserStreak.user_id == streak.user_id)
+                    .values(current_streak=0)
+                )
+                await session.execute(upd)
+
+            await session.commit()
+
         if broken:
             logger.info(f"Reset {len(broken)} broken streaks")
 
@@ -66,11 +76,15 @@ def daily_credit_reset_task():
     import asyncio
 
     async def _reset():
-        from src.shared.database import db
+        from sqlalchemy import text
+        from src.shared.database import get_session_factory
 
-        result = await db.execute_raw(
-            'UPDATE "User" SET "creditsUsedToday" = 0 WHERE "creditsUsedToday" > 0 AND role = \'USER\''
-        )
+        factory = get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                text('UPDATE "User" SET "creditsUsedToday" = 0 WHERE "creditsUsedToday" > 0 AND role = \'USER\'')
+            )
+            await session.commit()
         logger.info("Daily credit reset complete")
 
     loop = asyncio.new_event_loop()

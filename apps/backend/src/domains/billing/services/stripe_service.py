@@ -19,10 +19,14 @@ from typing import Any
 
 import stripe
 
+from sqlalchemy import select
+
 from src.domains.identity.db_models import User
+from src.domains.identity.repository import IdentityRepository
+from src.domains.billing.repository import billing_repo
+from src.shared.database import get_session_factory
 
 from ..config import Settings, get_settings
-from ..core.database import db
 from ..schemas.subscription import (
     PlanCatalogEntry,
     PlanCatalogProductId,
@@ -93,7 +97,7 @@ def _is_first_plus_purchase(user: User) -> bool:
     """
     if str(user.tier or "FREE") != "FREE":
         return False
-    return not (user.stripeSubscriptionId or user.paystackSubscriptionCode)
+    return not (user.stripe_subscription_id or user.paystack_subscription_code)
 
 
 def get_active_plan_catalog() -> PlanCatalogResponse:
@@ -282,8 +286,8 @@ async def get_or_create_stripe_customer(user: User) -> str:
     Returns:
         Stripe customer ID
     """
-    if user.stripeCustomerId:
-        return user.stripeCustomerId
+    if user.stripe_customer_id:
+        return user.stripe_customer_id
 
     # Create new Stripe customer
     customer = stripe.Customer.create(
@@ -293,10 +297,8 @@ async def get_or_create_stripe_customer(user: User) -> str:
     )
 
     # Update user with Stripe customer ID
-    await db.user.update(
-        where={"id": user.id},
-        data={"stripeCustomerId": customer.id},
-    )
+    identity_repo = IdentityRepository()
+    await identity_repo.update(user.id, {"stripeCustomerId": customer.id})
 
     return customer.id
 
@@ -341,7 +343,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
     Returns:
         Updated subscription information
     """
-    if not user.stripeSubscriptionId:
+    if not user.stripe_subscription_id:
         raise ValueError("User does not have an active subscription")
 
     # Reject modification target tiers that have been retired
@@ -350,7 +352,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
 
     # Retrieve current subscription
     subscription = stripe.Subscription.retrieve(
-        user.stripeSubscriptionId, expand=["items.data.price"]
+        user.stripe_subscription_id, expand=["items.data.price"]
     )
 
     # Check if subscription is active (not canceled, past_due, etc.)
@@ -431,7 +433,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
             # Stripe doesn't allow "unchanged" for interval changes
             # Charge prorated now, billing cycle resets to now
             modified_subscription = stripe.Subscription.modify(
-                user.stripeSubscriptionId,
+                user.stripe_subscription_id,
                 items=[
                     {
                         "id": subscription_item_id,
@@ -446,7 +448,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
             # Upgrade within same interval (e.g., free to monthly, or price change)
             # Charge now (prorated), billing cycle unchanged
             modified_subscription = stripe.Subscription.modify(
-                user.stripeSubscriptionId,
+                user.stripe_subscription_id,
                 items=[
                     {
                         "id": subscription_item_id,
@@ -465,7 +467,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
             # For now, we'll change immediately but charge at period end
             # Note: This is a limitation - we can't perfectly schedule interval changes
             modified_subscription = stripe.Subscription.modify(
-                user.stripeSubscriptionId,
+                user.stripe_subscription_id,
                 items=[
                     {
                         "id": subscription_item_id,
@@ -480,7 +482,7 @@ async def modify_existing_subscription(user: User, new_price_id: str) -> dict:
             # Downgrade within same interval
             # Charge at next billing date, changes take effect at period end
             modified_subscription = stripe.Subscription.modify(
-                user.stripeSubscriptionId,
+                user.stripe_subscription_id,
                 items=[
                     {
                         "id": subscription_item_id,
@@ -531,15 +533,15 @@ async def create_checkout_session(
 
     # Check if user already has an active subscription
     # First check database, then verify with Stripe
-    if user.stripeSubscriptionId:
+    if user.stripe_subscription_id:
         logger.info(
-            f"User {user.id} has subscription ID {user.stripeSubscriptionId} in database, "
+            f"User {user.id} has subscription ID {user.stripe_subscription_id} in database, "
             f"attempting to modify instead of creating new checkout"
         )
 
         # First check if the subscription is actually active/trialing on Stripe
         try:
-            existing_sub = stripe.Subscription.retrieve(user.stripeSubscriptionId)
+            existing_sub = stripe.Subscription.retrieve(user.stripe_subscription_id)
             existing_status = (
                 existing_sub.status
                 if hasattr(existing_sub, "status")
@@ -550,20 +552,18 @@ async def create_checkout_session(
                 # Subscription is fully ended — clear it and create a fresh checkout
                 logger.info(
                     f"User {user.id} has a {existing_status} subscription "
-                    f"{user.stripeSubscriptionId}. Clearing stale reference."
+                    f"{user.stripe_subscription_id}. Clearing stale reference."
                 )
-                await db.user.update(
-                    where={"id": user.id},
-                    data={
-                        "stripeSubscriptionId": None,
-                        "stripeSubscriptionStatus": None,
-                        "stripePriceId": None,
-                        "tier": "FREE",
-                        "subscriptionCurrentPeriodStart": None,
-                        "subscriptionCurrentPeriodEnd": None,
-                    },
-                )
-                user.stripeSubscriptionId = None
+                identity_repo = IdentityRepository()
+                await identity_repo.update(user.id, {
+                    "stripeSubscriptionId": None,
+                    "stripeSubscriptionStatus": None,
+                    "stripePriceId": None,
+                    "tier": "FREE",
+                    "subscriptionCurrentPeriodStart": None,
+                    "subscriptionCurrentPeriodEnd": None,
+                })
+                user.stripe_subscription_id = None
                 # Fall through to create new checkout below
             else:
                 # Subscription exists and is modifiable — try to modify
@@ -587,18 +587,18 @@ async def create_checkout_session(
                             "Syncing subscription data from Stripe."
                         )
                         updated_user = await update_user_subscription_from_stripe(
-                            user.stripeSubscriptionId
+                            user.stripe_subscription_id
                         )
                         if updated_user:
                             user = updated_user
                         return {
-                            "session_id": user.stripeSubscriptionId,
+                            "session_id": user.stripe_subscription_id,
                             "url": None,
                             "modified": False,
                             "is_upgrade": False,
                             "current_period_end": (
-                                user.subscriptionCurrentPeriodEnd.isoformat()
-                                if user.subscriptionCurrentPeriodEnd
+                                user.subscription_current_period_end.isoformat()
+                                if user.subscription_current_period_end
                                 else None
                             ),
                         }
@@ -619,17 +619,15 @@ async def create_checkout_session(
         except stripe.error.StripeError as e:
             # Can't retrieve subscription — clear stale reference
             logger.warning(
-                f"Could not retrieve subscription {user.stripeSubscriptionId} for user {user.id}: {e}. "
+                f"Could not retrieve subscription {user.stripe_subscription_id} for user {user.id}: {e}. "
                 "Clearing stale reference."
             )
-            await db.user.update(
-                where={"id": user.id},
-                data={
-                    "stripeSubscriptionId": None,
-                    "stripeSubscriptionStatus": None,
-                },
-            )
-            user.stripeSubscriptionId = None
+            identity_repo = IdentityRepository()
+            await identity_repo.update(user.id, {
+                "stripeSubscriptionId": None,
+                "stripeSubscriptionStatus": None,
+            })
+            user.stripe_subscription_id = None
     else:
         # Also check Stripe directly in case database is out of sync
         try:
@@ -648,15 +646,13 @@ async def create_checkout_session(
 
                 # Perform full synchronization from Stripe
                 updated_user = await update_user_subscription_from_stripe(
-                    active_subscription.id, db
+                    active_subscription.id
                 )
                 if not updated_user:
                     # Fallback to manual ID update if standard sync fails
-                    await db.user.update(
-                        where={"id": user.id},
-                        data={"stripeSubscriptionId": active_subscription.id},
-                    )
-                    user.stripeSubscriptionId = active_subscription.id
+                    identity_repo = IdentityRepository()
+                    await identity_repo.update(user.id, {"stripeSubscriptionId": active_subscription.id})
+                    user.stripe_subscription_id = active_subscription.id
                 else:
                     user = updated_user
 
@@ -680,13 +676,13 @@ async def create_checkout_session(
                             f"User {user.id} is already subscribed to the requested plan after sync."
                         )
                         return {
-                            "session_id": user.stripeSubscriptionId,
+                            "session_id": user.stripe_subscription_id,
                             "url": None,
                             "modified": False,
                             "is_upgrade": False,
                             "current_period_end": (
-                                user.subscriptionCurrentPeriodEnd.isoformat()
-                                if user.subscriptionCurrentPeriodEnd
+                                user.subscription_current_period_end.isoformat()
+                                if user.subscription_current_period_end
                                 else None
                             ),
                         }
@@ -746,11 +742,11 @@ async def create_portal_session(user: User, return_url: str) -> dict:
     Returns:
         Portal session object with URL
     """
-    if not user.stripeCustomerId:
+    if not user.stripe_customer_id:
         raise ValueError("User does not have a Stripe customer ID")
 
     session = stripe.billing_portal.Session.create(
-        customer=user.stripeCustomerId,
+        customer=user.stripe_customer_id,
         return_url=return_url,
     )
 
@@ -767,21 +763,19 @@ async def cancel_subscription(user: User) -> dict:
     Returns:
         Updated subscription status
     """
-    if not user.stripeSubscriptionId:
+    if not user.stripe_subscription_id:
         raise ValueError("User does not have an active subscription")
 
     subscription = stripe.Subscription.modify(
-        user.stripeSubscriptionId,
+        user.stripe_subscription_id,
         cancel_at_period_end=True,
     )
 
     # Update user subscription status
-    await db.user.update(
-        where={"id": user.id},
-        data={
-            "stripeSubscriptionStatus": subscription.status,
-        },
-    )
+    identity_repo = IdentityRepository()
+    await identity_repo.update(user.id, {
+        "stripeSubscriptionStatus": subscription.status,
+    })
 
     return {
         "status": subscription.status,
@@ -800,13 +794,11 @@ async def sync_subscription_from_checkout_session(
     Args:
         session_id: Stripe checkout session ID (cs_xxx)
         user_id: ID of the current user (must own this session)
-        db_client: Optional Prisma client
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Updated User or None if session invalid/not found
     """
-    if db_client is None:
-        db_client = db
     try:
         session = stripe.checkout.Session.retrieve(session_id, expand=["subscription"])
         subscription_id = session.subscription
@@ -817,7 +809,7 @@ async def sync_subscription_from_checkout_session(
         else:
             logger.warning(f"No subscription in checkout session {session_id}")
             return None
-        updated = await update_user_subscription_from_stripe(sub_id, db_client)
+        updated = await update_user_subscription_from_stripe(sub_id)
         if updated and str(updated.id) != str(user_id):
             logger.warning(
                 f"Checkout session {session_id} belongs to different user "
@@ -840,13 +832,12 @@ async def update_user_subscription_from_stripe(
 
     Args:
         subscription_id: Stripe subscription ID
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
 
     Returns:
         Updated User object or None if not found
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     try:
         # Retrieve subscription with expanded items to get price information
@@ -859,7 +850,7 @@ async def update_user_subscription_from_stripe(
         )
 
         # Find user by Stripe customer ID
-        user = await db_client.user.find_unique(where={"stripeCustomerId": customer_id})
+        user = await billing_repo.find_user_by_stripe_customer(customer_id)
 
         if not user:
             logger.warning(f"User not found for Stripe customer: {customer_id}")
@@ -929,33 +920,30 @@ async def update_user_subscription_from_stripe(
         # Check if this is a new billing period (period start changed)
         # This happens when a new subscription starts or renews
         is_new_period = False
-        if period_start_dt and user.subscriptionCurrentPeriodStart:
+        if period_start_dt and user.subscription_current_period_start:
             # Period start changed, meaning new billing cycle
-            if period_start_dt != user.subscriptionCurrentPeriodStart:
+            if period_start_dt != user.subscription_current_period_start:
                 is_new_period = True
-        elif period_start_dt and not user.subscriptionCurrentPeriodStart:
+        elif period_start_dt and not user.subscription_current_period_start:
             # First time setting period start
             is_new_period = True
 
         # Update user subscription data
-        updated_user = await db_client.user.update(
-            where={"id": user.id},
-            data={
-                "stripeSubscriptionId": sub_id,
-                "stripeSubscriptionStatus": sub_status,
-                "stripePriceId": price_id,
-                "tier": tier,
-                "paymentProvider": "stripe",
-                "subscriptionCurrentPeriodStart": period_start_dt,
-                "subscriptionCurrentPeriodEnd": period_end_dt,
-            },
-        )
+        updated_user = await identity_repo.update(user.id, {
+            "stripeSubscriptionId": sub_id,
+            "stripeSubscriptionStatus": sub_status,
+            "stripePriceId": price_id,
+            "tier": tier,
+            "paymentProvider": "stripe",
+            "subscriptionCurrentPeriodStart": period_start_dt,
+            "subscriptionCurrentPeriodEnd": period_end_dt,
+        })
 
         # Reset credits if this is a new billing period
         if is_new_period and period_start_dt and period_end_dt:
             try:
                 updated_user = await reset_credits_for_period_start(
-                    updated_user, period_start_dt, period_end_dt, db_client
+                    updated_user, period_start_dt, period_end_dt
                 )
                 logger.info(f"Reset credits for user {user.id} due to new subscription period")
             except Exception as e:
@@ -981,7 +969,7 @@ async def update_user_subscription_from_stripe(
 
             # Track referral subscription reward
             try:
-                await track_referral_subscription(updated_user, db_client)
+                await track_referral_subscription(updated_user)
             except Exception as e:
                 # Don't fail subscription update if referral tracking fails
                 logger.error(f"Failed to track referral subscription: {e}")
@@ -1005,10 +993,9 @@ async def handle_subscription_webhook(
     Args:
         event_type: Stripe event type (e.g., 'customer.subscription.created')
         subscription: Stripe subscription object
-        db_client: Optional Prisma client (defaults to global db)
+        db_client: Optional (kept for backward compat, ignored)
     """
-    if db_client is None:
-        db_client = db
+    identity_repo = IdentityRepository()
 
     subscription_id = subscription.get("id")
     if not subscription_id:
@@ -1016,24 +1003,21 @@ async def handle_subscription_webhook(
         return
 
     # Update user subscription data
-    await update_user_subscription_from_stripe(subscription_id, db_client)
+    await update_user_subscription_from_stripe(subscription_id)
 
     # Handle specific event types
     if event_type == "customer.subscription.deleted":
         # Subscription was canceled - set user to FREE tier
         customer_id = subscription.get("customer")
         if customer_id:
-            user = await db_client.user.find_unique(where={"stripeCustomerId": customer_id})
+            user = await billing_repo.find_user_by_stripe_customer(customer_id)
             if user:
-                await db_client.user.update(
-                    where={"id": user.id},
-                    data={
-                        "tier": "FREE",
-                        "stripeSubscriptionStatus": "canceled",
-                        "stripeSubscriptionId": None,
-                        "stripePriceId": None,
-                        "subscriptionCurrentPeriodStart": None,
-                        "subscriptionCurrentPeriodEnd": None,
-                    },
-                )
+                await identity_repo.update(user.id, {
+                    "tier": "FREE",
+                    "stripeSubscriptionStatus": "canceled",
+                    "stripeSubscriptionId": None,
+                    "stripePriceId": None,
+                    "subscriptionCurrentPeriodStart": None,
+                    "subscriptionCurrentPeriodEnd": None,
+                })
                 logger.info(f"Subscription canceled for user: {user.id}")
