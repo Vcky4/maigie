@@ -2,114 +2,82 @@
 Service for Note management.
 """
 
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
-from src.core.database import Prisma
+from sqlalchemy import select, update, delete, func, or_
+
+from src.shared.database import get_session_factory
+from src.domains.personal_learning.db_models import Note, NoteTag, NoteAttachment
+from src.domains.personal_learning.repository import personal_learning_repo
+from src.domains.learning_spaces.db_models import CircleMember
 from src.models.notes import NoteAttachmentCreate, NoteCreate, NoteUpdate
 
 
 async def latest_note_for_topic(
-    db: Prisma, topic_id: str, user_id: str | None = None
+    db: Any = None, topic_id: str = "", user_id: str | None = None
 ) -> Any | None:
     """Most recently updated note linked to a topic (optionally scoped to a user)."""
-    where: dict = {"topicId": topic_id}
-    if user_id is not None:
-        where["userId"] = user_id
-    return await db.note.find_first(where=where, order={"updatedAt": "desc"})
+    factory = get_session_factory()
+    async with factory() as session:
+        conditions = [Note.topic_id == topic_id]
+        if user_id is not None:
+            conditions.append(Note.user_id == user_id)
+        stmt = select(Note).where(*conditions).order_by(Note.updated_at.desc()).limit(1)
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
 
-async def create_note(db: Prisma, user_id: str, data: NoteCreate):
-    """
-    Create a new note.
-    """
-    # Prepare data for creation
+async def create_note(db: Any = None, user_id: str = "", data: NoteCreate = None):
+    """Create a new note."""
     note_data = data.model_dump(exclude={"tags"})
     note_data["userId"] = user_id
 
-    # Create the note
-    note = await db.note.create(data=note_data)
+    note = await personal_learning_repo.create_note(note_data)
 
     # Handle tags if provided
     if data.tags:
-        for tag in data.tags:
-            await db.notetag.create(
-                data={
-                    "noteId": note.id,
-                    "tag": tag,
-                }
-            )
+        await personal_learning_repo.create_note_tags(note.id, data.tags)
 
-    # Return the created note with relations
-    return await get_note(db, note.id, user_id)
+    return await personal_learning_repo.find_note(note.id, user_id)
 
 
-async def get_note(db: Prisma, note_id: str, user_id: str):
-    """
-    Get a note by ID and user ID.
-    """
-    return await db.note.find_unique(
-        where={
-            "id": note_id,
-        },
-        include={
-            "tags": True,
-            "attachments": True,
-        },
-    )
+async def get_note(db: Any = None, note_id: str = "", user_id: str = ""):
+    """Get a note by ID and user ID."""
+    return await personal_learning_repo.find_note(note_id, user_id)
 
 
-async def update_note(db: Prisma, note_id: str, user_id: str, data: NoteUpdate):
-    """
-    Update a note.
-    """
-    # Check ownership
-    existing_note = await db.note.find_unique(where={"id": note_id})
-    if not existing_note or existing_note.userId != user_id:
+async def update_note(db: Any = None, note_id: str = "", user_id: str = "", data: NoteUpdate = None):
+    """Update a note."""
+    existing_note = await personal_learning_repo.find_note(note_id, user_id)
+    if not existing_note or existing_note.user_id != user_id:
         return None
 
-    # Prepare update data
     update_data = data.model_dump(exclude={"tags"}, exclude_unset=True)
 
-    # Update note fields
     if update_data:
-        await db.note.update(
-            where={"id": note_id},
-            data=update_data,
-        )
+        await personal_learning_repo.update_note(note_id, {**update_data, "userId": user_id})
 
     # Update tags if provided (replace all)
     if data.tags is not None:
-        # Remove existing tags
-        await db.notetag.delete_many(where={"noteId": note_id})
+        await personal_learning_repo.delete_note_tags(note_id)
+        await personal_learning_repo.create_note_tags(note_id, data.tags)
 
-        # Add new tags
-        for tag in data.tags:
-            await db.notetag.create(
-                data={
-                    "noteId": note_id,
-                    "tag": tag,
-                }
-            )
-
-    return await get_note(db, note_id, user_id)
+    return await personal_learning_repo.find_note(note_id, user_id)
 
 
-async def delete_note(db: Prisma, note_id: str, user_id: str) -> bool:
-    """
-    Delete a note.
-    """
-    # Check ownership
-    existing_note = await db.note.find_unique(where={"id": note_id})
-    if not existing_note or existing_note.userId != user_id:
+async def delete_note(db: Any = None, note_id: str = "", user_id: str = "") -> bool:
+    """Delete a note."""
+    existing_note = await personal_learning_repo.find_note(note_id, user_id)
+    if not existing_note or existing_note.user_id != user_id:
         return False
 
-    await db.note.delete(where={"id": note_id})
+    await personal_learning_repo.delete_note(note_id)
     return True
 
 
 async def list_notes(
-    db: Prisma,
-    user_id: str,
+    db: Any = None,
+    user_id: str = "",
     page: int = 1,
     size: int = 20,
     search: str | None = None,
@@ -118,148 +86,121 @@ async def list_notes(
     topic_id: str | None = None,
     archived: bool | None = False,
     circle_id: str | None = None,
-) -> tuple[list[dict], int]:
-    """
-    List notes with filtering and pagination.
-    """
+) -> tuple[list, int]:
+    """List notes with filtering and pagination."""
     skip = (page - 1) * size
 
-    # Build query
-    if circle_id:
-        # Notes shared in the circle
-        where_clause = {"circleId": circle_id}
-    else:
-        # Personal notes (not shared in a circle)
-        where_clause = {"userId": user_id, "circleId": None}
+    factory = get_session_factory()
+    async with factory() as session:
+        conditions = []
 
-    if archived is not None:
-        where_clause["archived"] = archived
+        if circle_id:
+            conditions.append(Note.circle_id == circle_id)
+        else:
+            conditions.append(Note.user_id == user_id)
+            conditions.append(Note.circle_id.is_(None))
 
-    if course_id:
-        where_clause["courseId"] = course_id
+        if archived is not None:
+            conditions.append(Note.archived == archived)
+        if course_id:
+            conditions.append(Note.course_id == course_id)
+        if topic_id:
+            conditions.append(Note.topic_id == topic_id)
+        if search:
+            conditions.append(
+                or_(Note.title.ilike(f"%{search}%"), Note.content.ilike(f"%{search}%"))
+            )
+        if tag:
+            # Subquery for tag filter
+            tag_subq = select(NoteTag.note_id).where(NoteTag.tag == tag).subquery()
+            conditions.append(Note.id.in_(select(tag_subq.c.noteId)))
 
-    if topic_id:
-        where_clause["topicId"] = topic_id
+        count_stmt = select(func.count()).select_from(Note).where(*conditions)
+        total = (await session.execute(count_stmt)).scalar() or 0
 
-    if tag:
-        where_clause["tags"] = {"some": {"tag": tag}}
-
-    if search:
-        # Simple case-insensitive search on title or content
-        where_clause["OR"] = [
-            {"title": {"contains": search, "mode": "insensitive"}},
-            {"content": {"contains": search, "mode": "insensitive"}},
-        ]
-
-    # Get total count
-    total = await db.note.count(where=where_clause)
-
-    # Get items
-    notes = await db.note.find_many(
-        where=where_clause,
-        skip=skip,
-        take=size,
-        order={"updatedAt": "desc"},
-        include={
-            "tags": True,
-            "attachments": True,
-        },
-    )
+        stmt = (
+            select(Note)
+            .where(*conditions)
+            .order_by(Note.updated_at.desc())
+            .offset(skip)
+            .limit(size)
+        )
+        result = await session.execute(stmt)
+        notes = list(result.scalars().all())
 
     return notes, total
 
 
-async def add_attachment(db: Prisma, note_id: str, user_id: str, data: NoteAttachmentCreate):
-    """
-    Add an attachment to a note.
-    """
-    # Check ownership
-    existing_note = await db.note.find_unique(where={"id": note_id})
-    if not existing_note or existing_note.userId != user_id:
+async def add_attachment(db: Any = None, note_id: str = "", user_id: str = "", data: NoteAttachmentCreate = None):
+    """Add an attachment to a note."""
+    existing_note = await personal_learning_repo.find_note(note_id, user_id)
+    if not existing_note or existing_note.user_id != user_id:
         return None
 
-    # Create attachment
-    attachment = await db.noteattachment.create(
-        data={
-            "noteId": note_id,
-            "filename": data.filename,
-            "url": data.url,
-            "size": data.size,
-        }
-    )
-
-    return attachment
+    return await personal_learning_repo.create_attachment({
+        "noteId": note_id,
+        "filename": data.filename,
+        "url": data.url,
+        "size": data.size,
+    })
 
 
-async def remove_attachment(db: Prisma, note_id: str, attachment_id: str, user_id: str) -> bool:
-    """
-    Remove an attachment from a note.
-    """
-    # Check ownership of the note via the attachment
-    # This also implicitly checks if the attachment exists and belongs to the note
-    attachment = await db.noteattachment.find_first(
-        where={
-            "id": attachment_id,
-            "noteId": note_id,
-            "note": {"userId": user_id},
-        }
-    )
-
+async def remove_attachment(db: Any = None, note_id: str = "", attachment_id: str = "", user_id: str = "") -> bool:
+    """Remove an attachment from a note."""
+    attachment = await personal_learning_repo.find_attachment(attachment_id, note_id)
     if not attachment:
         return False
 
-    await db.noteattachment.delete(where={"id": attachment_id})
+    # Check note ownership
+    note = await personal_learning_repo.find_note(note_id, user_id)
+    if not note or note.user_id != user_id:
+        return False
+
+    await personal_learning_repo.delete_attachment(attachment_id)
     return True
 
 
-async def import_note_to_circle(db: Prisma, note_id: str, circle_id: str, user_id: str):
-    """
-    Import a personal note to a circle by creating a copy.
-    """
-    # Verify the note belongs to the user and is a personal note
-    original = await db.note.find_first(
-        where={"id": note_id, "userId": user_id, "circleId": None},
-        include={"tags": True, "attachments": True},
-    )
+async def import_note_to_circle(db: Any = None, note_id: str = "", circle_id: str = "", user_id: str = ""):
+    """Import a personal note to a circle by creating a copy."""
+    # Verify the note belongs to the user and is personal
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(Note).where(
+            Note.id == note_id, Note.user_id == user_id, Note.circle_id.is_(None)
+        )
+        result = await session.execute(stmt)
+        original = result.scalar_one_or_none()
+
     if not original:
         raise ValueError("Personal note not found or access denied")
 
-    # Verify user is a member of the circle
-    member = await db.circlemember.find_first(where={"circleId": circle_id, "userId": user_id})
+    # Verify membership
+    from src.domains.learning_spaces.repository import space_repo
+    member = await space_repo.find_member(circle_id, user_id)
     if not member:
         raise ValueError("User is not a member of the circle")
 
-    # Create a copy of the note for the circle
-    note_data = {
+    # Create copy
+    new_note = await personal_learning_repo.create_note({
         "title": original.title,
         "content": original.content,
         "userId": user_id,
         "circleId": circle_id,
         "summary": original.summary,
-    }
-
-    new_note = await db.note.create(data=note_data)
+    })
 
     # Copy tags
     if original.tags:
-        for tag_obj in original.tags:
-            await db.notetag.create(
-                data={
-                    "noteId": new_note.id,
-                    "tag": tag_obj.tag,
-                }
-            )
+        await personal_learning_repo.create_note_tags(new_note.id, [t.tag for t in original.tags])
 
-    # Copy attachments metadata (pointing to the same S3 URLs)
+    # Copy attachments
     if original.attachments:
         for att in original.attachments:
-            await db.noteattachment.create(
-                data={
-                    "noteId": new_note.id,
-                    "filename": att.filename,
-                    "url": att.url,
-                    "size": att.size,
-                }
-            )
+            await personal_learning_repo.create_attachment({
+                "noteId": new_note.id,
+                "filename": att.filename,
+                "url": att.url,
+                "size": att.size,
+            })
 
-    return await get_note(db, new_note.id, user_id)
+    return await personal_learning_repo.find_note(new_note.id, user_id)

@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from src.shared.auth import StaffUser, SuperAdminUser
 from src.shared.database import check_db_health, get_session_factory
 from src.shared.infrastructure import cache
+from sqlalchemy import select
 
 from . import models
 
@@ -96,54 +97,64 @@ async def list_users(
     tier: str | None = Query(None),
 ):
     """List all users (staff only)."""
-    where: dict = {"role": "USER"}
-    if search:
-        where["OR"] = [
-            {"email": {"contains": search, "mode": "insensitive"}},
-            {"name": {"contains": search, "mode": "insensitive"}},
-        ]
-    if tier:
-        where["tier"] = tier
+    from src.domains.identity.db_models import User as UserModel
 
-    users = await db.user.find_many(
-        where=where,
-        skip=(page - 1) * pageSize,
-        take=pageSize,
-        order={"createdAt": "desc"},
-    )
+    factory = get_session_factory()
+    async with factory() as session:
+        conditions = [UserModel.role == "USER"]
+        if search:
+            conditions.append(
+                (UserModel.email.ilike(f"%{search}%")) | (UserModel.name.ilike(f"%{search}%"))
+            )
+        if tier:
+            conditions.append(UserModel.tier == tier)
+
+        stmt = (
+            select(UserModel)
+            .where(*conditions)
+            .order_by(UserModel.created_at.desc())
+            .offset((page - 1) * pageSize)
+            .limit(pageSize)
+        )
+        result = await session.execute(stmt)
+        users = list(result.scalars().all())
     return users
 
 
 @router.post("/users/{user_id}/deactivate")
 async def deactivate_user(user_id: str, admin_user: SuperAdminUser):
     """Deactivate a user account (super admin only)."""
-    user = await db.user.find_unique(where={"id": user_id})
+    from src.domains.identity.repository import IdentityRepository
+    repo = IdentityRepository()
+    user = await repo.find_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    await db.user.update(where={"id": user_id}, data={"isActive": False})
+    await repo.update(user_id, {"isActive": False})
     return {"status": "deactivated", "userId": user_id}
 
 
 @router.post("/users/{user_id}/activate")
 async def activate_user(user_id: str, admin_user: SuperAdminUser):
     """Reactivate a user account (super admin only)."""
-    user = await db.user.find_unique(where={"id": user_id})
+    from src.domains.identity.repository import IdentityRepository
+    repo = IdentityRepository()
+    user = await repo.find_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    await db.user.update(where={"id": user_id}, data={"isActive": True})
+    await repo.update(user_id, {"isActive": True})
     return {"status": "activated", "userId": user_id}
 
 
 @router.post("/staff/role")
 async def update_staff_role(body: models.StaffRoleUpdateRequest, admin_user: SuperAdminUser):
     """Update a user's admin staff role (super admin only)."""
-    user = await db.user.find_unique(where={"id": body.userId})
+    from src.domains.identity.repository import IdentityRepository
+    repo = IdentityRepository()
+    user = await repo.find_by_id(body.userId)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if user.role != "ADMIN":
         raise HTTPException(status_code=400, detail="User is not an admin")
 
-    await db.user.update(
-        where={"id": body.userId}, data={"adminStaffRole": body.staffRole}
-    )
+    await repo.update(body.userId, {"adminStaffRole": body.staffRole})
     return {"status": "updated", "userId": body.userId, "staffRole": body.staffRole}
