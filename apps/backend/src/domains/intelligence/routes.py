@@ -258,11 +258,9 @@ def register_websocket(app):
         from src.domains.intelligence.routes import register_websocket
         register_websocket(app)
     """
-    from src.shared.database import db
-
     from .conversation.websocket_handler import register_chat_websocket_routes
 
     # Create a dedicated router for the WebSocket
     ws_router = APIRouter(prefix="/api/v1/intelligence", tags=["intelligence"])
-    register_chat_websocket_routes(ws_router, db)
+    register_chat_websocket_routes(ws_router, None)
     app.include_router(ws_router)

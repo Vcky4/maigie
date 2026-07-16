@@ -65,8 +65,6 @@ async def list_resources(
 
 async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]:
     """Create a new resource and index it."""
-    from prisma import Json
-
     resource_data: dict[str, Any] = {
         "userId": user.id,
         "title": data["title"],
@@ -77,7 +75,7 @@ async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]
     if data.get("description"):
         resource_data["description"] = data["description"]
     if data.get("metadata"):
-        resource_data["metadata"] = Json(data["metadata"])
+        resource_data["metadata"] = data["metadata"]
     if data.get("recommendationScore"):
         resource_data["recommendationScore"] = data["recommendationScore"]
     if data.get("recommendationSource"):
