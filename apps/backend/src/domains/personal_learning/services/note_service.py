@@ -46,15 +46,15 @@ async def list_notes(
     course_id: str | None = None,
     topic_id: str | None = None,
     archived: bool | None = False,
-    circle_id: str | None = None,
+    space_id: str | None = None,
 ) -> tuple[list, int]:
     """List notes with filters and pagination."""
     where: dict[str, Any] = {}
 
-    if circle_id:
-        where["circleId"] = circle_id
+    if space_id:
+        where["spaceId"] = space_id
     else:
-        where["circleId"] = None
+        where["spaceId"] = None
 
     if archived is not None:
         where["archived"] = archived

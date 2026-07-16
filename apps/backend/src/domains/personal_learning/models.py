@@ -89,7 +89,7 @@ class NoteListResponse(BaseModel):
 class NoteImportRequest(BaseModel):
     """Import a personal note into a Learning Space."""
 
-    circleId: str
+    spaceId: str
 
 
 # ===========================================================================

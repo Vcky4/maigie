@@ -20,7 +20,7 @@ async def create_classroom(*, space_id: str, user_id: str, data: dict[str, Any])
     await _require_role(None, space_id, user_id, min_role="TUTOR")
 
     classroom = await classroom_repo.create_classroom({
-        "circleId": space_id,
+        "spaceId": space_id,
         "name": data["name"],
         "visibility": data.get("visibility", "PUBLIC"),
         "description": data.get("description"),
@@ -51,7 +51,7 @@ async def update_classroom(*, classroom_id: str, user_id: str, data: dict[str, A
 
     from src.domains.learning_spaces.services.space_impl import _require_role
 
-    await _require_role(None, classroom.circle_id, user_id, min_role="TUTOR")
+    await _require_role(None, classroom.space_id, user_id, min_role="TUTOR")
 
     update_data = {k: v for k, v in data.items() if v is not None}
     if update_data:
@@ -67,5 +67,5 @@ async def delete_classroom(*, classroom_id: str, user_id: str) -> None:
 
     from src.domains.learning_spaces.services.space_impl import _require_role
 
-    await _require_role(None, classroom.circle_id, user_id, min_role="ADMIN")
+    await _require_role(None, classroom.space_id, user_id, min_role="ADMIN")
     await classroom_repo.delete_classroom(classroom_id)

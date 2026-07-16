@@ -283,7 +283,7 @@ class PersonalLearningRepository:
             "summary": "summary",
             "courseId": "course_id",
             "topicId": "topic_id",
-            "circleId": "circle_id",
+            "spaceId": "space_id",
             "lastEditedById": "last_edited_by_id",
             "archived": "archived",
             "voiceRecordingUrl": "voice_recording_url",
@@ -308,7 +308,7 @@ class PersonalLearningRepository:
             "examDate": "exam_date",
             "description": "description",
             "status": "status",
-            "circleId": "circle_id",
+            "spaceId": "space_id",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 
@@ -338,8 +338,8 @@ class PersonalLearningRepository:
             conditions.append(Note.course_id == where["courseId"])
         if "topicId" in where:
             conditions.append(Note.topic_id == where["topicId"])
-        if "circleId" in where:
-            conditions.append(Note.circle_id == where["circleId"])
+        if "spaceId" in where:
+            conditions.append(Note.space_id == where["spaceId"])
         if "title" in where and isinstance(where["title"], dict):
             contains = where["title"].get("contains", "")
             if contains:

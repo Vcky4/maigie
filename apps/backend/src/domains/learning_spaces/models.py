@@ -70,8 +70,7 @@ class InviteResponse(BaseModel):
     """Invitation details."""
 
     id: str
-    circleId: str  # Will rename to spaceId in schema migration
-    circleName: str | None = None
+    spaceId: str
     inviterId: str
     inviterName: str | None = None
     inviteeEmail: str
@@ -111,7 +110,7 @@ class ChatGroupUpdate(BaseModel):
 class ChatGroupResponse(BaseModel):
     id: str
     name: str
-    circleId: str
+    spaceId: str
     chatSessionId: str | None = None
     visibility: str = "PUBLIC"
     description: str | None = None
@@ -151,7 +150,7 @@ class SessionUpdate(BaseModel):
 
 class SessionResponse(BaseModel):
     id: str
-    circleId: str
+    spaceId: str
     title: str
     description: str | None = None
     scheduledAt: datetime
@@ -279,18 +278,3 @@ class ImportRequest(BaseModel):
     noteIds: list[str] = []
     goalIds: list[str] = []
 
-
-# ===========================================================================
-# Backward-compatibility aliases (legacy "Circle" names → "Space" names)
-# These allow existing imports to continue working during the migration.
-# Remove once all consumers are updated.
-# ===========================================================================
-
-CircleCreate = SpaceCreate
-CircleUpdate = SpaceUpdate
-CircleChatGroupCreate = ChatGroupCreate
-CircleChatGroupUpdate = ChatGroupUpdate
-CircleInviteCreate = InviteRequest
-CircleSessionCreate = SessionCreate
-CircleSessionUpdate = SessionUpdate
-CircleImportRequest = ImportRequest

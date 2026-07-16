@@ -2,7 +2,7 @@
 Discussion management — messages within a Classroom.
 
 In the current architecture, discussions happen via the chat system
-(ChatSession with isCircleRoom=true). This service provides a
+(ChatSession with isSpaceRoom=true). This service provides a
 clean domain interface for classroom-scoped messaging.
 """
 
@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from src.shared.database import get_session_factory
 from src.domains.intelligence.db_models import ChatMessage
-from src.domains.learning_spaces.db_models import CircleChatGroup
+from src.domains.learning_spaces.db_models import SpaceChatGroup
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ async def get_classroom_messages(
     factory = get_session_factory()
     async with factory() as session:
         # Find the chat session linked to this classroom
-        stmt = select(CircleChatGroup).where(CircleChatGroup.id == classroom_id)
+        stmt = select(SpaceChatGroup).where(SpaceChatGroup.id == classroom_id)
         result = await session.execute(stmt)
         group = result.scalar_one_or_none()
 

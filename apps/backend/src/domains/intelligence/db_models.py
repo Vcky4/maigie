@@ -36,11 +36,11 @@ class ChatSession(Base, TimestampMixin):
 
     title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column("isActive", Boolean, default=True, server_default="true")
-    is_circle_room: Mapped[bool] = mapped_column("isCircleRoom", Boolean, default=False, server_default="false")
+    is_space_room: Mapped[bool] = mapped_column("isSpaceRoom", Boolean, default=False, server_default="false")
     session_type: Mapped[str] = mapped_column("sessionType", String, default="general", server_default="general")
 
     # Context links
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
     course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
     exam_prep_id: Mapped[Optional[str]] = mapped_column("examPrepId", String, nullable=True, index=True)
@@ -51,10 +51,10 @@ class ChatSession(Base, TimestampMixin):
     conversation_summaries: Mapped[list["ConversationSummary"]] = relationship("ConversationSummary", back_populates="session", lazy="noload")
 
     __table_args__ = (
-        Index("ChatSession_isCircleRoom_idx", "isCircleRoom"),
+        Index("ChatSession_isSpaceRoom_idx", "isSpaceRoom"),
         Index("ChatSession_sessionType_idx", "sessionType"),
-        Index("ChatSession_userId_circleId_courseId_idx", "userId", "circleId", "courseId"),
-        Index("ChatSession_userId_circleId_topicId_idx", "userId", "circleId", "topicId"),
+        Index("ChatSession_userId_spaceId_courseId_idx", "userId", "spaceId", "courseId"),
+        Index("ChatSession_userId_spaceId_topicId_idx", "userId", "spaceId", "topicId"),
     )
 
     def __repr__(self) -> str:

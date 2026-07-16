@@ -101,7 +101,7 @@ class LearningSpaceRepository:
             stmt = (
                 select(SpaceMember)
                 .options(selectinload(SpaceMember.user))
-                .where(SpaceMember.circle_id == space_id, SpaceMember.user_id == user_id)
+                .where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
@@ -118,7 +118,7 @@ class LearningSpaceRepository:
         async with await self._session() as session:
             stmt = (
                 update(SpaceMember)
-                .where(SpaceMember.circle_id == space_id, SpaceMember.user_id == user_id)
+                .where(SpaceMember.space_id == space_id, SpaceMember.user_id == user_id)
                 .values(**self._map_member(data))
             )
             await session.execute(stmt)
@@ -128,14 +128,14 @@ class LearningSpaceRepository:
     async def remove_member(self, space_id: str, user_id: str) -> None:
         async with await self._session() as session:
             stmt = delete(SpaceMember).where(
-                SpaceMember.circle_id == space_id, SpaceMember.user_id == user_id
+                SpaceMember.space_id == space_id, SpaceMember.user_id == user_id
             )
             await session.execute(stmt)
             await session.commit()
 
     async def count_members(self, space_id: str) -> int:
         async with await self._session() as session:
-            stmt = select(func.count()).select_from(SpaceMember).where(SpaceMember.circle_id == space_id)
+            stmt = select(func.count()).select_from(SpaceMember).where(SpaceMember.space_id == space_id)
             return (await session.execute(stmt)).scalar() or 0
 
     async def count_plus_seats(self, space_id: str) -> int:
@@ -143,7 +143,7 @@ class LearningSpaceRepository:
             stmt = (
                 select(func.count())
                 .select_from(SpaceMember)
-                .where(SpaceMember.circle_id == space_id, SpaceMember.seat_tier == "PLUS_SEAT")
+                .where(SpaceMember.space_id == space_id, SpaceMember.seat_tier == "PLUS_SEAT")
             )
             return (await session.execute(stmt)).scalar() or 0
 
@@ -152,7 +152,7 @@ class LearningSpaceRepository:
             stmt = (
                 select(SpaceMember)
                 .options(selectinload(SpaceMember.user))
-                .where(SpaceMember.circle_id == space_id, SpaceMember.seat_tier == "PLUS_SEAT")
+                .where(SpaceMember.space_id == space_id, SpaceMember.seat_tier == "PLUS_SEAT")
                 .order_by(SpaceMember.joined_at.asc())
             )
             result = await session.execute(stmt)
@@ -180,7 +180,7 @@ class LearningSpaceRepository:
         async with await self._session() as session:
             stmt = (
                 select(SpaceInvite)
-                .where(SpaceInvite.circle_id == space_id, SpaceInvite.status == "PENDING")
+                .where(SpaceInvite.space_id == space_id, SpaceInvite.status == "PENDING")
                 .order_by(SpaceInvite.created_at.desc())
             )
             result = await session.execute(stmt)
@@ -223,7 +223,7 @@ class LearningSpaceRepository:
 
     async def list_chat_groups(self, space_id: str) -> list[SpaceChatGroup]:
         async with await self._session() as session:
-            stmt = select(SpaceChatGroup).where(SpaceChatGroup.circle_id == space_id)
+            stmt = select(SpaceChatGroup).where(SpaceChatGroup.space_id == space_id)
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
@@ -262,7 +262,7 @@ class LearningSpaceRepository:
         async with await self._session() as session:
             stmt = (
                 select(SpaceSession)
-                .where(SpaceSession.circle_id == space_id)
+                .where(SpaceSession.space_id == space_id)
                 .order_by(SpaceSession.scheduled_at.desc())
             )
             result = await session.execute(stmt)
@@ -275,7 +275,7 @@ class LearningSpaceRepository:
             stmt = (
                 select(SpaceSession)
                 .where(
-                    SpaceSession.circle_id == space_id,
+                    SpaceSession.space_id == space_id,
                     SpaceSession.status.in_(["SCHEDULED", "ACTIVE"]),
                     SpaceSession.scheduled_at >= now,
                 )
@@ -306,7 +306,7 @@ class LearningSpaceRepository:
         async with await self._session() as session:
             stmt = (
                 select(SpaceSeatAddon)
-                .where(SpaceSeatAddon.circle_id == space_id)
+                .where(SpaceSeatAddon.space_id == space_id)
                 .order_by(SpaceSeatAddon.purchased_at.desc())
             )
             result = await session.execute(stmt)
@@ -339,14 +339,14 @@ class LearningSpaceRepository:
     }
 
     _MEMBER_MAP = {
-        "circleId": "circle_id",
+        "spaceId": "space_id",
         "userId": "user_id",
         "role": "role",
         "seatTier": "seat_tier",
     }
 
     _INVITE_MAP = {
-        "circleId": "circle_id",
+        "spaceId": "space_id",
         "inviterId": "inviter_id",
         "inviteeEmail": "invitee_email",
         "inviteeId": "invitee_id",
@@ -357,7 +357,7 @@ class LearningSpaceRepository:
     }
 
     _CHAT_GROUP_MAP = {
-        "circleId": "circle_id",
+        "spaceId": "space_id",
         "name": "name",
         "chatSessionId": "chat_session_id",
         "visibility": "visibility",
@@ -365,7 +365,7 @@ class LearningSpaceRepository:
     }
 
     _SESSION_MAP = {
-        "circleId": "circle_id",
+        "spaceId": "space_id",
         "title": "title",
         "description": "description",
         "scheduledAt": "scheduled_at",

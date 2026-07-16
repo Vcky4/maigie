@@ -4,10 +4,6 @@ Learning Spaces domain — SQLAlchemy models.
 Space, SpaceMember, SpaceChatGroup, SpaceChatGroupMember,
 SpaceInvite, SpaceMemberStat, SpaceSession, SpaceJoinRequest,
 SpaceSubscription, SpaceSeatAddon, AiUsageRecord.
-
-Maps to existing PostgreSQL tables created by Prisma.
-Table and column names are preserved to match the existing schema exactly.
-Python class names use the "Space" naming convention.
 """
 
 from datetime import datetime
@@ -21,12 +17,12 @@ from src.shared.database.base import Base, TimestampMixin
 
 
 # ---------------------------------------------------------------------------
-# Space (table: "Circle")
+# Space
 # ---------------------------------------------------------------------------
 
 
 class Space(Base, TimestampMixin):
-    __tablename__ = "Circle"
+    __tablename__ = "Space"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
     name: Mapped[str] = mapped_column(String, nullable=False)
@@ -47,8 +43,8 @@ class Space(Base, TimestampMixin):
     theme_json: Mapped[Optional[dict]] = mapped_column("themeJson", JSON, nullable=True)
 
     # Plan & seat
-    space_plan_active: Mapped[bool] = mapped_column("circlePlanActive", Boolean, default=False, server_default="false")
-    space_plan_current_period_end: Mapped[Optional[datetime]] = mapped_column("circlePlanCurrentPeriodEnd", DateTime(timezone=True), nullable=True)
+    space_plan_active: Mapped[bool] = mapped_column("spacePlanActive", Boolean, default=False, server_default="false")
+    space_plan_current_period_end: Mapped[Optional[datetime]] = mapped_column("spacePlanCurrentPeriodEnd", DateTime(timezone=True), nullable=True)
     seat_pool_size: Mapped[int] = mapped_column("seatPoolSize", Integer, default=0, server_default="0")
 
     # Moderation
@@ -63,9 +59,9 @@ class Space(Base, TimestampMixin):
     chat_groups: Mapped[list["SpaceChatGroup"]] = relationship("SpaceChatGroup", back_populates="space", lazy="noload")
 
     __table_args__ = (
-        Index("Circle_visibility_idx", "visibility"),
-        Index("Circle_featured_idx", "featured"),
-        Index("Circle_circlePlanActive_idx", "circlePlanActive"),
+        Index("Space_visibility_idx", "visibility"),
+        Index("Space_featured_idx", "featured"),
+        Index("Space_spacePlanActive_idx", "spacePlanActive"),
     )
 
     def __repr__(self) -> str:
@@ -73,15 +69,15 @@ class Space(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
-# SpaceMember (table: "CircleMember")
+# SpaceMember
 # ---------------------------------------------------------------------------
 
 
 class SpaceMember(Base):
-    __tablename__ = "CircleMember"
+    __tablename__ = "SpaceMember"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"), index=True)
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String, default="MEMBER", server_default="MEMBER")
     seat_tier: Mapped[str] = mapped_column("seatTier", String, default="FREE_SEAT", server_default="FREE_SEAT")
@@ -95,21 +91,21 @@ class SpaceMember(Base):
     user: Mapped[Optional["User"]] = relationship("User", lazy="selectin")
 
     __table_args__ = (
-        Index("CircleMember_circleId_userId_key", "circleId", "userId", unique=True),
-        Index("CircleMember_circleId_seatTier_idx", "circleId", "seatTier"),
+        Index("SpaceMember_spaceId_userId_key", "spaceId", "userId", unique=True),
+        Index("SpaceMember_spaceId_seatTier_idx", "spaceId", "seatTier"),
     )
 
 
 # ---------------------------------------------------------------------------
-# SpaceChatGroup (table: "CircleChatGroup")
+# SpaceChatGroup
 # ---------------------------------------------------------------------------
 
 
 class SpaceChatGroup(Base, TimestampMixin):
-    __tablename__ = "CircleChatGroup"
+    __tablename__ = "SpaceChatGroup"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"), index=True)
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
 
     chat_session_id: Mapped[Optional[str]] = mapped_column("chatSessionId", String, unique=True, nullable=True)
@@ -121,15 +117,15 @@ class SpaceChatGroup(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
-# SpaceChatGroupMember (table: "CircleChatGroupMember")
+# SpaceChatGroupMember
 # ---------------------------------------------------------------------------
 
 
 class SpaceChatGroupMember(Base):
-    __tablename__ = "CircleChatGroupMember"
+    __tablename__ = "SpaceChatGroupMember"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    chat_group_id: Mapped[str] = mapped_column("chatGroupId", String, ForeignKey("CircleChatGroup.id", ondelete="CASCADE"), index=True)
+    chat_group_id: Mapped[str] = mapped_column("chatGroupId", String, ForeignKey("SpaceChatGroup.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
     joined_at: Mapped[datetime] = mapped_column(
         "joinedAt", DateTime(timezone=True),
@@ -137,20 +133,20 @@ class SpaceChatGroupMember(Base):
     )
 
     __table_args__ = (
-        Index("CircleChatGroupMember_chatGroupId_userId_key", "chatGroupId", "userId", unique=True),
+        Index("SpaceChatGroupMember_chatGroupId_userId_key", "chatGroupId", "userId", unique=True),
     )
 
 
 # ---------------------------------------------------------------------------
-# SpaceInvite (table: "CircleInvite")
+# SpaceInvite
 # ---------------------------------------------------------------------------
 
 
 class SpaceInvite(Base):
-    __tablename__ = "CircleInvite"
+    __tablename__ = "SpaceInvite"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"), index=True)
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"), index=True)
     inviter_id: Mapped[str] = mapped_column("inviterId", String, nullable=False)
     invitee_email: Mapped[str] = mapped_column("inviteeEmail", String, nullable=False, index=True)
     invitee_id: Mapped[Optional[str]] = mapped_column("inviteeId", String, nullable=True, index=True)
@@ -164,20 +160,20 @@ class SpaceInvite(Base):
     )
 
     __table_args__ = (
-        Index("CircleInvite_circleId_inviteeEmail_key", "circleId", "inviteeEmail", unique=True),
+        Index("SpaceInvite_spaceId_inviteeEmail_key", "spaceId", "inviteeEmail", unique=True),
     )
 
 
 # ---------------------------------------------------------------------------
-# SpaceMemberStat (table: "CircleMemberStat")
+# SpaceMemberStat
 # ---------------------------------------------------------------------------
 
 
 class SpaceMemberStat(Base, TimestampMixin):
-    __tablename__ = "CircleMemberStat"
+    __tablename__ = "SpaceMemberStat"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"), index=True)
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
 
     contribution_points: Mapped[int] = mapped_column("contributionPoints", Integer, default=0, server_default="0")
@@ -187,20 +183,20 @@ class SpaceMemberStat(Base, TimestampMixin):
     quiz_average: Mapped[float] = mapped_column("quizAverage", Float, default=0.0, server_default="0")
 
     __table_args__ = (
-        Index("CircleMemberStat_circleId_userId_key", "circleId", "userId", unique=True),
+        Index("SpaceMemberStat_spaceId_userId_key", "spaceId", "userId", unique=True),
     )
 
 
 # ---------------------------------------------------------------------------
-# SpaceSession (table: "CircleSession")
+# SpaceSession
 # ---------------------------------------------------------------------------
 
 
 class SpaceSession(Base, TimestampMixin):
-    __tablename__ = "CircleSession"
+    __tablename__ = "SpaceSession"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"), index=True)
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"), index=True)
 
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -216,15 +212,15 @@ class SpaceSession(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
-# SpaceJoinRequest (table: "CircleJoinRequest")
+# SpaceJoinRequest
 # ---------------------------------------------------------------------------
 
 
 class SpaceJoinRequest(Base):
-    __tablename__ = "CircleJoinRequest"
+    __tablename__ = "SpaceJoinRequest"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"))
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"))
     user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(String, default="PENDING", server_default="PENDING")
     created_at: Mapped[datetime] = mapped_column(
@@ -234,21 +230,21 @@ class SpaceJoinRequest(Base):
     decided_at: Mapped[Optional[datetime]] = mapped_column("decidedAt", DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        Index("CircleJoinRequest_circleId_userId_key", "circleId", "userId", unique=True),
-        Index("CircleJoinRequest_circleId_status_idx", "circleId", "status"),
+        Index("SpaceJoinRequest_spaceId_userId_key", "spaceId", "userId", unique=True),
+        Index("SpaceJoinRequest_spaceId_status_idx", "spaceId", "status"),
     )
 
 
 # ---------------------------------------------------------------------------
-# SpaceSubscription (table: "CircleSubscription")
+# SpaceSubscription
 # ---------------------------------------------------------------------------
 
 
 class SpaceSubscription(Base, TimestampMixin):
-    __tablename__ = "CircleSubscription"
+    __tablename__ = "SpaceSubscription"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"), unique=True)
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"), unique=True)
     provider: Mapped[str] = mapped_column(String, nullable=False)
     provider_subscription_id: Mapped[str] = mapped_column("providerSubscriptionId", String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, index=True)
@@ -259,15 +255,15 @@ class SpaceSubscription(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
-# SpaceSeatAddon (table: "CircleSeatAddon")
+# SpaceSeatAddon
 # ---------------------------------------------------------------------------
 
 
 class SpaceSeatAddon(Base):
-    __tablename__ = "CircleSeatAddon"
+    __tablename__ = "SpaceSeatAddon"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
-    circle_id: Mapped[str] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="CASCADE"))
+    space_id: Mapped[str] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(String, nullable=False)
     provider_subscription_id: Mapped[str] = mapped_column("providerSubscriptionId", String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
@@ -282,8 +278,8 @@ class SpaceSeatAddon(Base):
     assigned_at: Mapped[Optional[datetime]] = mapped_column("assignedAt", DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
-        Index("CircleSeatAddon_circleId_status_idx", "circleId", "status"),
-        Index("CircleSeatAddon_circleId_assignedAt_idx", "circleId", "assignedAt"),
+        Index("SpaceSeatAddon_spaceId_status_idx", "spaceId", "status"),
+        Index("SpaceSeatAddon_spaceId_assignedAt_idx", "spaceId", "assignedAt"),
     )
 
 
@@ -298,7 +294,7 @@ class AiUsageRecord(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
     user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"))
     usage_scope: Mapped[str] = mapped_column("usageScope", String, nullable=False)
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, nullable=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True)
     provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     feature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
@@ -312,26 +308,10 @@ class AiUsageRecord(Base):
 
     __table_args__ = (
         Index("AiUsageRecord_userId_usageScope_idx", "userId", "usageScope"),
-        Index("AiUsageRecord_circleId_userId_idx", "circleId", "userId"),
+        Index("AiUsageRecord_spaceId_userId_idx", "spaceId", "userId"),
         Index("AiUsageRecord_userId_createdAt_idx", "userId", "createdAt"),
-        Index("AiUsageRecord_circleId_createdAt_idx", "circleId", "createdAt"),
+        Index("AiUsageRecord_spaceId_createdAt_idx", "spaceId", "createdAt"),
     )
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatibility aliases (remove once all consumers are updated)
-# ---------------------------------------------------------------------------
-
-Circle = Space
-CircleMember = SpaceMember
-CircleChatGroup = SpaceChatGroup
-CircleChatGroupMember = SpaceChatGroupMember
-CircleInvite = SpaceInvite
-CircleMemberStat = SpaceMemberStat
-CircleSession = SpaceSession
-CircleJoinRequest = SpaceJoinRequest
-CircleSubscription = SpaceSubscription
-CircleSeatAddon = SpaceSeatAddon
 
 
 # Import User for relationship resolution

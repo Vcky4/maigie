@@ -9,7 +9,7 @@ from sqlalchemy import select, update, delete, func, or_
 from src.shared.database import get_session_factory
 from src.domains.personal_learning.db_models import Note, NoteTag, NoteAttachment
 from src.domains.personal_learning.repository import personal_learning_repo
-from src.domains.learning_spaces.db_models import CircleMember
+from src.domains.learning_spaces.db_models import SpaceMember
 from src.models.notes import NoteAttachmentCreate, NoteCreate, NoteUpdate
 
 
@@ -85,7 +85,7 @@ async def list_notes(
     course_id: str | None = None,
     topic_id: str | None = None,
     archived: bool | None = False,
-    circle_id: str | None = None,
+    space_id: str | None = None,
 ) -> tuple[list, int]:
     """List notes with filtering and pagination."""
     skip = (page - 1) * size
@@ -94,11 +94,11 @@ async def list_notes(
     async with factory() as session:
         conditions = []
 
-        if circle_id:
-            conditions.append(Note.circle_id == circle_id)
+        if space_id:
+            conditions.append(Note.space_id == space_id)
         else:
             conditions.append(Note.user_id == user_id)
-            conditions.append(Note.circle_id.is_(None))
+            conditions.append(Note.space_id.is_(None))
 
         if archived is not None:
             conditions.append(Note.archived == archived)
@@ -160,13 +160,13 @@ async def remove_attachment(db: Any = None, note_id: str = "", attachment_id: st
     return True
 
 
-async def import_note_to_circle(db: Any = None, note_id: str = "", circle_id: str = "", user_id: str = ""):
-    """Import a personal note to a circle by creating a copy."""
+async def import_note_to_space(db: Any = None, note_id: str = "", space_id: str = "", user_id: str = ""):
+    """Import a personal note to a space by creating a copy."""
     # Verify the note belongs to the user and is personal
     factory = get_session_factory()
     async with factory() as session:
         stmt = select(Note).where(
-            Note.id == note_id, Note.user_id == user_id, Note.circle_id.is_(None)
+            Note.id == note_id, Note.user_id == user_id, Note.space_id.is_(None)
         )
         result = await session.execute(stmt)
         original = result.scalar_one_or_none()
@@ -176,16 +176,16 @@ async def import_note_to_circle(db: Any = None, note_id: str = "", circle_id: st
 
     # Verify membership
     from src.domains.learning_spaces.repository import space_repo
-    member = await space_repo.find_member(circle_id, user_id)
+    member = await space_repo.find_member(space_id, user_id)
     if not member:
-        raise ValueError("User is not a member of the circle")
+        raise ValueError("User is not a member of the space")
 
     # Create copy
     new_note = await personal_learning_repo.create_note({
         "title": original.title,
         "content": original.content,
         "userId": user_id,
-        "circleId": circle_id,
+        "spaceId": space_id,
         "summary": original.summary,
     })
 

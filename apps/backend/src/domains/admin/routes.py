@@ -61,7 +61,7 @@ async def admin_stats(admin_user: StaffUser):
     from sqlalchemy import select, func
     from src.domains.identity.db_models import User
     from src.domains.knowledge.db_models import Course
-    from src.domains.learning_spaces.db_models import Circle
+    from src.domains.learning_spaces.db_models import Space
     from src.domains.intelligence.db_models import ChatMessage
 
     factory = get_session_factory()
@@ -70,7 +70,7 @@ async def admin_stats(admin_user: StaffUser):
         active_users = (await session.execute(select(func.count()).select_from(User).where(User.role == "USER", User.is_active == True))).scalar() or 0
         premium_users = (await session.execute(select(func.count()).select_from(User).where(User.tier.in_(["PREMIUM_MONTHLY", "PREMIUM_YEARLY"])))).scalar() or 0
         total_courses = (await session.execute(select(func.count()).select_from(Course))).scalar() or 0
-        total_spaces = (await session.execute(select(func.count()).select_from(Circle))).scalar() or 0
+        total_spaces = (await session.execute(select(func.count()).select_from(Space))).scalar() or 0
         total_messages = (await session.execute(select(func.count()).select_from(ChatMessage))).scalar() or 0
 
     return models.AdminStatsResponse(

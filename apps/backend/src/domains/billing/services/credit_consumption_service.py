@@ -322,10 +322,10 @@ async def ensure_credit_period(user: User, db_client: Any | None = None) -> User
 
 
 async def check_credit_availability(
-    user: User, credits_needed: int, db_client: Any | None = None, circle_id: str | None = None
+    user: User, credits_needed: int, db_client: Any | None = None, space_id: str | None = None
 ) -> tuple[bool, str | None]:
     """
-    Check if user (or circle) has enough credits available.
+    Check if user (or space) has enough credits available.
 
     Checks subscription credits first, then falls back to purchased credits balance.
 
@@ -333,7 +333,7 @@ async def check_credit_availability(
         user: User model instance
         credits_needed: Number of credits required (raw tokens - multiplier will be applied)
         db_client: Optional (kept for backward compat, ignored)
-        circle_id: Optional ID of the circle to check credits for
+        space_id: Optional ID of the space to check credits for
 
     Returns:
         Tuple of (is_available, warning_or_notice_message)
@@ -345,15 +345,15 @@ async def check_credit_availability(
     # Apply token multiplier to get actual credits that will be consumed
     credits_needed = apply_token_multiplier(credits_needed)
 
-    # Check circle credits if circle_id is provided
-    if circle_id:
-        circle = await space_repo.find_space_basic(circle_id)
-        if not circle:
-            raise ValueError(f"Circle {circle_id} not found")
+    # Check space credits if space_id is provided
+    if space_id:
+        space = await space_repo.find_space_basic(space_id)
+        if not space:
+            raise ValueError(f"Space {space_id} not found")
 
-        # In a circle context, limits might be defined per circle. For now, checking if limit exists
-        if circle.credits_limit and circle.credits + credits_needed > circle.credits_limit:
-            return False, "Circle credit limit reached."
+        # In a space context, limits might be defined per space. For now, checking if limit exists
+        if space.credits_limit and space.credits + credits_needed > space.credits_limit:
+            return False, "Space credit limit reached."
         return True, None
 
     # Ensure credit period is active
@@ -469,10 +469,10 @@ async def consume_credits(
     credits: int,
     operation: str = "unknown",
     db_client: Any | None = None,
-    circle_id: str | None = None,
+    space_id: str | None = None,
 ) -> CreditConsumptionResult:
     """
-    Consume credits for a user or circle operation.
+    Consume credits for a user or space operation.
 
     Supports three consumption modes:
     - Subscription only: when subscription credits are sufficient
@@ -486,7 +486,7 @@ async def consume_credits(
         credits: Number of credits to consume (raw tokens - multiplier will be applied)
         operation: Description of the operation (for logging)
         db_client: Optional (kept for backward compat, ignored)
-        circle_id: Optional ID of the circle to consume credits from
+        space_id: Optional ID of the space to consume credits from
 
     Returns:
         CreditConsumptionResult with source metadata
@@ -499,30 +499,30 @@ async def consume_credits(
     # Apply token multiplier to reduce credits charged
     credits = apply_token_multiplier(credits)
 
-    # Handle circle consumption (unchanged behavior)
-    if circle_id:
+    # Handle space consumption (unchanged behavior)
+    if space_id:
         is_available, warning_message = await check_credit_availability(
-            user, credits, circle_id=circle_id
+            user, credits, space_id=space_id
         )
         if not is_available:
             raise SubscriptionLimitError(
-                message="Circle credit limit exceeded.",
-                detail=f"This operation requires {credits} credits, which exceeds the circle's limit.",
+                message="Space credit limit exceeded.",
+                detail=f"This operation requires {credits} credits, which exceeds the space's limit.",
             )
 
-        # Increment circle credits using raw SQLAlchemy
+        # Increment space credits using raw SQLAlchemy
         from sqlalchemy import update as sa_update
-        from src.domains.learning_spaces.db_models import Circle
+        from src.domains.learning_spaces.db_models import Space
         factory = get_session_factory()
         async with factory() as session:
             stmt = (
-                sa_update(Circle)
-                .where(Circle.id == circle_id)
-                .values(credits=Circle.credits + credits)
+                sa_update(Space)
+                .where(Space.id == space_id)
+                .values(credits=Space.credits + credits)
             )
             await session.execute(stmt)
             await session.commit()
-        logger.info(f"Consumed {credits} credits for circle {circle_id} (operation: {operation})")
+        logger.info(f"Consumed {credits} credits for space {space_id} (operation: {operation})")
         return CreditConsumptionResult(
             user=user,
             credits_consumed=credits,

@@ -40,7 +40,7 @@ class ClassroomResponse(BaseModel):
     """A Classroom within a Learning Space."""
 
     id: str
-    spaceId: str  # circleId in current DB
+    spaceId: str
     name: str
     description: str | None = None
     visibility: str = "PUBLIC"

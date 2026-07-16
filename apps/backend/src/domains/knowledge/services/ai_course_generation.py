@@ -53,15 +53,15 @@ async def generate_course_content_task(
             )
 
             course_row = await knowledge_repo.find_course(course_id, user_id)
-            course_circle_id = course_row.circle_id if course_row else None
-            if course_circle_id:
-                emit_scope = build_circle_usage_scope(course_circle_id)
+            course_space_id = course_row.space_id if course_row else None
+            if course_space_id:
+                emit_scope = build_circle_usage_scope(course_space_id)
             else:
                 emit_scope = PERSONAL_USAGE_SCOPE
             await emit_ai_usage(
                 user_id=user_id,
                 usage_scope=emit_scope,
-                circle_id=course_circle_id,
+                space_id=course_space_id,
                 provider="gemini",
                 model=None,
                 feature="ai_course_generation",

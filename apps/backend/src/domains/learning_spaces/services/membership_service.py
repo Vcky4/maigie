@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 async def invite_members(*, space_id: str, user_id: str, emails: list[str], role: str | None = None, seat_tier: str | None = None) -> list[Any]:
     """Invite users to a Learning Space by email."""
     from src.domains.learning_spaces.services.space_impl import invite_members as _invite
-    from src.domains.learning_spaces.models import CircleInviteCreate
+    from src.domains.learning_spaces.models import InviteRequest
 
-    invite_data = CircleInviteCreate(emails=emails, role=role, seat_tier=seat_tier)
+    invite_data = InviteRequest(emails=emails, role=role, seat_tier=seat_tier)
     return await _invite(None, space_id, user_id, invite_data)
 
 
@@ -28,15 +28,15 @@ async def accept_invite(*, invite_id: str, user_id: str) -> Any:
 
     result = await _accept(None, invite_id, user_id)
     if result:
-        await emit("space.member_joined", {"user_id": user_id, "space_id": result.get("circleId", "")})
+        await emit("space.member_joined", {"user_id": user_id, "space_id": result.get("spaceId", "")})
     return result
 
 
 async def leave_space(*, space_id: str, user_id: str) -> None:
     """Leave a Learning Space."""
-    from src.domains.learning_spaces.services.space_impl import leave_circle as _leave
+    from src.domains.learning_spaces.services.space_impl import remove_member as _leave
 
-    await _leave(None, space_id, user_id)
+    await _leave(None, space_id, user_id, user_id)
     await emit("space.member_left", {"user_id": user_id, "space_id": space_id})
 
 

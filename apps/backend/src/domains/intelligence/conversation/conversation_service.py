@@ -25,7 +25,7 @@ async def create_conversation(*, user_id: str, data: dict[str, Any]) -> Any:
         "userId": user_id,
         "sessionType": data.get("sessionType", "general"),
         "isActive": True,
-        "isCircleRoom": data.get("isCircleRoom", False),
+        "isSpaceRoom": data.get("isSpaceRoom", False),
     }
     if data.get("title"):
         create_data["title"] = data["title"]
@@ -37,8 +37,8 @@ async def create_conversation(*, user_id: str, data: dict[str, Any]) -> Any:
         create_data["examPrepId"] = data["examPrepId"]
     if data.get("noteId"):
         create_data["noteId"] = data["noteId"]
-    if data.get("circleId"):
-        create_data["circleId"] = data["circleId"]
+    if data.get("spaceId"):
+        create_data["spaceId"] = data["spaceId"]
 
     return await intelligence_repo.create_chat_session(create_data)
 
@@ -58,10 +58,10 @@ async def list_conversations(
         if session_type:
             conditions.append(ChatSession.session_type == session_type)
         if space_id:
-            conditions.append(ChatSession.circle_id == space_id)
+            conditions.append(ChatSession.space_id == space_id)
         else:
-            conditions.append(ChatSession.circle_id.is_(None))
-            conditions.append(ChatSession.is_circle_room == False)  # noqa: E712
+            conditions.append(ChatSession.space_id.is_(None))
+            conditions.append(ChatSession.is_space_room == False)  # noqa: E712
 
         count_stmt = select(func.count()).select_from(ChatSession).where(*conditions)
         total = (await session.execute(count_stmt)).scalar() or 0

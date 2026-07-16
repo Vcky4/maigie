@@ -26,7 +26,7 @@ class Course(Base, TimestampMixin):
     is_ai_generated: Mapped[bool] = mapped_column("isAIGenerated", Boolean, default=False, server_default="false")
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
 
     # Relationships
     modules: Mapped[list["Module"]] = relationship("Module", back_populates="course", lazy="selectin", order_by="Module.order")
@@ -103,7 +103,7 @@ class Resource(Base, TimestampMixin):
     recommendation_reason: Mapped[Optional[str]] = mapped_column("recommendationReason", String, nullable=True)
     course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
     click_count: Mapped[int] = mapped_column("clickCount", Integer, default=0, server_default="0")
     bookmark_count: Mapped[int] = mapped_column("bookmarkCount", Integer, default=0, server_default="0")
     last_accessed_at: Mapped[Optional[datetime]] = mapped_column("lastAccessedAt", DateTime(timezone=True), nullable=True)

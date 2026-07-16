@@ -20,7 +20,7 @@ async def create_session(*, space_id: str, user_id: str, data: dict[str, Any]) -
     await _require_role(None, space_id, user_id, min_role="TUTOR")
 
     session = await classroom_repo.create_session({
-        "circleId": space_id,
+        "spaceId": space_id,
         "title": data["title"],
         "description": data.get("description"),
         "scheduledAt": data["scheduledAt"],
@@ -58,7 +58,7 @@ async def update_session(*, session_id: str, user_id: str, data: dict[str, Any])
 
     from src.domains.learning_spaces.services.space_impl import _require_role
 
-    await _require_role(None, session.circle_id, user_id, min_role="TUTOR")
+    await _require_role(None, session.space_id, user_id, min_role="TUTOR")
 
     update_data = {k: v for k, v in data.items() if v is not None}
     if update_data:
@@ -74,7 +74,7 @@ async def delete_session(*, session_id: str, user_id: str) -> None:
 
     from src.domains.learning_spaces.services.space_impl import _require_role
 
-    await _require_role(None, session.circle_id, user_id, min_role="TUTOR")
+    await _require_role(None, session.space_id, user_id, min_role="TUTOR")
     await classroom_repo.delete_session(session_id)
 
 

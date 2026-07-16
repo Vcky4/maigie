@@ -97,14 +97,14 @@ async def list_courses(
     pageSize: int = Query(20, ge=1, le=100),
     sortBy: str = Query("createdAt", pattern="^(createdAt|updatedAt|title)$"),
     sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
-    circleId: str | None = Query(None),
+    spaceId: str | None = Query(None),
 ):
     """List courses with pagination and filtering."""
     where: dict[str, Any] = {}
-    if circleId:
-        where["circleId"] = circleId
+    if spaceId:
+        where["spaceId"] = spaceId
     else:
-        where["circleId"] = None
+        where["spaceId"] = None
     if archived is not None:
         where["archived"] = archived
     if difficulty:
@@ -423,7 +423,7 @@ async def generate_topic_content(
 @router.get("/resources", response_model=models.ResourceListResponse)
 async def list_resources(
     current_user: CurrentUser,
-    circle_id: str | None = Query(None, alias="circle_id"),
+    circle_id: str | None = Query(None, alias="space_id"),
     topicId: str | None = Query(None),
     courseId: str | None = Query(None),
     type: str | None = Query(None),

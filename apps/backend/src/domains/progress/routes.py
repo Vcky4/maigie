@@ -91,13 +91,13 @@ async def list_goals(
     pageSize: int = Query(20, ge=1, le=100),
     sortBy: str = Query("createdAt", pattern="^(createdAt|updatedAt|title|targetDate)$"),
     sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
-    circleId: str | None = Query(None),
+    spaceId: str | None = Query(None),
 ):
     """List goals with pagination."""
     goals, total = await goal_service.list_goals(
         user_id=current_user.id,
         status=status_filter,
-        circle_id=circleId,
+        space_id=spaceId,
         page=page,
         page_size=pageSize,
         sort_by=sortBy,

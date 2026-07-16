@@ -265,7 +265,7 @@ class BillingRepository:
     async def get_space_subscription(self, space_id: str) -> SpaceSubscription | None:
         async with await self._session() as session:
             stmt = select(SpaceSubscription).where(
-                SpaceSubscription.circle_id == space_id,
+                SpaceSubscription.space_id == space_id,
                 SpaceSubscription.status == "active",
             )
             result = await session.execute(stmt)
@@ -275,7 +275,7 @@ class BillingRepository:
         async with await self._session() as session:
             stmt = (
                 select(SpaceSeatAddon)
-                .where(SpaceSeatAddon.circle_id == space_id)
+                .where(SpaceSeatAddon.space_id == space_id)
                 .order_by(SpaceSeatAddon.purchased_at.desc())
             )
             result = await session.execute(stmt)

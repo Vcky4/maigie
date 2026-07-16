@@ -263,7 +263,7 @@ class KnowledgeRepository:
                 recommendation_source=data.get("recommendationSource"),
                 course_id=data.get("courseId"),
                 topic_id=data.get("topicId"),
-                circle_id=data.get("circleId"),
+                space_id=data.get("spaceId"),
             )
             session.add(resource)
             await session.commit()
@@ -318,11 +318,11 @@ class KnowledgeRepository:
         conditions = []
         if "userId" in where:
             conditions.append(Course.user_id == where["userId"])
-        if "circleId" in where:
-            if where["circleId"] is None:
-                conditions.append(Course.circle_id.is_(None))
+        if "spaceId" in where:
+            if where["spaceId"] is None:
+                conditions.append(Course.space_id.is_(None))
             else:
-                conditions.append(Course.circle_id == where["circleId"])
+                conditions.append(Course.space_id == where["spaceId"])
         if "archived" in where:
             conditions.append(Course.archived == where["archived"])
         if "difficulty" in where:
@@ -339,11 +339,11 @@ class KnowledgeRepository:
         conditions = []
         if "userId" in where:
             conditions.append(Resource.user_id == where["userId"])
-        if "circleId" in where:
-            if where["circleId"] is None:
-                conditions.append(Resource.circle_id.is_(None))
+        if "spaceId" in where:
+            if where["spaceId"] is None:
+                conditions.append(Resource.space_id.is_(None))
             else:
-                conditions.append(Resource.circle_id == where["circleId"])
+                conditions.append(Resource.space_id == where["spaceId"])
         if "topicId" in where:
             conditions.append(Resource.topic_id == where["topicId"])
         if "courseId" in where:
@@ -357,7 +357,7 @@ class KnowledgeRepository:
             "userId": "user_id",
             "isAIGenerated": "is_ai_generated",
             "targetDate": "target_date",
-            "circleId": "circle_id",
+            "spaceId": "space_id",
         }
         result = {}
         for key, value in data.items():

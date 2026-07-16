@@ -204,7 +204,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 .where(
                     ChatSession.user_id == user.id,
                     ChatSession.is_active == True,  # noqa: E712
-                    ChatSession.is_circle_room == False,  # noqa: E712
+                    ChatSession.is_space_room == False,  # noqa: E712
                 )
                 .order_by(ChatSession.updated_at.desc())
                 .limit(1)
@@ -217,7 +217,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 {
                     "userId": user.id,
                     "title": "New Chat",
-                    "isCircleRoom": False,
+                    "isSpaceRoom": False,
                     "sessionType": "general",
                 }
             )
@@ -278,7 +278,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 await manager.send_connection_json(
                                     {
                                         "type": "error",
-                                        "payload": {"message": "Unable to join this circle room."},
+                                        "payload": {"message": "Unable to join this space room."},
                                     },
                                     connection_id,
                                 )
@@ -332,7 +332,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                         {
                                             "type": "error",
                                             "payload": {
-                                                "message": "You are not allowed to access this circle room."
+                                                "message": "You are not allowed to access this space room."
                                             },
                                         },
                                         connection_id,
@@ -362,7 +362,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         await manager.send_connection_json(
                             {
                                 "type": "error",
-                                "payload": {"message": "You are not a member of this circle room."},
+                                "payload": {"message": "You are not a member of this space room."},
                             },
                             connection_id,
                         )
@@ -463,7 +463,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 user_name=getattr(user, "name", None),
                                 stream_callback=stream_greeting,
                                 usage_scope=PERSONAL_SCOPE,
-                                circle_id=None,
+                                space_id=None,
                             )
 
                             clean_greeting = response_text.strip()
@@ -1253,20 +1253,20 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 if is_circle_session:
                     if not enriched_context:
                         enriched_context = {}
-                    enriched_context["circleId"] = circle_group.circleId
-                    enriched_context["circleName"] = (
-                        circle_group.circle.name if getattr(circle_group, "circle", None) else None
+                    enriched_context["spaceId"] = circle_group.space_id
+                    enriched_context["spaceName"] = (
+                        circle_group.space.name if getattr(circle_group, "space", None) else None
                     )
                     enriched_context["chatGroupId"] = circle_group.id
                     enriched_context["chatGroupName"] = circle_group.name
                     enriched_context["memberCount"] = (
-                        len(circle_group.circle.members)
-                        if getattr(circle_group, "circle", None) and circle_group.circle.members
+                        len(circle_group.space.members)
+                        if getattr(circle_group, "space", None) and circle_group.space.members
                         else 0
                     )
                     enriched_context["pageContext"] = (
-                        "You are participating in a shared circle chat room. "
-                        "Respond with the circle's discussion in mind, not the user's private study history. "
+                        "You are participating in a shared learning space chat room. "
+                        "Respond with the space's discussion in mind, not the user's private study history. "
                         "Keep responses collaborative and suitable for the whole room."
                     )
                     if reply_target_message:
@@ -1281,7 +1281,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         )
 
                         kb_context = await get_knowledge_context_for_chat_group(
-                            None, circle_group.circleId, circle_group.id
+                            None, circle_group.space_id, circle_group.id
                         )
                         if kb_context:
                             enriched_context["knowledgeBaseContext"] = kb_context
@@ -1451,7 +1451,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     # Personal_Tier (Requirements 7.2, 7.3, 7.4).
                     feature_flags = get_feature_flag_service()
                     if is_circle_session and circle_group is not None:
-                        request_scope = circle_scope(circle_group.circleId)
+                        request_scope = circle_scope(circle_group.space_id)
                         user_tier = await feature_flags.effective_tier_for_request(
                             user_id=user.id,
                             scope=request_scope,
@@ -1487,8 +1487,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         progress_callback=send_progress,
                         stream_callback=stream_text,
                         usage_scope=request_scope,
-                        circle_id=(
-                            circle_group.circleId
+                        space_id=(
+                            circle_group.space_id
                             if is_circle_session and circle_group is not None
                             else None
                         ),
@@ -1741,7 +1741,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     return
 
                 circle_credit_id = (
-                    circle_group.circleId if is_circle_session and circle_group else None
+                    circle_group.space_id if is_circle_session and circle_group else None
                 )
 
                 try:
@@ -1750,7 +1750,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         user_obj,
                         estimated_total_tokens,
                         db_client=None,
-                        circle_id=circle_credit_id,
+                        space_id=circle_credit_id,
                     )
                     if not is_available:
                         tier = str(user_obj.tier) if user_obj.tier else "FREE"
@@ -1854,7 +1854,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         actual_total_tokens,
                         operation="chat_message",
                         db_client=None,
-                        circle_id=circle_credit_id,
+                        space_id=circle_credit_id,
                     )
                 except SubscriptionLimitError as e:
                     # This shouldn't happen if check above worked, but handle gracefully

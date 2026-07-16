@@ -33,7 +33,7 @@ class Note(Base, TimestampMixin):
 
     course_id: Mapped[Optional[str]] = mapped_column("courseId", String, ForeignKey("Course.id", ondelete="SET NULL"), nullable=True, index=True)
     topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, ForeignKey("Topic.id", ondelete="SET NULL"), nullable=True, index=True)
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="SET NULL"), nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="SET NULL"), nullable=True, index=True)
 
     last_edited_by_id: Mapped[Optional[str]] = mapped_column("lastEditedById", String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True)
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
@@ -140,7 +140,7 @@ class ExamPrep(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
 
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, ForeignKey("Circle.id", ondelete="SET NULL"), nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, ForeignKey("Space.id", ondelete="SET NULL"), nullable=True, index=True)
 
     __table_args__ = (
         Index("ExamPrep_userId_examDate_idx", "userId", "examDate"),

@@ -37,7 +37,7 @@ class Goal(Base, TimestampMixin):
     # Optional links
     course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
 
     # Relationships
     schedules: Mapped[list["ScheduleBlock"]] = relationship(
@@ -177,7 +177,7 @@ class StudySession(Base, TimestampMixin):
     # Context
     course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    circle_id: Mapped[Optional[str]] = mapped_column("circleId", String, nullable=True, index=True)
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
     metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
 
     __table_args__ = (

@@ -23,7 +23,7 @@ async def merge_generic_sessions(user_id: str, db: Any = None):
             select(ChatSession)
             .where(
                 ChatSession.user_id == user_id,
-                ChatSession.is_circle_room == False,  # noqa: E712
+                ChatSession.is_space_room == False,  # noqa: E712
                 ChatSession.session_type == "general",
                 ChatSession.course_id.is_(None),
                 ChatSession.topic_id.is_(None),
@@ -72,7 +72,7 @@ async def get_or_create_onboarding_session(user_id: str, db: Any = None):
             .where(
                 ChatSession.user_id == user_id,
                 ChatSession.session_type == "onboarding",
-                ChatSession.is_circle_room == False,  # noqa: E712
+                ChatSession.is_space_room == False,  # noqa: E712
             )
             .order_by(ChatSession.created_at.asc())
         )
@@ -88,7 +88,7 @@ async def get_or_create_onboarding_session(user_id: str, db: Any = None):
         "userId": user_id,
         "title": "Onboarding",
         "isActive": False,
-        "isCircleRoom": False,
+        "isSpaceRoom": False,
         "sessionType": "onboarding",
     })
 

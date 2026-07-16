@@ -264,7 +264,7 @@ def _enrich_args_from_context(args: dict[str, Any], context: dict[str, Any]) -> 
         ("topicId", "topic_id"),
         ("noteId", "note_id"),
         ("reviewItemId", "review_item_id"),
-        ("circleId", "circle_id"),
+        ("spaceId", "space_id"),
         ("scheduleId", "schedule_id"),
     ]
     for context_key, arg_key in _CONTEXT_MAPPINGS:

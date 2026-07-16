@@ -24,8 +24,8 @@ class ConversationCreate(BaseModel):
     topicId: str | None = None
     examPrepId: str | None = None
     noteId: str | None = None
-    circleId: str | None = None
-    isCircleRoom: bool = False
+    spaceId: str | None = None
+    isSpaceRoom: bool = False
 
 
 class ConversationResponse(BaseModel):
@@ -40,8 +40,8 @@ class ConversationResponse(BaseModel):
     topicId: str | None = None
     examPrepId: str | None = None
     noteId: str | None = None
-    circleId: str | None = None
-    isCircleRoom: bool = False
+    spaceId: str | None = None
+    isSpaceRoom: bool = False
     createdAt: datetime
     updatedAt: datetime
 

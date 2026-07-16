@@ -47,7 +47,7 @@ async def list_classrooms(space_id: str, current_user: CurrentUser):
 async def get_classroom(classroom_id: str, current_user: CurrentUser):
     """Get Classroom details."""
     classroom = await classroom_service.get_classroom(classroom_id=classroom_id)
-    return _to_classroom_response(classroom, classroom.circleId)
+    return _to_classroom_response(classroom, classroom.space_id)
 
 
 @router.put("/{classroom_id}", response_model=models.ClassroomResponse)
@@ -56,7 +56,7 @@ async def update_classroom(classroom_id: str, body: models.ClassroomUpdate, curr
     result = await classroom_service.update_classroom(
         classroom_id=classroom_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
     )
-    return _to_classroom_response(result, result.circleId)
+    return _to_classroom_response(result, result.space_id)
 
 
 @router.delete("/{classroom_id}", status_code=204)
@@ -134,7 +134,7 @@ async def get_discussion_messages(
     """Get recent messages from a Classroom discussion."""
     classroom = await classroom_service.get_classroom(classroom_id=classroom_id)
     messages = await discussion_service.get_classroom_messages(
-        classroom_id=classroom_id, space_id=classroom.circleId, limit=limit, before=before
+        classroom_id=classroom_id, space_id=classroom.space_id, limit=limit, before=before
     )
     return messages
 
@@ -194,7 +194,7 @@ def _to_classroom_response(group, space_id: str) -> models.ClassroomResponse:
 def _to_session_response(session) -> models.SessionResponse:
     return models.SessionResponse(
         id=session.id,
-        spaceId=session.circleId,
+        spaceId=session.space_id,
         classroomId=getattr(session, "chatGroupId", None),
         title=session.title,
         description=session.description,

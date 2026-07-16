@@ -126,7 +126,7 @@ class CourseCreate(BaseModel):
     difficulty: DifficultyLevel | None = None
     targetDate: datetime | None = None
     isAIGenerated: bool = False
-    circleId: str | None = None
+    spaceId: str | None = None
 
 
 class CourseUpdate(BaseModel):
@@ -135,7 +135,7 @@ class CourseUpdate(BaseModel):
     difficulty: DifficultyLevel | None = None
     targetDate: datetime | None = None
     archived: bool | None = None
-    circleId: str | None = None
+    spaceId: str | None = None
 
 
 class CourseResponse(BaseModel):
@@ -326,7 +326,7 @@ class ResourceCreate(BaseModel):
     recommendationSource: str | None = None
     courseId: str | None = None
     topicId: str | None = None
-    circleId: str | None = None
+    spaceId: str | None = None
 
 
 class ResourceResponse(BaseModel):
@@ -342,7 +342,7 @@ class ResourceResponse(BaseModel):
     recommendationSource: str | None = None
     clickCount: int = 0
     bookmarkCount: int = 0
-    circleId: str | None = None
+    spaceId: str | None = None
     lastAccessedAt: str | None = None
     createdAt: str
     updatedAt: str
@@ -393,4 +393,4 @@ class CourseFilters(BaseModel):
     pageSize: int = Field(20, ge=1, le=100)
     sortBy: str = Field("createdAt", pattern="^(createdAt|updatedAt|title|progress)$")
     sortOrder: str = Field("desc", pattern="^(asc|desc)$")
-    circleId: str | None = None
+    spaceId: str | None = None

@@ -365,11 +365,11 @@ class ProgressRepository:
         conditions = []
         if "status" in where:
             conditions.append(Goal.status == where["status"])
-        if "circleId" in where:
-            if where["circleId"] is None:
-                conditions.append(Goal.circle_id.is_(None))
+        if "spaceId" in where:
+            if where["spaceId"] is None:
+                conditions.append(Goal.space_id.is_(None))
             else:
-                conditions.append(Goal.circle_id == where["circleId"])
+                conditions.append(Goal.space_id == where["spaceId"])
         if "courseId" in where:
             conditions.append(Goal.course_id == where["courseId"])
         return conditions
@@ -397,7 +397,7 @@ class ProgressRepository:
         "progress": "progress",
         "courseId": "course_id",
         "topicId": "topic_id",
-        "circleId": "circle_id",
+        "spaceId": "space_id",
     }
 
     _BLOCK_FIELD_MAP = {
@@ -423,7 +423,7 @@ class ProgressRepository:
         "duration": "duration",
         "courseId": "course_id",
         "topicId": "topic_id",
-        "circleId": "circle_id",
+        "spaceId": "space_id",
         "metadata": "metadata_json",
     }
 

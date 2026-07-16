@@ -119,8 +119,8 @@ async def create_course(*, user: User, data: dict[str, Any]) -> Any:
         "targetDate": data.get("targetDate"),
         "isAIGenerated": data.get("isAIGenerated", False),
     }
-    if data.get("circleId"):
-        create_data["circleId"] = data["circleId"]
+    if data.get("spaceId"):
+        create_data["spaceId"] = data["spaceId"]
 
     course = await knowledge_repo.create_course(create_data)
     await emit_course_created(user.id, course.id, is_ai_generated=create_data["isAIGenerated"])

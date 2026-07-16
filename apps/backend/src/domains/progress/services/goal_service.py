@@ -17,16 +17,16 @@ async def create_goal(*, user_id: str, data: dict[str, Any]) -> Any:
 
 
 async def list_goals(
-    *, user_id: str, status: str | None = None, circle_id: str | None = None,
+    *, user_id: str, status: str | None = None, space_id: str | None = None,
     page: int = 1, page_size: int = 20, sort_by: str = "createdAt", sort_order: str = "desc",
 ) -> tuple[list, int]:
     where: dict[str, Any] = {}
     if status:
         where["status"] = status
-    if circle_id:
-        where["circleId"] = circle_id
+    if space_id:
+        where["spaceId"] = space_id
     else:
-        where["circleId"] = None
+        where["spaceId"] = None
     skip = (page - 1) * page_size
     return await progress_repo.list_goals(user_id, where=where, skip=skip, take=page_size, order={sort_by: sort_order})
 

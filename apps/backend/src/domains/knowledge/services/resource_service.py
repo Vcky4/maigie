@@ -33,9 +33,9 @@ async def list_resources(
     where: dict[str, Any] = {"userId": user_id}
 
     if space_id:
-        where["circleId"] = space_id
+        where["spaceId"] = space_id
     else:
-        where["circleId"] = None
+        where["spaceId"] = None
 
     if topic_id:
         where["topicId"] = topic_id
@@ -84,8 +84,8 @@ async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]
         resource_data["courseId"] = data["courseId"]
     if data.get("topicId"):
         resource_data["topicId"] = data["topicId"]
-    if data.get("circleId"):
-        resource_data["circleId"] = data["circleId"]
+    if data.get("spaceId"):
+        resource_data["spaceId"] = data["spaceId"]
 
     resource = await knowledge_repo.create_resource(resource_data)
     await emit_resource_added(user.id, resource.id, data.get("courseId"))
@@ -185,7 +185,7 @@ def _format_resource(r) -> dict[str, Any]:
         "recommendationSource": getattr(r, "recommendationSource", None),
         "clickCount": r.clickCount,
         "bookmarkCount": getattr(r, "bookmarkCount", 0),
-        "circleId": getattr(r, "circleId", None),
+        "spaceId": getattr(r, "space_id", None),
         "lastAccessedAt": r.lastAccessedAt.isoformat() if r.lastAccessedAt else None,
         "createdAt": r.createdAt.isoformat(),
         "updatedAt": r.updatedAt.isoformat(),

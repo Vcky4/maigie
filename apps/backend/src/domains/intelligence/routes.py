@@ -44,7 +44,7 @@ async def list_conversations(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
     sessionType: str | None = Query(None),
-    circleId: str | None = Query(None),
+    spaceId: str | None = Query(None),
 ):
     """List conversations."""
     sessions, total = await conversation_service.list_conversations(
@@ -52,7 +52,7 @@ async def list_conversations(
         page=page,
         page_size=pageSize,
         session_type=sessionType,
-        space_id=circleId,
+        space_id=spaceId,
     )
     return models.ConversationListResponse(
         conversations=sessions, total=total, page=page, pageSize=pageSize

@@ -88,8 +88,8 @@ async def handle_tool_call(
             args["note_id"] = context["noteId"]
         if "reviewItemId" in context and "review_item_id" not in args:
             args["review_item_id"] = context["reviewItemId"]
-        if "circleId" in context and "circle_id" not in args:
-            args["circle_id"] = context["circleId"]
+        if "spaceId" in context and "space_id" not in args:
+            args["space_id"] = context["spaceId"]
 
     try:
         # Pass progress_callback to handlers that support it
@@ -580,8 +580,8 @@ async def handle_recommend_resources(
         "topicId": args.get("topic_id"),
         "courseId": args.get("course_id"),
     }
-    if args.get("circle_id"):
-        action_data["circleId"] = args["circle_id"]
+    if args.get("space_id"):
+        action_data["spaceId"] = args["space_id"]
 
     # Call existing action service
     result = await action_service.recommend_resources(action_data, user_id)
