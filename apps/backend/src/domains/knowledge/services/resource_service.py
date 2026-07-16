@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 async def list_resources(
     *,
     user_id: str,
-    circle_id: str | None = None,
+    space_id: str | None = None,
     topic_id: str | None = None,
     course_id: str | None = None,
     resource_type: str | None = None,
@@ -32,8 +32,8 @@ async def list_resources(
     """List resources with pagination and filters."""
     where: dict[str, Any] = {"userId": user_id}
 
-    if circle_id:
-        where["circleId"] = circle_id
+    if space_id:
+        where["circleId"] = space_id
     else:
         where["circleId"] = None
 

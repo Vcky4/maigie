@@ -1,5 +1,5 @@
 """
-Service for Circle (study group) management.
+Service for Learning Space management.
 """
 
 from datetime import UTC, datetime, timedelta, timezone
@@ -9,87 +9,87 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, func
 from src.domains.identity.repository import identity_repo
 from src.domains.intelligence.repository import intelligence_repo
-from src.models.circles import (
-    CircleChatGroupCreate,
-    CircleChatGroupUpdate,
-    CircleCreate,
-    CircleImportRequest,
-    CircleInviteCreate,
-    CircleSessionCreate,
-    CircleSessionUpdate,
-    CircleUpdate,
+from src.domains.learning_spaces.models import (
+    ChatGroupCreate,
+    ChatGroupUpdate,
+    ImportRequest,
+    InviteRequest,
+    SessionCreate,
+    SessionUpdate,
+    SpaceCreate,
+    SpaceUpdate,
     TransferOwnershipRequest,
 )
 from src.services.email import send_circle_invite_email
 from src.shared.database import get_session_factory
 
-from ..db_models import CircleInvite, CircleMember, CircleSeatAddon
+from ..db_models import SpaceInvite, SpaceMember, SpaceSeatAddon
 from ..repository import space_repo
 
 # --- Tier constants ---
 
-CIRCLE_CREATE_TIERS = (
+SPACE_CREATE_TIERS = (
     "STUDY_CIRCLE_MONTHLY",
     "STUDY_CIRCLE_YEARLY",
     "SQUAD_MONTHLY",
     "SQUAD_YEARLY",
 )
 
-MAX_CIRCLES_PER_USER = 5
-MAX_MEMBERS_PER_CIRCLE = 5
-MAX_GROUPS_PER_CIRCLE = 5
+MAX_SPACES_PER_USER = 5
+MAX_MEMBERS_PER_SPACE = 5
+MAX_GROUPS_PER_SPACE = 5
 INVITE_EXPIRY_DAYS = 7
 
 
 # --- Helpers ---
 
 
-async def _verify_membership(db: Any, circle_id: str, user_id: str):
-    """Verify user is a member of the circle. Returns the membership record."""
-    member = await space_repo.find_member(circle_id, user_id)
+async def _verify_membership(db: Any, space_id: str, user_id: str):
+    """Verify user is a member of the space. Returns the membership record."""
+    member = await space_repo.find_member(space_id, user_id)
     if not member:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not a member of this circle.",
+            detail="You are not a member of this space.",
         )
     return member
 
 
-async def _verify_owner(db: Any, circle_id: str, user_id: str):
-    """Verify user is the OWNER of the circle."""
-    member = await _verify_membership(db, circle_id, user_id)
+async def _verify_owner(db: Any, space_id: str, user_id: str):
+    """Verify user is the OWNER of the space."""
+    member = await _verify_membership(db, space_id, user_id)
     if member.role != "OWNER":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the circle owner can perform this action.",
+            detail="Only the space owner can perform this action.",
         )
     return member
 
 
-async def _verify_admin(db: Any, circle_id: str, user_id: str):
-    """Verify user is an ADMIN or OWNER of the circle."""
-    member = await _verify_membership(db, circle_id, user_id)
+async def _verify_admin(db: Any, space_id: str, user_id: str):
+    """Verify user is an ADMIN or OWNER of the space."""
+    member = await _verify_membership(db, space_id, user_id)
     if member.role not in ("OWNER", "ADMIN"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only circle admins can perform this action.",
+            detail="Only space admins can perform this action.",
         )
     return member
 
 
-async def _verify_tutor(db: Any, circle_id: str, user_id: str):
-    """Verify user is a TUTOR, ADMIN or OWNER of the circle."""
-    member = await _verify_membership(db, circle_id, user_id)
+async def _verify_tutor(db: Any, space_id: str, user_id: str):
+    """Verify user is a TUTOR, ADMIN or OWNER of the space."""
+    member = await _verify_membership(db, space_id, user_id)
     if member.role not in ("OWNER", "ADMIN", "TUTOR"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only circle tutors or admins can perform this action.",
+            detail="Only space tutors or admins can perform this action.",
         )
     return member
 
 
 async def _sync_chat_group_session_metadata(db: Any, session_id: str):
-    """Ensure circle-backed chat sessions stay isolated from personal chat state."""
+    """Ensure space-backed chat sessions stay isolated from personal chat state."""
     await intelligence_repo.update_chat_session(
         session_id,
         {
@@ -99,28 +99,28 @@ async def _sync_chat_group_session_metadata(db: Any, session_id: str):
     )
 
 
-# --- Circle CRUD ---
+# --- Space CRUD ---
 
 
-async def create_circle(db: Any, user_id: str, user_tier: str, data: CircleCreate):
+async def create_circle(db: Any, user_id: str, user_tier: str, data: SpaceCreate):
     """
-    Create a new circle. Any authenticated user can create a Circle
+    Create a new Learning Space. Any authenticated user can create a Space
     (Requirement 4.1). Suspended users are rejected at the route layer.
     """
-    # Check max circles — count where user is OWNER
+    # Check max spaces — count where user is OWNER
     factory = get_session_factory()
     async with factory() as session:
         result = await session.execute(
-            select(func.count()).select_from(CircleMember).where(
-                CircleMember.user_id == user_id, CircleMember.role == "OWNER"
+            select(func.count()).select_from(SpaceMember).where(
+                SpaceMember.user_id == user_id, SpaceMember.role == "OWNER"
             )
         )
         membership_count = result.scalar() or 0
 
-    if membership_count >= MAX_CIRCLES_PER_USER:
+    if membership_count >= MAX_SPACES_PER_USER:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"You can own up to {MAX_CIRCLES_PER_USER} circles.",
+            detail=f"You can own up to {MAX_SPACES_PER_USER} spaces.",
         )
 
     # Build create data with optional visibility and category
@@ -137,15 +137,15 @@ async def create_circle(db: Any, user_id: str, user_tier: str, data: CircleCreat
     if hasattr(data, "category") and data.category is not None:
         create_data["category"] = data.category
 
-    # Create circle
-    circle = await space_repo.create_space(create_data)
+    # Create space
+    space = await space_repo.create_space(create_data)
 
     # Add creator as OWNER member. Seat_Tier is PLUS_SEAT only if the
-    # Circle has an active Circle_Plan; otherwise FREE_SEAT (Req 4.4).
-    owner_seat_tier = "PLUS_SEAT" if circle.circle_plan_active else "FREE_SEAT"
+    # Space has an active Space_Plan; otherwise FREE_SEAT (Req 4.4).
+    owner_seat_tier = "PLUS_SEAT" if space.space_plan_active else "FREE_SEAT"
     await space_repo.add_member(
         {
-            "circleId": circle.id,
+            "circleId": space.id,
             "userId": user_id,
             "role": "OWNER",
             "seatTier": owner_seat_tier,
@@ -164,66 +164,66 @@ async def create_circle(db: Any, user_id: str, user_tier: str, data: CircleCreat
 
     await space_repo.create_chat_group(
         {
-            "circleId": circle.id,
+            "circleId": space.id,
             "name": "General",
             "chatSessionId": chat_session.id,
         }
     )
 
-    return await get_circle_detail(db, circle.id, user_id)
+    return await get_circle_detail(db, space.id, user_id)
 
 
-async def get_circle_detail(db: Any, circle_id: str, user_id: str):
-    """Get a circle with full details (members, chat groups)."""
-    await _verify_membership(db, circle_id, user_id)
+async def get_circle_detail(db: Any, space_id: str, user_id: str):
+    """Get a space with full details (members, chat groups)."""
+    await _verify_membership(db, space_id, user_id)
 
-    circle = await space_repo.find_space(circle_id)
+    space = await space_repo.find_space(space_id)
 
-    if not circle:
+    if not space:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Circle not found.",
+            detail="Space not found.",
         )
 
-    circle = await _ensure_circle_chat_sessions(db, circle, user_id)
-    return circle
+    space = await _ensure_space_chat_sessions(db, space, user_id)
+    return space
 
 
 async def list_user_circles(db: Any, user_id: str):
-    """List all circles the user belongs to."""
+    """List all spaces the user belongs to."""
     memberships = await space_repo.list_user_spaces(user_id)
     return memberships
 
 
-async def update_circle(db: Any, circle_id: str, user_id: str, data: CircleUpdate):
-    """Update a circle (owner only)."""
-    await _verify_owner(db, circle_id, user_id)
+async def update_circle(db: Any, space_id: str, user_id: str, data: SpaceUpdate):
+    """Update a space (owner only)."""
+    await _verify_owner(db, space_id, user_id)
 
     update_data = data.model_dump(exclude_unset=True)
     if not update_data:
-        return await get_circle_detail(db, circle_id, user_id)
+        return await get_circle_detail(db, space_id, user_id)
 
-    await space_repo.update_space(circle_id, update_data)
+    await space_repo.update_space(space_id, update_data)
 
-    return await get_circle_detail(db, circle_id, user_id)
+    return await get_circle_detail(db, space_id, user_id)
 
 
-async def delete_circle(db: Any, circle_id: str, user_id: str) -> bool:
-    """Delete a circle (owner only)."""
-    await _verify_owner(db, circle_id, user_id)
+async def delete_circle(db: Any, space_id: str, user_id: str) -> bool:
+    """Delete a space (owner only)."""
+    await _verify_owner(db, space_id, user_id)
 
-    await space_repo.delete_space(circle_id)
+    await space_repo.delete_space(space_id)
     return True
 
 
-async def set_visibility(db: Any, circle_id: str, actor_user_id: str, visibility: str) -> dict:
-    """Change a Circle's visibility (OWNER or ADMIN only).
+async def set_visibility(db: Any, space_id: str, actor_user_id: str, visibility: str) -> dict:
+    """Change a Space's visibility (OWNER or ADMIN only).
 
     Preserves all members on PUBLIC -> PRIVATE transition (Requirement 4.7).
     Syncs to repository within 60 s by updating the visibility column
     directly (the repository query filters on this column).
     """
-    await _verify_admin(db, circle_id, actor_user_id)
+    await _verify_admin(db, space_id, actor_user_id)
 
     if visibility not in ("PUBLIC", "PRIVATE"):
         raise HTTPException(
@@ -231,11 +231,11 @@ async def set_visibility(db: Any, circle_id: str, actor_user_id: str, visibility
             detail="visibility must be PUBLIC or PRIVATE.",
         )
 
-    circle = await space_repo.update_space(circle_id, {"visibility": visibility})
+    space = await space_repo.update_space(space_id, {"visibility": visibility})
 
     return {
-        "circleId": circle.id,
-        "visibility": str(circle.visibility),
+        "spaceId": space.id,
+        "visibility": str(space.visibility),
     }
 
 
@@ -244,67 +244,67 @@ async def set_visibility(db: Any, circle_id: str, actor_user_id: str, visibility
 
 async def transfer_ownership(
     db: Any,
-    circle_id: str,
+    space_id: str,
     user_id: str,
     data: TransferOwnershipRequest,
 ):
-    """Transfer circle ownership to another member.
+    """Transfer space ownership to another member.
 
-    Any member can become the new owner (tier gate removed by Circle
+    Any member can become the new owner (tier gate removed by Space
     Reimagining). The transfer is immediate for the basic case.
     """
-    await _verify_owner(db, circle_id, user_id)
+    await _verify_owner(db, space_id, user_id)
 
     # Verify new owner is a member
-    new_owner_member = await space_repo.find_member(circle_id, data.newOwnerUserId)
+    new_owner_member = await space_repo.find_member(space_id, data.newOwnerUserId)
     if not new_owner_member:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The new owner must be an existing member of the circle.",
+            detail="The new owner must be an existing member of the space.",
         )
 
     # Transfer: demote current owner to ADMIN, promote new owner
-    await space_repo.update_member(circle_id, user_id, {"role": "ADMIN"})
-    await space_repo.update_member(circle_id, data.newOwnerUserId, {"role": "OWNER"})
+    await space_repo.update_member(space_id, user_id, {"role": "ADMIN"})
+    await space_repo.update_member(space_id, data.newOwnerUserId, {"role": "OWNER"})
 
-    # Update createdById on the circle
-    await space_repo.update_space(circle_id, {"createdById": data.newOwnerUserId})
+    # Update createdById on the space
+    await space_repo.update_space(space_id, {"createdById": data.newOwnerUserId})
 
-    # If Circle has active plan, ensure new owner gets PLUS_SEAT
-    circle = await space_repo.find_space_basic(circle_id)
-    if circle and circle.circle_plan_active:
-        await space_repo.update_member(circle_id, data.newOwnerUserId, {"seatTier": "PLUS_SEAT"})
+    # If Space has active plan, ensure new owner gets PLUS_SEAT
+    space = await space_repo.find_space_basic(space_id)
+    if space and space.space_plan_active:
+        await space_repo.update_member(space_id, data.newOwnerUserId, {"seatTier": "PLUS_SEAT"})
 
-    return await get_circle_detail(db, circle_id, user_id)
+    return await get_circle_detail(db, space_id, user_id)
 
 
 # --- Invite System ---
 
 
-async def invite_members(db: Any, circle_id: str, user_id: str, data: CircleInviteCreate):
-    """Invite members to a circle (owner only)."""
-    await _verify_owner(db, circle_id, user_id)
+async def invite_members(db: Any, space_id: str, user_id: str, data: InviteRequest):
+    """Invite members to a space (owner only)."""
+    await _verify_owner(db, space_id, user_id)
 
     # Check member count
-    current_member_count = await space_repo.count_members(circle_id)
+    current_member_count = await space_repo.count_members(space_id)
 
     # Count pending invites
     factory = get_session_factory()
     async with factory() as session:
         result = await session.execute(
-            select(func.count()).select_from(CircleInvite).where(
-                CircleInvite.circle_id == circle_id, CircleInvite.status == "PENDING"
+            select(func.count()).select_from(SpaceInvite).where(
+                SpaceInvite.circle_id == space_id, SpaceInvite.status == "PENDING"
             )
         )
         pending_invites = result.scalar() or 0
 
-    circle = await space_repo.find_space_basic(circle_id)
-    max_members = circle.max_members if circle else MAX_MEMBERS_PER_CIRCLE
+    space = await space_repo.find_space_basic(space_id)
+    max_members = space.max_members if space else MAX_MEMBERS_PER_SPACE
 
     if current_member_count + pending_invites + len(data.emails) > max_members:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"This circle can have at most {max_members} members (including pending invites).",
+            detail=f"This space can have at most {max_members} members (including pending invites).",
         )
 
     created_invites = []
@@ -313,9 +313,9 @@ async def invite_members(db: Any, circle_id: str, user_id: str, data: CircleInvi
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(CircleInvite).where(
-                    CircleInvite.circle_id == circle_id,
-                    func.lower(CircleInvite.invitee_email) == str(email).lower(),
+                select(SpaceInvite).where(
+                    SpaceInvite.circle_id == space_id,
+                    func.lower(SpaceInvite.invitee_email) == str(email).lower(),
                 )
             )
             existing = result.scalar_one_or_none()
@@ -328,21 +328,21 @@ async def invite_members(db: Any, circle_id: str, user_id: str, data: CircleInvi
 
         if invitee_user:
             # Check if already a member
-            existing_member = await space_repo.find_member(circle_id, invitee_user.id)
+            existing_member = await space_repo.find_member(space_id, invitee_user.id)
             if existing_member:
                 continue  # Already a member, skip
 
-        # Check if invitee already belongs to max circles
+        # Check if invitee already belongs to max spaces
         if invitee_user:
             async with factory() as session:
                 result = await session.execute(
-                    select(func.count()).select_from(CircleMember).where(
-                        CircleMember.user_id == invitee_user.id
+                    select(func.count()).select_from(SpaceMember).where(
+                        SpaceMember.user_id == invitee_user.id
                     )
                 )
-                invitee_circle_count = result.scalar() or 0
-            if invitee_circle_count >= MAX_CIRCLES_PER_USER:
-                continue  # Can't join more circles
+                invitee_space_count = result.scalar() or 0
+            if invitee_space_count >= MAX_SPACES_PER_USER:
+                continue  # Can't join more spaces
 
         expires_at = datetime.now(UTC) + timedelta(days=INVITE_EXPIRY_DAYS)
 
@@ -372,7 +372,7 @@ async def invite_members(db: Any, circle_id: str, user_id: str, data: CircleInvi
         else:
             invite = await space_repo.create_invite(
                 {
-                    "circleId": circle_id,
+                    "circleId": space_id,
                     "inviterId": user_id,
                     "inviteeEmail": str(email),
                     "inviteeId": invitee_user.id if invitee_user else None,
@@ -386,7 +386,7 @@ async def invite_members(db: Any, circle_id: str, user_id: str, data: CircleInvi
         inviter = await identity_repo.find_by_id(user_id)
         inviter_name = (inviter.name or inviter.email) if inviter else "Maigie User"
         await send_circle_invite_email(
-            str(email), inviter_name, circle.name if circle else "a study circle"
+            str(email), inviter_name, space.name if space else "a learning space"
         )
 
         created_invites.append(invite)
@@ -397,16 +397,16 @@ async def invite_members(db: Any, circle_id: str, user_id: str, data: CircleInvi
     }
 
 
-async def cancel_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
+async def cancel_invite(db: Any, space_id: str, invite_id: str, user_id: str):
     """Cancel a pending invite."""
-    await _verify_owner(db, circle_id, user_id)
+    await _verify_owner(db, space_id, user_id)
 
     invite = await space_repo.find_invite(invite_id)
 
-    if not invite or invite.circle_id != circle_id:
+    if not invite or invite.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invite not found for this circle.",
+            detail="Invite not found for this space.",
         )
 
     if invite.status != "PENDING":
@@ -419,7 +419,7 @@ async def cancel_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
     from sqlalchemy import delete
     factory = get_session_factory()
     async with factory() as session:
-        stmt = delete(CircleInvite).where(CircleInvite.id == invite_id)
+        stmt = delete(SpaceInvite).where(SpaceInvite.id == invite_id)
         await session.execute(stmt)
         await session.commit()
 
@@ -436,11 +436,11 @@ async def list_pending_invites(db: Any, user_id: str):
     return invites
 
 
-async def accept_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
-    """Accept a circle invite."""
+async def accept_invite(db: Any, space_id: str, invite_id: str, user_id: str):
+    """Accept a space invite."""
     invite = await space_repo.find_invite(invite_id)
 
-    if not invite or invite.circle_id != circle_id:
+    if not invite or invite.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invite not found.",
@@ -472,22 +472,22 @@ async def accept_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
         )
 
     # Check if already a member
-    existing_membership = await space_repo.find_member(circle_id, user_id)
+    existing_membership = await space_repo.find_member(space_id, user_id)
 
     if not existing_membership:
-        # Check max circles for the accepting user
+        # Check max spaces for the accepting user
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(CircleMember).where(
-                    CircleMember.user_id == user_id
+                select(func.count()).select_from(SpaceMember).where(
+                    SpaceMember.user_id == user_id
                 )
             )
-            user_circle_count = result.scalar() or 0
-        if user_circle_count >= MAX_CIRCLES_PER_USER:
+            user_space_count = result.scalar() or 0
+        if user_space_count >= MAX_SPACES_PER_USER:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"You can belong to a maximum of {MAX_CIRCLES_PER_USER} circles. Please leave another circle first.",
+                detail=f"You can belong to a maximum of {MAX_SPACES_PER_USER} spaces. Please leave another space first.",
             )
 
         # Add user as member with the role and seat tier specified in the invite
@@ -495,7 +495,7 @@ async def accept_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
         invite_seat_tier = getattr(invite, "seat_tier", "FREE_SEAT") or "FREE_SEAT"
         await space_repo.add_member(
             {
-                "circleId": circle_id,
+                "circleId": space_id,
                 "userId": user_id,
                 "role": invite_role,
                 "seatTier": invite_seat_tier,
@@ -505,14 +505,14 @@ async def accept_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
     # Update invite status
     await space_repo.update_invite(invite_id, {"status": "ACCEPTED", "inviteeId": user_id})
 
-    return await get_circle_detail(db, circle_id, user_id)
+    return await get_circle_detail(db, space_id, user_id)
 
 
-async def decline_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
-    """Decline a circle invite."""
+async def decline_invite(db: Any, space_id: str, invite_id: str, user_id: str):
+    """Decline a space invite."""
     invite = await space_repo.find_invite(invite_id)
 
-    if not invite or invite.circle_id != circle_id:
+    if not invite or invite.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invite not found.",
@@ -533,36 +533,36 @@ async def decline_invite(db: Any, circle_id: str, invite_id: str, user_id: str):
 # --- Member Management ---
 
 
-async def remove_member(db: Any, circle_id: str, target_user_id: str, current_user_id: str):
-    """Remove a member or leave a circle."""
+async def remove_member(db: Any, space_id: str, target_user_id: str, current_user_id: str):
+    """Remove a member or leave a space."""
     if target_user_id == current_user_id:
-        # Leaving the circle
-        member = await _verify_membership(db, circle_id, current_user_id)
+        # Leaving the space
+        member = await _verify_membership(db, space_id, current_user_id)
         if member.role == "OWNER":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Circle owners must transfer ownership before leaving.",
+                detail="Space owners must transfer ownership before leaving.",
             )
     else:
         # Removing someone (owner only)
-        await _verify_owner(db, circle_id, current_user_id)
+        await _verify_owner(db, space_id, current_user_id)
 
     # Release any PLUS_SEAT held by the departing member before deletion
     from src.services.seat_service import release_seat_on_member_remove
 
-    await release_seat_on_member_remove(circle_id, target_user_id, db_client=db)
+    await release_seat_on_member_remove(space_id, target_user_id, db_client=db)
 
-    await space_repo.remove_member(circle_id, target_user_id)
+    await space_repo.remove_member(space_id, target_user_id)
 
     return True
 
 
 async def update_member_role(
-    db: Any, circle_id: str, target_user_id: str, new_role: str, current_user_id: str
+    db: Any, space_id: str, target_user_id: str, new_role: str, current_user_id: str
 ):
     """Change a member's role. Only OWNER or ADMIN can do this. Cannot change OWNER."""
     # Verify the caller is OWNER or ADMIN
-    await _verify_admin(db, circle_id, current_user_id)
+    await _verify_admin(db, space_id, current_user_id)
 
     # Cannot change your own role
     if target_user_id == current_user_id:
@@ -572,11 +572,11 @@ async def update_member_role(
         )
 
     # Get the target member
-    target_member = await space_repo.find_member(circle_id, target_user_id)
+    target_member = await space_repo.find_member(space_id, target_user_id)
     if not target_member:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Member not found in this circle.",
+            detail="Member not found in this space.",
         )
 
     # Cannot change the OWNER's role
@@ -588,14 +588,14 @@ async def update_member_role(
 
     # Only OWNER can promote to ADMIN
     if new_role == "ADMIN":
-        caller = await space_repo.find_member(circle_id, current_user_id)
+        caller = await space_repo.find_member(space_id, current_user_id)
         if caller and caller.role != "OWNER":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the circle owner can promote members to ADMIN.",
+                detail="Only the space owner can promote members to ADMIN.",
             )
 
-    updated = await space_repo.update_member(circle_id, target_user_id, {"role": new_role})
+    updated = await space_repo.update_member(space_id, target_user_id, {"role": new_role})
 
     return {
         "userId": target_user_id,
@@ -607,17 +607,17 @@ async def update_member_role(
 # --- Chat Groups ---
 
 
-async def create_chat_group(db: Any, circle_id: str, user_id: str, data: CircleChatGroupCreate):
-    """Create a new chat group in a circle (owner/admin only, gated by plan)."""
-    await _verify_admin(db, circle_id, user_id)
+async def create_chat_group(db: Any, space_id: str, user_id: str, data: ChatGroupCreate):
+    """Create a new chat group in a space (owner/admin only, gated by plan)."""
+    await _verify_admin(db, space_id, user_id)
 
     # Plan-aware gate check (Task 5.4 / 8.3)
     from src.services.circle_gates import CircleFeature, CircleGateError, CircleGateState, gate
 
-    circle = await space_repo.find_space_basic(circle_id)
+    space = await space_repo.find_space_basic(space_id)
 
     # Count chat groups
-    groups = await space_repo.list_chat_groups(circle_id)
+    groups = await space_repo.list_chat_groups(space_id)
     group_count = len(groups)
 
     # Check if any active add-on exists
@@ -626,9 +626,9 @@ async def create_chat_group(db: Any, circle_id: str, user_id: str, data: CircleC
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(CircleSeatAddon).where(
-                    CircleSeatAddon.circle_id == circle_id,
-                    CircleSeatAddon.status.in_(["ACTIVE", "TRIALING"]),
+                select(func.count()).select_from(SpaceSeatAddon).where(
+                    SpaceSeatAddon.circle_id == space_id,
+                    SpaceSeatAddon.status.in_(["ACTIVE", "TRIALING"]),
                 )
             )
             addon_count = result.scalar() or 0
@@ -637,7 +637,7 @@ async def create_chat_group(db: Any, circle_id: str, user_id: str, data: CircleC
         pass
 
     state = CircleGateState(
-        circle_plan_active=circle.circle_plan_active if circle else False,
+        circle_plan_active=space.space_plan_active if space else False,
         has_any_active_addon=has_addon,
         chat_group_count=group_count,
     )
@@ -653,7 +653,7 @@ async def create_chat_group(db: Any, circle_id: str, user_id: str, data: CircleC
     chat_session = await intelligence_repo.create_chat_session(
         {
             "userId": user_id,
-            "title": f"{circle.name} - {data.name}" if circle else data.name,
+            "title": f"{space.name} - {data.name}" if space else data.name,
             "isActive": False,
             "isCircleRoom": True,
         }
@@ -661,7 +661,7 @@ async def create_chat_group(db: Any, circle_id: str, user_id: str, data: CircleC
 
     group = await space_repo.create_chat_group(
         {
-            "circleId": circle_id,
+            "circleId": space_id,
             "name": data.name,
             "chatSessionId": chat_session.id,
         }
@@ -670,11 +670,11 @@ async def create_chat_group(db: Any, circle_id: str, user_id: str, data: CircleC
     return group
 
 
-async def list_chat_groups(db: Any, circle_id: str, user_id: str):
-    """List chat groups in a circle."""
-    await _verify_membership(db, circle_id, user_id)
+async def list_chat_groups(db: Any, space_id: str, user_id: str):
+    """List chat groups in a space."""
+    await _verify_membership(db, space_id, user_id)
 
-    groups = await space_repo.list_chat_groups(circle_id)
+    groups = await space_repo.list_chat_groups(space_id)
 
     repaired_groups = []
     for group in groups:
@@ -687,34 +687,34 @@ async def list_chat_groups(db: Any, circle_id: str, user_id: str):
     return repaired_groups
 
 
-async def _ensure_circle_chat_sessions(db: Any, circle, user_id: str):
-    """Backfill missing chat sessions for legacy circle groups."""
+async def _ensure_space_chat_sessions(db: Any, space, user_id: str):
+    """Backfill missing chat sessions for legacy space groups."""
     repaired_groups = []
     repaired_any = False
 
-    for group in circle.chat_groups or []:
+    for group in space.chat_groups or []:
         if group.chat_session_id:
             await _sync_chat_group_session_metadata(db, group.chat_session_id)
             repaired_groups.append(group)
             continue
 
-        repaired_groups.append(await _ensure_chat_group_session(db, group, user_id, circle))
+        repaired_groups.append(await _ensure_chat_group_session(db, group, user_id, space))
         repaired_any = True
 
     if repaired_any:
-        circle.chat_groups = repaired_groups
+        space.chat_groups = repaired_groups
 
-    return circle
+    return space
 
 
-async def _ensure_chat_group_session(db: Any, group, user_id: str, circle=None):
+async def _ensure_chat_group_session(db: Any, group, user_id: str, space=None):
     """Create a backing chat session for groups created before chatSessionId was enforced."""
     if group.chat_session_id:
         return group
 
-    owning_circle = circle or await space_repo.find_space_basic(group.circle_id)
-    session_owner_id = getattr(owning_circle, "created_by_id", None) or user_id
-    session_title = f"{owning_circle.name} - {group.name}" if owning_circle else group.name
+    owning_space = space or await space_repo.find_space_basic(group.circle_id)
+    session_owner_id = getattr(owning_space, "created_by_id", None) or user_id
+    session_title = f"{owning_space.name} - {group.name}" if owning_space else group.name
 
     chat_session = await intelligence_repo.create_chat_session(
         {
@@ -732,16 +732,16 @@ async def _ensure_chat_group_session(db: Any, group, user_id: str, circle=None):
 
 async def update_chat_group(
     db: Any,
-    circle_id: str,
+    space_id: str,
     group_id: str,
     user_id: str,
-    data: CircleChatGroupUpdate,
+    data: ChatGroupUpdate,
 ):
     """Update a chat group (owner/admin only)."""
-    await _verify_admin(db, circle_id, user_id)
+    await _verify_admin(db, space_id, user_id)
 
     group = await space_repo.find_chat_group(group_id)
-    if not group or group.circle_id != circle_id:
+    if not group or group.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat group not found.",
@@ -762,12 +762,12 @@ async def update_chat_group(
     return await space_repo.find_chat_group(group_id)
 
 
-async def delete_chat_group(db: Any, circle_id: str, group_id: str, user_id: str):
+async def delete_chat_group(db: Any, space_id: str, group_id: str, user_id: str):
     """Delete a chat group (owner only)."""
-    await _verify_owner(db, circle_id, user_id)
+    await _verify_owner(db, space_id, user_id)
 
     group = await space_repo.find_chat_group(group_id)
-    if not group or group.circle_id != circle_id:
+    if not group or group.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Chat group not found.",
@@ -781,14 +781,14 @@ async def delete_chat_group(db: Any, circle_id: str, group_id: str, user_id: str
     return True
 
 
-# --- Circle-scoped resources ---
+# --- Space-scoped resources ---
 
 
-async def list_circle_notes(
-    db: Any, circle_id: str, user_id: str, page: int = 1, size: int = 20
+async def list_space_notes(
+    db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20
 ):
-    """List notes shared in a circle."""
-    await _verify_membership(db, circle_id, user_id)
+    """List notes shared in a space."""
+    await _verify_membership(db, space_id, user_id)
 
     from sqlalchemy import text
 
@@ -797,7 +797,7 @@ async def list_circle_notes(
     async with factory() as session:
         total_result = await session.execute(
             text('SELECT COUNT(*) FROM "Note" WHERE "circleId" = :cid'),
-            {"cid": circle_id},
+            {"cid": space_id},
         )
         total = total_result.scalar() or 0
 
@@ -806,18 +806,18 @@ async def list_circle_notes(
                 'SELECT * FROM "Note" WHERE "circleId" = :cid '
                 'ORDER BY "updatedAt" DESC OFFSET :skip LIMIT :take'
             ),
-            {"cid": circle_id, "skip": skip, "take": size},
+            {"cid": space_id, "skip": skip, "take": size},
         )
         notes = [dict(row._mapping) for row in result.fetchall()]
 
     return notes, total
 
 
-async def list_circle_goals(
-    db: Any, circle_id: str, user_id: str, page: int = 1, size: int = 20
+async def list_space_goals(
+    db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20
 ):
-    """List goals shared in a circle."""
-    await _verify_membership(db, circle_id, user_id)
+    """List goals shared in a space."""
+    await _verify_membership(db, space_id, user_id)
 
     from src.domains.progress.db_models import Goal
 
@@ -825,13 +825,13 @@ async def list_circle_goals(
     skip = (page - 1) * size
     async with factory() as session:
         total_result = await session.execute(
-            select(func.count()).select_from(Goal).where(Goal.circle_id == circle_id)
+            select(func.count()).select_from(Goal).where(Goal.circle_id == space_id)
         )
         total = total_result.scalar() or 0
 
         stmt = (
             select(Goal)
-            .where(Goal.circle_id == circle_id)
+            .where(Goal.circle_id == space_id)
             .order_by(Goal.updated_at.desc())
             .offset(skip)
             .limit(size)
@@ -842,11 +842,11 @@ async def list_circle_goals(
     return goals, total
 
 
-async def list_circle_courses(
-    db: Any, circle_id: str, user_id: str, page: int = 1, size: int = 20
+async def list_space_courses(
+    db: Any, space_id: str, user_id: str, page: int = 1, size: int = 20
 ):
-    """List courses shared in a circle."""
-    await _verify_membership(db, circle_id, user_id)
+    """List courses shared in a space."""
+    await _verify_membership(db, space_id, user_id)
 
     from src.domains.knowledge.db_models import Course
 
@@ -854,13 +854,13 @@ async def list_circle_courses(
     skip = (page - 1) * size
     async with factory() as session:
         total_result = await session.execute(
-            select(func.count()).select_from(Course).where(Course.circle_id == circle_id)
+            select(func.count()).select_from(Course).where(Course.circle_id == space_id)
         )
         total = total_result.scalar() or 0
 
         stmt = (
             select(Course)
-            .where(Course.circle_id == circle_id)
+            .where(Course.circle_id == space_id)
             .order_by(Course.updated_at.desc())
             .offset(skip)
             .limit(size)
@@ -871,39 +871,39 @@ async def list_circle_courses(
     return courses, total
 
 
-async def award_contribution_points(db: Any, circle_id: str, user_id: str, points: int):
-    """Award contribution points to a circle member."""
-    from ..db_models import CircleMemberStat
+async def award_contribution_points(db: Any, space_id: str, user_id: str, points: int):
+    """Award contribution points to a space member."""
+    from ..db_models import SpaceMemberStat
     from sqlalchemy import update as sa_update
 
     factory = get_session_factory()
     async with factory() as session:
         result = await session.execute(
-            select(CircleMemberStat).where(
-                CircleMemberStat.circle_id == circle_id,
-                CircleMemberStat.user_id == user_id,
+            select(SpaceMemberStat).where(
+                SpaceMemberStat.circle_id == space_id,
+                SpaceMemberStat.user_id == user_id,
             )
         )
         stat = result.scalar_one_or_none()
 
         if not stat:
-            new_stat = CircleMemberStat(
-                circle_id=circle_id, user_id=user_id, contribution_points=points
+            new_stat = SpaceMemberStat(
+                circle_id=space_id, user_id=user_id, contribution_points=points
             )
             session.add(new_stat)
         else:
             stmt = (
-                sa_update(CircleMemberStat)
-                .where(CircleMemberStat.id == stat.id)
+                sa_update(SpaceMemberStat)
+                .where(SpaceMemberStat.id == stat.id)
                 .values(contribution_points=stat.contribution_points + points)
             )
             await session.execute(stmt)
         await session.commit()
 
 
-async def import_to_circle(db: Any, circle_id: str, user_id: str, data: CircleImportRequest):
-    """Import items (notes, courses, resources, goals) into a circle."""
-    await _verify_membership(db, circle_id, user_id)
+async def import_to_circle(db: Any, space_id: str, user_id: str, data: ImportRequest):
+    """Import items (notes, courses, resources, goals) into a space."""
+    await _verify_membership(db, space_id, user_id)
 
     from sqlalchemy import update as sa_update, text
     from src.domains.knowledge.db_models import Course, Resource
@@ -923,7 +923,7 @@ async def import_to_circle(db: Any, circle_id: str, user_id: str, data: CircleIm
             if note and note.userId == user_id and not note.circleId:
                 await session.execute(
                     text('UPDATE "Note" SET "circleId" = :cid WHERE id = :nid'),
-                    {"cid": circle_id, "nid": note_id},
+                    {"cid": space_id, "nid": note_id},
                 )
                 await session.commit()
                 imported_stats["notes"] += 1
@@ -934,7 +934,7 @@ async def import_to_circle(db: Any, circle_id: str, user_id: str, data: CircleIm
             result = await session.execute(select(Course).where(Course.id == course_id))
             course = result.scalar_one_or_none()
             if course and course.user_id == user_id and not course.circle_id:
-                stmt = sa_update(Course).where(Course.id == course_id).values(circle_id=circle_id)
+                stmt = sa_update(Course).where(Course.id == course_id).values(circle_id=space_id)
                 await session.execute(stmt)
                 await session.commit()
                 imported_stats["courses"] += 1
@@ -945,7 +945,7 @@ async def import_to_circle(db: Any, circle_id: str, user_id: str, data: CircleIm
             result = await session.execute(select(Resource).where(Resource.id == resource_id))
             resource = result.scalar_one_or_none()
             if resource and resource.user_id == user_id and not resource.circle_id:
-                stmt = sa_update(Resource).where(Resource.id == resource_id).values(circle_id=circle_id)
+                stmt = sa_update(Resource).where(Resource.id == resource_id).values(circle_id=space_id)
                 await session.execute(stmt)
                 await session.commit()
                 imported_stats["resources"] += 1
@@ -957,7 +957,7 @@ async def import_to_circle(db: Any, circle_id: str, user_id: str, data: CircleIm
                 result = await session.execute(select(Goal).where(Goal.id == goal_id))
                 goal = result.scalar_one_or_none()
                 if goal and goal.user_id == user_id and not goal.circle_id:
-                    stmt = sa_update(Goal).where(Goal.id == goal_id).values(circle_id=circle_id)
+                    stmt = sa_update(Goal).where(Goal.id == goal_id).values(circle_id=space_id)
                     await session.execute(stmt)
                     await session.commit()
                     imported_stats["goals"] += 1
@@ -966,12 +966,12 @@ async def import_to_circle(db: Any, circle_id: str, user_id: str, data: CircleIm
 
 
 async def export_from_circle(
-    db: Any, circle_id: str, user_id: str, resource_type: str, resource_id: str
+    db: Any, space_id: str, user_id: str, resource_type: str, resource_id: str
 ):
-    """Export (copy) a Circle resource into the user's Personal_Workspace.
+    """Export (copy) a Space resource into the user's Personal_Workspace.
 
-    Gated by ``Circle.allowMemberExport`` — OWNER is always allowed.
-    The original resource remains in the Circle_Workspace.
+    Gated by ``Space.allowMemberExport`` — OWNER is always allowed.
+    The original resource remains in the Space.
 
     Args:
         resource_type: One of "note", "course", "goal", "resource"
@@ -980,18 +980,18 @@ async def export_from_circle(
     Returns:
         The newly created personal copy.
     """
-    member = await _verify_membership(db, circle_id, user_id)
+    member = await _verify_membership(db, space_id, user_id)
 
     # Check export permission
-    circle = await space_repo.find_space_basic(circle_id)
-    if circle is None:
-        raise HTTPException(status_code=404, detail="Circle not found.")
+    space = await space_repo.find_space_basic(space_id)
+    if space is None:
+        raise HTTPException(status_code=404, detail="Space not found.")
 
     is_owner = str(member.role) == "OWNER"
-    if not is_owner and not circle.allow_member_export:
+    if not is_owner and not space.allow_member_export:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Member export is not allowed for this Circle.",
+            detail="Member export is not allowed for this Space.",
         )
 
     from sqlalchemy import text
@@ -1007,8 +1007,8 @@ async def export_from_circle(
                 {"nid": resource_id},
             )
             original = result.fetchone()
-        if not original or original.circleId != circle_id:
-            raise HTTPException(status_code=404, detail="Note not found in this Circle.")
+        if not original or original.circleId != space_id:
+            raise HTTPException(status_code=404, detail="Note not found in this Space.")
         new_id = _uuid.uuid4().hex[:25]
         async with factory() as session:
             await session.execute(
@@ -1031,8 +1031,8 @@ async def export_from_circle(
         async with factory() as session:
             result = await session.execute(select(Course).where(Course.id == resource_id))
             original = result.scalar_one_or_none()
-        if not original or original.circle_id != circle_id:
-            raise HTTPException(status_code=404, detail="Course not found in this Circle.")
+        if not original or original.circle_id != space_id:
+            raise HTTPException(status_code=404, detail="Course not found in this Space.")
         async with factory() as session:
             copy = Course(
                 title=original.title,
@@ -1051,8 +1051,8 @@ async def export_from_circle(
         async with factory() as session:
             result = await session.execute(select(Goal).where(Goal.id == resource_id))
             original = result.scalar_one_or_none()
-        if not original or original.circle_id != circle_id:
-            raise HTTPException(status_code=404, detail="Goal not found in this Circle.")
+        if not original or original.circle_id != space_id:
+            raise HTTPException(status_code=404, detail="Goal not found in this Space.")
         async with factory() as session:
             copy = Goal(
                 title=original.title,
@@ -1076,17 +1076,17 @@ async def export_from_circle(
 # --- Group Sessions ---
 
 
-async def create_group_session(db: Any, circle_id: str, user_id: str, data: CircleSessionCreate):
+async def create_group_session(db: Any, space_id: str, user_id: str, data: SessionCreate):
     """Create a new scheduled group session (gated by plan)."""
-    await _verify_admin(db, circle_id, user_id)
+    await _verify_admin(db, space_id, user_id)
 
     # Plan-aware gate check (Task 8.3)
     from src.services.circle_gates import CircleFeature, CircleGateError, CircleGateState, gate
 
-    circle = await space_repo.find_space_basic(circle_id)
+    space = await space_repo.find_space_basic(space_id)
 
     # Count sessions
-    sessions = await space_repo.list_sessions(circle_id)
+    sessions = await space_repo.list_sessions(space_id)
     session_count = len(sessions)
 
     has_addon = False
@@ -1094,9 +1094,9 @@ async def create_group_session(db: Any, circle_id: str, user_id: str, data: Circ
         factory = get_session_factory()
         async with factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(CircleSeatAddon).where(
-                    CircleSeatAddon.circle_id == circle_id,
-                    CircleSeatAddon.status.in_(["ACTIVE", "TRIALING"]),
+                select(func.count()).select_from(SpaceSeatAddon).where(
+                    SpaceSeatAddon.circle_id == space_id,
+                    SpaceSeatAddon.status.in_(["ACTIVE", "TRIALING"]),
                 )
             )
             addon_count = result.scalar() or 0
@@ -1105,7 +1105,7 @@ async def create_group_session(db: Any, circle_id: str, user_id: str, data: Circ
         pass
 
     state = CircleGateState(
-        circle_plan_active=circle.circle_plan_active if circle else False,
+        circle_plan_active=space.space_plan_active if space else False,
         has_any_active_addon=has_addon,
         group_session_count=session_count,
     )
@@ -1118,15 +1118,15 @@ async def create_group_session(db: Any, circle_id: str, user_id: str, data: Circ
         )
 
     chat_group = await space_repo.find_chat_group(data.chatGroupId)
-    if not chat_group or chat_group.circle_id != circle_id:
+    if not chat_group or chat_group.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please select a valid chat destination for this circle.",
+            detail="Please select a valid chat destination for this space.",
         )
 
     session_obj = await space_repo.create_session(
         {
-            "circleId": circle_id,
+            "circleId": space_id,
             "title": data.title,
             "description": data.description,
             "scheduledAt": data.scheduledAt,
@@ -1140,22 +1140,22 @@ async def create_group_session(db: Any, circle_id: str, user_id: str, data: Circ
     return session_obj
 
 
-async def list_group_sessions(db: Any, circle_id: str, user_id: str):
-    """List all group sessions for a circle."""
-    await _verify_membership(db, circle_id, user_id)
+async def list_group_sessions(db: Any, space_id: str, user_id: str):
+    """List all group sessions for a space."""
+    await _verify_membership(db, space_id, user_id)
 
-    sessions = await space_repo.list_sessions(circle_id)
+    sessions = await space_repo.list_sessions(space_id)
     return sessions
 
 
 async def update_group_session(
-    db: Any, circle_id: str, session_id: str, user_id: str, data: CircleSessionUpdate
+    db: Any, space_id: str, session_id: str, user_id: str, data: SessionUpdate
 ):
     """Update a group session."""
-    await _verify_admin(db, circle_id, user_id)
+    await _verify_admin(db, space_id, user_id)
 
     session_obj = await space_repo.find_session(session_id)
-    if not session_obj or session_obj.circle_id != circle_id:
+    if not session_obj or session_obj.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found.",
@@ -1164,10 +1164,10 @@ async def update_group_session(
     update_data = data.model_dump(exclude_unset=True)
     if "chatGroupId" in update_data and update_data["chatGroupId"]:
         chat_group = await space_repo.find_chat_group(update_data["chatGroupId"])
-        if not chat_group or chat_group.circle_id != circle_id:
+        if not chat_group or chat_group.circle_id != space_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Please select a valid chat destination for this circle.",
+                detail="Please select a valid chat destination for this space.",
             )
 
     if update_data:
@@ -1177,12 +1177,12 @@ async def update_group_session(
     return session_obj
 
 
-async def delete_group_session(db: Any, circle_id: str, session_id: str, user_id: str) -> None:
+async def delete_group_session(db: Any, space_id: str, session_id: str, user_id: str) -> None:
     """Delete a group session."""
-    await _verify_admin(db, circle_id, user_id)
+    await _verify_admin(db, space_id, user_id)
 
     session_obj = await space_repo.find_session(session_id)
-    if not session_obj or session_obj.circle_id != circle_id:
+    if not session_obj or session_obj.circle_id != space_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found.",
@@ -1191,11 +1191,11 @@ async def delete_group_session(db: Any, circle_id: str, session_id: str, user_id
     await space_repo.delete_session(session_id)
 
 
-async def suggest_group_sessions(db: Any, circle_id: str, user_id: str) -> list[dict]:
-    """Generate AI suggestions for group sessions based on circle's recent activity."""
-    await _verify_membership(db, circle_id, user_id)
+async def suggest_group_sessions(db: Any, space_id: str, user_id: str) -> list[dict]:
+    """Generate AI suggestions for group sessions based on space's recent activity."""
+    await _verify_membership(db, space_id, user_id)
 
-    # Gather some context: recent courses and goals in the circle
+    # Gather some context: recent courses and goals in the space
     from src.domains.knowledge.db_models import Course
     from src.domains.progress.db_models import Goal
 
@@ -1203,7 +1203,7 @@ async def suggest_group_sessions(db: Any, circle_id: str, user_id: str) -> list[
     async with factory() as session:
         courses_result = await session.execute(
             select(Course)
-            .where(Course.circle_id == circle_id)
+            .where(Course.circle_id == space_id)
             .order_by(Course.updated_at.desc())
             .limit(3)
         )
@@ -1211,7 +1211,7 @@ async def suggest_group_sessions(db: Any, circle_id: str, user_id: str) -> list[
 
         goals_result = await session.execute(
             select(Goal)
-            .where(Goal.circle_id == circle_id)
+            .where(Goal.circle_id == space_id)
             .order_by(Goal.updated_at.desc())
             .limit(3)
         )
@@ -1230,12 +1230,12 @@ async def suggest_group_sessions(db: Any, circle_id: str, user_id: str) -> list[
 
     context_text = "\n".join(context_lines)
     if not context_text:
-        context_text = "The circle is new and doesn't have much activity yet."
+        context_text = "The space is new and doesn't have much activity yet."
 
-    prompt = f"""You are an AI study assistant managing a study circle.
-Based on the circle's recent activity, suggest 3 relevant group study sessions or discussion topics.
+    prompt = f"""You are an AI study assistant managing a learning space.
+Based on the space's recent activity, suggest 3 relevant group study sessions or discussion topics.
 
-Circle Activity:
+Space Activity:
 {context_text}
 
 Provide your response strictly as valid JSON matching this schema:

@@ -52,7 +52,7 @@ async def list_conversations(
         page=page,
         page_size=pageSize,
         session_type=sessionType,
-        circle_id=circleId,
+        space_id=circleId,
     )
     return models.ConversationListResponse(
         conversations=sessions, total=total, page=page, pageSize=pageSize

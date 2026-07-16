@@ -8,6 +8,7 @@ from typing import Any
 from src.shared.events import emit
 from src.shared.exceptions import ForbiddenError, NotFoundError
 
+from ..models import SpaceCreate, SpaceUpdate
 from ..repository import space_repo
 
 logger = logging.getLogger(__name__)
@@ -16,13 +17,12 @@ logger = logging.getLogger(__name__)
 async def create_space(*, user, data: dict[str, Any]) -> Any:
     """Create a new Learning Space. User becomes OWNER."""
     from src.domains.learning_spaces.services.space_impl import create_circle
-    from src.domains.learning_spaces.models import CircleCreate
 
-    create_model = CircleCreate(**data)
-    circle = await create_circle(None, user.id, str(user.tier), create_model)
+    create_model = SpaceCreate(**data)
+    space = await create_circle(None, user.id, str(user.tier), create_model)
 
-    await emit("space.created", {"user_id": user.id, "space_id": circle.id})
-    return circle
+    await emit("space.created", {"user_id": user.id, "space_id": space.id})
+    return space
 
 
 async def list_user_spaces(*, user_id: str) -> list[Any]:
@@ -40,9 +40,8 @@ async def get_space_detail(*, space_id: str, user_id: str) -> Any:
 async def update_space(*, space_id: str, user_id: str, data: dict[str, Any]) -> Any:
     """Update space settings (OWNER/ADMIN only)."""
     from src.domains.learning_spaces.services.space_impl import update_circle
-    from src.domains.learning_spaces.models import CircleUpdate
 
-    update_model = CircleUpdate(**data)
+    update_model = SpaceUpdate(**data)
     return await update_circle(None, space_id, user_id, update_model)
 
 

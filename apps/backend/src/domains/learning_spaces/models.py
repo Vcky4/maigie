@@ -278,3 +278,19 @@ class ImportRequest(BaseModel):
     courseIds: list[str] = []
     noteIds: list[str] = []
     goalIds: list[str] = []
+
+
+# ===========================================================================
+# Backward-compatibility aliases (legacy "Circle" names → "Space" names)
+# These allow existing imports to continue working during the migration.
+# Remove once all consumers are updated.
+# ===========================================================================
+
+CircleCreate = SpaceCreate
+CircleUpdate = SpaceUpdate
+CircleChatGroupCreate = ChatGroupCreate
+CircleChatGroupUpdate = ChatGroupUpdate
+CircleInviteCreate = InviteRequest
+CircleSessionCreate = SessionCreate
+CircleSessionUpdate = SessionUpdate
+CircleImportRequest = ImportRequest

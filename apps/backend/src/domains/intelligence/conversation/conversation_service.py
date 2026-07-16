@@ -49,7 +49,7 @@ async def list_conversations(
     page: int = 1,
     page_size: int = 20,
     session_type: str | None = None,
-    circle_id: str | None = None,
+    space_id: str | None = None,
 ) -> tuple[list, int]:
     """List conversations for a user."""
     factory = get_session_factory()
@@ -57,8 +57,8 @@ async def list_conversations(
         conditions = [ChatSession.user_id == user_id, ChatSession.is_active == True]  # noqa: E712
         if session_type:
             conditions.append(ChatSession.session_type == session_type)
-        if circle_id:
-            conditions.append(ChatSession.circle_id == circle_id)
+        if space_id:
+            conditions.append(ChatSession.circle_id == space_id)
         else:
             conditions.append(ChatSession.circle_id.is_(None))
             conditions.append(ChatSession.is_circle_room == False)  # noqa: E712

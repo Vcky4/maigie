@@ -21,7 +21,7 @@ from src.domains.billing.db_models import (
     ReferralRewardClaim,
     AdRewardClaim,
 )
-from src.domains.learning_spaces.db_models import CircleSubscription, CircleSeatAddon
+from src.domains.learning_spaces.db_models import SpaceSubscription, SpaceSeatAddon
 
 logger = logging.getLogger(__name__)
 
@@ -259,24 +259,24 @@ class BillingRepository:
             return claim
 
     # -----------------------------------------------------------------------
-    # Circle/Space Billing
+    # Space Billing
     # -----------------------------------------------------------------------
 
-    async def get_circle_subscription(self, circle_id: str) -> CircleSubscription | None:
+    async def get_space_subscription(self, space_id: str) -> SpaceSubscription | None:
         async with await self._session() as session:
-            stmt = select(CircleSubscription).where(
-                CircleSubscription.circle_id == circle_id,
-                CircleSubscription.status == "active",
+            stmt = select(SpaceSubscription).where(
+                SpaceSubscription.circle_id == space_id,
+                SpaceSubscription.status == "active",
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def get_seat_addons(self, circle_id: str) -> list[CircleSeatAddon]:
+    async def get_seat_addons(self, space_id: str) -> list[SpaceSeatAddon]:
         async with await self._session() as session:
             stmt = (
-                select(CircleSeatAddon)
-                .where(CircleSeatAddon.circle_id == circle_id)
-                .order_by(CircleSeatAddon.purchased_at.desc())
+                select(SpaceSeatAddon)
+                .where(SpaceSeatAddon.circle_id == space_id)
+                .order_by(SpaceSeatAddon.purchased_at.desc())
             )
             result = await session.execute(stmt)
             return list(result.scalars().all())

@@ -436,7 +436,7 @@ async def list_resources(
     """List resources with filters and pagination."""
     result = await resource_service.list_resources(
         user_id=current_user.id,
-        circle_id=circle_id,
+        space_id=circle_id,
         topic_id=topicId,
         course_id=courseId,
         resource_type=type,
