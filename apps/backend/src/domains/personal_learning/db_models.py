@@ -10,7 +10,7 @@ Column names use camelCase to match the existing schema exactly.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, ForeignKey, Index
+from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey, Index, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
@@ -178,3 +178,416 @@ class GeneratedDocument(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<GeneratedDocument id={self.id} title={self.title}>"
+
+# ---------------------------------------------------------------------------
+# FlashcardDeck
+# ---------------------------------------------------------------------------
+
+
+class FlashcardDeck(Base, TimestampMixin):
+    __tablename__ = "FlashcardDeck"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
+    prep_id: Mapped[Optional[str]] = mapped_column("prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True)
+
+    # Relationships
+    flashcards: Mapped[list["Flashcard"]] = relationship("Flashcard", back_populates="deck", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<FlashcardDeck id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# Flashcard
+# ---------------------------------------------------------------------------
+
+
+class Flashcard(Base, TimestampMixin):
+    __tablename__ = "Flashcard"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    deck_id: Mapped[Optional[str]] = mapped_column("deckId", String, ForeignKey("FlashcardDeck.id", ondelete="SET NULL"), nullable=True, index=True)
+    front: Mapped[str] = mapped_column(Text, nullable=False)
+    back: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # SM-2 spaced repetition fields
+    interval_days: Mapped[int] = mapped_column("intervalDays", Integer, default=1)
+    repetition_count: Mapped[int] = mapped_column("repetitionCount", Integer, default=0)
+    ease_factor: Mapped[float] = mapped_column("easeFactor", Float, default=2.5)
+    next_review_at: Mapped[datetime] = mapped_column("nextReviewAt", DateTime(timezone=True), nullable=False)
+    last_reviewed_at: Mapped[Optional[datetime]] = mapped_column("lastReviewedAt", DateTime(timezone=True), nullable=True)
+    last_quality: Mapped[int] = mapped_column("lastQuality", Integer, default=-1)
+    lapse_count: Mapped[int] = mapped_column("lapseCount", Integer, default=0)
+
+    # Source tracking
+    source_type: Mapped[Optional[str]] = mapped_column("sourceType", String, nullable=True)
+    source_id: Mapped[Optional[str]] = mapped_column("sourceId", String, nullable=True)
+
+    # Relationships
+    deck: Mapped[Optional["FlashcardDeck"]] = relationship("FlashcardDeck", back_populates="flashcards")
+
+    __table_args__ = (
+        Index("Flashcard_userId_nextReviewAt_idx", "userId", "nextReviewAt"),
+        Index("Flashcard_deckId_idx", "deckId"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Flashcard id={self.id} front={self.front[:30]}>"
+
+
+# ---------------------------------------------------------------------------
+# SavedResource
+# ---------------------------------------------------------------------------
+
+
+class SavedResource(Base, TimestampMixin):
+    __tablename__ = "SavedResource"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source_type: Mapped[str] = mapped_column("sourceType", String, nullable=False)
+    source_id: Mapped[Optional[str]] = mapped_column("sourceId", String, nullable=True)
+    tags: Mapped[Optional[dict]] = mapped_column("tags", JSON, nullable=True)
+    last_accessed_at: Mapped[Optional[datetime]] = mapped_column("lastAccessedAt", DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("SavedResource_userId_sourceType_idx", "userId", "sourceType"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<SavedResource id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# LearningProfile
+# ---------------------------------------------------------------------------
+
+
+class LearningProfile(Base, TimestampMixin):
+    __tablename__ = "LearningProfile"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), unique=True, index=True)
+    purpose: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    subjects: Mapped[Optional[dict]] = mapped_column("subjects", JSON, nullable=True)
+    goals_text: Mapped[Optional[str]] = mapped_column("goalsText", Text, nullable=True)
+    preferred_explanation_style: Mapped[Optional[str]] = mapped_column("preferredExplanationStyle", String, nullable=True)
+    proficiency_map: Mapped[Optional[dict]] = mapped_column("proficiencyMap", JSON, nullable=True)
+    onboarding_completed_at: Mapped[Optional[datetime]] = mapped_column("onboardingCompletedAt", DateTime(timezone=True), nullable=True)
+    maturity_days: Mapped[int] = mapped_column("maturityDays", Integer, default=0)
+    quiet_hours_start: Mapped[Optional[str]] = mapped_column("quietHoursStart", String, nullable=True)
+    quiet_hours_end: Mapped[Optional[str]] = mapped_column("quietHoursEnd", String, nullable=True)
+    max_daily_notifications: Mapped[int] = mapped_column("maxDailyNotifications", Integer, default=5)
+
+    # Behaviour cache (updated by background task)
+    preferred_study_times: Mapped[Optional[dict]] = mapped_column("preferredStudyTimes", JSON, nullable=True)
+    avg_session_minutes: Mapped[Optional[float]] = mapped_column("avgSessionMinutes", Float, nullable=True)
+    consistency_score: Mapped[Optional[float]] = mapped_column("consistencyScore", Float, nullable=True)
+    best_day_of_week: Mapped[Optional[str]] = mapped_column("bestDayOfWeek", String, nullable=True)
+    dropout_risk: Mapped[Optional[float]] = mapped_column("dropoutRisk", Float, nullable=True)
+
+    __table_args__ = (
+        Index("LearningProfile_userId_idx", "userId"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<LearningProfile id={self.id} userId={self.user_id}>"
+
+
+# ---------------------------------------------------------------------------
+# Notification
+# ---------------------------------------------------------------------------
+
+
+class Notification(Base, TimestampMixin):
+    __tablename__ = "Notification"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, default=5)
+    action_data: Mapped[Optional[dict]] = mapped_column("actionData", JSON, nullable=True)
+    scheduled_at: Mapped[datetime] = mapped_column("scheduledAt", DateTime(timezone=True), nullable=False)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column("deliveredAt", DateTime(timezone=True), nullable=True)
+    read_at: Mapped[Optional[datetime]] = mapped_column("readAt", DateTime(timezone=True), nullable=True)
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column("dismissedAt", DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="PENDING")
+
+    __table_args__ = (
+        Index("Notification_userId_status_idx", "userId", "status"),
+        Index("Notification_scheduledAt_idx", "scheduledAt"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Notification id={self.id} type={self.type}>"
+
+
+# ---------------------------------------------------------------------------
+# PrepTopic
+# ---------------------------------------------------------------------------
+
+
+class PrepTopic(Base, TimestampMixin):
+    __tablename__ = "PrepTopic"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    prep_id: Mapped[str] = mapped_column("prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    estimated_minutes: Mapped[int] = mapped_column("estimatedMinutes", Integer, default=30)
+    order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)
+    mastery_score: Mapped[float] = mapped_column("masteryScore", Float, default=0.0)
+    status: Mapped[str] = mapped_column(String, default="NOT_STARTED")
+
+    __table_args__ = (
+        Index("PrepTopic_prepId_order_idx", "prepId", "orderIndex"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PrepTopic id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# PrepMaterial
+# ---------------------------------------------------------------------------
+
+
+class PrepMaterial(Base, TimestampMixin):
+    __tablename__ = "PrepMaterial"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    prep_id: Mapped[str] = mapped_column("prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True)
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+    file_type: Mapped[Optional[str]] = mapped_column("fileType", String, nullable=True)
+    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    extracted_text: Mapped[Optional[str]] = mapped_column("extractedText", Text, nullable=True)
+    category: Mapped[str] = mapped_column(String, default="OTHER")
+    label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<PrepMaterial id={self.id} filename={self.filename}>"
+
+
+# ---------------------------------------------------------------------------
+# QuizSession
+# ---------------------------------------------------------------------------
+
+
+class QuizSession(Base, TimestampMixin):
+    __tablename__ = "QuizSession"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    prep_id: Mapped[str] = mapped_column("prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True)
+    mode: Mapped[str] = mapped_column(String, nullable=False)
+    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="IN_PROGRESS")
+    total_questions: Mapped[int] = mapped_column("totalQuestions", Integer, default=0)
+    correct_count: Mapped[int] = mapped_column("correctCount", Integer, default=0)
+    score_percentage: Mapped[Optional[float]] = mapped_column("scorePercentage", Float, nullable=True)
+    duration_seconds: Mapped[Optional[int]] = mapped_column("durationSeconds", Integer, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column("completedAt", DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    answers: Mapped[list["QuizAnswer"]] = relationship("QuizAnswer", back_populates="quiz_session", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("QuizSession_userId_prepId_idx", "userId", "prepId"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<QuizSession id={self.id} mode={self.mode}>"
+
+
+# ---------------------------------------------------------------------------
+# QuizQuestion
+# ---------------------------------------------------------------------------
+
+
+class QuizQuestion(Base, TimestampMixin):
+    __tablename__ = "QuizQuestion"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    quiz_session_id: Mapped[str] = mapped_column("quizSessionId", String, ForeignKey("QuizSession.id", ondelete="CASCADE"), index=True)
+    prep_topic_id: Mapped[Optional[str]] = mapped_column("prepTopicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True)
+    question_text: Mapped[str] = mapped_column("questionText", Text, nullable=False)
+    question_type: Mapped[str] = mapped_column("questionType", String, default="MULTIPLE_CHOICE")
+    options: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    correct_answer: Mapped[str] = mapped_column("correctAnswer", String, nullable=False)
+    explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)
+
+    def __repr__(self) -> str:
+        return f"<QuizQuestion id={self.id} type={self.question_type}>"
+
+
+# ---------------------------------------------------------------------------
+# QuizAnswer
+# ---------------------------------------------------------------------------
+
+
+class QuizAnswer(Base, TimestampMixin):
+    __tablename__ = "QuizAnswer"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    quiz_session_id: Mapped[str] = mapped_column("quizSessionId", String, ForeignKey("QuizSession.id", ondelete="CASCADE"), index=True)
+    question_id: Mapped[str] = mapped_column("questionId", String, ForeignKey("QuizQuestion.id", ondelete="CASCADE"))
+    user_answer: Mapped[str] = mapped_column("userAnswer", String, nullable=False)
+    is_correct: Mapped[bool] = mapped_column("isCorrect", Boolean, default=False)
+    time_taken_seconds: Mapped[Optional[int]] = mapped_column("timeTakenSeconds", Integer, nullable=True)
+
+    # Relationships
+    quiz_session: Mapped["QuizSession"] = relationship("QuizSession", back_populates="answers")
+
+    def __repr__(self) -> str:
+        return f"<QuizAnswer id={self.id} correct={self.is_correct}>"
+
+
+# ---------------------------------------------------------------------------
+# StudyPlan
+# ---------------------------------------------------------------------------
+
+
+class StudyPlan(Base, TimestampMixin):
+    __tablename__ = "StudyPlan"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    goal_description: Mapped[Optional[str]] = mapped_column("goalDescription", Text, nullable=True)
+    deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    prep_id: Mapped[Optional[str]] = mapped_column("prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String, default="ACTIVE")
+    total_items: Mapped[int] = mapped_column("totalItems", Integer, default=0)
+    completed_items: Mapped[int] = mapped_column("completedItems", Integer, default=0)
+
+    # Relationships
+    items: Mapped[list["StudyPlanItem"]] = relationship("StudyPlanItem", back_populates="plan", cascade="all, delete-orphan", order_by="StudyPlanItem.scheduled_date")
+
+    __table_args__ = (
+        Index("StudyPlan_userId_status_idx", "userId", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<StudyPlan id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# StudyPlanItem
+# ---------------------------------------------------------------------------
+
+
+class StudyPlanItem(Base, TimestampMixin):
+    __tablename__ = "StudyPlanItem"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    plan_id: Mapped[str] = mapped_column("planId", String, ForeignKey("StudyPlan.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    scheduled_date: Mapped[datetime] = mapped_column("scheduledDate", DateTime(timezone=True), nullable=False)
+    estimated_minutes: Mapped[int] = mapped_column("estimatedMinutes", Integer, default=30)
+    item_type: Mapped[str] = mapped_column("itemType", String, default="STUDY")
+    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True)
+    prep_topic_id: Mapped[Optional[str]] = mapped_column("prepTopicId", String, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="PENDING")
+    completed_at: Mapped[Optional[datetime]] = mapped_column("completedAt", DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    plan: Mapped["StudyPlan"] = relationship("StudyPlan", back_populates="items")
+
+    __table_args__ = (
+        Index("StudyPlanItem_planId_scheduledDate_idx", "planId", "scheduledDate"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<StudyPlanItem id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# Reflection
+# ---------------------------------------------------------------------------
+
+
+class Reflection(Base, TimestampMixin):
+    __tablename__ = "Reflection"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    period_start: Mapped[datetime] = mapped_column("periodStart", DateTime(timezone=True), nullable=False)
+    period_end: Mapped[datetime] = mapped_column("periodEnd", DateTime(timezone=True), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    activities_layer: Mapped[Optional[dict]] = mapped_column("activitiesLayer", JSON, nullable=True)
+    progress_layer: Mapped[Optional[dict]] = mapped_column("progressLayer", JSON, nullable=True)
+    achievements_layer: Mapped[Optional[dict]] = mapped_column("achievementsLayer", JSON, nullable=True)
+    recommendations: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("Reflection_userId_type_idx", "userId", "type"),
+        Index("Reflection_periodEnd_idx", "periodEnd"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Reflection id={self.id} type={self.type}>"
+
+
+# ---------------------------------------------------------------------------
+# DiscoveryRecommendation
+# ---------------------------------------------------------------------------
+
+
+class DiscoveryRecommendation(Base, TimestampMixin):
+    __tablename__ = "DiscoveryRecommendation"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    item_type: Mapped[str] = mapped_column("itemType", String, nullable=False)
+    item_id: Mapped[str] = mapped_column("itemId", String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    relevance_score: Mapped[float] = mapped_column("relevanceScore", Float, default=0.0)
+    status: Mapped[str] = mapped_column(String, default="ACTIVE")
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column("dismissedAt", DateTime(timezone=True), nullable=True)
+    followed_at: Mapped[Optional[datetime]] = mapped_column("followedAt", DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("DiscoveryRecommendation_userId_status_idx", "userId", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DiscoveryRecommendation id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# ActivityFeedEntry (no TimestampMixin — just occurred_at)
+# ---------------------------------------------------------------------------
+
+
+class ActivityFeedEntry(Base):
+    __tablename__ = "ActivityFeedEntry"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25])
+    user_id: Mapped[str] = mapped_column("userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True)
+    activity_type: Mapped[str] = mapped_column("activityType", String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column("occurredAt", DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("ActivityFeedEntry_userId_occurredAt_idx", "userId", "occurredAt"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ActivityFeedEntry id={self.id} type={self.activity_type}>"
