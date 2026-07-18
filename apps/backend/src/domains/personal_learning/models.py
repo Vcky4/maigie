@@ -365,23 +365,23 @@ class SavedResourceTagUpdate(BaseModel):
 
 class LearningProfileResponse(BaseModel):
     id: str
-    userId: str
+    userId: str = Field(validation_alias="user_id")
     purpose: str | None = None
-    subjects: list[str] | None = None
-    goalsText: str | None = None
-    preferredExplanationStyle: str | None = None
-    onboardingCompletedAt: datetime | None = None
-    maturityDays: int
-    quietHoursStart: str | None = None
-    quietHoursEnd: str | None = None
-    preferredStudyTimes: list[str] | None = None
-    avgSessionMinutes: float | None = None
-    consistencyScore: float | None = None
-    bestDayOfWeek: str | None = None
-    dropoutRisk: float | None = None
-    createdAt: datetime
+    subjects: list | None = None
+    goalsText: str | None = Field(default=None, validation_alias="goals_text")
+    preferredExplanationStyle: str | None = Field(default=None, validation_alias="preferred_explanation_style")
+    onboardingCompletedAt: datetime | None = Field(default=None, validation_alias="onboarding_completed_at")
+    maturityDays: int = Field(default=0, validation_alias="maturity_days")
+    quietHoursStart: str | None = Field(default=None, validation_alias="quiet_hours_start")
+    quietHoursEnd: str | None = Field(default=None, validation_alias="quiet_hours_end")
+    preferredStudyTimes: dict | None = Field(default=None, validation_alias="preferred_study_times")
+    avgSessionMinutes: float | None = Field(default=None, validation_alias="avg_session_minutes")
+    consistencyScore: float | None = Field(default=None, validation_alias="consistency_score")
+    bestDayOfWeek: str | None = Field(default=None, validation_alias="best_day_of_week")
+    dropoutRisk: float | None = Field(default=None, validation_alias="dropout_risk")
+    createdAt: datetime = Field(validation_alias="created_at")
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class PurposeSetRequest(BaseModel):

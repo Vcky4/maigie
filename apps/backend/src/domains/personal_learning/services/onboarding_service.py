@@ -90,14 +90,54 @@ async def update_maturity(*, user_id: str) -> None:
 
 async def is_onboarding(*, user_id: str) -> bool:
     """
-    Check if the learner is still in the onboarding phase (first 7 days).
+    Check if the learner is still in the onboarding phase.
 
-    Req 14.5: Onboarding phase = maturity_days <= 7
+    Onboarding ends (returns False) when EITHER:
+    - Time-based: maturity_days > 7 (fallback for inactive users)
+    - Activity-based: the learner has a purpose set AND has created
+      at least one piece of content (note, flashcard, or preparation)
+
+    This ensures active learners get real value immediately while
+    inactive users still see gentle onboarding prompts.
     """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
         return True  # No profile = definitely onboarding
-    return (profile.maturity_days or 0) <= 7
+
+    # Time-based exit (fallback)
+    if (profile.maturity_days or 0) > 7:
+        return False
+
+    # Activity-based exit: purpose set + at least one content item created
+    if not profile.purpose:
+        return True  # Haven't even set purpose yet
+
+    # Check if user has created any content (notes, flashcards, or preparations)
+    from ..repository import personal_learning_repo
+
+    # Quick check: any flashcards?
+    stats = await personal_learning_repo.get_flashcard_stats(user_id)
+    if stats.get("total", 0) > 0:
+        return False
+
+    # Any notes?
+    notes, note_count = await personal_learning_repo.list_notes(
+        user_id, where={}, skip=0, take=1
+    )
+    if note_count > 0:
+        return False
+
+    # Any preparations?
+    preps = await personal_learning_repo.list_exam_preps(user_id)
+    if preps:
+        return False
+
+    # Any study plans?
+    plans = await personal_learning_repo.list_active_plans(user_id)
+    if plans:
+        return False
+
+    return True  # Still onboarding — no content created yet
 
 
 async def update_quiet_hours(*, user_id: str, start: str | None, end: str | None) -> Any:

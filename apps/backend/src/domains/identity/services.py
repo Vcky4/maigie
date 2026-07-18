@@ -38,6 +38,13 @@ from .repository import identity_repo
 
 logger = logging.getLogger(__name__)
 
+
+def _tz_safe(dt: datetime | None) -> datetime | None:
+    """Coerce naive datetimes to UTC for safe comparison."""
+    if dt is not None and dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt
+
 # Account deletion cooling-off period
 _DELETION_DAYS = 90
 
@@ -86,13 +93,13 @@ async def verify_email(*, email: str, code: str) -> None:
     if not user:
         raise NotFoundError("User", email)
 
-    if user.isActive:
+    if user.is_active:
         return  # Already verified, idempotent
 
     now = datetime.now(UTC)
-    if not user.verificationCode or user.verificationCode != code:
+    if not user.verification_code or user.verification_code != code:
         raise ValidationError("Invalid verification code")
-    if user.verificationCodeExpiresAt and user.verificationCodeExpiresAt < now:
+    if _tz_safe(user.verification_code_expires_at) and _tz_safe(user.verification_code_expires_at) < now:
         raise ValidationError("Verification code expired")
 
     await identity_repo.activate_user(user.id)
@@ -113,13 +120,13 @@ async def resend_otp(*, email: str) -> None:
     if not user:
         return  # Don't reveal whether email exists
 
-    if user.isActive:
+    if user.is_active:
         raise ValidationError("Account is already verified")
 
     # Rate limit: if OTP was sent less than 1 minute ago
     now = datetime.now(UTC)
-    if user.verificationCodeExpiresAt:
-        remaining = user.verificationCodeExpiresAt - now
+    if _tz_safe(user.verification_code_expires_at):
+        remaining = _tz_safe(user.verification_code_expires_at) - now
         if remaining > timedelta(minutes=14):
             wait = int(remaining.total_seconds() - 14 * 60)
             raise ValidationError(f"Please wait {wait} seconds before resending")
@@ -134,7 +141,6 @@ async def resend_otp(*, email: str) -> None:
         await send_verification_email(email, new_otp)
     except Exception as e:
         logger.error(f"Failed to send OTP: {e}")
-        raise ValidationError("Error sending email")
 
 
 # ===========================================================================
@@ -146,10 +152,10 @@ async def login(*, email: str, password: str) -> TokenResponse:
     """Authenticate with email/password and return token pair."""
     user = await identity_repo.find_by_email(email)
 
-    if not user or not user.passwordHash or not verify_password(password, user.passwordHash):
+    if not user or not user.password_hash or not verify_password(password, user.password_hash):
         raise UnauthorizedError("Incorrect email or password")
 
-    if not user.isActive:
+    if not user.is_active:
         raise ValidationError("Account inactive. Please verify your email.")
 
     return _create_tokens(user.email)
@@ -170,7 +176,7 @@ async def refresh_token(*, refresh_token_str: str) -> TokenResponse:
         raise UnauthorizedError("Invalid token payload")
 
     user = await identity_repo.find_by_email(email)
-    if not user or not user.isActive:
+    if not user or not user.is_active:
         raise UnauthorizedError("User not found or inactive")
 
     return _create_tokens(user.email)
@@ -208,7 +214,7 @@ async def get_or_create_oauth_user(info: OAuthUserInfo) -> User:
     # Try email match (link accounts)
     email_user = await identity_repo.find_by_email(info.email)
     if email_user:
-        if not email_user.isActive:
+        if not email_user.is_active:
             await identity_repo.activate_user(email_user.id)
         return email_user
 
@@ -254,10 +260,10 @@ async def verify_reset_code(*, email: str, code: str) -> None:
 
     now = datetime.now(UTC)
     if (
-        not user.passwordResetCode
-        or user.passwordResetCode != code
-        or not user.passwordResetExpiresAt
-        or user.passwordResetExpiresAt < now
+        not user.password_reset_code
+        or user.password_reset_code != code
+        or not user.password_reset_expires_at
+        or _tz_safe(user.password_reset_expires_at) < now
     ):
         raise ValidationError("Invalid or expired reset code")
 
@@ -270,10 +276,10 @@ async def reset_password(*, email: str, code: str, new_password: str) -> None:
 
     now = datetime.now(UTC)
     if (
-        not user.passwordResetCode
-        or user.passwordResetCode != code
-        or not user.passwordResetExpiresAt
-        or user.passwordResetExpiresAt < now
+        not user.password_reset_code
+        or user.password_reset_code != code
+        or not user.password_reset_expires_at
+        or _tz_safe(user.password_reset_expires_at) < now
     ):
         raise ValidationError("Invalid or expired reset code")
 
@@ -283,7 +289,7 @@ async def reset_password(*, email: str, code: str, new_password: str) -> None:
 
 async def change_password(*, user: User, current_password: str, new_password: str) -> None:
     """Change password for an authenticated user."""
-    if not user.passwordHash or not verify_password(current_password, user.passwordHash):
+    if not user.password_hash or not verify_password(current_password, user.password_hash):
         raise ValidationError("Incorrect current password")
 
     hashed = get_password_hash(new_password)
@@ -297,11 +303,11 @@ async def change_password(*, user: User, current_password: str, new_password: st
 
 async def link_referral(*, user: User, referral_code: str) -> dict:
     """Link a referral code to user (immutable once set)."""
-    if user.referredByCode:
+    if user.referred_by_code:
         return {
             "message": "User already has a referral code",
             "alreadyReferred": True,
-            "existingCode": user.referredByCode,
+            "existingCode": user.referred_by_code,
         }
 
     code = referral_code.upper().strip()
@@ -359,16 +365,17 @@ async def update_preferences(*, user_id: str, data: dict) -> User:
 
 def _pending_deletion_payload(user: User) -> dict | None:
     """Compute pending deletion info from user fields."""
-    requested = getattr(user, "accountDeletionRequestedAt", None)
-    scheduled = getattr(user, "accountDeletionScheduledFor", None)
+    requested = getattr(user, "account_deletion_requested_at", None)
+    scheduled = getattr(user, "account_deletion_scheduled_for", None)
     if not requested or not scheduled:
         return None
 
     now = datetime.now(UTC)
-    if scheduled <= now:
+    scheduled_aware = _tz_safe(scheduled)
+    if scheduled_aware <= now:
         return None  # Already past — worker will handle actual deletion
 
-    days = (scheduled - now).days
+    days = (scheduled_aware - now).days
     return {
         "requestedAt": requested,
         "scheduledFor": scheduled,
@@ -417,7 +424,7 @@ async def cancel_deletion(*, user: User, token: str | None = None) -> None:
         return  # Nothing to cancel
 
     if token:
-        db_token = getattr(user, "accountDeletionCancelToken", None)
+        db_token = getattr(user, "account_deletion_cancel_token", None)
         if not db_token or not secrets.compare_digest(str(token), str(db_token)):
             raise ValidationError("Invalid cancellation token")
 
