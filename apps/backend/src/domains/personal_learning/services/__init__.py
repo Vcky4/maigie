@@ -16,6 +16,8 @@ from . import (
     activity_feed_service,
     document_impl,
     chat_helper,
+    guidance_engine,
+    auto_setup_service,
 )
 
 __all__ = [
@@ -34,4 +36,6 @@ __all__ = [
     "activity_feed_service",
     "document_impl",
     "chat_helper",
+    "guidance_engine",
+    "auto_setup_service",
 ]

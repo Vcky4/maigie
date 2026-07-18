@@ -43,6 +43,14 @@ async def set_subjects(
     """
     Set initial subjects and/or goals for the learner.
 
+    After subjects are set, automatically create initial content:
+    - Preparation (exam prep, certification, etc.)
+    - Topics extracted via AI
+    - Initial flashcards
+    - Study plan
+
+    The learner provides intent — the system prepares everything.
+
     Req 14.2: When subjects provided, create study plan seeds.
               When goals provided without subjects, create topic interests.
     """
@@ -60,9 +68,16 @@ async def set_subjects(
     if update_data:
         profile = await repo.update_profile(user_id, update_data)
 
-    # Req 14.3: Generate initial recommendations based on stated purpose and goals
-    # This will be handled by the discovery service's background task
-    # For now, we store the data that the recommendation engine will use
+    # Trigger auto-setup: create preparation, topics, flashcards, study plan
+    # This runs inline so the learner sees "setting up" in the next Home request
+    # and the content is ready by the time they check again
+    try:
+        from . import auto_setup_service
+
+        await auto_setup_service.auto_setup_for_learner(user_id=user_id)
+    except Exception as e:
+        logger.error(f"Auto-setup failed after subjects set: {e}")
+        # Don't fail the subjects endpoint — auto-setup is best-effort
 
     return profile
 

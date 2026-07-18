@@ -204,9 +204,13 @@ class MessageResponse(BaseModel):
 
 
 class TodaysFocusResponse(BaseModel):
-    courseTitle: str | None = None
-    topicTitle: str | None = None
+    title: str | None = None  # Primary field for autonomous guidance
+    courseTitle: str | None = None  # Keep for backward compat
+    topicTitle: str | None = None  # Keep for backward compat
     reason: str
+    estimatedMinutes: int | None = None
+    type: str | None = None  # review_flashcards, complete_plan_item, study_topic, set_purpose, etc.
+    actionData: dict | None = None  # Data needed to execute the action
 
 
 class ProgressSummaryResponse(BaseModel):
@@ -255,10 +259,12 @@ class HomeResponse(BaseModel):
     progressSummary: ProgressSummaryResponse
     dueReviews: list[DueReviewResponse]
     scheduleBlocks: list[ScheduleBlockResponse]
-    recommendations: list[RecommendationResponse]
-    nextAction: NextActionResponse
+    readyForYou: list[dict] = []  # Things prepared by the system
+    stage: str = "active"  # fresh, purpose_set, setting_up, active
+    nextAction: NextActionResponse | dict | None = None
+    recommendations: list[RecommendationResponse] = []  # Deprecated — replaced by readyForYou
     reEngagement: ReEngagementResponse | None = None
-    isOnboarding: bool
+    isOnboarding: bool  # Kept for backward compat
 
 
 # ===========================================================================

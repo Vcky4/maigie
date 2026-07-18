@@ -7,7 +7,6 @@ Aggregates from profile, progress, flashcards, schedules, and discovery
 to create the emotional center of the product. A Home, not a dashboard.
 """
 
-import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,69 +20,47 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
     """
     Build the personalized home response.
 
-    Aggregates all sub-services concurrently via asyncio.gather().
-    Adapts content based on profile maturity (onboarding vs mature).
-
-    Req 1.1-1.10: Full personalized home aggregation.
+    The learner opens Maigie and everything is ready.
+    They don't plan. They don't organize. They just learn.
     """
     from . import (
         behaviour_service,
-        discovery_service,
         flashcard_service,
-        onboarding_service,
+        guidance_engine,
     )
 
-    # Concurrent queries for all home data
-    (
-        profile,
-        behaviour,
-        due_flashcards,
-        flashcard_stats,
-        recommendations,
-        is_onboarding,
-    ) = await asyncio.gather(
-        repo.get_profile_by_user(user_id),
-        behaviour_service.get_behaviour_profile(user_id=user_id),
-        flashcard_service.get_due_flashcards(user_id=user_id),
-        flashcard_service.get_statistics(user_id=user_id),
-        discovery_service.get_recommendations(user_id=user_id, limit=5),
-        onboarding_service.is_onboarding(user_id=user_id),
-    )
+    # Get guidance (the brain of the experience)
+    guidance = await guidance_engine.compute_guidance(user_id=user_id)
+
+    # Get profile for greeting
+    profile = await repo.get_profile_by_user(user_id)
 
     # Build greeting
-    greeting = _build_greeting(profile, behaviour)
+    greeting = _build_greeting(profile, None)
 
-    # Build today's focus
-    todays_focus = await _compute_todays_focus(user_id, due_flashcards, profile)
-
-    # Build progress summary
+    # Get progress summary
+    flashcard_stats = await flashcard_service.get_statistics(user_id=user_id)
     progress_summary = _build_progress_summary(profile, flashcard_stats)
 
-    # Build due reviews list
+    # Get due reviews
+    due_flashcards = await flashcard_service.get_due_flashcards(user_id=user_id)
     due_reviews = _build_due_reviews(due_flashcards)
 
-    # Build schedule blocks (from study plans)
+    # Get schedule blocks
     schedule_blocks = await _get_schedule_blocks(user_id)
 
-    # Build recommendations
-    rec_list = _build_recommendations(recommendations, is_onboarding)
-
-    # Determine next action
-    next_action = _compute_next_action(due_flashcards, todays_focus, schedule_blocks)
-
-    # Check for re-engagement
-    re_engagement = _check_re_engagement(profile)
-
     return {
-        "greeting": greeting,
-        "todaysFocus": todays_focus,
+        "greeting": guidance.get("message", greeting),
+        "todaysFocus": guidance.get("todaysFocus"),
         "progressSummary": progress_summary,
         "dueReviews": due_reviews,
         "scheduleBlocks": schedule_blocks,
-        "recommendations": rec_list,
-        "nextAction": next_action,
-        "reEngagement": re_engagement,
-        "isOnboarding": is_onboarding,
+        "readyForYou": guidance.get("readyForYou", []),
+        "stage": guidance.get("stage", "active"),
+        "nextAction": guidance.get("todaysFocus"),  # todaysFocus IS the next action
+        "recommendations": [],  # Deprecated — replaced by readyForYou
+        "reEngagement": _check_re_engagement(profile),
+        "isOnboarding": guidance.get("stage") in ("fresh", "purpose_set", "setting_up"),
     }
 
 
