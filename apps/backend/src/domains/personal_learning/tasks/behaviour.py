@@ -1,6 +1,8 @@
 """Celery task: Analyze learner behaviour patterns.
 
 Schedule: Daily at 02:00 UTC | Queue: heavy
+
+Uses paginated batch processing to avoid loading all users into memory.
 """
 
 import asyncio
@@ -9,6 +11,8 @@ import logging
 from src.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+_BATCH_SIZE = 50
 
 
 @celery_app.task(
@@ -36,20 +40,32 @@ async def _analyze_behaviour_async():
 
     logger.info("Behaviour analysis task started")
 
-    profiles = await repo.list_active_profiles()
     updated = 0
+    total = 0
+    skip = 0
 
-    for profile in profiles:
-        user_id = profile.user_id
-        try:
-            # Recompute behaviour analytics and persist to profile
-            await behaviour_service.analyze_behaviour(user_id)
+    while True:
+        profiles = await repo.list_active_profiles(skip=skip, take=_BATCH_SIZE)
+        if not profiles:
+            break
 
-            # Also increment maturity_days
-            await repo.increment_maturity_days(user_id)
+        total += len(profiles)
 
-            updated += 1
-        except Exception:
-            logger.exception(f"Failed to analyze behaviour for user {user_id}")
+        for profile in profiles:
+            user_id = profile.user_id
+            try:
+                # Recompute behaviour analytics and persist to profile
+                await behaviour_service.analyze_behaviour(user_id=user_id)
 
-    logger.info(f"Behaviour analysis completed: updated {updated}/{len(profiles)} profile(s)")
+                # Also increment maturity_days
+                await repo.increment_maturity_days(user_id)
+
+                updated += 1
+            except Exception:
+                logger.exception(f"Failed to analyze behaviour for user {user_id}")
+
+        skip += _BATCH_SIZE
+        if len(profiles) < _BATCH_SIZE:
+            break
+
+    logger.info(f"Behaviour analysis completed: updated {updated}/{total} profile(s)")

@@ -1,6 +1,8 @@
 """Celery task: Generate fresh discovery recommendations.
 
 Schedule: Daily at 03:00 UTC | Queue: heavy
+
+Uses paginated batch processing to avoid loading all users into memory.
 """
 
 import asyncio
@@ -9,6 +11,8 @@ import logging
 from src.core.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
+
+_BATCH_SIZE = 50
 
 
 @celery_app.task(
@@ -37,19 +41,31 @@ async def _generate_recommendations_async():
 
     logger.info("Recommendations generation task started")
 
-    profiles = await repo.list_active_profiles()
     generated = 0
+    total = 0
+    skip = 0
 
-    for profile in profiles:
-        user_id = profile.user_id
-        try:
-            # Clean up old dismissed/expired recommendations
-            await repo.delete_old_recommendations(user_id)
+    while True:
+        profiles = await repo.list_active_profiles(skip=skip, take=_BATCH_SIZE)
+        if not profiles:
+            break
 
-            # Generate fresh recommendations using discovery service
-            await discovery_service.generate_recommendations(user_id=user_id)
-            generated += 1
-        except Exception:
-            logger.exception(f"Failed to generate recommendations for user {user_id}")
+        total += len(profiles)
 
-    logger.info(f"Recommendations generated for {generated}/{len(profiles)} learner(s)")
+        for profile in profiles:
+            user_id = profile.user_id
+            try:
+                # Clean up old dismissed/expired recommendations
+                await repo.delete_old_recommendations(user_id)
+
+                # Generate fresh recommendations using discovery service
+                await discovery_service.generate_recommendations(user_id=user_id)
+                generated += 1
+            except Exception:
+                logger.exception(f"Failed to generate recommendations for user {user_id}")
+
+        skip += _BATCH_SIZE
+        if len(profiles) < _BATCH_SIZE:
+            break
+
+    logger.info(f"Recommendations generated for {generated}/{total} learner(s)")

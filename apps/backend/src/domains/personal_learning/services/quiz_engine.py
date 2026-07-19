@@ -5,7 +5,6 @@ Supports multiple modes: FULL_PRACTICE (all topics), WEAK_AREAS (mastery < 70),
 TOPIC_FOCUS (single topic), and QUICK_REVIEW.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -32,7 +31,7 @@ async def start_quiz(
     Req 4.6: WEAK_AREAS — topics with mastery < 70
     Req 4.7: TOPIC_FOCUS — single specified topic
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
+    from .llm_resilient import generate_content_json
 
     # Verify prep exists and belongs to user
     prep = await repo.find_exam_prep(prep_id, user_id)
@@ -90,9 +89,10 @@ async def start_quiz(
     )
 
     try:
-        response = await generate_content(prompt, max_tokens=4000)
-        questions_data = json.loads(response)
-    except (json.JSONDecodeError, Exception) as e:
+        questions_data = await generate_content_json(
+            prompt, max_tokens=4000, timeout_s=45, fallback=[]
+        )
+    except Exception as e:
         logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
         questions_data = []
 
@@ -155,7 +155,11 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     if not question:
         raise NotFoundError("QuizQuestion", question_id)
 
-    is_correct = user_answer.strip().lower() == question.correct_answer.strip().lower()
+    is_correct = _check_answer_correctness(
+        user_answer=user_answer,
+        correct_answer=question.correct_answer,
+        options=question.options,
+    )
 
     # Record the answer
     await repo.create_quiz_answer(
@@ -327,3 +331,90 @@ def _suggest_next_step(weak_areas: list[str]) -> str | None:
             f"Focus on reviewing: {weak_areas[0]}. Try a Topic Focus quiz to strengthen this area."
         )
     return f"Review these topics: {', '.join(weak_areas[:3])}. Try a Weak Areas quiz to improve."
+
+
+def _check_answer_correctness(
+    user_answer: str,
+    correct_answer: str,
+    options: list[str] | dict | None,
+) -> bool:
+    """Check if a user's answer is correct using multiple matching strategies.
+
+    Handles these cases:
+    1. Direct text match (case-insensitive, stripped)
+    2. Option index match: user sends "A"/"B"/"C"/"D" or "0"/"1"/"2"/"3",
+       and correct_answer is the full text of an option (or vice versa)
+    3. Prefix match: user sends "A. <text>" or "A) <text>"
+    4. Substring match: correct_answer is contained in user_answer or vice versa
+       (for short answers where the user adds extra context)
+
+    Returns True if the answer is considered correct by any strategy.
+    """
+    # Normalize
+    user_norm = user_answer.strip().lower()
+    correct_norm = correct_answer.strip().lower()
+
+    # Strategy 1: Direct match
+    if user_norm == correct_norm:
+        return True
+
+    # Strategy 2: Option index matching (A/B/C/D or 0/1/2/3)
+    if options and isinstance(options, list) and len(options) > 0:
+        # Normalize options
+        options_norm = [str(o).strip().lower() for o in options]
+
+        # Find the index of the correct answer in options
+        correct_index = None
+        for i, opt in enumerate(options_norm):
+            if opt == correct_norm:
+                correct_index = i
+                break
+
+        # Map letter/number to index
+        index_map = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5}
+
+        # Case: user sent an index (letter or number), correct_answer is option text
+        user_index = index_map.get(user_norm)
+        if user_index is None and user_norm.isdigit():
+            user_index = int(user_norm)
+
+        if user_index is not None and correct_index is not None:
+            return user_index == correct_index
+
+        # Case: user sent the full option text, correct_answer is a letter/number
+        correct_as_index = index_map.get(correct_norm)
+        if correct_as_index is None and correct_norm.isdigit():
+            correct_as_index = int(correct_norm)
+
+        if correct_as_index is not None and 0 <= correct_as_index < len(options_norm):
+            # correct_answer is "A" or "0" — compare user's answer to the option text
+            if user_norm == options_norm[correct_as_index]:
+                return True
+
+        # Case: user sent "A. <text>" or "A) <text>" — extract the text part
+        if len(user_norm) >= 2 and user_norm[0] in index_map and user_norm[1] in ".):- ":
+            user_text = user_norm[2:].strip().lstrip(".):- ").strip()
+            if user_text == correct_norm:
+                return True
+            # Also check if the extracted text matches the option at that index
+            letter_index = index_map[user_norm[0]]
+            if correct_index is not None and letter_index == correct_index:
+                return True
+
+        # Case: user sent full option text, check if it matches the correct option
+        if correct_index is not None and user_norm == options_norm[correct_index]:
+            return True
+
+        # Case: user's answer matches any option that matches the correct answer
+        if user_norm in options_norm:
+            user_option_index = options_norm.index(user_norm)
+            if correct_index is not None and user_option_index == correct_index:
+                return True
+
+    # Strategy 3: One contains the other (for short-answer flexibility)
+    # Only apply if both are non-trivial length (avoid "a" matching everything)
+    if len(correct_norm) > 3 and len(user_norm) > 3:
+        if correct_norm in user_norm or user_norm in correct_norm:
+            return True
+
+    return False

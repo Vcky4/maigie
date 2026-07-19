@@ -42,7 +42,7 @@ class Note(Base, TimestampMixin):
         "topicId", String, ForeignKey("Topic.id", ondelete="SET NULL"), nullable=True, index=True
     )
     space_id: Mapped[Optional[str]] = mapped_column(
-        "spaceId", String, ForeignKey("Space.id", ondelete="SET NULL"), nullable=True, index=True
+        "spaceId", String, nullable=True, index=True
     )
 
     last_edited_by_id: Mapped[Optional[str]] = mapped_column(
@@ -177,7 +177,7 @@ class ExamPrep(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
 
     space_id: Mapped[Optional[str]] = mapped_column(
-        "spaceId", String, ForeignKey("Space.id", ondelete="SET NULL"), nullable=True, index=True
+        "spaceId", String, nullable=True, index=True
     )
 
     __table_args__ = (

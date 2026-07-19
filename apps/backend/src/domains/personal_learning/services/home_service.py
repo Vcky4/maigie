@@ -23,31 +23,34 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
     The learner opens Maigie and everything is ready.
     They don't plan. They don't organize. They just learn.
     """
+    import asyncio
+
     from . import (
         behaviour_service,
         flashcard_service,
         guidance_engine,
     )
 
-    # Get guidance (the brain of the experience)
-    guidance = await guidance_engine.compute_guidance(user_id=user_id)
-
-    # Get profile for greeting
-    profile = await repo.get_profile_by_user(user_id)
+    # Fire guidance computation and profile fetch concurrently
+    guidance, profile, flashcard_stats = await asyncio.gather(
+        guidance_engine.compute_guidance(user_id=user_id),
+        repo.get_profile_by_user(user_id),
+        flashcard_service.get_statistics(user_id=user_id),
+    )
 
     # Build greeting
     greeting = _build_greeting(profile, None)
 
     # Get progress summary
-    flashcard_stats = await flashcard_service.get_statistics(user_id=user_id)
     progress_summary = _build_progress_summary(profile, flashcard_stats)
 
-    # Get due reviews
-    due_flashcards = await flashcard_service.get_due_flashcards(user_id=user_id)
-    due_reviews = _build_due_reviews(due_flashcards)
+    # Get due reviews and schedule blocks concurrently
+    due_flashcards, schedule_blocks = await asyncio.gather(
+        flashcard_service.get_due_flashcards(user_id=user_id),
+        _get_schedule_blocks(user_id),
+    )
 
-    # Get schedule blocks
-    schedule_blocks = await _get_schedule_blocks(user_id)
+    due_reviews = _build_due_reviews(due_flashcards)
 
     return {
         "greeting": guidance.get("message", greeting),

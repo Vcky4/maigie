@@ -3,9 +3,17 @@ Personal Learning domain — Data access layer (SQLAlchemy).
 
 Encapsulates all queries for Notes, NoteTag, NoteAttachment,
 ExamPrep, and GeneratedDocument.
+
+Session management:
+    - All public methods accept an optional `session: AsyncSession | None` parameter.
+    - When provided: the caller owns the transaction (no commit/rollback here).
+    - When None: a new session is created and committed/rolled back automatically.
+    - Use `unit_of_work()` context manager for multi-operation transactions.
 """
 
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -43,17 +51,65 @@ logger = logging.getLogger(__name__)
 
 
 class PersonalLearningRepository:
-    """Data access for notes, exam prep, and documents."""
+    """Data access for notes, exam prep, and documents.
 
-    async def _session(self) -> AsyncSession:
-        return get_session_factory()()
+    Session injection pattern:
+        # Single operation (auto-managed session):
+        note = await repo.find_note(note_id, user_id)
+
+        # Multi-operation transaction (caller-managed session):
+        async with repo.unit_of_work() as session:
+            plan = await repo.create_study_plan(data, session=session)
+            for item in items:
+                await repo.create_plan_item(item_data, session=session)
+            # Commits on exit; rolls back on exception
+    """
+
+    @asynccontextmanager
+    async def unit_of_work(self) -> AsyncGenerator[AsyncSession, None]:
+        """Context manager that provides a single transactional session.
+
+        All operations within the block share one session and one transaction.
+        Commits on successful exit; rolls back on exception.
+        """
+        factory = get_session_factory()
+        async with factory() as session:
+            try:
+                yield session
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+
+    @asynccontextmanager
+    async def _use_session(
+        self, session: AsyncSession | None
+    ) -> AsyncGenerator[AsyncSession, None]:
+        """Internal helper: use provided session or create a new auto-managed one.
+
+        - If session is provided: yield it as-is (caller owns commit/rollback).
+        - If session is None: create a new session, auto-commit on success.
+        """
+        if session is not None:
+            yield session
+        else:
+            factory = get_session_factory()
+            async with factory() as new_session:
+                try:
+                    yield new_session
+                    await new_session.commit()
+                except Exception:
+                    await new_session.rollback()
+                    raise
 
     # -----------------------------------------------------------------------
     # Notes
     # -----------------------------------------------------------------------
 
-    async def find_note(self, note_id: str, user_id: str) -> Note | None:
-        async with await self._session() as session:
+    async def find_note(
+        self, note_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> Note | None:
+        async with self._use_session(session) as s:
             stmt = (
                 select(Note)
                 .options(
@@ -62,7 +118,7 @@ class PersonalLearningRepository:
                 )
                 .where(Note.id == note_id, Note.user_id == user_id)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
     async def list_notes(
@@ -72,14 +128,15 @@ class PersonalLearningRepository:
         where: dict[str, Any],
         skip: int = 0,
         take: int = 20,
+        session: AsyncSession | None = None,
     ) -> tuple[list[Note], int]:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             conditions = [Note.user_id == user_id]
             conditions.extend(self._build_note_conditions(where))
 
             # Count
             count_stmt = select(func.count()).select_from(Note).where(*conditions)
-            total = (await session.execute(count_stmt)).scalar() or 0
+            total = (await s.execute(count_stmt)).scalar() or 0
 
             # Items
             stmt = (
@@ -93,12 +150,14 @@ class PersonalLearningRepository:
                 .offset(skip)
                 .limit(take)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
 
-    async def create_note(self, data: dict[str, Any]) -> Note:
-        async with await self._session() as session:
+    async def create_note(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Note:
+        async with self._use_session(session) as s:
             note = Note(**self._map_note(data))
 
             # Handle nested tags
@@ -108,151 +167,172 @@ class PersonalLearningRepository:
                 for tag_item in create_list:
                     note.tags.append(NoteTag(tag=tag_item["tag"]))
 
-            session.add(note)
-            await session.commit()
-            await session.refresh(note)
+            s.add(note)
+            await s.flush()
+            await s.refresh(note)
             return note
 
-    async def update_note(self, note_id: str, data: dict[str, Any]) -> Note | None:
-        async with await self._session() as session:
+    async def update_note(
+        self, note_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Note | None:
+        async with self._use_session(session) as s:
             mapped = self._map_note(data)
             if mapped:
                 stmt = update(Note).where(Note.id == note_id).values(**mapped)
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
         return await self.find_note(note_id, data.get("userId", ""))
 
-    async def delete_note(self, note_id: str) -> None:
-        async with await self._session() as session:
+    async def delete_note(
+        self, note_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = delete(Note).where(Note.id == note_id)
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Note Attachments
     # -----------------------------------------------------------------------
 
-    async def create_attachment(self, data: dict[str, Any]) -> NoteAttachment:
-        async with await self._session() as session:
+    async def create_attachment(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> NoteAttachment:
+        async with self._use_session(session) as s:
             attachment = NoteAttachment(**self._map_attachment(data))
-            session.add(attachment)
-            await session.commit()
-            await session.refresh(attachment)
+            s.add(attachment)
+            await s.flush()
+            await s.refresh(attachment)
             return attachment
 
-    async def delete_attachment(self, attachment_id: str) -> None:
-        async with await self._session() as session:
+    async def delete_attachment(
+        self, attachment_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = delete(NoteAttachment).where(NoteAttachment.id == attachment_id)
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
-    async def find_attachment(self, attachment_id: str, note_id: str) -> NoteAttachment | None:
-        async with await self._session() as session:
+    async def find_attachment(
+        self, attachment_id: str, note_id: str, *, session: AsyncSession | None = None
+    ) -> NoteAttachment | None:
+        async with self._use_session(session) as s:
             stmt = select(NoteAttachment).where(
                 NoteAttachment.id == attachment_id,
                 NoteAttachment.note_id == note_id,
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
     # -----------------------------------------------------------------------
     # Note Tags
     # -----------------------------------------------------------------------
 
-    async def delete_note_tags(self, note_id: str) -> None:
-        async with await self._session() as session:
+    async def delete_note_tags(
+        self, note_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = delete(NoteTag).where(NoteTag.note_id == note_id)
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
-    async def create_note_tags(self, note_id: str, tags: list[str]) -> None:
-        async with await self._session() as session:
+    async def create_note_tags(
+        self, note_id: str, tags: list[str], *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             for tag in tags:
-                session.add(NoteTag(note_id=note_id, tag=tag))
-            await session.commit()
+                s.add(NoteTag(note_id=note_id, tag=tag))
+            await s.flush()
 
     # -----------------------------------------------------------------------
     # Exam Prep
     # -----------------------------------------------------------------------
 
-    async def find_exam_prep(self, prep_id: str, user_id: str) -> ExamPrep | None:
-        async with await self._session() as session:
+    async def find_exam_prep(
+        self, prep_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> ExamPrep | None:
+        async with self._use_session(session) as s:
             stmt = select(ExamPrep).where(
                 ExamPrep.id == prep_id,
                 ExamPrep.user_id == user_id,
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_exam_preps(self, user_id: str) -> list[ExamPrep]:
-        async with await self._session() as session:
+    async def list_exam_preps(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[ExamPrep]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(ExamPrep)
                 .where(ExamPrep.user_id == user_id)
                 .order_by(ExamPrep.created_at.desc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def create_exam_prep(self, data: dict[str, Any]) -> ExamPrep:
-        async with await self._session() as session:
+    async def create_exam_prep(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> ExamPrep:
+        async with self._use_session(session) as s:
             prep = ExamPrep(**self._map_exam_prep(data))
-            session.add(prep)
-            await session.commit()
-            await session.refresh(prep)
+            s.add(prep)
+            await s.flush()
+            await s.refresh(prep)
             return prep
 
-    async def update_exam_prep(self, prep_id: str, data: dict[str, Any]) -> ExamPrep | None:
-        async with await self._session() as session:
+    async def update_exam_prep(
+        self, prep_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> ExamPrep | None:
+        async with self._use_session(session) as s:
             mapped = self._map_exam_prep(data)
             if mapped:
                 stmt = update(ExamPrep).where(ExamPrep.id == prep_id).values(**mapped)
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
         # Re-fetch to return updated object
-        # Use a broad user_id match since we don't always have it here
-        async with await self._session() as session:
+        async with self._use_session(None) as s:
             stmt = select(ExamPrep).where(ExamPrep.id == prep_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def delete_exam_prep(self, prep_id: str) -> None:
-        async with await self._session() as session:
+    async def delete_exam_prep(
+        self, prep_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = delete(ExamPrep).where(ExamPrep.id == prep_id)
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Generated Documents
     # -----------------------------------------------------------------------
 
-    async def find_document(self, doc_id: str, user_id: str) -> GeneratedDocument | None:
-        async with await self._session() as session:
+    async def find_document(
+        self, doc_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> GeneratedDocument | None:
+        async with self._use_session(session) as s:
             stmt = select(GeneratedDocument).where(
                 GeneratedDocument.id == doc_id,
                 GeneratedDocument.user_id == user_id,
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def find_document_by_share_id(self, share_id: str) -> GeneratedDocument | None:
-        async with await self._session() as session:
+    async def find_document_by_share_id(
+        self, share_id: str, *, session: AsyncSession | None = None
+    ) -> GeneratedDocument | None:
+        async with self._use_session(session) as s:
             stmt = select(GeneratedDocument).where(GeneratedDocument.share_id == share_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
     async def list_documents(
-        self, user_id: str, *, skip: int = 0, take: int = 20
+        self, user_id: str, *, skip: int = 0, take: int = 20, session: AsyncSession | None = None
     ) -> tuple[list[GeneratedDocument], int]:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             count_stmt = (
                 select(func.count())
                 .select_from(GeneratedDocument)
                 .where(GeneratedDocument.user_id == user_id)
             )
-            total = (await session.execute(count_stmt)).scalar() or 0
+            total = (await s.execute(count_stmt)).scalar() or 0
 
             stmt = (
                 select(GeneratedDocument)
@@ -261,31 +341,34 @@ class PersonalLearningRepository:
                 .offset(skip)
                 .limit(take)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
 
-    async def create_document(self, data: dict[str, Any]) -> GeneratedDocument:
-        async with await self._session() as session:
+    async def create_document(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> GeneratedDocument:
+        async with self._use_session(session) as s:
             doc = GeneratedDocument(**self._map_document(data))
-            session.add(doc)
-            await session.commit()
-            await session.refresh(doc)
+            s.add(doc)
+            await s.flush()
+            await s.refresh(doc)
             return doc
 
-    async def update_document(self, doc_id: str, data: dict[str, Any]) -> GeneratedDocument | None:
-        async with await self._session() as session:
+    async def update_document(
+        self, doc_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> GeneratedDocument | None:
+        async with self._use_session(session) as s:
             mapped = self._map_document(data)
             if mapped:
                 stmt = (
                     update(GeneratedDocument).where(GeneratedDocument.id == doc_id).values(**mapped)
                 )
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
-        async with await self._session() as session:
+        async with self._use_session(None) as s:
             stmt = select(GeneratedDocument).where(GeneratedDocument.id == doc_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
     # -----------------------------------------------------------------------
@@ -368,39 +451,46 @@ class PersonalLearningRepository:
     # Flashcards
     # -----------------------------------------------------------------------
 
-    async def create_flashcard(self, data: dict[str, Any]) -> Flashcard:
-        async with await self._session() as session:
+    async def create_flashcard(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Flashcard:
+        async with self._use_session(session) as s:
             flashcard = Flashcard(**self._map_flashcard(data))
-            session.add(flashcard)
-            await session.commit()
-            await session.refresh(flashcard)
+            s.add(flashcard)
+            await s.flush()
+            await s.refresh(flashcard)
             return flashcard
 
-    async def get_flashcard(self, card_id: str, user_id: str) -> Flashcard | None:
-        async with await self._session() as session:
+    async def get_flashcard(
+        self, card_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> Flashcard | None:
+        async with self._use_session(session) as s:
             stmt = select(Flashcard).where(
                 Flashcard.id == card_id,
                 Flashcard.user_id == user_id,
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def update_flashcard(self, card_id: str, data: dict[str, Any]) -> Flashcard | None:
-        async with await self._session() as session:
+    async def update_flashcard(
+        self, card_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Flashcard | None:
+        async with self._use_session(session) as s:
             mapped = self._map_flashcard(data)
             if mapped:
                 stmt = update(Flashcard).where(Flashcard.id == card_id).values(**mapped)
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
         # Re-fetch to return updated object
-        async with await self._session() as session:
+        async with self._use_session(None) as s:
             stmt = select(Flashcard).where(Flashcard.id == card_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_due_flashcards(self, user_id: str) -> list[Flashcard]:
-        async with await self._session() as session:
+    async def list_due_flashcards(
+        self, user_id: str, *, limit: int | None = None, session: AsyncSession | None = None
+    ) -> list[Flashcard]:
+        async with self._use_session(session) as s:
             now = datetime.now(timezone.utc)
             stmt = (
                 select(Flashcard)
@@ -410,18 +500,22 @@ class PersonalLearningRepository:
                 )
                 .order_by(Flashcard.next_review_at.asc())
             )
-            result = await session.execute(stmt)
+            if limit is not None:
+                stmt = stmt.limit(limit)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def get_flashcard_stats(self, user_id: str) -> dict[str, Any]:
-        async with await self._session() as session:
+    async def get_flashcard_stats(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> dict[str, Any]:
+        async with self._use_session(session) as s:
             now = datetime.now(timezone.utc)
 
             # Total count
             total_stmt = (
                 select(func.count()).select_from(Flashcard).where(Flashcard.user_id == user_id)
             )
-            total = (await session.execute(total_stmt)).scalar() or 0
+            total = (await s.execute(total_stmt)).scalar() or 0
 
             # Due today count
             due_stmt = (
@@ -432,7 +526,7 @@ class PersonalLearningRepository:
                     Flashcard.next_review_at <= now,
                 )
             )
-            due_today = (await session.execute(due_stmt)).scalar() or 0
+            due_today = (await s.execute(due_stmt)).scalar() or 0
 
             # Mastered count (interval > 21 days)
             mastered_stmt = (
@@ -443,13 +537,13 @@ class PersonalLearningRepository:
                     Flashcard.interval_days > 21,
                 )
             )
-            mastered_count = (await session.execute(mastered_stmt)).scalar() or 0
+            mastered_count = (await s.execute(mastered_stmt)).scalar() or 0
 
             # Average ease factor
             avg_ease_stmt = select(func.avg(Flashcard.ease_factor)).where(
                 Flashcard.user_id == user_id
             )
-            avg_ease_factor = (await session.execute(avg_ease_stmt)).scalar() or 2.5
+            avg_ease_factor = (await s.execute(avg_ease_stmt)).scalar() or 2.5
 
             return {
                 "total": total,
@@ -462,26 +556,32 @@ class PersonalLearningRepository:
     # Flashcard Decks
     # -----------------------------------------------------------------------
 
-    async def create_deck(self, data: dict[str, Any]) -> FlashcardDeck:
-        async with await self._session() as session:
+    async def create_deck(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> FlashcardDeck:
+        async with self._use_session(session) as s:
             deck = FlashcardDeck(**self._map_deck(data))
-            session.add(deck)
-            await session.commit()
-            await session.refresh(deck)
+            s.add(deck)
+            await s.flush()
+            await s.refresh(deck)
             return deck
 
-    async def list_decks(self, user_id: str) -> list[FlashcardDeck]:
-        async with await self._session() as session:
+    async def list_decks(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[FlashcardDeck]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(FlashcardDeck)
                 .where(FlashcardDeck.user_id == user_id)
                 .order_by(FlashcardDeck.created_at.desc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def list_deck_flashcards(self, deck_id: str, user_id: str) -> list[Flashcard]:
-        async with await self._session() as session:
+    async def list_deck_flashcards(
+        self, deck_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[Flashcard]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(Flashcard)
                 .where(
@@ -490,7 +590,7 @@ class PersonalLearningRepository:
                 )
                 .order_by(Flashcard.created_at.desc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
     # -----------------------------------------------------------------------
@@ -532,12 +632,14 @@ class PersonalLearningRepository:
     # Saved Resources
     # -----------------------------------------------------------------------
 
-    async def create_resource(self, data: dict[str, Any]) -> SavedResource:
-        async with await self._session() as session:
+    async def create_resource(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> SavedResource:
+        async with self._use_session(session) as s:
             resource = SavedResource(**self._map_resource(data))
-            session.add(resource)
-            await session.commit()
-            await session.refresh(resource)
+            s.add(resource)
+            await s.flush()
+            await s.refresh(resource)
             return resource
 
     async def list_resources(
@@ -548,8 +650,9 @@ class PersonalLearningRepository:
         search: str | None = None,
         skip: int = 0,
         take: int = 20,
+        session: AsyncSession | None = None,
     ) -> tuple[list[SavedResource], int]:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             conditions = [SavedResource.user_id == user_id]
 
             if source_type is not None:
@@ -559,7 +662,7 @@ class PersonalLearningRepository:
 
             # Count
             count_stmt = select(func.count()).select_from(SavedResource).where(*conditions)
-            total = (await session.execute(count_stmt)).scalar() or 0
+            total = (await s.execute(count_stmt)).scalar() or 0
 
             # Items
             stmt = (
@@ -569,24 +672,25 @@ class PersonalLearningRepository:
                 .offset(skip)
                 .limit(take)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
 
-    async def delete_resource(self, resource_id: str, user_id: str) -> bool:
-        async with await self._session() as session:
+    async def delete_resource(
+        self, resource_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._use_session(session) as s:
             stmt = delete(SavedResource).where(
                 SavedResource.id == resource_id,
                 SavedResource.user_id == user_id,
             )
-            result = await session.execute(stmt)
-            await session.commit()
+            result = await s.execute(stmt)
             return result.rowcount > 0
 
     async def update_resource_tags(
-        self, resource_id: str, user_id: str, tags: list[str]
+        self, resource_id: str, user_id: str, tags: list[str], *, session: AsyncSession | None = None
     ) -> SavedResource | None:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             stmt = (
                 update(SavedResource)
                 .where(
@@ -595,26 +699,26 @@ class PersonalLearningRepository:
                 )
                 .values(tags=tags)
             )
-            result = await session.execute(stmt)
-            await session.commit()
+            result = await s.execute(stmt)
             if result.rowcount == 0:
                 return None
 
         # Re-fetch updated resource
-        async with await self._session() as session:
+        async with self._use_session(None) as s:
             stmt = select(SavedResource).where(SavedResource.id == resource_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def update_last_accessed(self, resource_id: str) -> None:
-        async with await self._session() as session:
+    async def update_last_accessed(
+        self, resource_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = (
                 update(SavedResource)
                 .where(SavedResource.id == resource_id)
                 .values(last_accessed_at=datetime.now(timezone.utc))
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Saved Resources
@@ -636,22 +740,28 @@ class PersonalLearningRepository:
     # Learning Profiles
     # -----------------------------------------------------------------------
 
-    async def create_profile(self, data: dict[str, Any]) -> LearningProfile:
-        async with await self._session() as session:
+    async def create_profile(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> LearningProfile:
+        async with self._use_session(session) as s:
             profile = LearningProfile(**self._map_profile(data))
-            session.add(profile)
-            await session.commit()
-            await session.refresh(profile)
+            s.add(profile)
+            await s.flush()
+            await s.refresh(profile)
             return profile
 
-    async def get_profile_by_user(self, user_id: str) -> LearningProfile | None:
-        async with await self._session() as session:
+    async def get_profile_by_user(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> LearningProfile | None:
+        async with self._use_session(session) as s:
             stmt = select(LearningProfile).where(LearningProfile.user_id == user_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def update_profile(self, user_id: str, data: dict[str, Any]) -> LearningProfile | None:
-        async with await self._session() as session:
+    async def update_profile(
+        self, user_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> LearningProfile | None:
+        async with self._use_session(session) as s:
             mapped = self._map_profile(data)
             if mapped:
                 stmt = (
@@ -659,12 +769,13 @@ class PersonalLearningRepository:
                     .where(LearningProfile.user_id == user_id)
                     .values(**mapped)
                 )
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
         return await self.get_profile_by_user(user_id)
 
-    async def update_profile_behaviour(self, user_id: str, data: dict[str, Any]) -> None:
+    async def update_profile_behaviour(
+        self, user_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> None:
         behaviour_fields = {
             "preferredStudyTimes": "preferred_study_times",
             "avgSessionMinutes": "avg_session_minutes",
@@ -676,12 +787,11 @@ class PersonalLearningRepository:
         if not mapped:
             return
 
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             stmt = (
                 update(LearningProfile).where(LearningProfile.user_id == user_id).values(**mapped)
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Learning Profile
@@ -713,16 +823,20 @@ class PersonalLearningRepository:
     # Notifications
     # -----------------------------------------------------------------------
 
-    async def create_notification(self, data: dict[str, Any]) -> Notification:
-        async with await self._session() as session:
+    async def create_notification(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Notification:
+        async with self._use_session(session) as s:
             notification = Notification(**self._map_notification(data))
-            session.add(notification)
-            await session.commit()
-            await session.refresh(notification)
+            s.add(notification)
+            await s.flush()
+            await s.refresh(notification)
             return notification
 
-    async def list_unread(self, user_id: str) -> list[Notification]:
-        async with await self._session() as session:
+    async def list_unread(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[Notification]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(Notification)
                 .where(
@@ -731,11 +845,13 @@ class PersonalLearningRepository:
                 )
                 .order_by(Notification.priority.asc(), Notification.scheduled_at.asc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def mark_read(self, notification_id: str, user_id: str) -> None:
-        async with await self._session() as session:
+    async def mark_read(
+        self, notification_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = (
                 update(Notification)
                 .where(
@@ -744,11 +860,12 @@ class PersonalLearningRepository:
                 )
                 .values(status="READ", read_at=datetime.now(timezone.utc))
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
-    async def mark_dismissed(self, notification_id: str, user_id: str) -> None:
-        async with await self._session() as session:
+    async def mark_dismissed(
+        self, notification_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = (
                 update(Notification)
                 .where(
@@ -757,11 +874,12 @@ class PersonalLearningRepository:
                 )
                 .values(status="DISMISSED", dismissed_at=datetime.now(timezone.utc))
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
-    async def count_today_delivered(self, user_id: str) -> int:
-        async with await self._session() as session:
+    async def count_today_delivered(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> int:
+        async with self._use_session(session) as s:
             now = datetime.now(timezone.utc)
             start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -774,11 +892,13 @@ class PersonalLearningRepository:
                     Notification.delivered_at <= end_of_day,
                 )
             )
-            result = (await session.execute(stmt)).scalar() or 0
+            result = (await s.execute(stmt)).scalar() or 0
             return result
 
-    async def list_pending_for_delivery(self) -> list[Notification]:
-        async with await self._session() as session:
+    async def list_pending_for_delivery(
+        self, *, session: AsyncSession | None = None
+    ) -> list[Notification]:
+        async with self._use_session(session) as s:
             now = datetime.now(timezone.utc)
             stmt = (
                 select(Notification)
@@ -788,19 +908,19 @@ class PersonalLearningRepository:
                 )
                 .order_by(Notification.scheduled_at.asc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
     async def update_status(
-        self, notification_id: str, status: str, delivered_at: datetime | None = None
+        self, notification_id: str, status: str, delivered_at: datetime | None = None,
+        *, session: AsyncSession | None = None
     ) -> None:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             values: dict[str, Any] = {"status": status}
             if delivered_at is not None:
                 values["delivered_at"] = delivered_at
             stmt = update(Notification).where(Notification.id == notification_id).values(**values)
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Notifications
@@ -824,70 +944,84 @@ class PersonalLearningRepository:
     # Prep Topics
     # -----------------------------------------------------------------------
 
-    async def create_prep_topic(self, data: dict[str, Any]) -> PrepTopic:
-        async with await self._session() as session:
+    async def create_prep_topic(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> PrepTopic:
+        async with self._use_session(session) as s:
             topic = PrepTopic(**self._map_prep_topic(data))
-            session.add(topic)
-            await session.commit()
-            await session.refresh(topic)
+            s.add(topic)
+            await s.flush()
+            await s.refresh(topic)
             return topic
 
-    async def list_prep_topics(self, prep_id: str) -> list[PrepTopic]:
-        async with await self._session() as session:
+    async def list_prep_topics(
+        self, prep_id: str, *, session: AsyncSession | None = None
+    ) -> list[PrepTopic]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(PrepTopic)
                 .where(PrepTopic.prep_id == prep_id)
                 .order_by(PrepTopic.order_index.asc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def update_topic_mastery(self, topic_id: str, mastery_score: float, status: str) -> None:
-        async with await self._session() as session:
+    async def update_topic_mastery(
+        self, topic_id: str, mastery_score: float, status: str,
+        *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = (
                 update(PrepTopic)
                 .where(PrepTopic.id == topic_id)
                 .values(mastery_score=mastery_score, status=status)
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Prep Materials
     # -----------------------------------------------------------------------
 
-    async def create_prep_material(self, data: dict[str, Any]) -> PrepMaterial:
-        async with await self._session() as session:
+    async def create_prep_material(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> PrepMaterial:
+        async with self._use_session(session) as s:
             material = PrepMaterial(**self._map_prep_material(data))
-            session.add(material)
-            await session.commit()
-            await session.refresh(material)
+            s.add(material)
+            await s.flush()
+            await s.refresh(material)
             return material
 
-    async def list_prep_materials(self, prep_id: str) -> list[PrepMaterial]:
-        async with await self._session() as session:
+    async def list_prep_materials(
+        self, prep_id: str, *, session: AsyncSession | None = None
+    ) -> list[PrepMaterial]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(PrepMaterial)
                 .where(PrepMaterial.prep_id == prep_id)
                 .order_by(PrepMaterial.created_at.desc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
     # -----------------------------------------------------------------------
     # Quiz Sessions, Questions & Answers
     # -----------------------------------------------------------------------
 
-    async def create_quiz_session(self, data: dict[str, Any]) -> QuizSession:
-        async with await self._session() as session:
+    async def create_quiz_session(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> QuizSession:
+        async with self._use_session(session) as s:
             quiz = QuizSession(**self._map_quiz_session(data))
-            session.add(quiz)
-            await session.commit()
-            await session.refresh(quiz)
+            s.add(quiz)
+            await s.flush()
+            await s.refresh(quiz)
             return quiz
 
-    async def get_quiz_session(self, quiz_id: str, user_id: str) -> QuizSession | None:
-        async with await self._session() as session:
+    async def get_quiz_session(
+        self, quiz_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> QuizSession | None:
+        async with self._use_session(session) as s:
             stmt = (
                 select(QuizSession)
                 .options(selectinload(QuizSession.answers))
@@ -896,43 +1030,50 @@ class PersonalLearningRepository:
                     QuizSession.user_id == user_id,
                 )
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def update_quiz_session(self, quiz_id: str, data: dict[str, Any]) -> QuizSession | None:
-        async with await self._session() as session:
+    async def update_quiz_session(
+        self, quiz_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> QuizSession | None:
+        async with self._use_session(session) as s:
             mapped = self._map_quiz_session(data)
             if mapped:
                 stmt = update(QuizSession).where(QuizSession.id == quiz_id).values(**mapped)
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
         # Re-fetch to return updated object
-        async with await self._session() as session:
+        async with self._use_session(None) as s:
             stmt = select(QuizSession).where(QuizSession.id == quiz_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def create_quiz_question(self, data: dict[str, Any]) -> QuizQuestion:
-        async with await self._session() as session:
+    async def create_quiz_question(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> QuizQuestion:
+        async with self._use_session(session) as s:
             question = QuizQuestion(**self._map_quiz_question(data))
-            session.add(question)
-            await session.commit()
-            await session.refresh(question)
+            s.add(question)
+            await s.flush()
+            await s.refresh(question)
             return question
 
-    async def create_quiz_answer(self, data: dict[str, Any]) -> QuizAnswer:
-        async with await self._session() as session:
+    async def create_quiz_answer(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> QuizAnswer:
+        async with self._use_session(session) as s:
             answer = QuizAnswer(**self._map_quiz_answer(data))
-            session.add(answer)
-            await session.commit()
-            await session.refresh(answer)
+            s.add(answer)
+            await s.flush()
+            await s.refresh(answer)
             return answer
 
-    async def list_quiz_answers(self, quiz_id: str) -> list[QuizAnswer]:
-        async with await self._session() as session:
+    async def list_quiz_answers(
+        self, quiz_id: str, *, session: AsyncSession | None = None
+    ) -> list[QuizAnswer]:
+        async with self._use_session(session) as s:
             stmt = select(QuizAnswer).where(QuizAnswer.quiz_session_id == quiz_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
     # -----------------------------------------------------------------------
@@ -1011,16 +1152,20 @@ class PersonalLearningRepository:
     # Study Plans
     # -----------------------------------------------------------------------
 
-    async def create_study_plan(self, data: dict[str, Any]) -> StudyPlan:
-        async with await self._session() as session:
+    async def create_study_plan(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> StudyPlan:
+        async with self._use_session(session) as s:
             plan = StudyPlan(**self._map_study_plan(data))
-            session.add(plan)
-            await session.commit()
-            await session.refresh(plan)
+            s.add(plan)
+            await s.flush()
+            await s.refresh(plan)
             return plan
 
-    async def get_study_plan(self, plan_id: str, user_id: str) -> StudyPlan | None:
-        async with await self._session() as session:
+    async def get_study_plan(
+        self, plan_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> StudyPlan | None:
+        async with self._use_session(session) as s:
             stmt = (
                 select(StudyPlan)
                 .options(selectinload(StudyPlan.items))
@@ -1029,11 +1174,13 @@ class PersonalLearningRepository:
                     StudyPlan.user_id == user_id,
                 )
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_active_plans(self, user_id: str) -> list[StudyPlan]:
-        async with await self._session() as session:
+    async def list_active_plans(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[StudyPlan]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(StudyPlan)
                 .options(selectinload(StudyPlan.items))
@@ -1043,49 +1190,55 @@ class PersonalLearningRepository:
                 )
                 .order_by(StudyPlan.deadline.asc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def update_plan_status(self, plan_id: str, status: str) -> None:
-        async with await self._session() as session:
+    async def update_plan_status(
+        self, plan_id: str, status: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = update(StudyPlan).where(StudyPlan.id == plan_id).values(status=status)
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Study Plan Items
     # -----------------------------------------------------------------------
 
-    async def create_plan_item(self, data: dict[str, Any]) -> StudyPlanItem:
-        async with await self._session() as session:
+    async def create_plan_item(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> StudyPlanItem:
+        async with self._use_session(session) as s:
             item = StudyPlanItem(**self._map_plan_item(data))
-            session.add(item)
-            await session.commit()
-            await session.refresh(item)
+            s.add(item)
+            await s.flush()
+            await s.refresh(item)
             return item
 
-    async def update_plan_item(self, item_id: str, data: dict[str, Any]) -> StudyPlanItem | None:
-        async with await self._session() as session:
+    async def update_plan_item(
+        self, item_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> StudyPlanItem | None:
+        async with self._use_session(session) as s:
             mapped = self._map_plan_item(data)
             if mapped:
                 stmt = update(StudyPlanItem).where(StudyPlanItem.id == item_id).values(**mapped)
-                await session.execute(stmt)
-                await session.commit()
+                await s.execute(stmt)
 
         # Re-fetch to return updated object
-        async with await self._session() as session:
+        async with self._use_session(None) as s:
             stmt = select(StudyPlanItem).where(StudyPlanItem.id == item_id)
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def list_plan_items(self, plan_id: str) -> list[StudyPlanItem]:
-        async with await self._session() as session:
+    async def list_plan_items(
+        self, plan_id: str, *, session: AsyncSession | None = None
+    ) -> list[StudyPlanItem]:
+        async with self._use_session(session) as s:
             stmt = (
                 select(StudyPlanItem)
                 .where(StudyPlanItem.plan_id == plan_id)
                 .order_by(StudyPlanItem.scheduled_date.asc())
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
     # -----------------------------------------------------------------------
@@ -1126,12 +1279,14 @@ class PersonalLearningRepository:
     # Reflections
     # -----------------------------------------------------------------------
 
-    async def create_reflection(self, data: dict[str, Any]) -> Reflection:
-        async with await self._session() as session:
+    async def create_reflection(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Reflection:
+        async with self._use_session(session) as s:
             reflection = Reflection(**self._map_reflection(data))
-            session.add(reflection)
-            await session.commit()
-            await session.refresh(reflection)
+            s.add(reflection)
+            await s.flush()
+            await s.refresh(reflection)
             return reflection
 
     async def list_reflections(
@@ -1141,8 +1296,9 @@ class PersonalLearningRepository:
         type_filter: str | None = None,
         skip: int = 0,
         take: int = 20,
+        session: AsyncSession | None = None,
     ) -> tuple[list[Reflection], int]:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             conditions = [Reflection.user_id == user_id]
 
             if type_filter is not None:
@@ -1150,7 +1306,7 @@ class PersonalLearningRepository:
 
             # Count
             count_stmt = select(func.count()).select_from(Reflection).where(*conditions)
-            total = (await session.execute(count_stmt)).scalar() or 0
+            total = (await s.execute(count_stmt)).scalar() or 0
 
             # Items
             stmt = (
@@ -1160,17 +1316,19 @@ class PersonalLearningRepository:
                 .offset(skip)
                 .limit(take)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
 
-    async def get_reflection(self, reflection_id: str, user_id: str) -> Reflection | None:
-        async with await self._session() as session:
+    async def get_reflection(
+        self, reflection_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> Reflection | None:
+        async with self._use_session(session) as s:
             stmt = select(Reflection).where(
                 Reflection.id == reflection_id,
                 Reflection.user_id == user_id,
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
     # -----------------------------------------------------------------------
@@ -1196,18 +1354,20 @@ class PersonalLearningRepository:
     # Discovery Recommendations
     # -----------------------------------------------------------------------
 
-    async def create_recommendation(self, data: dict[str, Any]) -> DiscoveryRecommendation:
-        async with await self._session() as session:
+    async def create_recommendation(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> DiscoveryRecommendation:
+        async with self._use_session(session) as s:
             recommendation = DiscoveryRecommendation(**self._map_recommendation(data))
-            session.add(recommendation)
-            await session.commit()
-            await session.refresh(recommendation)
+            s.add(recommendation)
+            await s.flush()
+            await s.refresh(recommendation)
             return recommendation
 
     async def list_active_recommendations(
-        self, user_id: str, *, limit: int = 5
+        self, user_id: str, *, limit: int = 5, session: AsyncSession | None = None
     ) -> list[DiscoveryRecommendation]:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             stmt = (
                 select(DiscoveryRecommendation)
                 .where(
@@ -1217,11 +1377,13 @@ class PersonalLearningRepository:
                 .order_by(DiscoveryRecommendation.relevance_score.desc())
                 .limit(limit)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def mark_followed(self, rec_id: str, user_id: str) -> None:
-        async with await self._session() as session:
+    async def mark_followed(
+        self, rec_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = (
                 update(DiscoveryRecommendation)
                 .where(
@@ -1230,11 +1392,12 @@ class PersonalLearningRepository:
                 )
                 .values(status="FOLLOWED", followed_at=datetime.now(timezone.utc))
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
-    async def dismiss_recommendation(self, rec_id: str, user_id: str) -> None:
-        async with await self._session() as session:
+    async def dismiss_recommendation(
+        self, rec_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             stmt = (
                 update(DiscoveryRecommendation)
                 .where(
@@ -1243,19 +1406,19 @@ class PersonalLearningRepository:
                 )
                 .values(status="DISMISSED", dismissed_at=datetime.now(timezone.utc))
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
-    async def delete_old_recommendations(self, user_id: str) -> None:
-        async with await self._session() as session:
+    async def delete_old_recommendations(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
             cutoff = datetime.now(timezone.utc) - timedelta(days=7)
             stmt = delete(DiscoveryRecommendation).where(
                 DiscoveryRecommendation.user_id == user_id,
                 DiscoveryRecommendation.status == "ACTIVE",
                 DiscoveryRecommendation.created_at < cutoff,
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Discovery Recommendations
@@ -1278,12 +1441,14 @@ class PersonalLearningRepository:
     # Activity Feed
     # -----------------------------------------------------------------------
 
-    async def create_feed_entry(self, data: dict[str, Any]) -> ActivityFeedEntry:
-        async with await self._session() as session:
+    async def create_feed_entry(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> ActivityFeedEntry:
+        async with self._use_session(session) as s:
             entry = ActivityFeedEntry(**self._map_feed_entry(data))
-            session.add(entry)
-            await session.commit()
-            await session.refresh(entry)
+            s.add(entry)
+            await s.flush()
+            await s.refresh(entry)
             return entry
 
     async def list_feed_entries(
@@ -1292,13 +1457,14 @@ class PersonalLearningRepository:
         *,
         skip: int = 0,
         take: int = 20,
+        session: AsyncSession | None = None,
     ) -> tuple[list[ActivityFeedEntry], int]:
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             conditions = [ActivityFeedEntry.user_id == user_id]
 
             # Count
             count_stmt = select(func.count()).select_from(ActivityFeedEntry).where(*conditions)
-            total = (await session.execute(count_stmt)).scalar() or 0
+            total = (await s.execute(count_stmt)).scalar() or 0
 
             # Items
             stmt = (
@@ -1308,7 +1474,7 @@ class PersonalLearningRepository:
                 .offset(skip)
                 .limit(take)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
 
@@ -1332,40 +1498,63 @@ class PersonalLearningRepository:
     # Background task helpers
     # -----------------------------------------------------------------------
 
-    async def list_active_profiles(self) -> list[LearningProfile]:
-        """Return all LearningProfiles (active learners)."""
-        async with await self._session() as session:
-            stmt = select(LearningProfile)
-            result = await session.execute(stmt)
+    async def list_active_profiles(
+        self, *, skip: int = 0, take: int = 100, session: AsyncSession | None = None
+    ) -> list[LearningProfile]:
+        """Return LearningProfiles in paginated batches (for background tasks)."""
+        async with self._use_session(session) as s:
+            stmt = (
+                select(LearningProfile)
+                .order_by(LearningProfile.user_id)
+                .offset(skip)
+                .limit(take)
+            )
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    async def count_active_profiles(
+        self, *, session: AsyncSession | None = None
+    ) -> int:
+        """Return total count of active learning profiles."""
+        async with self._use_session(session) as s:
+            stmt = select(func.count()).select_from(LearningProfile)
+            return (await s.execute(stmt)).scalar() or 0
+
     async def list_declining_engagement_profiles(
-        self, min_declining_days: int = 3
+        self, min_declining_days: int = 3, *, skip: int = 0, take: int = 100,
+        session: AsyncSession | None = None
     ) -> list[LearningProfile]:
-        """Return profiles with dropout_risk above threshold (proxy for declining engagement).
+        """Return profiles with dropout_risk above threshold (paginated).
 
         A more sophisticated implementation would track daily activity counts,
         but for now we use the cached dropout_risk score computed by the
         behaviour analysis task (> 0.5 indicates declining engagement).
         """
-        async with await self._session() as session:
-            stmt = select(LearningProfile).where(
-                LearningProfile.dropout_risk.isnot(None),
-                LearningProfile.dropout_risk > 0.5,
+        async with self._use_session(session) as s:
+            stmt = (
+                select(LearningProfile)
+                .where(
+                    LearningProfile.dropout_risk.isnot(None),
+                    LearningProfile.dropout_risk > 0.5,
+                )
+                .order_by(LearningProfile.user_id)
+                .offset(skip)
+                .limit(take)
             )
-            result = await session.execute(stmt)
+            result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def increment_maturity_days(self, user_id: str) -> None:
+    async def increment_maturity_days(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> None:
         """Increment maturity_days counter for a learner's profile."""
-        async with await self._session() as session:
+        async with self._use_session(session) as s:
             stmt = (
                 update(LearningProfile)
                 .where(LearningProfile.user_id == user_id)
                 .values(maturity_days=LearningProfile.maturity_days + 1)
             )
-            await session.execute(stmt)
-            await session.commit()
+            await s.execute(stmt)
 
 
 # Singleton

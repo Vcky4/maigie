@@ -9,7 +9,6 @@ so responsive, so well-designed that learning happens without effort.
 Not without work. But without the overhead."
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -44,17 +43,30 @@ async def compute_guidance(*, user_id: str) -> dict[str, Any]:
 
 
 async def _gather_learner_state(user_id: str) -> dict[str, Any]:
-    """Gather everything we know about the learner."""
-    profile = await repo.get_profile_by_user(user_id)
+    """Gather everything we know about the learner.
 
-    # Content counts
-    flashcard_stats = await repo.get_flashcard_stats(user_id)
-    _, note_count = await repo.list_notes(user_id, where={}, skip=0, take=1)
-    preps = await repo.list_exam_preps(user_id)
-    plans = await repo.list_active_plans(user_id)
-    due_flashcards = await repo.list_due_flashcards(user_id)
+    Runs independent queries concurrently via asyncio.gather() for low latency.
+    """
+    import asyncio
 
-    # Today's plan items
+    # Fire all independent queries concurrently
+    (
+        profile,
+        flashcard_stats,
+        (_, note_count),
+        preps,
+        plans,
+        due_flashcards,
+    ) = await asyncio.gather(
+        repo.get_profile_by_user(user_id),
+        repo.get_flashcard_stats(user_id),
+        repo.list_notes(user_id, where={}, skip=0, take=1),
+        repo.list_exam_preps(user_id),
+        repo.list_active_plans(user_id),
+        repo.list_due_flashcards(user_id),
+    )
+
+    # Today's plan items (in-memory filtering, no extra query)
     todays_items = []
     if plans:
         today = datetime.now(timezone.utc).date()
@@ -219,7 +231,7 @@ def _deterministic_guidance(state: dict) -> dict[str, Any] | None:
 
 async def _llm_guidance(user_id: str, state: dict) -> dict[str, Any]:
     """Use LLM to generate contextual, personalized guidance."""
-    from src.domains.intelligence.reasoning.llm import generate_content
+    from .llm_resilient import generate_content_json
 
     context = _build_llm_context(state)
 
@@ -249,8 +261,13 @@ Return a JSON object with:
 Return ONLY valid JSON."""
 
     try:
-        response = await generate_content(prompt, max_tokens=500, temperature=0.7)
-        data = json.loads(response)
+        data = await generate_content_json(
+            prompt,
+            max_tokens=500,
+            temperature=0.7,
+            timeout_s=15,
+            fallback=None,
+        )
 
         return {
             "message": data.get("message", "Ready to continue learning."),
@@ -267,8 +284,8 @@ Return ONLY valid JSON."""
             ],
             "stage": "active",
         }
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"LLM guidance parse failed: {e}")
+    except Exception as e:
+        logger.warning(f"LLM guidance failed: {e}")
         raise
 
 

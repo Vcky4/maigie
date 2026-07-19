@@ -179,6 +179,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     Redistribute remaining plan items when learner is behind schedule.
 
     Req 7.5: Redistribute within deadline respecting sustainable session lengths.
+    Ensures no single day exceeds max_daily_minutes (avg_session * 1.5 or 120 min).
     """
     plan = await repo.get_study_plan(plan_id, user_id)
     if not plan:
@@ -188,7 +189,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     deadline = plan.deadline
     days_remaining = max(1, (deadline - now).days)
 
-    # Get behaviour profile
+    # Get behaviour profile for sustainable session limit
     profile = await repo.get_profile_by_user(user_id)
     avg_session_minutes = 60
     if profile and profile.avg_session_minutes:
@@ -202,16 +203,29 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     if not pending_items:
         return
 
-    # Redistribute across remaining days respecting daily limit
-    items_per_day = max(1, len(pending_items) // days_remaining)
+    # Redistribute respecting max_daily_minutes per day
+    day_index = 0
+    daily_minutes_used = 0.0
 
-    for idx, item in enumerate(pending_items):
-        day_offset = idx // items_per_day
-        if day_offset >= days_remaining:
-            day_offset = days_remaining - 1
+    for item in pending_items:
+        item_minutes = getattr(item, "estimated_minutes", 30) or 30
 
-        new_date = now + timedelta(days=day_offset + 1)
+        # If adding this item would exceed the daily limit, move to next day
+        if daily_minutes_used + item_minutes > max_daily_minutes and daily_minutes_used > 0:
+            day_index += 1
+            daily_minutes_used = 0.0
+
+        # Cap at deadline — if we run out of days, pack remaining into last day
+        actual_day = min(day_index, days_remaining - 1)
+        new_date = now + timedelta(days=actual_day + 1)
         await repo.update_plan_item(item.id, {"scheduledDate": new_date})
+
+        daily_minutes_used += item_minutes
+
+        # If this single item fills the day, advance
+        if daily_minutes_used >= max_daily_minutes:
+            day_index += 1
+            daily_minutes_used = 0.0
 
 
 def _distribute_items(
@@ -293,8 +307,7 @@ async def _generate_topics_from_goal(
     title: str, goal_description: str | None
 ) -> list[dict[str, Any]]:
     """Generate study topics from a goal description using AI."""
-    from src.domains.intelligence.reasoning.llm import generate_content
-    import json
+    from .llm_resilient import generate_content_json
 
     prompt = (
         f"Break down this learning goal into study topics:\n"
@@ -305,8 +318,9 @@ async def _generate_topics_from_goal(
     )
 
     try:
-        response = await generate_content(prompt, max_tokens=2000)
-        topics_data = json.loads(response)
+        topics_data = await generate_content_json(
+            prompt, max_tokens=2000, fallback=None
+        )
         return [
             {
                 "title": t["title"],

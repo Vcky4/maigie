@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
+from .cache import cached as _cached
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,12 @@ async def create_flashcard(*, user_id: str, data: dict[str, Any]) -> Any:
         "lastQuality": -1,
         "lapseCount": 0,
     }
-    return await repo.create_flashcard(flashcard_data)
+    result = await repo.create_flashcard(flashcard_data)
+
+    # Invalidate stats cache since total count changed
+    await _get_statistics_cached.invalidate(user_id=user_id)
+
+    return result
 
 
 async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
@@ -45,7 +51,7 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
 
     Req 5.2: Extract key concepts from note content and create flashcards.
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
+    from .llm_resilient import generate_content_json
 
     note = await repo.find_note(note_id, user_id)
     if not note or not note.content:
@@ -60,13 +66,8 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
         f"Return ONLY the JSON array, no other text."
     )
 
-    import json
-
-    try:
-        response = await generate_content(prompt, max_tokens=2000)
-        cards_data = json.loads(response)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"Failed to generate flashcards from note {note_id}: {e}")
+    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[])
+    if not cards_data:
         return []
 
     created_cards = []
@@ -92,7 +93,7 @@ async def generate_from_topic(*, user_id: str, topic_id: str) -> list[Any]:
 
     Req 5.3: Generate flashcards based on topic content and materials.
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
+    from .llm_resilient import generate_content_json
     from sqlalchemy import select as sa_select
     from src.domains.knowledge.db_models import Topic
     from src.shared.database import get_session_factory
@@ -115,13 +116,8 @@ async def generate_from_topic(*, user_id: str, topic_id: str) -> list[Any]:
         f"Return ONLY the JSON array, no other text."
     )
 
-    import json
-
-    try:
-        response = await generate_content(prompt, max_tokens=2000)
-        cards_data = json.loads(response)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"Failed to generate flashcards from topic {topic_id}: {e}")
+    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[])
+    if not cards_data:
         return []
 
     created_cards = []
@@ -190,7 +186,12 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
         "lapseCount": new_lapse,
     }
 
-    return await repo.update_flashcard(card_id, update_data)
+    result = await repo.update_flashcard(card_id, update_data)
+
+    # Invalidate stats cache since a review changes due counts and mastery
+    await _get_statistics_cached.invalidate(user_id=user_id)
+
+    return result
 
 
 async def get_due_flashcards(*, user_id: str) -> list[Any]:
@@ -207,7 +208,15 @@ async def get_statistics(*, user_id: str) -> dict[str, Any]:
     Get flashcard statistics.
 
     Req 5.8: Return total, due_today, mastered (interval > 21), average ease factor.
+
+    Cached for 60s — stats change only on flashcard review or creation.
     """
+    return await _get_statistics_cached(user_id=user_id)
+
+
+@_cached(ttl_seconds=60, max_size=1000, key_arg="user_id")
+async def _get_statistics_cached(*, user_id: str) -> dict[str, Any]:
+    """Cached inner implementation."""
     stats = await repo.get_flashcard_stats(user_id)
     return {
         "total": stats["total"],

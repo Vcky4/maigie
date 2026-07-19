@@ -13,6 +13,7 @@ from statistics import mean
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
+from .cache import cached
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,15 @@ async def get_behaviour_profile(*, user_id: str) -> dict[str, Any]:
 
     Req 11.4: Return preferred_times, avg_session_minutes, consistency_score,
     best_day_of_week, and dropout_risk_factors.
+
+    Cached for 120s — behaviour data changes only via background task (daily).
     """
+    return await _get_behaviour_profile_cached(user_id=user_id)
+
+
+@cached(ttl_seconds=120, max_size=1000, key_arg="user_id")
+async def _get_behaviour_profile_cached(*, user_id: str) -> dict[str, Any]:
+    """Cached inner implementation."""
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
         return {
@@ -89,6 +98,9 @@ async def analyze_behaviour(*, user_id: str, sessions: list[Any]) -> dict[str, A
         "dropoutRisk": round(dropout_risk, 2),
     }
     await repo.update_profile_behaviour(user_id, behaviour_data)
+
+    # Invalidate the cached behaviour profile since we just updated it
+    await _get_behaviour_profile_cached.invalidate(user_id=user_id)
 
     return behaviour_data
 
