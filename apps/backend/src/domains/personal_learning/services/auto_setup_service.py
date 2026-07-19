@@ -90,7 +90,7 @@ async def _create_preparation(
     prep_type = type_map.get(purpose, "PROJECT")
 
     # Default deadline: 30 days from now (can be adjusted later)
-    default_deadline = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    default_deadline = datetime.now(timezone.utc) + timedelta(days=30)
 
     subject_title = subjects[0] if subjects else "My Learning"
     description = goals if goals else f"Preparation for {', '.join(subjects)}"
@@ -183,16 +183,17 @@ async def _create_study_plan(
         return None
 
     try:
+        deadline = (
+            prep.exam_date
+            if prep.exam_date
+            else (datetime.now(timezone.utc) + timedelta(days=30))
+        )
         plan = await study_plan_service.generate_plan(
             user_id=user_id,
             data={
                 "title": f"Study Plan: {prep.subject}",
                 "goalDescription": goals or f"Master {prep.subject}",
-                "deadline": (
-                    prep.exam_date.isoformat()
-                    if prep.exam_date
-                    else (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
-                ),
+                "deadline": deadline.isoformat() if isinstance(deadline, datetime) else str(deadline),
                 "prepId": prep.id,
             },
         )
