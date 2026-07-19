@@ -33,9 +33,19 @@ class NoteAttachmentResponse(BaseModel):
     filename: str
     url: str
     size: int | None = None
-    createdAt: datetime
+    createdAt: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_orm_model(cls, att) -> "NoteAttachmentResponse":
+        return cls(
+            id=att.id,
+            filename=att.filename,
+            url=att.url,
+            size=att.size,
+            createdAt=getattr(att, "created_at", None),
+        )
 
 
 class NoteCreate(BaseModel):
@@ -75,7 +85,28 @@ class NoteResponse(BaseModel):
     createdAt: datetime
     updatedAt: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @classmethod
+    def from_orm_model(cls, note) -> "NoteResponse":
+        """Convert a SQLAlchemy Note to NoteResponse, handling snake_case → camelCase."""
+        return cls(
+            id=note.id,
+            userId=note.user_id,
+            title=note.title,
+            content=note.content,
+            summary=note.summary,
+            courseId=note.course_id,
+            topicId=note.topic_id,
+            archived=note.archived,
+            voiceRecordingUrl=note.voice_recording_url,
+            tags=[NoteTagResponse(id=t.id, tag=t.tag) for t in (note.tags or [])],
+            attachments=[
+                NoteAttachmentResponse.from_orm_model(a) for a in (note.attachments or [])
+            ],
+            createdAt=note.created_at,
+            updatedAt=note.updated_at,
+        )
 
 
 class NoteListResponse(BaseModel):

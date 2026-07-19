@@ -117,9 +117,10 @@ async def complete_topic(course_id: str, topic_id: str, current_user: CurrentUse
 @router.post("/notes", response_model=models.NoteResponse, status_code=201)
 async def create_note(body: models.NoteCreate, current_user: CurrentUser):
     """Create a personal note."""
-    return await note_service.create_note(
+    note = await note_service.create_note(
         user_id=current_user.id, data=body.model_dump(exclude_unset=True)
     )
+    return models.NoteResponse.from_orm_model(note)
 
 
 @router.get("/notes", response_model=models.NoteListResponse)
@@ -145,21 +146,29 @@ async def list_notes(
         archived=archived,
     )
     pages = (total + size - 1) // size if total > 0 else 0
-    return models.NoteListResponse(items=items, total=total, page=page, size=size, pages=pages)
+    return models.NoteListResponse(
+        items=[models.NoteResponse.from_orm_model(n) for n in items],
+        total=total,
+        page=page,
+        size=size,
+        pages=pages,
+    )
 
 
 @router.get("/notes/{note_id}", response_model=models.NoteResponse)
 async def get_note(note_id: str, current_user: CurrentUser):
     """Get a note by ID."""
-    return await note_service.get_note(user_id=current_user.id, note_id=note_id)
+    note = await note_service.get_note(user_id=current_user.id, note_id=note_id)
+    return models.NoteResponse.from_orm_model(note)
 
 
 @router.patch("/notes/{note_id}", response_model=models.NoteResponse)
 async def update_note(note_id: str, body: models.NoteUpdate, current_user: CurrentUser):
     """Update a note."""
-    return await note_service.update_note(
+    note = await note_service.update_note(
         user_id=current_user.id, note_id=note_id, data=body.model_dump(exclude_unset=True)
     )
+    return models.NoteResponse.from_orm_model(note)
 
 
 @router.delete("/notes/{note_id}", status_code=204)
@@ -177,9 +186,10 @@ async def add_attachment(
     note_id: str, body: models.NoteAttachmentCreate, current_user: CurrentUser
 ):
     """Add an attachment to a note."""
-    return await note_service.add_attachment(
+    att = await note_service.add_attachment(
         user_id=current_user.id, note_id=note_id, data=body.model_dump()
     )
+    return models.NoteAttachmentResponse.from_orm_model(att)
 
 
 @router.delete("/notes/{note_id}/attachments/{attachment_id}", status_code=204)
@@ -195,13 +205,15 @@ async def remove_attachment(note_id: str, attachment_id: str, current_user: Curr
 @router.post("/notes/{note_id}/summary", response_model=models.NoteResponse)
 async def generate_summary(note_id: str, current_user: CurrentUser):
     """Generate AI summary for a note."""
-    return await note_service.add_summary(user_id=current_user.id, note_id=note_id)
+    note = await note_service.add_summary(user_id=current_user.id, note_id=note_id)
+    return models.NoteResponse.from_orm_model(note)
 
 
 @router.post("/notes/{note_id}/retake", response_model=models.NoteResponse)
 async def retake_note(note_id: str, current_user: CurrentUser):
     """AI-rewrite a note with improved formatting."""
-    return await note_service.retake_note(user_id=current_user.id, note_id=note_id)
+    note = await note_service.retake_note(user_id=current_user.id, note_id=note_id)
+    return models.NoteResponse.from_orm_model(note)
 
 
 @router.post("/notes/{note_id}/import", response_model=models.MessageResponse)
