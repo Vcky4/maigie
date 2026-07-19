@@ -440,11 +440,36 @@ class PersonalLearningRepository:
         if "topicId" in where:
             conditions.append(Note.topic_id == where["topicId"])
         if "spaceId" in where:
-            conditions.append(Note.space_id == where["spaceId"])
+            if where["spaceId"] is None:
+                conditions.append(Note.space_id.is_(None))
+            else:
+                conditions.append(Note.space_id == where["spaceId"])
         if "title" in where and isinstance(where["title"], dict):
             contains = where["title"].get("contains", "")
             if contains:
                 conditions.append(Note.title.ilike(f"%{contains}%"))
+        # OR search: match title OR content (case-insensitive)
+        if "OR" in where:
+            from sqlalchemy import or_
+
+            or_conditions = []
+            for clause in where["OR"]:
+                if "title" in clause and isinstance(clause["title"], dict):
+                    text = clause["title"].get("contains", "")
+                    if text:
+                        or_conditions.append(Note.title.ilike(f"%{text}%"))
+                if "content" in clause and isinstance(clause["content"], dict):
+                    text = clause["content"].get("contains", "")
+                    if text:
+                        or_conditions.append(Note.content.ilike(f"%{text}%"))
+            if or_conditions:
+                conditions.append(or_(*or_conditions))
+        # Tag filter: match notes that have a specific tag
+        if "tags" in where and isinstance(where["tags"], dict):
+            some = where["tags"].get("some", {})
+            tag_value = some.get("tag")
+            if tag_value:
+                conditions.append(Note.tags.any(NoteTag.tag == tag_value))
         return conditions
 
     # -----------------------------------------------------------------------
