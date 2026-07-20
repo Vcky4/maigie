@@ -35,7 +35,6 @@ nh3 = "^0.2.21"
 trafilatura = "^2.0.0"
 itsdangerous = "^2.2.0"
 fastapi-mail = "^1.5.8"
-aiosmtplib = "^3.0.0"
 bcrypt = "4.0.1"
 stripe = "^10.0.0"
 google-auth = "^2.38.0"
@@ -54,6 +53,7 @@ python-pptx = "^1.0.0"
 sqlalchemy = {extras = ["asyncio"], version = "^2.0.51"}
 asyncpg = "^0.31.0"
 alembic = "^1.18.5"
+greenlet = "^3.5.3"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

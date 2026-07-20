@@ -12,5 +12,5 @@ elif command -v poetry &> /dev/null; then
 else
     echo "Error: Neither virtual environment nor Poetry found"
     exit 1
-}
+fi
 
