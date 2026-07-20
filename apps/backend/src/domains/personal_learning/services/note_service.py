@@ -142,14 +142,14 @@ async def retake_note(*, user_id: str, note_id: str) -> Any:
 
     # Build context
     context_parts = [f"Title: {note.title}"]
-    if note.topicId:
+    if note.topic_id:
         from sqlalchemy import select as sa_select
         from src.domains.knowledge.db_models import Topic, Module, Course
         from src.shared.database import get_session_factory
 
         factory = get_session_factory()
         async with factory() as session:
-            stmt = sa_select(Topic).where(Topic.id == note.topicId)
+            stmt = sa_select(Topic).where(Topic.id == note.topic_id)
             result = await session.execute(stmt)
             topic = result.scalar_one_or_none()
             topic_module = None
