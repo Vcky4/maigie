@@ -26,12 +26,12 @@ from src.domains.identity.repository import IdentityRepository
 from src.domains.intelligence.db_models import ChatSession, ChatMessage
 from src.domains.intelligence.repository import intelligence_repo
 from src.shared.database import get_session_factory
-from src.routes.chat_greeting import (
+from src.domains.intelligence.conversation.chat_greeting import (
     _build_greeting_components,
     _build_greeting_context,
     _build_greeting_prompt,
 )
-from src.routes.chat_helpers import (
+from src.domains.intelligence.conversation.chat_helpers import (
     MAIGIE_MENTION_PATTERN,
     _attach_topic_resources_context,
     _extract_suggestion,
@@ -41,28 +41,28 @@ from src.routes.chat_helpers import (
     _serialize_reply_preview,
     _strip_maigie_mention,
 )
-from src.services import note_service
-from src.services.component_response_service import (
+from src.domains.intelligence.conversation import note_service
+from src.domains.intelligence.conversation.component_response import (
     format_action_component_response,
     format_list_component_response,
 )
-from src.services.cost_calculator import calculate_ai_cost, calculate_revenue
-from src.services.credit_service import (
+from src.domains.billing.services.cost_calculator import calculate_ai_cost, calculate_revenue
+from src.domains.billing.services.credit_service import (
     PURCHASE_DEEP_LINK,
     check_credit_availability,
     consume_credits,
     get_credit_usage,
 )
-from src.services.llm.adapter_registry import get_feature_flag_service, get_llm_router
-from src.services.llm.errors import LLMProviderError
-from src.services.llm.feature_flags import (
+from src.domains.intelligence.reasoning.llm.adapter_registry import get_feature_flag_service, get_llm_router
+from src.domains.intelligence.reasoning.llm.errors import LLMProviderError
+from src.domains.intelligence.reasoning.llm.feature_flags import (
     PERSONAL_SCOPE,
     circle_scope,
 )
-from src.services.llm_registry import LlmTask, default_model_for
-from src.services.llm_service import llm_service
-from src.services.rag_service import rag_service
-from src.services.socket_manager import manager
+from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
+from src.domains.intelligence.reasoning.llm.llm_service import llm_service
+from src.domains.intelligence.reasoning.rag_service import rag_service
+from src.shared.infrastructure.socket_manager import manager
 from src.utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
@@ -224,7 +224,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
         # 2b. Deliver pending AI nudges on connect
         try:
-            from src.services.memory_service import get_pending_nudges
+            from src.domains.intelligence.memory.memory_service import get_pending_nudges
 
             pending = await get_pending_nudges(user.id)
             if pending:
@@ -395,7 +395,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     and not (context and context.get("reviewItemId"))
                 ):
                     try:
-                        from src.services.onboarding_service import (
+                        from src.domains.identity.onboarding import (
                             get_onboarding_state,
                             save_onboarding_state,
                         )
@@ -603,7 +603,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                 # Track activity (streak + lastSeenAt)
                 try:
-                    from src.services.activity_tracker import record_activity
+                    from src.domains.intelligence.observation.tracker import record_activity
 
                     await record_activity(user.id)
                 except Exception:
@@ -665,7 +665,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # 4.1b Index uploaded images into knowledge base (fire-and-forget)
                 if file_urls_list:
                     try:
-                        from src.services.knowledge_base_service import index_user_uploads
+                        from src.domains.knowledge.services.knowledge_base_service import index_user_uploads
 
                         asyncio.create_task(
                             index_user_uploads(
@@ -731,11 +731,11 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     and not (context and context.get("reviewItemId"))
                 ):
                     try:
-                        from src.services.onboarding_service import (
+                        from src.domains.identity.onboarding import (
                             ensure_onboarding_initialized,
                             handle_onboarding_message,
                         )
-                        from src.services.chat_session_service import (
+                        from src.domains.intelligence.conversation.session_service import (
                             get_or_create_onboarding_session,
                         )
 
@@ -1306,7 +1306,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
 
                     # Inject knowledge base context for this chat group
                     try:
-                        from src.services.circle_kb_context_service import (
+                        from src.domains.learning_spaces.services.kb_context_service import (
                             get_knowledge_context_for_chat_group,
                         )
 
@@ -1415,7 +1415,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                     print("⏭️ Skipping personal memory injection for circle chat.")
                 else:
                     try:
-                        from src.services.memory_service import get_memory_context
+                        from src.domains.intelligence.memory.memory_impl import get_memory_context
 
                         memory_ctx = await get_memory_context(user.id, query=llm_user_text)
                         if memory_ctx:

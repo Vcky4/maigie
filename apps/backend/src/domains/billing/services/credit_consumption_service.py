@@ -27,8 +27,8 @@ from src.domains.learning_spaces.repository import space_repo
 from src.shared.database import get_session_factory
 
 from src.config import Settings, get_settings
-from src.services.email import send_limit_reached_email
-from src.services.referral_service import get_daily_limit_increase
+from src.shared.infrastructure.email import send_limit_reached_email
+from src.domains.billing.services.referral_service import get_daily_limit_increase
 from src.utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)

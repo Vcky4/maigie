@@ -21,7 +21,7 @@ from typing import Any
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
 from src.domains.identity.repository import IdentityRepository
-from src.services.action_service import action_service
+from src.domains.intelligence.action.action_service import action_service
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
     from google import genai
     from google.genai import types
 
-    from src.services.llm_registry import LlmTask, default_model_for, gemini_api_key
+    from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for, gemini_api_key
 
     api_key = gemini_api_key()
     if not api_key:

@@ -225,7 +225,7 @@ class DocumentGenerationService:
         filename = f"{safe_title}_{timestamp}_{short_id}.{format}"
 
         # Upload to storage
-        from src.services.storage_service import storage_service
+        from src.shared.infrastructure.storage_service import storage_service
 
         storage_path = f"generated-docs/{user_id or 'anonymous'}"
         upload_result = await self._upload_bytes(storage_service, doc_bytes, filename, storage_path)

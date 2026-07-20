@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from src.services.skills.types import Skill, SkillCategory, ToolDefinition
+from .types import Skill, SkillCategory, ToolDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -223,15 +223,15 @@ class SkillRegistry:
 
     def _load_all_skills(self) -> None:
         """Import and register all skill modules."""
-        from src.services.skills.skill_courses import register as register_courses
-        from src.services.skills.skill_documents import register as register_documents
-        from src.services.skills.skill_goals import register as register_goals
-        from src.services.skills.skill_memory import register as register_memory
-        from src.services.skills.skill_notes import register as register_notes
-        from src.services.skills.skill_planning import register as register_planning
-        from src.services.skills.skill_resources import register as register_resources
-        from src.services.skills.skill_scheduling import register as register_scheduling
-        from src.services.skills.skill_study_mode import register as register_study_mode
+        from .skill_courses import register as register_courses
+        from .skill_documents import register as register_documents
+        from .skill_goals import register as register_goals
+        from .skill_memory import register as register_memory
+        from .skill_notes import register as register_notes
+        from .skill_planning import register as register_planning
+        from .skill_resources import register as register_resources
+        from .skill_scheduling import register as register_scheduling
+        from .skill_study_mode import register as register_study_mode
 
         register_courses(self)
         register_notes(self)

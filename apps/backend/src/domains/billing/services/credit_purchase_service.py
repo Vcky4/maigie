@@ -29,14 +29,14 @@ from src.domains.billing.repository import billing_repo
 
 from src.config import get_settings
 from src.shared.database import get_session_factory
-from src.services.audit_service import log_admin_action
-from src.services.credit_purchase_notifications import (
+from src.domains.admin.services.audit_service import log_admin_action
+from src.domains.billing.services.credit_purchase_notifications import (
     CREDIT_PURCHASE_NOTIFICATION_TITLE,
     CreditPurchaseNotificationData,
     format_push_notification_body,
     format_push_notification_payload,
 )
-from src.services.push_notification_service import send_push_notification
+from src.shared.infrastructure.push_notifications import send_push_notification
 from src.utils.exceptions import ResourceNotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -293,7 +293,7 @@ async def fulfill_purchase(
     pack_name = pack.name if pack else "Credit Pack"
 
     try:
-        from src.services.ws_event_bus import publish_ws_event
+        from src.shared.infrastructure.ws_event_bus import publish_ws_event
 
         await publish_ws_event(
             user_id=transaction.user_id,
@@ -527,7 +527,7 @@ async def _send_purchase_receipt_email(
     Args:
         data: The notification data containing user and purchase details.
     """
-    from src.services.credit_purchase_notifications import (
+    from src.domains.billing.services.credit_purchase_notifications import (
         format_email_subject,
         get_email_template_data,
     )
@@ -536,7 +536,7 @@ async def _send_purchase_receipt_email(
         logger.debug(f"No email for user {data.user_id} — skipping purchase receipt email")
         return
 
-    from src.services import email as email_service
+    from src.shared.infrastructure import email as email_service
 
     settings = get_settings()
     template_data = get_email_template_data(data)

@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.services.skills.types import Skill, SkillCategory, ToolDefinition
+from .types import Skill, SkillCategory, ToolDefinition
 
 if TYPE_CHECKING:
-    from src.services.skills.registry import SkillRegistry
+    from .registry import SkillRegistry
 
 
 SKILL = Skill(
@@ -133,7 +133,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the document generation skill."""
-    from src.services.skills.handlers import handle_generate_document
+    from .handlers import handle_generate_document
 
     registry.register_skill(
         SKILL,

@@ -26,7 +26,7 @@ async def generate_course_content_task(
             },
         )
 
-        from src.services.llm_service import llm_service
+        from src.domains.intelligence.reasoning.llm.llm_service import llm_service
 
         await manager.send_to_user(
             user_id,
@@ -46,7 +46,7 @@ async def generate_course_content_task(
 
         # Emit AI usage scoped to the course's workspace (Personal or Circle).
         try:
-            from src.services.usage_tracking_service import (
+            from src.domains.billing.services.usage_tracking import (
                 PERSONAL_USAGE_SCOPE,
                 build_circle_usage_scope,
                 emit_ai_usage,

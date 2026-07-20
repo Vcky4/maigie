@@ -75,3 +75,8 @@ async def record_interaction(
         importance=importance,
         metadata=metadata,
     )
+
+
+async def get_pending_nudges(user_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    """Get pending AI nudges for a user."""
+    return []  # TODO: migrate implementation from services/memory_service

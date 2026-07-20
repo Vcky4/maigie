@@ -31,7 +31,7 @@ def send_push_task(user_id: str, title: str, body: str, data: dict | None = None
     """Send a push notification via FCM."""
     import asyncio
 
-    from src.services.push_notification_service import send_push_to_user
+    from src.shared.infrastructure.push_notifications import send_push_to_user
 
     loop = asyncio.new_event_loop()
     try:
@@ -59,7 +59,7 @@ def send_weekly_summaries_task():
     """Send weekly learning summary emails."""
     import asyncio
 
-    from src.services.weekly_summary_email_service import send_weekly_summaries
+    from src.shared.infrastructure.email import send_weekly_summaries
 
     loop = asyncio.new_event_loop()
     try:

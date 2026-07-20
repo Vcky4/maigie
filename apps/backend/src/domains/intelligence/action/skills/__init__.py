@@ -6,7 +6,7 @@ Each skill defines its tools, handlers, and metadata independently of any
 specific LLM provider (Gemini, OpenAI, Anthropic, etc.).
 
 Usage:
-    from src.services.skills import skill_registry
+    from src.domains.intelligence.action.skills import skill_registry
 
     # Get all tool definitions in legacy format (for adapters)
     all_tools = skill_registry.get_all_tools_legacy_format()
@@ -21,6 +21,6 @@ Usage:
     study_tools = skill_registry.get_study_tools_legacy_format()
 """
 
-from src.services.skills.registry import SkillRegistry, skill_registry
+from .registry import SkillRegistry, skill_registry
 
 __all__ = ["SkillRegistry", "skill_registry"]

@@ -20,7 +20,7 @@ def generate_course_task(course_id: str, user_id: str, topic_prompt: str, diffic
     """
     import asyncio
 
-    from src.services.ai_course import generate_course_content_task
+    from src.domains.knowledge.services.ai_course_generation import generate_course_content_task
 
     loop = asyncio.new_event_loop()
     try:
@@ -41,7 +41,7 @@ def generate_schedule_task(user_id: str, preferences: dict | None = None):
     """Generate AI study schedule in background."""
     import asyncio
 
-    from src.services.schedule_regeneration_service import regenerate_schedule
+    from src.domains.intelligence.planning.schedule_regen_impl import regenerate_schedule
 
     loop = asyncio.new_event_loop()
     try:

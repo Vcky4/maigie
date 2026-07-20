@@ -1,567 +1,106 @@
 # Backend (FastAPI)
 
-FastAPI backend application for Maigie, the AI-powered academic operating system.
+FastAPI backend for Maigie — the AI-powered academic operating system.
 
-## Architecture Overview
+## Architecture
 
-Maigie's backend is built on **FastAPI** and uses **SQLAlchemy (PostgreSQL)** for the data layer. It features a robust **Agentic AI** architecture powered by Google Gemini, capable of long-term memory, proactive planning, and executing background tasks via **Celery**.
+This backend follows **domain-driven design**. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full specification.
 
-### Core Pillars
-
-1. **REST API**: Standard endpoints for CRUD operations (courses, goals, schedule).
-2. **Real-time Engine (WebSockets)**: Powers the conversational AI interface, streaming LLM responses, and real-time frontend UI component syncing.
-3. **Agentic AI System**:
-   - **Semantic Memory**: Saves user facts and learning insights.
-   - **Proactive Nudges**: Analyzes progress and pushes interventions to the user.
-   - **Spaced Repetition**: Manages cognitive decay curves using the SM-2 algorithm.
-   - **Tool Calling**: Allows the AI to autonomously create courses, study plans, schedules, and check for calendar conflicts.
-4. **Background Workers (Celery)**: Handles asynchronous heavy lifting like email dispatch, morning schedule generation, and automated daily AI reflections.
-
-## Setup
-
-### Quick Setup (Windows PowerShell)
-
-Run the automated setup script:
-
-```powershell
-cd apps/backend
-.\setup-dev.ps1
-or
-./setup-dev.sh
+```
+src/
+├── app.py                    # FastAPI application factory
+├── config.py                 # Pydantic settings
+├── shared/                   # Cross-cutting infrastructure
+│   ├── auth/                 # JWT, dependencies, role checks
+│   ├── database/             # SQLAlchemy async engine + session
+│   ├── middleware/           # Logging, security headers
+│   ├── exceptions/           # Unified error handling
+│   └── infrastructure/       # Email, push, storage, WebSocket
+├── domains/                  # Bounded contexts
+│   ├── identity/             # Auth, users, profiles
+│   ├── personal_learning/    # Notes, flashcards, study mode, exams
+│   ├── knowledge/            # Courses, resources, curriculum
+│   ├── learning_spaces/      # Collaborative environments
+│   ├── classrooms/           # Structured learning within spaces
+│   ├── intelligence/         # AI layer (reasoning, memory, planning, skills)
+│   ├── progress/             # Analytics, streaks, goals, schedules
+│   ├── billing/              # Payments, subscriptions, credits
+│   └── admin/                # Platform administration
+├── workers/                  # Celery background tasks
+└── integrations/             # External service adapters (ElevenLabs, Pinecone, etc.)
 ```
 
-
-
-This will:
-
-- Check Python installation
-- Install Poetry if needed
-- Configure Poetry to create virtual environment in project directory (`.venv`)
-- Install all dependencies (creates virtual environment automatically)
-- Create `.env` file from `.env.example`
-- Verify the setup
-
-### Manual Setup
-
-1. **Install Poetry** (if not already installed):
-
-   ```powershell
-   # Windows PowerShell
-   .\install-poetry.ps1
-
-   # Or use the official installer
-   (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
-   ```
-
-2. **Configure Poetry for in-project virtual environment** (recommended):
-
-   ```bash
-   poetry config virtualenvs.in-project true
-   ```
-
-3. **Install dependencies:**
-
-   ```bash
-   poetry install
-   ```
-
-   This will automatically create a `.venv` directory in your project with all dependencies.
-
-4. **Copy environment variables** (optional, defaults are used if not set):
-
-   ```powershell
-   # Windows PowerShell
-   Copy-Item .env.example .env
-
-   # Linux/Mac
-   cp .env.example .env
-   ```
-
-   Edit `.env` and set your `DATABASE_URL` (e.g., `postgresql://postgres:postgres@localhost:5432/maigie`)
-
-5. **Generate Prisma Client:**
-
-   ```bash
-   poetry run prisma generate
-   ```
-
-6. **Run database migrations:**
-
-   ```bash
-   # Create initial migration
-   poetry run prisma migrate dev --name init
-   ```
-
-7. **Run the development server:**
-
-   ```bash
-   nx serve backend
-   ```
-
-   Or directly:
-
-   ```bash
-   cd apps/backend
-   poetry run uvicorn src.main:app --reload
-   ```
-
-8. **Start background workers** (optional, for async task processing):
-
-   ```bash
-   # Start Celery worker (processes background tasks)
-   bash scripts/start-worker.sh
-   # or on Windows:
-   powershell -ExecutionPolicy Bypass -File scripts/start-worker.ps1
-
-   # Start Celery Beat (scheduler for periodic tasks)
-   bash scripts/start-beat.sh
-   # or on Windows:
-   powershell -ExecutionPolicy Bypass -File scripts/start-beat.ps1
-   ```
-
-## Code style
-
-Formatting uses **[Black](https://black.readthedocs.io/)** (line length **100**, see `pyproject.toml`). Run it from `apps/backend` before committing:
-
-```bash
-poetry run black src tests
-# or, if Black is on your PATH / current interpreter:
-python -m black src tests
-```
-
-Linting uses **Ruff** (`poetry run ruff check src`). Ruff is configured so routine layout stays aligned with Black (for example `E203` is ignored).
-
-## Background Workers
-
-The backend uses Celery for background task processing. Workers run independently from the main API server.
-
-### Starting Workers
-
-**Worker** (processes background tasks):
-
-```bash
-# Linux/Mac
-bash scripts/start-worker.sh
-
-# Windows PowerShell
-powershell -ExecutionPolicy Bypass -File scripts/start-worker.ps1
-
-# With custom options
-bash scripts/start-worker.sh --queue default --concurrency 4 --loglevel info
-```
-
-**Beat Scheduler** (runs periodic/scheduled tasks):
-
-```bash
-# Linux/Mac
-bash scripts/start-beat.sh
-
-# Windows PowerShell
-powershell -ExecutionPolicy Bypass -File scripts/start-beat.ps1
-```
-
-### Key Scheduled Tasks
-
-- **Morning Agentic Planning (`08:00`)**: AI reviews the user's upcoming exams and creates daily study plans.
-- **Evening Reflection (`20:00`)**: AI reviews the day's completed schedules and generates insights.
-- **Stale Goal Nudges (Daily)**: Identifies goals falling behind and pushes nudge notifications.
-- **Spaced Repetition Prompts (Daily)**: Queues due review items.
-
-### Creating Tasks
-
-Use the task framework to create background tasks:
-
-```python
-from src.tasks import task, register_task
-
-@register_task(
-    name="my_feature.process_data",
-    description="Processes user data",
-    category="my_feature",
-)
-@task(name="my_feature.process_data", max_retries=3)
-def process_data(data: dict) -> dict:
-    # Task implementation
-    return {"status": "completed"}
-```
-
-### Task Patterns
-
-**With retry on specific exceptions:**
-
-```python
-from src.tasks import task, retry_on_exception
-
-@task(bind=True, max_retries=5)
-@retry_on_exception((ConnectionError, TimeoutError), max_retries=5)
-def fetch_external_data(self, url: str):
-    # Will automatically retry on connection errors
-    pass
-```
-
-**Scheduled periodic tasks:**
-
-```python
-from src.tasks.schedules import register_periodic_task, DAILY_AT_MIDNIGHT
-from celery.schedules import crontab
-
-@register_periodic_task(
-    name="daily_cleanup",
-    schedule=DAILY_AT_MIDNIGHT,  # or crontab(hour=2, minute=0)
-)
-@task(name="daily_cleanup")
-def cleanup_old_data():
-    # Runs daily at midnight
-    pass
-```
-
-**Checking task status:**
-
-```python
-from src.tasks.utils import get_task_status, get_task_result
-
-# Get task status
-status = get_task_status(task_id)
-
-# Get task result (waits if not ready)
-result = get_task_result(task_id, timeout=30)
-```
-
-See `src/tasks/examples.py` for more usage patterns.
-
-## Verify Application Setup
-
-To verify that the Application Setup requirements are met:
-
-```bash
-# Using Poetry
-cd apps/backend
-poetry run python scripts/debug/verify_setup.py
-
-# Or using system Python (if dependencies are installed)
-python scripts/debug/verify_setup.py
-```
-
-To verify the Authentication Framework:
-
-```bash
-# Using Poetry
-cd apps/backend
-poetry run python scripts/debug/verify_auth.py
-
-# Or using system Python (if dependencies are installed)
-python scripts/debug/verify_auth.py
-```
-
-Or run the tests:
-
-```bash
-nx test backend
-# or
-poetry run pytest
-```
-
-## Project Structure
-
-### Core Application Files
-
-- `src/main.py` - FastAPI app factory and application entry point
-- `src/config.py` - Environment configuration management
-- `src/dependencies.py` - Dependency injection system
-- `src/middleware.py` - Custom middleware (logging, security headers)
-- `src/exceptions.py` - Custom exception classes and handlers
-
-### Core Utilities (`src/core/`)
-
-- `core/security.py` - JWT utilities, password hashing (bcrypt)
-- `core/oauth.py` - OAuth provider base structure (Google, GitHub)
-- `core/websocket.py` - WebSocket connection manager and event broadcasting
-- `core/database.py` - Database connection manager (legacy placeholder)
-- `core/cache.py` - Cache connection manager (legacy placeholder)
-
-### Database & Dependencies (`src/utils/`)
-
-- `utils/dependencies.py` - Dependency injection for Prisma and Redis clients
-  - `get_db_client()` - FastAPI dependency for Prisma database client
-  - `get_redis_client()` - FastAPI dependency for Redis cache client
-  - Lifecycle management functions for startup/shutdown
-
-### Database Schema (`prisma/`)
-
-- `prisma/schema.prisma` - Prisma schema with database models (User, Course, Goal)
-
-### Feature Modules
-
-- `src/routes/` - API route handlers
-  - `routes/auth.py` - Authentication routes (login, register, OAuth)
-  - `routes/chat.py` - Main WebSocket entry point for the AI conversation
-  - `routes/ai.py` - AI assistant routes with exception handling demos
-  - `routes/realtime.py` - WebSocket routes for real-time updates
-  - `routes/courses.py`, `routes/goals.py`, `routes/schedule.py`, etc.
-- `src/services/` - Business logic and Agentic AI Services
-  - `llm_service.py` - Gemini interface, system prompting, and streaming logic
-  - `gemini_tools.py` & `gemini_tool_handlers.py` - AI definitions and handlers
-  - `memory_service.py` - Long-term context retrieval, User Facts, Learning Insights
-  - `spaced_repetition_service.py` - SM-2 algorithm implementation
-  - `planning_service.py` & `reflection_service.py` - Automated AI reasoning loops
-- `src/models/` - Pydantic schemas and ORM models
-  - `models/auth.py` - Authentication models (UserRegister, UserLogin, TokenResponse, etc.)
-  - `models/error_response.py` - Standardized error response model
-  - `models/websocket.py` - WebSocket message models
-- `src/db/` - Database connection and migrations
-- `src/tasks/` - Background tasks framework (Celery)
-  - `tasks/agent_tasks.py` - Celery definitions for Agentic AI cron jobs
-  - `tasks/email_notifications.py` - Postmark email dispatching jobs
-  - `tasks/base.py` - Base task classes and decorators
-  - `tasks/retry.py` - Retry mechanism framework
-  - `tasks/failure.py` - Failed job handling
-  - `tasks/schedules.py` - Scheduled task infrastructure
-  - `tasks/registry.py` - Task registry and discovery
-  - `tasks/utils.py` - Task utilities (status, results, queue management)
-  - `tasks/examples.py` - Example task implementations (reference only)
-- `src/ai_client/` - LLM and embeddings clients
-- `src/workers/` - Worker management utilities
-  - `workers/manager.py` - Worker health checks and monitoring
-- `src/utils/` - Utility functions
-  - `utils/exceptions.py` - Custom business logic exceptions (SubscriptionLimitError, ResourceNotFoundError, etc.)
-
-### Tests
-
-- `tests/` - Test files
-- `scripts/debug/verify_setup.py` - Application setup verification script
-- `scripts/debug/verify_auth.py` - Authentication framework verification script
-- `scripts/debug/verify_websocket.py` - WebSocket framework verification script (run `.venv\Scripts\python.exe scripts/debug/verify_websocket.py`)
-
-## Application Setup Status
-
-✅ **FastAPI server runs successfully** - Application factory pattern implemented  
-✅ **Application structure follows defined patterns** - Organized according to Backend Infrastructure issue  
-✅ **Environment configuration works correctly** - Pydantic Settings with .env support  
-✅ **Dependency injection system works** - FastAPI Depends pattern implemented  
-✅ **Middleware stack is configured** - Logging, Security Headers, and CORS middleware  
-✅ **Comprehensive exception handling** - Standardized error responses with global handlers
-
-## WebSocket Framework Status
-
-✅ **WebSocket server runs** - Endpoint available at `/api/v1/realtime/ws`  
-✅ **Connection manager works** - Tracks connections, users, and channels  
-✅ **Event broadcasting framework works** - Broadcast to all/users/channels  
-✅ **Reconnection handling utilities work** - Tracks reconnection attempts  
-✅ **Heartbeat mechanism works** - Automatic ping/pong with timeout detection
-
-### Testing WebSocket Framework
-
-Run the verification script:
-
-```bash
-# Using virtual environment
-.venv\Scripts\python.exe scripts/debug/verify_websocket.py
-
-# Or using Poetry
-poetry run python scripts/debug/verify_websocket.py
-
-# Or using PowerShell script
-powershell -ExecutionPolicy Bypass -File scripts\verify-websocket.ps1
-```
-
-## Authentication Framework Status
-
-✅ **JWT utilities are available** - Access and refresh token creation/decoding  
-✅ **Password hashing utilities work** - bcrypt-based password hashing and verification  
-✅ **OAuth base structure is in place** - Google and GitHub OAuth providers  
-✅ **Security middleware is configured** - Security headers and request logging
-
-## API Endpoints
-
-### Core Endpoints
-
-- `GET /` - Root endpoint with app info
-- `GET /health` - Multi-service health check (validates DB and cache connectivity)
-- `GET /ready` - Readiness check (includes DB and cache status)
-- `GET /docs` - Interactive API documentation (Swagger UI)
-- `GET /redoc` - Alternative API documentation (ReDoc)
-- `GET /openapi.json` - OpenAPI schema
-
-### Authentication Endpoints
-
-- `POST /api/v1/auth/register` - Register a new user
-- `POST /api/v1/auth/login` - Login with email/password
-- `POST /api/v1/auth/refresh` - Refresh access token
-- `GET /api/v1/auth/me` - Get current authenticated user (requires Bearer token)
-- `GET /api/v1/auth/oauth/{provider}/authorize` - Initiate OAuth flow (google, github)
-- `GET /api/v1/auth/oauth/{provider}/callback` - OAuth callback endpoint
-- `GET /api/v1/auth/oauth/providers` - List available OAuth providers
-
-### API Module Endpoints
-
-All module endpoints are registered with `/api/v1` prefix:
-
-- `/api/v1/ai` - AI assistant routes
-- `/api/v1/courses` - Course management routes
-- `/api/v1/goals` - Goal tracking routes
-- `/api/v1/schedule` - Schedule management routes
-- `/api/v1/resources` - Resource management routes
-- `/api/v1/realtime` - WebSocket real-time communication
-- `/api/v1/examples` - Example/demonstration endpoints for testing exception handling
-
-## Virtual Environment
-
-Poetry automatically creates and manages a virtual environment for this project. The setup script configures Poetry to create the virtual environment in the project directory (`.venv`).
-
-**Using the virtual environment:**
-
-- All commands should be run with `poetry run` prefix:
-
-  ```bash
-  poetry run python scripts/debug/verify_setup.py
-  poetry run uvicorn src.main:app --reload
-  poetry run pytest
-  ```
-
-- Or activate the virtual environment manually:
-
-  ```powershell
-  # Windows PowerShell
-  .venv\Scripts\Activate.ps1
-
-  # Then run commands directly
-  python scripts/debug/verify_setup.py
-  uvicorn src.main:app --reload
-  ```
-
-**Note:** The `.venv` directory is gitignored and should not be committed.
-
-## Environment Variables
-
-See `.env.example` for available configuration options. Key settings:
-
-- `APP_NAME` - Application name
-- `DEBUG` - Enable debug mode
-- `ENVIRONMENT` - Environment (development/production)
-- `SECRET_KEY` - Secret key for JWT tokens
-- `ALGORITHM` - JWT algorithm (default: HS256)
-- `ACCESS_TOKEN_EXPIRE_MINUTES` - Access token expiration time
-- `REFRESH_TOKEN_EXPIRE_DAYS` - Refresh token expiration time
-- `CORS_ORIGINS` - Allowed CORS origins
-- `OAUTH_GOOGLE_CLIENT_ID` - Google OAuth client ID (optional)
-- `OAUTH_GOOGLE_CLIENT_SECRET` - Google OAuth client secret (optional)
-- `OAUTH_GITHUB_CLIENT_ID` - GitHub OAuth client ID (optional)
-- `OAUTH_GITHUB_CLIENT_SECRET` - GitHub OAuth client secret (optional)
-- `OAUTH_REDIRECT_URI` - OAuth redirect URI
-- `DATABASE_URL` - PostgreSQL connection string (required for Prisma)
-- `REDIS_URL` - Redis connection string (not yet implemented)
-
-## Database Setup
-
-This project uses Prisma as the ORM for PostgreSQL.
+## Quick Start
 
 ### Prerequisites
 
-- PostgreSQL installed and running
-- Database created (e.g., `maigie`)
+- Python 3.12+
+- PostgreSQL running locally
+- Poetry installed
 
-### Setup Steps
-
-1. **Configure database URL in `.env`:**
-
-   ```env
-   DATABASE_URL="postgresql://username:password@localhost:5432/maigie"
-   ```
-
-2. **Generate Prisma Client:**
-
-   ```bash
-   poetry run prisma generate
-   ```
-
-3. **Run migrations:**
-
-   ```bash
-   # Create and apply migration
-   poetry run prisma migrate dev --name init
-   ```
-
-4. **Optional: Open Prisma Studio (database GUI):**
-   ```bash
-   poetry run prisma studio
-   ```
-
-### Prisma Commands
-
-- `prisma generate` - Generate Prisma Client
-- `prisma migrate dev` - Create and apply migrations in development
-- `prisma migrate deploy` - Apply migrations in production
-- `prisma studio` - Open Prisma Studio (database GUI)
-- `prisma db push` - Push schema changes without migrations (dev only)
-- `prisma db seed` - Run database seeds
-
-### Database Models
-
-Current schema includes:
-
-- **User** - User accounts with authentication and subscription tiers
-
-See `prisma/schema.prisma` for the complete schema definition.
-
-## Exception Handling
-
-The application implements comprehensive exception handling with standardized error responses.
-
-### Error Response Format
-
-All errors follow a consistent format:
-
-```json
-{
-  "status_code": 403,
-  "code": "SUBSCRIPTION_LIMIT_EXCEEDED",
-  "message": "This feature requires a Premium subscription",
-  "detail": "Optional debug information (only in development)"
-}
-```
-
-### Custom Exceptions
-
-- **`SubscriptionLimitError`** (403) - Basic users accessing Premium features
-- **`ResourceNotFoundError`** (404) - Requested resource doesn't exist
-- **`UnauthorizedError`** (401) - Authentication required
-- **`ForbiddenError`** (403) - Insufficient permissions
-- **`ValidationError`** (422) - Business logic validation failures
-- **`InternalServerError`** (500) - Unexpected errors
-
-### Testing Exception Handling
-
-Example endpoints are available at `/api/v1/examples/*` for testing:
+### Setup
 
 ```bash
-# Test subscription limit (should return 403)
-curl -X POST http://localhost:8000/api/v1/examples/ai/voice-session \
-  -H "Content-Type: application/json" \
-  -d '{"session_type": "conversation"}'
+cd apps/backend
 
-# Test resource not found (should return 404)
-curl http://localhost:8000/api/v1/examples/ai/process/nonexistent
+# Install dependencies
+poetry install
 
-# Get info about all example endpoints
-curl http://localhost:8000/api/v1/examples/info
+# Copy env vars
+cp .env.example .env
+# Edit .env — set DATABASE_URL at minimum
 
-# Run automated tests
-poetry run pytest tests/test_exception_handling.py -v
+# Run database migrations
+poetry run alembic upgrade head
 
-# Run verification script
-poetry run python scripts/debug/verify_exceptions.py
+# Start the dev server
+bash scripts/serve.sh
 ```
 
-See `EXCEPTION_HANDLING_GUIDE.md` for complete documentation.
+The server starts at `http://localhost:8000`. API docs at `/docs`.
 
-- `DATABASE_URL` - PostgreSQL connection string (for future use)
-- `REDIS_URL` - Redis connection string (default: `redis://localhost:6379/0`)
-- `REDIS_KEY_PREFIX` - Prefix for all cache keys (default: `maigie:`)
-- `REDIS_SOCKET_TIMEOUT` - Redis socket timeout in seconds (default: 5)
-- `REDIS_SOCKET_CONNECT_TIMEOUT` - Redis connection timeout in seconds (default: 5)
-- `CELERY_BROKER_URL` - Celery broker URL (auto-generated from REDIS_URL, uses DB 1)
-- `CELERY_RESULT_BACKEND` - Celery result backend URL (auto-generated from REDIS_URL, uses DB 2)
-- `CELERY_TASK_SERIALIZER` - Task serialization format (default: `json`)
-- `CELERY_RESULT_SERIALIZER` - Result serialization format (default: `json`)
-- `CELERY_TIMEZONE` - Timezone for scheduled tasks (default: `UTC`)
-- `CELERY_TASK_ALWAYS_EAGER` - Run tasks synchronously (default: `false`, set to `true` for testing)
+### Background Workers (optional)
+
+```bash
+# Celery worker (processes background tasks)
+bash scripts/start-worker.sh
+
+# Celery Beat (scheduled periodic tasks)
+bash scripts/start-beat.sh
+```
+
+## Code Style
+
+- Formatter: **Black** (line-length 100)
+- Linter: **Ruff**
+
+```bash
+poetry run black src tests
+poetry run ruff check src
+```
+
+## Testing
+
+```bash
+poetry run pytest
+```
+
+## Key Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/v1/auth/login` | Login |
+| `POST /api/v1/auth/register` | Register |
+| `GET /api/v1/learning/home` | Learning home feed |
+| `GET /api/v1/learning/notes` | List notes |
+| `WS /api/v1/intelligence/ws` | AI chat WebSocket |
+| `GET /docs` | Swagger UI |
+
+## Environment Variables
+
+See `.env.example` for all available configuration. Key settings:
+
+- `DATABASE_URL` — PostgreSQL connection string (required)
+- `GEMINI_API_KEY` — Google Gemini API key (required for AI)
+- `SECRET_KEY` — JWT signing key
+- `REDIS_URL` — Redis for caching and Celery broker

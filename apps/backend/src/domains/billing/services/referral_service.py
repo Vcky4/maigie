@@ -37,3 +37,12 @@ async def claim_reward(user: User, reward_id: str) -> dict[str, Any]:
     )
 
     return await _claim(user, reward_id)
+
+
+async def get_daily_limit_increase(user) -> int:
+    """Get the daily limit increase from referrals for a user.
+
+    Args:
+        user: User model instance or user_id string.
+    """
+    return 0  # TODO: migrate implementation from services/referral_service

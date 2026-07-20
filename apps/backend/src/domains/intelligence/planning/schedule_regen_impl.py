@@ -15,8 +15,8 @@ from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
 from src.shared.database import get_session_factory
 from src.config import get_settings
-from src.services.llm import new_gemini_client
-from src.services.skills.handlers import handle_create_schedule
+from src.domains.intelligence.reasoning.llm import new_gemini_client
+from src.domains.intelligence.action.skills.handlers import handle_create_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ async def regenerate_user_schedule(user_id: str) -> None:
         # 4. Get user preferences from memory (if available)
         facts_text = ""
         try:
-            from src.services.user_memory_service import user_memory_service
+            from src.domains.intelligence.memory.user_memory_impl import user_memory_service
 
             user_facts = await user_memory_service.get_user_facts(
                 user_id, category="schedule", limit=10
@@ -284,3 +284,8 @@ Return ONLY the JSON array, no other text."""
 
     except Exception as e:
         logger.error(f"Schedule regeneration failed for user {user_id}: {e}", exc_info=True)
+
+
+async def regenerate_schedule(user_id: str, preferences: dict | None = None) -> None:
+    """Alias for regenerate_user_schedule (used by workers)."""
+    await regenerate_user_schedule(user_id)

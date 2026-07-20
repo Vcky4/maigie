@@ -55,3 +55,8 @@ async def on_study_session_completed(data: dict) -> None:
     user_id = data.get("user_id")
     logger.debug(f"Intelligence observed: study_session_completed user={user_id}")
     # Future: update learning patterns, adjust recommendations
+
+
+async def record_activity(user_id: str, **kwargs) -> None:
+    """Record user activity (streak tracking, lastSeenAt)."""
+    pass  # TODO: migrate implementation from services/activity_tracker

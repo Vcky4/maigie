@@ -6,10 +6,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.services.skills.types import Skill, SkillCategory, ToolDefinition
+from .types import Skill, SkillCategory, ToolDefinition
 
 if TYPE_CHECKING:
-    from src.services.skills.registry import SkillRegistry
+    from .registry import SkillRegistry
 
 
 SKILL = Skill(
@@ -151,7 +151,7 @@ SKILL = Skill(
 
 def register(registry: SkillRegistry) -> None:
     """Register the scheduling skill."""
-    from src.services.skills.handlers import (
+    from .handlers import (
         handle_check_schedule_conflicts,
         handle_create_schedule,
         handle_get_user_schedule,

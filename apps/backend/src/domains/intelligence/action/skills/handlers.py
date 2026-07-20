@@ -17,7 +17,7 @@ from src.domains.intelligence.repository import intelligence_repo
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
 from src.shared.database import get_session_factory
-from src.services.action_service import action_service
+from src.domains.intelligence.action.action_service import action_service
 
 logger = logging.getLogger(__name__)
 
@@ -485,7 +485,7 @@ async def handle_regenerate_schedule(
     """Handle regenerate_schedule tool call — regenerates the user's study plan."""
     import asyncio
 
-    from src.services.schedule_regeneration_service import regenerate_user_schedule
+    from src.domains.intelligence.planning.schedule_regen_impl import regenerate_user_schedule
 
     # Run regeneration (await it so the AI can report the result)
     try:
@@ -1029,7 +1029,7 @@ async def handle_create_study_plan(
     progress_callback=None,
 ) -> dict[str, Any]:
     """Handle create_study_plan tool call. Creates a multi-step study plan."""
-    from src.services.planning_service import create_study_plan
+    from src.domains.intelligence.planning.planning_impl import create_study_plan
 
     goal = args.get("goal", "")
     if not goal:
@@ -1102,7 +1102,7 @@ async def handle_get_pending_nudges(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle get_pending_nudges tool call. Returns proactive AI suggestions."""
-    from src.services.memory_service import get_pending_nudges
+    from src.domains.intelligence.memory.memory_service import get_pending_nudges
 
     limit = args.get("limit", 5)
     try:
@@ -1136,7 +1136,7 @@ async def handle_email_user(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle email_user tool call. Sends an email to the user."""
-    from src.services import email
+    from src.shared.infrastructure import email
     from src.domains.identity.repository import IdentityRepository
 
     subject = args.get("subject")
@@ -1179,7 +1179,7 @@ async def handle_generate_document(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle generate_document tool call. Generates a PDF or DOCX document."""
-    from src.services.document_generation_service import document_generation_service
+    from src.domains.personal_learning.services.document_generation import document_generation_service
 
     doc_format = args.get("format", "pdf")
     title = args.get("title")
