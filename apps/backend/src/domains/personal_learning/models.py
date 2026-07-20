@@ -6,8 +6,26 @@ These are the learner's private artifacts.
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
+
+
+class CamelModel(BaseModel):
+    """Base model for response schemas that read from SQLAlchemy ORM objects.
+
+    Automatically converts snake_case Python attributes (from SQLAlchemy models)
+    to camelCase JSON fields. Supports both:
+    - Direct construction with camelCase kwargs: CamelModel(userId="abc")
+    - ORM attribute reading: CamelModel.model_validate(orm_object)
+    """
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
 
 
 # ===========================================================================
@@ -15,11 +33,9 @@ from pydantic import BaseModel, ConfigDict, Field
 # ===========================================================================
 
 
-class NoteTagResponse(BaseModel):
+class NoteTagResponse(CamelModel):
     id: str
     tag: str
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class NoteAttachmentCreate(BaseModel):
@@ -28,24 +44,12 @@ class NoteAttachmentCreate(BaseModel):
     size: int | None = None
 
 
-class NoteAttachmentResponse(BaseModel):
+class NoteAttachmentResponse(CamelModel):
     id: str
     filename: str
     url: str
     size: int | None = None
-    createdAt: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-    @classmethod
-    def from_orm_model(cls, att) -> "NoteAttachmentResponse":
-        return cls(
-            id=att.id,
-            filename=att.filename,
-            url=att.url,
-            size=att.size,
-            createdAt=getattr(att, "created_at", None),
-        )
+    created_at: datetime | None = None
 
 
 class NoteCreate(BaseModel):
@@ -70,43 +74,20 @@ class NoteUpdate(BaseModel):
     tags: list[str] | None = None
 
 
-class NoteResponse(BaseModel):
+class NoteResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     title: str
     content: str | None = None
     summary: str | None = None
-    courseId: str | None = None
-    topicId: str | None = None
+    course_id: str | None = None
+    topic_id: str | None = None
     archived: bool = False
-    voiceRecordingUrl: str | None = None
+    voice_recording_url: str | None = None
     tags: list[NoteTagResponse] = []
     attachments: list[NoteAttachmentResponse] = []
-    createdAt: datetime
-    updatedAt: datetime
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
-    @classmethod
-    def from_orm_model(cls, note) -> "NoteResponse":
-        """Convert a SQLAlchemy Note to NoteResponse, handling snake_case → camelCase."""
-        return cls(
-            id=note.id,
-            userId=note.user_id,
-            title=note.title,
-            content=note.content,
-            summary=note.summary,
-            courseId=note.course_id,
-            topicId=note.topic_id,
-            archived=note.archived,
-            voiceRecordingUrl=note.voice_recording_url,
-            tags=[NoteTagResponse(id=t.id, tag=t.tag) for t in (note.tags or [])],
-            attachments=[
-                NoteAttachmentResponse.from_orm_model(a) for a in (note.attachments or [])
-            ],
-            createdAt=note.created_at,
-            updatedAt=note.updated_at,
-        )
+    created_at: datetime
+    updated_at: datetime
 
 
 class NoteListResponse(BaseModel):
@@ -197,20 +178,18 @@ class DocumentGenerateRequest(BaseModel):
     topicId: str | None = None
 
 
-class DocumentResponse(BaseModel):
+class DocumentResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     title: str
-    type: str
-    format: str
-    status: str
-    downloadUrl: str | None = None
-    previewUrl: str | None = None
-    shareId: str | None = None
-    isPublic: bool = False
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    format: str | None = None
+    style: str | None = None
+    filename: str | None = None
+    file_url: str | None = None
+    preview_url: str | None = None
+    share_id: str | None = None
+    is_public: bool = False
+    created_at: datetime
 
 
 class DocumentListResponse(BaseModel):
@@ -311,25 +290,23 @@ class FlashcardCreate(BaseModel):
     sourceId: str | None = None
 
 
-class FlashcardResponse(BaseModel):
+class FlashcardResponse(CamelModel):
     id: str
-    userId: str
-    deckId: str | None = None
+    user_id: str
+    deck_id: str | None = None
     front: str
     back: str
-    intervalDays: int
-    repetitionCount: int
-    easeFactor: float
-    nextReviewAt: datetime | None = None
-    lastReviewedAt: datetime | None = None
-    lastQuality: int | None = None
-    lapseCount: int
-    sourceType: str | None = None
-    sourceId: str | None = None
-    createdAt: datetime
-    updatedAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    interval_days: int
+    repetition_count: int
+    ease_factor: float
+    next_review_at: datetime | None = None
+    last_reviewed_at: datetime | None = None
+    last_quality: int | None = None
+    lapse_count: int
+    source_type: str | None = None
+    source_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class FlashcardReviewRequest(BaseModel):
@@ -351,17 +328,15 @@ class DeckCreate(BaseModel):
     prepId: str | None = None
 
 
-class DeckResponse(BaseModel):
+class DeckResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     title: str
     description: str | None = None
-    courseId: str | None = None
-    topicId: str | None = None
-    prepId: str | None = None
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    course_id: str | None = None
+    topic_id: str | None = None
+    prep_id: str | None = None
+    created_at: datetime
 
 
 # ===========================================================================
@@ -377,18 +352,16 @@ class SavedResourceCreate(BaseModel):
     tags: list[str] | None = None
 
 
-class SavedResourceResponse(BaseModel):
+class SavedResourceResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     title: str
     url: str | None = None
-    sourceType: str
-    sourceId: str | None = None
+    source_type: str
+    source_id: str | None = None
     tags: list[str] | None = None
-    lastAccessedAt: datetime | None = None
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    last_accessed_at: datetime | None = None
+    created_at: datetime
 
 
 class SavedResourceTagUpdate(BaseModel):
@@ -400,25 +373,23 @@ class SavedResourceTagUpdate(BaseModel):
 # ===========================================================================
 
 
-class LearningProfileResponse(BaseModel):
+class LearningProfileResponse(CamelModel):
     id: str
-    userId: str = Field(validation_alias="user_id")
+    user_id: str
     purpose: str | None = None
     subjects: list | None = None
-    goalsText: str | None = Field(default=None, validation_alias="goals_text")
-    preferredExplanationStyle: str | None = Field(default=None, validation_alias="preferred_explanation_style")
-    onboardingCompletedAt: datetime | None = Field(default=None, validation_alias="onboarding_completed_at")
-    maturityDays: int = Field(default=0, validation_alias="maturity_days")
-    quietHoursStart: str | None = Field(default=None, validation_alias="quiet_hours_start")
-    quietHoursEnd: str | None = Field(default=None, validation_alias="quiet_hours_end")
-    preferredStudyTimes: dict | None = Field(default=None, validation_alias="preferred_study_times")
-    avgSessionMinutes: float | None = Field(default=None, validation_alias="avg_session_minutes")
-    consistencyScore: float | None = Field(default=None, validation_alias="consistency_score")
-    bestDayOfWeek: str | None = Field(default=None, validation_alias="best_day_of_week")
-    dropoutRisk: float | None = Field(default=None, validation_alias="dropout_risk")
-    createdAt: datetime = Field(validation_alias="created_at")
-
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    goals_text: str | None = None
+    preferred_explanation_style: str | None = None
+    onboarding_completed_at: datetime | None = None
+    maturity_days: int = 0
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    preferred_study_times: dict | None = None
+    avg_session_minutes: float | None = None
+    consistency_score: float | None = None
+    best_day_of_week: str | None = None
+    dropout_risk: float | None = None
+    created_at: datetime | None = None
 
 
 class PurposeSetRequest(BaseModel):
@@ -437,22 +408,20 @@ class SubjectsSetRequest(BaseModel):
 # ===========================================================================
 
 
-class NotificationResponse(BaseModel):
+class NotificationResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     type: str
     title: str
     body: str | None = None
-    priority: str | None = None
-    actionData: dict | None = None
-    scheduledAt: datetime | None = None
-    deliveredAt: datetime | None = None
-    readAt: datetime | None = None
-    dismissedAt: datetime | None = None
+    priority: int | None = None
+    action_data: dict | None = None
+    scheduled_at: datetime | None = None
+    delivered_at: datetime | None = None
+    read_at: datetime | None = None
+    dismissed_at: datetime | None = None
     status: str
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
 # ===========================================================================
@@ -460,33 +429,29 @@ class NotificationResponse(BaseModel):
 # ===========================================================================
 
 
-class PrepTopicResponse(BaseModel):
+class PrepTopicResponse(CamelModel):
     id: str
-    prepId: str
+    prep_id: str
     title: str
     description: str | None = None
-    estimatedMinutes: int | None = None
-    orderIndex: int
-    masteryScore: float | None = None
+    estimated_minutes: int | None = None
+    order_index: int
+    mastery_score: float | None = None
     status: str
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
-class PrepMaterialResponse(BaseModel):
+class PrepMaterialResponse(CamelModel):
     id: str
-    prepId: str
+    prep_id: str
     filename: str
     url: str
-    fileType: str | None = None
+    file_type: str | None = None
     size: int | None = None
-    extractedText: str | None = None
+    extracted_text: str | None = None
     category: str | None = None
     label: str | None = None
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
 class PrepCreateRequest(BaseModel):
@@ -498,19 +463,14 @@ class PrepCreateRequest(BaseModel):
     description: str | None = None
 
 
-class PrepSummaryResponse(BaseModel):
+class PrepSummaryResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     subject: str
-    type: str
-    examDate: str | None = None
+    exam_date: datetime | None = None
     description: str | None = None
     status: str
-    progressPercentage: float
-    daysRemaining: int
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
 # ===========================================================================
@@ -526,21 +486,18 @@ class QuizQuestionResponse(BaseModel):
     orderIndex: int
 
 
-class QuizSessionResponse(BaseModel):
+class QuizSessionResponse(CamelModel):
     id: str
-    userId: str
-    prepId: str
+    user_id: str
+    prep_id: str
     mode: str
     status: str
-    totalQuestions: int
-    correctCount: int | None = None
-    scorePercentage: float | None = None
-    durationSeconds: int | None = None
-    completedAt: datetime | None = None
-    questions: list[QuizQuestionResponse] | None = None
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    total_questions: int
+    correct_count: int | None = None
+    score_percentage: float | None = None
+    duration_seconds: int | None = None
+    completed_at: datetime | None = None
+    created_at: datetime
 
 
 class AnswerResultResponse(BaseModel):
@@ -572,39 +529,32 @@ class StudyPlanCreate(BaseModel):
     prepId: str | None = None
 
 
-class StudyPlanItemResponse(BaseModel):
+class StudyPlanItemResponse(CamelModel):
     id: str
-    planId: str
+    plan_id: str
     title: str
     description: str | None = None
-    scheduledDate: str | None = None
-    estimatedMinutes: int | None = None
-    itemType: str | None = None
-    topicId: str | None = None
-    prepTopicId: str | None = None
+    scheduled_date: datetime | None = None
+    estimated_minutes: int | None = None
+    item_type: str | None = None
+    topic_id: str | None = None
+    prep_topic_id: str | None = None
     status: str
-    completedAt: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
+    completed_at: datetime | None = None
 
 
-class StudyPlanResponse(BaseModel):
+class StudyPlanResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     title: str
-    goalDescription: str | None = None
-    deadline: str
-    prepId: str | None = None
+    goal_description: str | None = None
+    deadline: datetime | None = None
+    prep_id: str | None = None
     status: str
-    totalItems: int
-    completedItems: int
-    completionPercentage: float
-    daysRemaining: int
-    todaysTasks: list[StudyPlanItemResponse]
+    total_items: int | None = None
+    completed_items: int | None = None
     items: list[StudyPlanItemResponse] | None = None
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
 # ===========================================================================
@@ -612,20 +562,18 @@ class StudyPlanResponse(BaseModel):
 # ===========================================================================
 
 
-class ReflectionResponse(BaseModel):
+class ReflectionResponse(CamelModel):
     id: str
-    userId: str
+    user_id: str
     type: str
-    periodStart: datetime
-    periodEnd: datetime
+    period_start: datetime
+    period_end: datetime
     summary: str
-    activitiesLayer: dict | None = None
-    progressLayer: dict | None = None
-    achievementsLayer: dict | None = None
+    activities_layer: dict | None = None
+    progress_layer: dict | None = None
+    achievements_layer: dict | None = None
     recommendations: dict | None = None
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
 class ReflectionGenerateRequest(BaseModel):
@@ -637,18 +585,16 @@ class ReflectionGenerateRequest(BaseModel):
 # ===========================================================================
 
 
-class DiscoveryRecommendationResponse(BaseModel):
+class DiscoveryRecommendationResponse(CamelModel):
     id: str
-    userId: str
-    itemType: str
-    itemId: str
+    user_id: str
+    item_type: str
+    item_id: str
     title: str
     reason: str
-    relevanceScore: float
+    relevance_score: float
     status: str
-    createdAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
 
 
 # ===========================================================================
@@ -656,16 +602,14 @@ class DiscoveryRecommendationResponse(BaseModel):
 # ===========================================================================
 
 
-class ActivityFeedEntryResponse(BaseModel):
+class ActivityFeedEntryResponse(CamelModel):
     id: str
-    userId: str
-    activityType: str
+    user_id: str
+    activity_type: str
     title: str
     description: str | None = None
     context: dict | None = None
-    occurredAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    occurred_at: datetime
 
 
 class ActivityFeedResponse(BaseModel):
