@@ -175,6 +175,7 @@ async def _resolve_provider(user_id: str | None) -> str:
     Falls back to system default if no preference set or user_id is None.
     """
     if not user_id:
+        logger.debug("No user_id provided, using default provider")
         return _DEFAULT_PROVIDER
 
     from ..repository import personal_learning_repo as repo
@@ -183,10 +184,13 @@ async def _resolve_provider(user_id: str | None) -> str:
     if profile and profile.preferred_llm_provider:
         provider = profile.preferred_llm_provider.lower().strip()
         if provider in SUPPORTED_PROVIDERS:
+            print(f"[LLM] User {user_id} preferred provider: {provider}")
             return provider
         logger.warning(
             f"Unknown LLM provider '{provider}' for user {user_id}, using default"
         )
+    else:
+        logger.debug(f"No LLM preference for user {user_id}, using default: {_DEFAULT_PROVIDER}")
 
     return _DEFAULT_PROVIDER
 
@@ -246,6 +250,10 @@ async def generate_content(
     """
     # Resolve preferred provider
     primary_provider = await _resolve_provider(user_id)
+    print(
+        f"[LLM] request: user_id={user_id}, resolved_provider={primary_provider}, "
+        f"prompt_length={len(prompt)}, max_tokens={max_tokens}"
+    )
 
     # Build provider attempt order: primary first, then fallbacks
     providers_to_try = [primary_provider] + _get_fallback_providers(primary_provider)
@@ -271,6 +279,7 @@ async def generate_content(
                     timeout=timeout_s,
                 )
                 _record_success(provider)
+                print(f"[LLM] [{provider}] succeeded: response_length={len(result)}")
                 return result
 
             except asyncio.TimeoutError:
