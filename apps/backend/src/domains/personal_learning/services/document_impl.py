@@ -1167,6 +1167,8 @@ async def create_from_prompt(
         logger.error(f"LLM generation failed for document '{title}': {e}")
         content = f"# {title}\n\n(Content generation failed. Please try again.)"
 
+    content = _sanitize_llm_output(content)
+
     # Render the file bytes and upload
     result = await document_generation_service.generate_document(
         format=format,
@@ -1244,102 +1246,56 @@ async def get_shared_document(share_id: str):
 
 _DOC_TYPE_GUIDANCE: dict[str, dict[str, str]] = {
     "essay": {
-        "word_target": "800-1200 words",
+        "word_target": "800 to 1200 words",
+        "voice": "formal and analytical",
         "structure": (
-            "1. Introduction — hook, background context, and a clear thesis statement.\n"
-            "2. Body — 3 to 5 paragraphs, each opening with a topic sentence and "
-            "developing one argument with evidence and analysis.\n"
-            "3. Conclusion — restate the thesis in new words, synthesize the argument, "
-            "and end with a broader implication or call to reflection."
-        ),
-        "voice": "formal, analytical, and third-person",
-        "extras": (
-            "Cite claims using inline references like (Author, Year) where relevant. "
-            "Do NOT invent specific citations — only reference them if the user provided them "
-            "in the prompt. Prefer clear reasoning over jargon."
+            "an introduction with a clear thesis, three to five body paragraphs each "
+            "developing one argument with evidence, and a conclusion that ties the thesis "
+            "to a broader implication."
         ),
     },
     "report": {
-        "word_target": "1200-2000 words",
-        "structure": (
-            "1. Executive Summary (~100-150 words).\n"
-            "2. Introduction — scope, objectives, background.\n"
-            "3. Methodology — how the analysis was conducted.\n"
-            "4. Findings — grouped under sub-headings, with data where possible.\n"
-            "5. Discussion — interpretation of findings, limitations.\n"
-            "6. Recommendations — 3 to 5 concrete, actionable items.\n"
-            "7. Conclusion — brief synthesis.\n"
-            "8. References — only if the user cited sources."
-        ),
+        "word_target": "1200 to 2000 words",
         "voice": "objective, precise, and professional",
-        "extras": (
-            "Use tables and bullet points to summarize data. Number sections (1, 1.1, 2, ...). "
-            "Keep paragraphs tight — reports reward brevity."
+        "structure": (
+            "an executive summary, introduction, methodology, findings grouped under "
+            "sub-headings, discussion, actionable recommendations, and a brief conclusion."
         ),
     },
     "presentation": {
-        "word_target": "8-14 slides worth of content",
+        "word_target": "8 to 14 slides",
+        "voice": "concise and speaker-friendly",
         "structure": (
-            "Return one Markdown H1 as the title slide, then one Markdown H2 per slide.\n"
-            "Under each H2, use short bullet points (3-6 per slide, one line each).\n"
-            "Include a closing 'Summary' slide and a 'Q&A' or 'Thank you' slide."
-        ),
-        "voice": "concise, high-signal, and speaker-friendly",
-        "extras": (
-            "Do NOT write full paragraphs. Bullets should be talking points, not sentences. "
-            "Consider adding an optional 'Speaker notes:' line under each slide with 1-2 "
-            "sentences of extra context for the presenter."
+            "one H1 for the title slide, then one H2 per slide with 3 to 6 short bullets "
+            "each. Close with a summary slide and a thank-you or Q&A slide. Bullets should "
+            "be talking points, not full sentences."
         ),
     },
     "letter": {
-        "word_target": "150-400 words",
+        "word_target": "150 to 400 words",
+        "voice": "polite and direct",
         "structure": (
-            "1. Sender contact block (top-right).\n"
-            "2. Date.\n"
-            "3. Recipient contact block.\n"
-            "4. Salutation (\"Dear ...,\").\n"
-            "5. Opening paragraph — purpose.\n"
-            "6. Body — 1 to 3 short paragraphs.\n"
-            "7. Closing — restate the ask or next step.\n"
-            "8. Sign-off (\"Sincerely,\") and name."
-        ),
-        "voice": "polite, direct, and appropriate to the recipient",
-        "extras": (
-            "Match the tone to context — formal for institutions, warm for personal letters. "
-            "Avoid clichés."
+            "sender contact, date, recipient contact, salutation, one to three body "
+            "paragraphs stating the purpose and any request, a closing line, and a sign-off."
         ),
     },
     "cv": {
-        "word_target": "one page, dense but readable",
+        "word_target": "one page, dense",
+        "voice": "confident and results-focused",
         "structure": (
-            "1. Contact — name (H1), email, phone, location, links (LinkedIn/GitHub).\n"
-            "2. Professional Summary — 2 to 3 sentence positioning statement.\n"
-            "3. Experience — reverse-chronological. For each role: title, company, dates, "
-            "and 3 to 5 bullet points using strong action verbs and quantified results.\n"
-            "4. Education — degree, institution, dates, key achievements.\n"
-            "5. Skills — grouped by category (e.g. Languages, Frameworks, Tools).\n"
-            "6. Projects or Publications — optional, only if provided."
-        ),
-        "voice": "confident, third-person implied (no pronouns), and results-focused",
-        "extras": (
-            "Every experience bullet MUST start with a strong action verb (Built, Led, "
-            "Reduced, Shipped, Automated). Quantify impact wherever possible (percentages, "
-            "team size, revenue, timelines). Do NOT invent facts — use only what the user "
-            "provides. Where information is missing, use placeholders like `[Company]` or "
-            "`[Metric]` so the user can fill them in."
+            "contact block, a short professional summary, reverse-chronological experience "
+            "with three to five bullets per role starting with action verbs and including "
+            "measurable results, education, and grouped skills. Use bracketed placeholders "
+            "like [Company] for any facts the user did not supply."
         ),
     },
 }
 
 
 _DEFAULT_GUIDANCE = {
-    "word_target": "600-1000 words",
-    "structure": (
-        "Use clear headings for major sections and short paragraphs. "
-        "Group related ideas under H2 headings; use bullet lists for enumerable items."
-    ),
-    "voice": "clear, professional, and appropriate to the audience",
-    "extras": "Prefer clarity over cleverness. Cut anything that does not serve the reader.",
+    "word_target": "600 to 1000 words",
+    "voice": "clear and professional",
+    "structure": "clear headings for major sections and short focused paragraphs.",
 }
 
 
@@ -1349,25 +1305,23 @@ def _resolve_doc_type_guidance(doc_type: str) -> dict[str, str]:
 
 
 def _build_document_prompt(*, doc_type: str, title: str, prompt: str, format: str) -> str:
-    """Compose a rich, type-aware LLM prompt for document generation."""
-    guidance = _resolve_doc_type_guidance(doc_type)
-    format_hint = format.upper()
+    """Compose a short, focused LLM prompt for document generation.
 
+    Kept intentionally lean — long rule-lists cause the model to echo
+    instructions back as content. Voice is enforced via the sanitizer
+    (see ``_sanitize_llm_output``), not the prompt.
+    """
+    guidance = _resolve_doc_type_guidance(doc_type)
+
+    article = "an" if (doc_type or "").strip().lower()[:1] in "aeiou" else "a"
     return (
-        f"You are a professional writer producing a {doc_type} titled \"{title}\".\n\n"
-        f"TARGET LENGTH: {guidance['word_target']}.\n"
-        f"VOICE: {guidance['voice']}.\n\n"
-        f"REQUIRED STRUCTURE:\n{guidance['structure']}\n\n"
-        f"STYLE NOTES:\n{guidance['extras']}\n\n"
-        f"FORMATTING RULES:\n"
-        f"- Return well-structured Markdown ready for rendering to {format_hint}.\n"
-        f"- Use `#` for the document title, `##` for major sections, `###` for subsections.\n"
-        f"- Use `-` for unordered lists and `1.` for ordered lists.\n"
-        f"- Use `**bold**` sparingly, only for emphasis or defined terms.\n"
-        f"- Do NOT wrap the output in ```markdown fences.\n"
-        f"- Do NOT include meta-commentary, disclaimers, or notes about the writing process.\n"
-        f"- Return ONLY the finished document body.\n\n"
-        f"USER REQUEST:\n{prompt.strip()}"
+        f"Write {article} {doc_type} titled \"{title}\".\n\n"
+        f"{prompt.strip()}\n\n"
+        f"Length: {guidance['word_target']}. Voice: {guidance['voice']}.\n"
+        f"Structure it as: {guidance['structure']}\n\n"
+        f"Return only the finished document in Markdown. "
+        f"Use plain text for math (e.g. O(log n), not LaTeX). "
+        f"Use commas and periods, not em-dashes."
     )
 
 
@@ -1381,3 +1335,90 @@ def _max_tokens_for_type(doc_type: str) -> int:
         "presentation": 3500,
         "report": 5000,
     }.get(key, 3000)
+
+
+
+# ---------------------------------------------------------------------------
+# LLM output sanitization
+# ---------------------------------------------------------------------------
+
+# Compiled once at module load.
+_EMDASH_PATTERN = re.compile(r"\s*[—–]\s*")
+
+# LaTeX inline math: $...$ but not $$...$$ (display) — we strip both.
+_LATEX_INLINE_PATTERN = re.compile(r"\$([^$\n]+?)\$")
+_LATEX_DISPLAY_PATTERN = re.compile(r"\$\$([^$]+?)\$\$", re.DOTALL)
+_LATEX_PAREN_PATTERN = re.compile(r"\\\(([^)]+?)\\\)")
+_LATEX_BRACKET_PATTERN = re.compile(r"\\\[([^\]]+?)\\\]", re.DOTALL)
+
+# Common LaTeX macros we strip when we hit plain-text math.
+_LATEX_MACRO_REPLACEMENTS = {
+    r"\log": "log",
+    r"\ln": "ln",
+    r"\sin": "sin",
+    r"\cos": "cos",
+    r"\tan": "tan",
+    r"\infty": "infinity",
+    r"\times": "×",
+    r"\cdot": "·",
+    r"\pm": "±",
+    r"\leq": "≤",
+    r"\geq": "≥",
+    r"\neq": "≠",
+    r"\approx": "≈",
+    r"\alpha": "alpha",
+    r"\beta": "beta",
+    r"\gamma": "gamma",
+    r"\delta": "delta",
+    r"\theta": "theta",
+    r"\pi": "pi",
+    r"\sigma": "sigma",
+    r"\mu": "mu",
+    r"\lambda": "lambda",
+}
+
+
+def _strip_latex(text: str) -> str:
+    """Convert LaTeX math to plain text since our HTML renderer does not process MathJax/KaTeX."""
+
+    def _unwrap(match: re.Match) -> str:
+        inner = match.group(1).strip()
+        for macro, replacement in _LATEX_MACRO_REPLACEMENTS.items():
+            inner = inner.replace(macro, replacement)
+        # Strip leftover backslashes on unknown macros.
+        inner = re.sub(r"\\[a-zA-Z]+\s*", "", inner)
+        # Normalize whitespace.
+        inner = re.sub(r"\s+", " ", inner).strip()
+        return inner
+
+    text = _LATEX_DISPLAY_PATTERN.sub(_unwrap, text)
+    text = _LATEX_INLINE_PATTERN.sub(_unwrap, text)
+    text = _LATEX_BRACKET_PATTERN.sub(_unwrap, text)
+    text = _LATEX_PAREN_PATTERN.sub(_unwrap, text)
+    return text
+
+
+def _sanitize_llm_output(text: str) -> str:
+    """
+    Post-process LLM output to remove the most obvious AI-writing tells.
+
+    - Replaces em-dashes / en-dashes with a comma.
+    - Strips LaTeX math notation ($...$, $$...$$, \\(...\\), \\[...\\]).
+    - Removes leaked markdown code fences around the document.
+    """
+    if not text:
+        return text
+
+    cleaned = text.strip()
+
+    # Drop leading/trailing markdown fences (```markdown ... ```).
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n", 1)
+        cleaned = lines[1] if len(lines) > 1 else ""
+    if cleaned.endswith("```"):
+        cleaned = cleaned.rsplit("```", 1)[0]
+
+    cleaned = _strip_latex(cleaned)
+    cleaned = _EMDASH_PATTERN.sub(", ", cleaned)
+
+    return cleaned.strip()
