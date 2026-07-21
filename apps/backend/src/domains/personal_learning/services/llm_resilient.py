@@ -198,9 +198,55 @@ async def generate_content_json(
             max_retries=max_retries,
             fallback=None,  # We handle fallback ourselves after JSON parse
         )
-        return json.loads(response)
+        # Strip markdown fences if present
+        cleaned = response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:].strip()
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            # Attempt repair: truncated arrays are common with LLM output limits
+            repaired = _try_repair_json(cleaned)
+            if repaired is not None:
+                return repaired
+            raise
     except (LLMUnavailableError, json.JSONDecodeError, Exception) as e:
         logger.warning(f"generate_content_json failed: {type(e).__name__}: {e}")
         if fallback is not None:
             return fallback
         raise
+
+
+def _try_repair_json(text: str) -> Any:
+    """Attempt to repair truncated JSON (e.g. arrays cut off mid-element)."""
+    import json
+
+    # Try progressively trimming from the end to find valid JSON
+    # Common pattern: array truncated mid-object
+    for trim in range(min(len(text), 500)):
+        candidate = text[: len(text) - trim]
+        # Try closing unclosed brackets
+        open_brackets = candidate.count("[") - candidate.count("]")
+        open_braces = candidate.count("{") - candidate.count("}")
+
+        # If we're inside a string, try cutting back to last complete element
+        if open_braces > 0 or open_brackets > 0:
+            # Find last complete element (last '}' followed by optional ',')
+            last_close = candidate.rfind("}")
+            if last_close > 0:
+                attempt = candidate[: last_close + 1]
+                # Close any open brackets
+                remaining_brackets = attempt.count("[") - attempt.count("]")
+                attempt += "]" * remaining_brackets
+                try:
+                    return json.loads(attempt)
+                except json.JSONDecodeError:
+                    continue
+
+    return None

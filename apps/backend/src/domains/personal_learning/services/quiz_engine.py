@@ -90,7 +90,7 @@ async def start_quiz(
 
     try:
         questions_data = await generate_content_json(
-            prompt, max_tokens=4000, timeout_s=45, fallback=[]
+            prompt, max_tokens=8000, timeout_s=60, fallback=[]
         )
     except Exception as e:
         logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")

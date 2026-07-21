@@ -144,7 +144,7 @@ class TopicUpdate(BaseModel):
     description: str | None = None
 
 
-class QuizStartRequest(BaseModel):
+class QuizStartRequest(CamelModel):
     mode: str = Field(
         ..., description="FULL_PRACTICE, WEAK_AREAS, TOPIC_FOCUS, PAST_PAPER_SIM, QUICK_REVIEW"
     )
