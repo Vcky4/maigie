@@ -281,9 +281,15 @@ async def list_topics(prep_id: str, current_user: CurrentUser):
 @router.post("/preparations/{prep_id}/study-plan")
 async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
     """Generate a study plan for a preparation."""
+    prep = await exam_prep_service.get_preparation(user_id=current_user.id, prep_id=prep_id)
+
     plan = await study_plan_service.generate_plan(
         user_id=current_user.id,
-        data={"title": f"Study Plan", "deadline": "", "prepId": prep_id},
+        data={
+            "title": f"Study Plan — {prep.subject}",
+            "deadline": prep.exam_date,
+            "prepId": prep_id,
+        },
     )
     return plan
 

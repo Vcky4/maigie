@@ -26,14 +26,20 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     """
     title = data["title"]
     goal_description = data.get("goalDescription")
-    deadline_str = data["deadline"]
+    deadline_raw = data.get("deadline")
     prep_id = data.get("prepId")
 
-    # Parse deadline
-    if isinstance(deadline_str, str):
-        deadline = datetime.fromisoformat(deadline_str.replace("Z", "+00:00"))
+    # Parse deadline — fall back to 30 days from now if not provided.
+    if isinstance(deadline_raw, datetime):
+        deadline = deadline_raw
+    elif isinstance(deadline_raw, str) and deadline_raw.strip():
+        deadline = datetime.fromisoformat(deadline_raw.replace("Z", "+00:00"))
     else:
-        deadline = deadline_str
+        deadline = datetime.now(timezone.utc).replace(hour=23, minute=59) + timedelta(days=30)
+
+    # Ensure timezone-aware for consistent math downstream
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
 
     # Get behaviour profile for sustainable scheduling
     profile = await repo.get_profile_by_user(user_id)
