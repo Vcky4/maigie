@@ -224,6 +224,13 @@ async def complete_quiz(
     correct = quiz.correct_count or 0
     score_pct = (correct / total) * 100 if total > 0 else 0.0
 
+    # Compute duration server-side if the client did not provide one.
+    if duration_seconds is None and quiz.created_at:
+        started_at = quiz.created_at
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        duration_seconds = int((now - started_at).total_seconds())
+
     # Update quiz session
     await repo.update_quiz_session(
         quiz_id,

@@ -330,9 +330,17 @@ async def submit_answer(quiz_id: str, body: models.AnswerSubmitRequest, current_
 
 
 @router.post("/quizzes/{quiz_id}/complete", response_model=models.QuizSummaryResponse)
-async def complete_quiz(quiz_id: str, current_user: CurrentUser):
+async def complete_quiz(
+    quiz_id: str,
+    current_user: CurrentUser,
+    body: models.QuizCompleteRequest | None = None,
+):
     """Complete a quiz session."""
-    return await quiz_engine.complete_quiz(user_id=current_user.id, quiz_id=quiz_id)
+    return await quiz_engine.complete_quiz(
+        user_id=current_user.id,
+        quiz_id=quiz_id,
+        duration_seconds=body.duration_seconds if body else None,
+    )
 
 
 @router.get("/quizzes/{quiz_id}", response_model=models.QuizSessionResponse)
