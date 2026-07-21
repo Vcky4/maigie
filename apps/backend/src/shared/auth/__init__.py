@@ -2,11 +2,13 @@
 
 from .dependencies import (
     CurrentUser,
+    OptionalCurrentUser,
     PremiumUser,
     SpaceMemberUser,
     StaffUser,
     SuperAdminUser,
     get_current_user,
+    get_current_user_optional,
     get_staff_user,
     get_super_admin_user,
     require_premium,
@@ -25,12 +27,14 @@ from .jwt import (
 __all__ = [
     # Dependencies (type aliases for route signatures)
     "CurrentUser",
+    "OptionalCurrentUser",
     "PremiumUser",
     "SpaceMemberUser",
     "StaffUser",
     "SuperAdminUser",
     # Dependency functions
     "get_current_user",
+    "get_current_user_optional",
     "get_staff_user",
     "get_super_admin_user",
     "require_premium",

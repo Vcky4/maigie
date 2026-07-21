@@ -11,7 +11,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from src.shared.auth import CurrentUser
+from src.shared.auth import CurrentUser, OptionalCurrentUser
 
 from . import models
 from .services import (
@@ -614,11 +614,18 @@ async def list_documents(
 
 
 @router.get("/documents/share/{share_id}", response_model=models.DocumentResponse)
-async def get_shared_document(share_id: str):
-    """Get a publicly shared document (no auth required)."""
+async def get_shared_document(share_id: str, current_user: OptionalCurrentUser = None):
+    """
+    Get a document by share id.
+
+    - Public documents are viewable by anyone.
+    - The document's owner can also view their own unpublished documents
+      via this endpoint (useful for previewing the share URL before publishing).
+    """
     from .services import document_impl
 
-    doc = await document_impl.get_by_share_id(share_id=share_id)
+    requester_id = current_user.id if current_user else None
+    doc = await document_impl.get_by_share_id(share_id=share_id, requester_id=requester_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc

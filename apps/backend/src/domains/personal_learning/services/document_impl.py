@@ -1254,17 +1254,25 @@ async def list_documents(*, user_id: str, page: int = 1, page_size: int = 20):
     return await repo.list_documents(user_id, skip=skip, take=page_size)
 
 
-async def get_by_share_id(*, share_id: str):
+async def get_by_share_id(*, share_id: str, requester_id: str | None = None):
     """
-    Public accessor for a shared document — no auth.
-    Returns ``None`` if the id does not match a public document.
+    Fetch a document by its share id.
+
+    - Public documents (``is_public=True``) are visible to anyone.
+    - Private documents are only returned when ``requester_id`` matches the owner,
+      so an owner can preview their share URL before publishing.
+    - Returns ``None`` if the document does not exist or the caller has no access.
     """
     from src.domains.personal_learning.repository import personal_learning_repo as repo
 
     doc = await repo.find_document_by_share_id(share_id)
-    if not doc or not getattr(doc, "is_public", False):
+    if not doc:
         return None
-    return doc
+    if getattr(doc, "is_public", False):
+        return doc
+    if requester_id and getattr(doc, "user_id", None) == requester_id:
+        return doc
+    return None
 
 
 # Backwards-compatible alias for older callers.

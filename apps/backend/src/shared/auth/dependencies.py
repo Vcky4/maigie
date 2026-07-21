@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 # Bearer token extraction
 _security = HTTPBearer()
+# Optional variant — does not 403 when the Authorization header is missing.
+_security_optional = HTTPBearer(auto_error=False)
 
 # ---------------------------------------------------------------------------
 # Last-seen tracking (throttled to avoid DB spam)
@@ -128,6 +130,44 @@ async def get_current_user(
 
 # Reusable type alias — use this in route signatures
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+async def get_current_user_optional(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(_security_optional)
+    ],
+    request: Request,
+) -> User | None:
+    """
+    Return the authenticated User if a valid token is present, otherwise None.
+
+    Use this on endpoints that anyone can call but that should give richer
+    responses when the caller is signed in (e.g. previewing your own share
+    link before publishing).
+    """
+    if credentials is None:
+        return None
+    try:
+        payload = decode_access_token(credentials.credentials)
+        email: str | None = payload.get("sub")
+        if not email:
+            return None
+    except JWTError:
+        return None
+
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(User).where(User.email == email)
+        result = await session.execute(stmt)
+        user = result.scalar_one_or_none()
+
+    if user is None or not user.is_active:
+        return None
+    return user
+
+
+# Type alias for optional auth
+OptionalCurrentUser = Annotated[User | None, Depends(get_current_user_optional)]
 
 
 # ---------------------------------------------------------------------------
