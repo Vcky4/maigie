@@ -515,15 +515,22 @@ async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUs
 @router.post("/documents", response_model=models.DocumentResponse, status_code=201)
 async def generate_document(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """Generate an academic document from a natural-language prompt (synchronous)."""
+    from fastapi import HTTPException
+
     from .services import document_impl
 
     payload = body.model_dump()
+    try:
+        fmt = document_impl._normalize_format(payload.get("format", "pdf"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     return await document_impl.create_from_prompt(
         user_id=current_user.id,
         doc_type=payload["type"],
         title=payload["title"],
         prompt=payload["prompt"],
-        format=payload.get("format", "pdf"),
+        format=fmt,
         style=payload.get("style", "academic"),
         course_id=payload.get("courseId"),
         topic_id=payload.get("topicId"),

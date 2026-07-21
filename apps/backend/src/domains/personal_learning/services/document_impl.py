@@ -265,9 +265,7 @@ class DocumentGenerationService:
             content = content[:MAX_CONTENT_LENGTH]
             logger.warning(f"Content truncated to {MAX_CONTENT_LENGTH} chars for user {user_id}")
 
-        format = format.lower().strip()
-        if format not in ("pdf", "docx", "pptx"):
-            raise ValueError(f"Unsupported format: {format}. Use 'pdf', 'docx', or 'pptx'.")
+        format = _normalize_format(format)
 
         # For pptx, content is a JSON string of slides; for pdf/docx it's HTML/markdown
         if format == "pptx":
@@ -1422,3 +1420,31 @@ def _sanitize_llm_output(text: str) -> str:
     cleaned = _EMDASH_PATTERN.sub(", ", cleaned)
 
     return cleaned.strip()
+
+
+
+# ---------------------------------------------------------------------------
+# Format normalization
+# ---------------------------------------------------------------------------
+
+_FORMAT_ALIASES: dict[str, str] = {
+    "pdf": "pdf",
+    "docx": "docx",
+    "doc": "docx",
+    "word": "docx",
+    "pptx": "pptx",
+    "ppt": "pptx",
+    "powerpoint": "pptx",
+    "slides": "pptx",
+    "presentation": "pptx",
+}
+
+
+def _normalize_format(value: str | None) -> str:
+    """Map user-supplied format strings to canonical values (pdf, docx, pptx)."""
+    key = (value or "").strip().lower()
+    if key not in _FORMAT_ALIASES:
+        raise ValueError(
+            f"Unsupported format: {value}. Use 'pdf', 'docx', or 'pptx'."
+        )
+    return _FORMAT_ALIASES[key]
