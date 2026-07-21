@@ -170,7 +170,7 @@ async def _compute_intelligent_guidance(user_id: str, state: dict) -> dict[str, 
         return await _llm_guidance(user_id, state)
     except Exception as e:
         logger.warning(f"LLM guidance failed, using fallback: {e}")
-        return _fallback_guidance(state)
+        return await _fallback_guidance(state)
 
 
 def _deterministic_guidance(state: dict) -> dict[str, Any] | None:
@@ -261,11 +261,14 @@ Return a JSON object with:
 Return ONLY valid JSON."""
 
     try:
+        # 500 tokens was hitting the ceiling mid-string, leaving the JSON
+        # unrepairable. 1200 comfortably covers a warm message + a title +
+        # reason + up to 3 ready items with descriptions.
         data = await generate_content_json(
             prompt,
-            max_tokens=500,
+            max_tokens=1200,
             temperature=0.7,
-            timeout_s=15,
+            timeout_s=20,
             fallback=None,
         )
 
@@ -284,25 +287,32 @@ Return ONLY valid JSON."""
             ],
             "stage": "active",
         }
-    except Exception as e:
-        logger.warning(f"LLM guidance failed: {e}")
+    except Exception:
+        # Let the caller (_compute_intelligent_guidance) log once and
+        # fall back — no need to double-report the same exception here.
         raise
 
 
-def _fallback_guidance(state: dict) -> dict[str, Any]:
-    """Fallback when LLM is unavailable."""
+async def _fallback_guidance(state: dict) -> dict[str, Any]:
+    """Fallback when LLM is unavailable.
+
+    Even in the fallback we surface concrete "ready for you" items so the
+    UI is never empty when the learner has an active preparation.
+    """
     if state["prep_count"] > 0:
         prep = state["active_preps"][0]
+        ready_items = await _build_ready_from_prep(prep, state)
+        first_topic_title = ready_items[0]["title"] if ready_items else f"Study: {prep.subject}"
         return {
             "message": f"Continue with your {prep.subject} preparation.",
             "todaysFocus": {
-                "title": f"Study: {prep.subject}",
+                "title": first_topic_title,
                 "reason": "Steady progress toward your goal.",
                 "estimatedMinutes": 30,
                 "type": "study_topic",
                 "actionData": {"prepId": prep.id},
             },
-            "readyForYou": [],
+            "readyForYou": ready_items,
             "stage": "active",
         }
 
@@ -318,6 +328,50 @@ def _fallback_guidance(state: dict) -> dict[str, Any]:
         "readyForYou": [],
         "stage": "active",
     }
+
+
+async def _build_ready_from_prep(prep: Any, state: dict) -> list[dict[str, Any]]:
+    """
+    Build up to 3 concrete "ready for you" items from an active preparation.
+
+    Priority:
+      1. Next unmastered prep topics (what to study next).
+      2. Due flashcards summary (if any exist and none surfaced elsewhere).
+    """
+    items: list[dict[str, Any]] = []
+    try:
+        topics = await repo.list_prep_topics(prep.id)
+    except Exception as e:  # pragma: no cover — belt-and-braces
+        logger.warning(f"Failed to load prep topics for ready-for-you: {e}")
+        topics = []
+
+    # Prefer the first 3 not-yet-mastered topics
+    unmastered = [t for t in topics if getattr(t, "status", "PENDING") != "MASTERED"]
+    for topic in unmastered[:3]:
+        items.append(
+            {
+                "type": "prep_topic",
+                "title": getattr(topic, "title", "Study topic"),
+                "description": getattr(topic, "description", None)
+                or f"Part of {prep.subject}",
+                "actionData": {
+                    "prepId": prep.id,
+                    "prepTopicId": getattr(topic, "id", None),
+                },
+            }
+        )
+
+    if state.get("flashcard_total", 0) > 0 and len(items) < 3:
+        items.append(
+            {
+                "type": "flashcards",
+                "title": f"{state['flashcard_total']} flashcards ready",
+                "description": "Practice recall anytime — 30 seconds per card.",
+                "actionData": {"action": "browse_flashcards"},
+            }
+        )
+
+    return items
 
 
 def _build_llm_context(state: dict) -> str:

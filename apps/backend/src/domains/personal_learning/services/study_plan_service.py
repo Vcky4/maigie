@@ -253,9 +253,11 @@ def _distribute_items(
             day_index += 1
             daily_minutes_used = 0.0
 
-        # Wrap around if we exceed available days
+        # Wrap around if we exceed available days.
+        # Start on day 0 (today) so a fresh plan gives the learner
+        # something to do the moment it's created.
         actual_day = day_index % days_available
-        scheduled = start + timedelta(days=actual_day + 1)
+        scheduled = start + timedelta(days=actual_day)
 
         items.append(
             {

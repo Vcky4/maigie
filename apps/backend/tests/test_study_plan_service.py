@@ -44,12 +44,12 @@ class TestDistributeItems:
     """Tests for _distribute_items pure scheduling logic."""
 
     def test_single_topic_single_day(self):
-        """1 topic, 1 day available -> 1 item on day 1."""
+        """1 topic, 1 day available -> 1 item scheduled on day 0 (today)."""
         topics = _make_topics(1)
         result = _distribute_items(topics, days_available=1, start=START, max_daily_minutes=120)
 
         assert len(result) == 1
-        assert result[0]["scheduledDate"] == START + timedelta(days=1)
+        assert result[0]["scheduledDate"] == START
 
     def test_topics_within_daily_limit(self):
         """3 topics at 30min each, limit 120min -> all fit on day 1."""
@@ -78,8 +78,8 @@ class TestDistributeItems:
         result = _distribute_items(topics, days_available=2, start=START, max_daily_minutes=60)
 
         assert len(result) == 10
-        # All scheduled dates should be within the 2-day window
-        expected_dates = {START + timedelta(days=1), START + timedelta(days=2)}
+        # All scheduled dates should be within the 2-day window (starting today)
+        expected_dates = {START, START + timedelta(days=1)}
         actual_dates = {item["scheduledDate"] for item in result}
         assert actual_dates == expected_dates
 
@@ -108,13 +108,13 @@ class TestDistributeItems:
         assert output_titles == input_titles
 
     def test_scheduled_dates_within_deadline(self):
-        """All dates are between start and start + days_available (inclusive)."""
+        """All dates are between start (day 0) and start + days_available - 1."""
         topics = _make_topics(4, minutes=30)
         days = 7
         result = _distribute_items(topics, days_available=days, start=START, max_daily_minutes=120)
 
-        earliest_allowed = START + timedelta(days=1)
-        latest_allowed = START + timedelta(days=days)
+        earliest_allowed = START
+        latest_allowed = START + timedelta(days=days - 1)
         for item in result:
             assert earliest_allowed <= item["scheduledDate"] <= latest_allowed
 

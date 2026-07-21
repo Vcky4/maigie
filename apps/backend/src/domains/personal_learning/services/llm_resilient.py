@@ -224,29 +224,93 @@ async def generate_content_json(
 
 
 def _try_repair_json(text: str) -> Any:
-    """Attempt to repair truncated JSON (e.g. arrays cut off mid-element)."""
+    """Attempt to repair truncated JSON produced by an LLM.
+
+    Strategy: walk back from EOF to the last complete `}` or `]`,
+    trim any trailing comma, then close any still-open brackets in the
+    correct nesting order.
+
+    Examples that recover:
+      - Array of objects truncated mid-string:
+          [{"a": 1}, {"b": 2}, {"c": "trun...  →  [{"a": 1}, {"b": 2}]
+      - Object with a truncated nested array:
+          {"m": "hi", "items": [{"t": "a"}, {"t": "tr...  →  {"m": "hi", "items": [{"t": "a"}]}
+      - Trailing comma before EOF:
+          {"a": 1, "b": 2,  →  {"a": 1, "b": 2}
+    """
     import json
 
-    # Try progressively trimming from the end to find valid JSON
-    # Common pattern: array truncated mid-object
-    for trim in range(min(len(text), 500)):
-        candidate = text[: len(text) - trim]
-        # Try closing unclosed brackets
-        open_brackets = candidate.count("[") - candidate.count("]")
-        open_braces = candidate.count("{") - candidate.count("}")
+    stripped = text.strip()
+    if not stripped:
+        return None
 
-        # If we're inside a string, try cutting back to last complete element
-        if open_braces > 0 or open_brackets > 0:
-            # Find last complete element (last '}' followed by optional ',')
-            last_close = candidate.rfind("}")
-            if last_close > 0:
-                attempt = candidate[: last_close + 1]
-                # Close any open brackets
-                remaining_brackets = attempt.count("[") - attempt.count("]")
-                attempt += "]" * remaining_brackets
+    # Fast path: brackets already balanced — the failure was something else.
+    if stripped.count("{") == stripped.count("}") and stripped.count("[") == stripped.count("]"):
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+
+    def _close_openers(candidate: str) -> str | None:
+        """Walk the candidate to figure out the still-open bracket stack, then
+        close them in reverse order. Return None if the walker gets confused
+        (e.g. we're mid-string)."""
+        stack: list[str] = []
+        in_string = False
+        escape = False
+        for ch in candidate:
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch == "}":
+                if not stack or stack[-1] != "{":
+                    return None
+                stack.pop()
+            elif ch == "]":
+                if not stack or stack[-1] != "[":
+                    return None
+                stack.pop()
+        # If we ended mid-string the candidate is not a clean boundary.
+        if in_string:
+            return None
+        closers = "".join("}" if opener == "{" else "]" for opener in reversed(stack))
+        return candidate + closers
+
+    # First, try just closing whatever is open on the whole string —
+    # handles cases like `{"a": 1, "b": 2,` where there's no closing brace.
+    whole = stripped.rstrip().rstrip(",").rstrip()
+    attempt = _close_openers(whole)
+    if attempt is not None:
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            pass
+
+    # Then try progressively earlier boundary points (last `}` or `]`).
+    tried: set[int] = set()
+    for boundary_char in ("}", "]"):
+        idx = stripped.rfind(boundary_char)
+        while idx > 0:
+            if idx in tried:
+                idx = stripped.rfind(boundary_char, 0, idx)
+                continue
+            tried.add(idx)
+            candidate = stripped[: idx + 1].rstrip().rstrip(",").rstrip()
+            attempt = _close_openers(candidate)
+            if attempt is not None:
                 try:
                     return json.loads(attempt)
                 except json.JSONDecodeError:
-                    continue
+                    pass
+            idx = stripped.rfind(boundary_char, 0, idx)
 
     return None
