@@ -2,12 +2,14 @@
 
 from .http import create_http_client
 from .redis import Cache, cache, get_cache
-from .storage import StorageClient
+from .storage import BunnyStorageClient, StorageError, storage_service
 
 __all__ = [
     "Cache",
     "cache",
     "get_cache",
     "create_http_client",
-    "StorageClient",
+    "BunnyStorageClient",
+    "StorageError",
+    "storage_service",
 ]

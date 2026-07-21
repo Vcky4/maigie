@@ -225,6 +225,8 @@ class Settings(BaseSettings):
     # Optional full public base for uploaded files, e.g. https://yourzone.b-cdn.net (no trailing slash).
     # Use when the custom CDN hostname has TLS issues but Bunny's default pull zone is valid.
     BUNNY_PUBLIC_URL_BASE: str | None = None
+    # BunnyCDN storage region code (de/uk/ny/la/sg/se/syd/br/jh). Default: de (Falkenstein).
+    BUNNY_STORAGE_REGION: str = "de"
 
     # --- Auto Blog Pipeline ---
     BLOG_AUTOPILOT_ENABLED: bool = True

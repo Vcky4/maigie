@@ -1038,32 +1038,12 @@ Reveal.initialize({{
     async def _upload_bytes(
         self, storage_service: Any, content: bytes, filename: str, path: str
     ) -> dict[str, Any]:
-        """Upload raw bytes to BunnyCDN storage."""
-        import httpx
-
-        if not storage_service.api_key or not storage_service.storage_zone:
-            raise RuntimeError("Storage configuration is missing.")
-
-        upload_path = f"{path.strip('/')}/{filename}"
-        upload_url = f"{storage_service.base_url}/{upload_path}"
-
-        headers = {
-            "AccessKey": storage_service.api_key,
-            "Content-Type": "application/octet-stream",
-        }
-
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.put(upload_url, headers=headers, content=content)
-            if response.status_code != 201:
-                raise RuntimeError(f"Upload failed: {response.status_code} - {response.text}")
-
-        # Build public URL
-        if storage_service.public_url_base:
-            public_url = f"{storage_service.public_url_base}/{upload_path}"
-        else:
-            public_url = f"https://{storage_service.cdn_hostname}/{upload_path}"
-
-        return {"filename": filename, "url": public_url, "size": len(content)}
+        """Upload raw bytes via the storage client."""
+        remote_path = f"{path.strip('/')}/{filename}"
+        content_type = CONTENT_TYPES.get(filename.rsplit(".", 1)[-1], "application/octet-stream")
+        return await storage_service.upload_bytes(
+            content, remote_path, content_type=content_type
+        )
 
 
 # Module-level singleton
