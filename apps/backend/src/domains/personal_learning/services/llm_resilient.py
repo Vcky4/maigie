@@ -184,7 +184,7 @@ async def _resolve_provider(user_id: str | None) -> str:
     if profile and profile.preferred_llm_provider:
         provider = profile.preferred_llm_provider.lower().strip()
         if provider in SUPPORTED_PROVIDERS:
-            print(f"[LLM] User {user_id} preferred provider: {provider}")
+            logger.info(f"User {user_id} preferred LLM provider: {provider}")
             return provider
         logger.warning(
             f"Unknown LLM provider '{provider}' for user {user_id}, using default"
@@ -250,8 +250,8 @@ async def generate_content(
     """
     # Resolve preferred provider
     primary_provider = await _resolve_provider(user_id)
-    print(
-        f"[LLM] request: user_id={user_id}, resolved_provider={primary_provider}, "
+    logger.info(
+        f"LLM request: user_id={user_id}, resolved_provider={primary_provider}, "
         f"prompt_length={len(prompt)}, max_tokens={max_tokens}"
     )
 
@@ -279,7 +279,7 @@ async def generate_content(
                     timeout=timeout_s,
                 )
                 _record_success(provider)
-                print(f"[LLM] [{provider}] succeeded: response_length={len(result)}")
+                logger.info(f"LLM [{provider}] succeeded: response_length={len(result)}")
                 return result
 
             except asyncio.TimeoutError:
