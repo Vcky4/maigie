@@ -17,7 +17,7 @@ def _mock_settings(
     zone: str | None = "test-zone",
     hostname: str = "cdn.test.com",
     public_base: str | None = None,
-    region: str = "de",
+    region: str = "uk",
 ) -> MagicMock:
     s = MagicMock()
     s.BUNNY_CDN_API_KEY = api_key
@@ -51,7 +51,7 @@ async def test_upload_bytes_success():
     assert result["url"] == "https://cdn.test.com/notes/hello.txt"
     assert result["size"] == 5
     assert http.put.call_args[0][0] == (
-        "https://storage.bunnycdn.com/test-zone/notes/hello.txt"
+        "https://uk.storage.bunnycdn.com/test-zone/notes/hello.txt"
     )
 
 
@@ -125,7 +125,7 @@ async def test_delete_by_public_url():
 
     assert ok is True
     assert http.delete.call_args[0][0] == (
-        "https://storage.bunnycdn.com/test-zone/notes/hello.txt"
+        "https://uk.storage.bunnycdn.com/test-zone/notes/hello.txt"
     )
 
 

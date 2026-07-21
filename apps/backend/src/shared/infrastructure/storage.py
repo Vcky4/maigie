@@ -38,8 +38,8 @@ class BunnyStorageClient:
     # Default region host for BunnyCDN storage.
     # Override via config if you use a different region (ny, la, sg, se, syd, br, jh).
     _REGION_HOSTS = {
-        "de": "storage.bunnycdn.com",  # default (Falkenstein, Germany)
-        "uk": "uk.storage.bunnycdn.com",
+        "de": "storage.bunnycdn.com",  # Falkenstein, Germany
+        "uk": "uk.storage.bunnycdn.com",  # default — London
         "ny": "ny.storage.bunnycdn.com",
         "la": "la.storage.bunnycdn.com",
         "sg": "sg.storage.bunnycdn.com",
@@ -70,8 +70,8 @@ class BunnyStorageClient:
         raw_base = (getattr(settings, "BUNNY_PUBLIC_URL_BASE", None) or "").strip().rstrip("/")
         self.public_url_base = raw_base or None
 
-        region = (getattr(settings, "BUNNY_STORAGE_REGION", "de") or "de").lower()
-        host = self._REGION_HOSTS.get(region, self._REGION_HOSTS["de"])
+        region = (getattr(settings, "BUNNY_STORAGE_REGION", "uk") or "uk").lower()
+        host = self._REGION_HOSTS.get(region, self._REGION_HOSTS["uk"])
         if self.storage_zone:
             self.base_url = f"https://{host}/{self.storage_zone}"
         self._initialized = True

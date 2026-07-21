@@ -1105,14 +1105,18 @@ async def create_from_prompt(
         {
             "userId": user_id,
             "title": title,
-            "type": doc_type,
             "format": format,
             "style": style,
             "filename": result.get("filename"),
             "fileUrl": result.get("url"),
             "previewUrl": result.get("preview_url"),
-            "courseId": course_id,
-            "topicId": topic_id,
+            "size": result.get("size", 0),
+            "contentType": result.get(
+                "content_type", CONTENT_TYPES.get(format, "application/octet-stream")
+            ),
+            # shareId is always generated but the document stays private until published.
+            "shareId": uuid.uuid4().hex[:16],
+            "isPublic": False,
         }
     )
     return doc
