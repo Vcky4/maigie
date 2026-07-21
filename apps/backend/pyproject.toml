@@ -54,6 +54,7 @@ sqlalchemy = {extras = ["asyncio"], version = "^2.0.51"}
 asyncpg = "^0.31.0"
 alembic = "^1.18.5"
 greenlet = "^3.5.3"
+weasyprint = "^69.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"

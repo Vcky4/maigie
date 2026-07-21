@@ -31,17 +31,47 @@ _ACADEMIC_CSS = """
 @page {
     size: A4;
     margin: 2.5cm 2cm;
+    @bottom-center {
+        content: counter(page) " / " counter(pages);
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 9pt;
+        color: #888;
+    }
+}
+@page :first {
+    @bottom-center { content: none; }
 }
 body {
     font-family: 'Times New Roman', Times, Georgia, serif;
     font-size: 12pt;
     line-height: 1.6;
     color: #1a1a1a;
+    orphans: 3;
+    widows: 3;
+    hyphens: auto;
 }
-h1 { font-size: 22pt; margin-top: 1.5em; margin-bottom: 0.5em; color: #111; }
-h2 { font-size: 16pt; margin-top: 1.3em; margin-bottom: 0.4em; color: #222; }
-h3 { font-size: 13pt; margin-top: 1.1em; margin-bottom: 0.3em; color: #333; }
-h4 { font-size: 12pt; margin-top: 1em; margin-bottom: 0.3em; font-style: italic; }
+h1 {
+    font-size: 22pt;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    color: #111;
+    page-break-after: avoid;
+}
+h2 {
+    font-size: 16pt;
+    margin-top: 1.3em;
+    margin-bottom: 0.4em;
+    color: #222;
+    page-break-after: avoid;
+}
+h3 {
+    font-size: 13pt;
+    margin-top: 1.1em;
+    margin-bottom: 0.3em;
+    color: #333;
+    page-break-after: avoid;
+}
+h4 { font-size: 12pt; margin-top: 1em; margin-bottom: 0.3em; font-style: italic; page-break-after: avoid; }
 p { margin-bottom: 0.8em; text-align: justify; }
 ul, ol { margin-bottom: 0.8em; padding-left: 2em; }
 li { margin-bottom: 0.3em; }
@@ -86,17 +116,51 @@ _REPORT_CSS = """
 @page {
     size: A4;
     margin: 2cm;
+    @top-right {
+        content: string(doc-title);
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 9pt;
+        color: #888;
+    }
+    @bottom-center {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: Helvetica, Arial, sans-serif;
+        font-size: 9pt;
+        color: #888;
+    }
+}
+@page :first {
+    @top-right { content: none; }
+    @bottom-center { content: none; }
 }
 body {
     font-family: Helvetica, Arial, sans-serif;
     font-size: 11pt;
     line-height: 1.5;
     color: #2d2d2d;
+    orphans: 3;
+    widows: 3;
 }
-h1 { font-size: 24pt; margin-top: 1.2em; margin-bottom: 0.4em; color: #1a1a1a; font-weight: bold; }
-h2 { font-size: 16pt; margin-top: 1.2em; margin-bottom: 0.4em; color: #333; border-bottom: 1px solid #eee; padding-bottom: 4px; }
-h3 { font-size: 13pt; margin-top: 1em; margin-bottom: 0.3em; color: #444; }
-h4 { font-size: 11pt; margin-top: 0.8em; margin-bottom: 0.3em; color: #555; font-weight: bold; }
+h1 {
+    font-size: 24pt;
+    margin-top: 1.2em;
+    margin-bottom: 0.4em;
+    color: #1a1a1a;
+    font-weight: bold;
+    string-set: doc-title content();
+    page-break-after: avoid;
+}
+h2 {
+    font-size: 16pt;
+    margin-top: 1.2em;
+    margin-bottom: 0.4em;
+    color: #333;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 4px;
+    page-break-after: avoid;
+}
+h3 { font-size: 13pt; margin-top: 1em; margin-bottom: 0.3em; color: #444; page-break-after: avoid; }
+h4 { font-size: 11pt; margin-top: 0.8em; margin-bottom: 0.3em; color: #555; font-weight: bold; page-break-after: avoid; }
 p { margin-bottom: 0.7em; }
 ul, ol { margin-bottom: 0.7em; padding-left: 1.8em; }
 li { margin-bottom: 0.2em; }
@@ -403,13 +467,31 @@ class DocumentGenerationService:
 </html>"""
 
     def _generate_pdf(self, title: str, content: str, style: str) -> bytes:
-        """Generate a PDF document from HTML content using xhtml2pdf."""
+        """
+        Generate a PDF document from HTML content.
+
+        Prefers WeasyPrint for print-quality output (proper fonts, page control,
+        widow/orphan handling, real CSS support). Falls back to xhtml2pdf when
+        WeasyPrint's native libraries (Pango, Cairo) are unavailable.
+        """
+        full_html = self._build_full_html(title, content, style)
+
+        try:
+            from weasyprint import HTML as _WeasyHTML
+
+            return _WeasyHTML(string=full_html).write_pdf()
+        except (ImportError, OSError) as e:
+            # OSError covers "cannot load library libgobject-2.0-0" on macOS
+            # when Homebrew Pango is not on DYLD_FALLBACK_LIBRARY_PATH.
+            logger.warning(
+                f"WeasyPrint unavailable ({e.__class__.__name__}: {e}). "
+                "Falling back to xhtml2pdf. See docs to enable WeasyPrint."
+            )
+
         from xhtml2pdf import pisa
 
-        full_html = self._build_full_html(title, content, style)
         buffer = io.BytesIO()
         pisa_status = pisa.CreatePDF(io.StringIO(full_html), dest=buffer)
-
         if pisa_status.err:
             logger.error(f"xhtml2pdf error count: {pisa_status.err}")
 
@@ -1076,17 +1158,11 @@ async def create_from_prompt(
     from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.intelligence.reasoning.llm import generate_content
 
-    # Ask the LLM to produce markdown content tailored to the doc type.
-    llm_prompt = (
-        f"You are producing a {doc_type} titled \"{title}\".\n"
-        f"Write it in well-structured Markdown suitable for direct rendering to {format.upper()}.\n"
-        f"Use headings, paragraphs, and bullet points where appropriate.\n"
-        f"Do NOT include meta-commentary — return only the document body.\n\n"
-        f"Request:\n{prompt}"
-    )
+    llm_prompt = _build_document_prompt(doc_type=doc_type, title=title, prompt=prompt, format=format)
+    max_tokens = _max_tokens_for_type(doc_type)
 
     try:
-        content = await generate_content(llm_prompt, max_tokens=4000, temperature=0.7)
+        content = await generate_content(llm_prompt, max_tokens=max_tokens, temperature=0.7)
     except Exception as e:
         logger.error(f"LLM generation failed for document '{title}': {e}")
         content = f"# {title}\n\n(Content generation failed. Please try again.)"
@@ -1160,3 +1236,148 @@ async def get_shared_document(share_id: str):
     if not doc:
         raise NotFoundError("SharedDocument", share_id)
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Prompt engineering per document type
+# ---------------------------------------------------------------------------
+
+_DOC_TYPE_GUIDANCE: dict[str, dict[str, str]] = {
+    "essay": {
+        "word_target": "800-1200 words",
+        "structure": (
+            "1. Introduction — hook, background context, and a clear thesis statement.\n"
+            "2. Body — 3 to 5 paragraphs, each opening with a topic sentence and "
+            "developing one argument with evidence and analysis.\n"
+            "3. Conclusion — restate the thesis in new words, synthesize the argument, "
+            "and end with a broader implication or call to reflection."
+        ),
+        "voice": "formal, analytical, and third-person",
+        "extras": (
+            "Cite claims using inline references like (Author, Year) where relevant. "
+            "Do NOT invent specific citations — only reference them if the user provided them "
+            "in the prompt. Prefer clear reasoning over jargon."
+        ),
+    },
+    "report": {
+        "word_target": "1200-2000 words",
+        "structure": (
+            "1. Executive Summary (~100-150 words).\n"
+            "2. Introduction — scope, objectives, background.\n"
+            "3. Methodology — how the analysis was conducted.\n"
+            "4. Findings — grouped under sub-headings, with data where possible.\n"
+            "5. Discussion — interpretation of findings, limitations.\n"
+            "6. Recommendations — 3 to 5 concrete, actionable items.\n"
+            "7. Conclusion — brief synthesis.\n"
+            "8. References — only if the user cited sources."
+        ),
+        "voice": "objective, precise, and professional",
+        "extras": (
+            "Use tables and bullet points to summarize data. Number sections (1, 1.1, 2, ...). "
+            "Keep paragraphs tight — reports reward brevity."
+        ),
+    },
+    "presentation": {
+        "word_target": "8-14 slides worth of content",
+        "structure": (
+            "Return one Markdown H1 as the title slide, then one Markdown H2 per slide.\n"
+            "Under each H2, use short bullet points (3-6 per slide, one line each).\n"
+            "Include a closing 'Summary' slide and a 'Q&A' or 'Thank you' slide."
+        ),
+        "voice": "concise, high-signal, and speaker-friendly",
+        "extras": (
+            "Do NOT write full paragraphs. Bullets should be talking points, not sentences. "
+            "Consider adding an optional 'Speaker notes:' line under each slide with 1-2 "
+            "sentences of extra context for the presenter."
+        ),
+    },
+    "letter": {
+        "word_target": "150-400 words",
+        "structure": (
+            "1. Sender contact block (top-right).\n"
+            "2. Date.\n"
+            "3. Recipient contact block.\n"
+            "4. Salutation (\"Dear ...,\").\n"
+            "5. Opening paragraph — purpose.\n"
+            "6. Body — 1 to 3 short paragraphs.\n"
+            "7. Closing — restate the ask or next step.\n"
+            "8. Sign-off (\"Sincerely,\") and name."
+        ),
+        "voice": "polite, direct, and appropriate to the recipient",
+        "extras": (
+            "Match the tone to context — formal for institutions, warm for personal letters. "
+            "Avoid clichés."
+        ),
+    },
+    "cv": {
+        "word_target": "one page, dense but readable",
+        "structure": (
+            "1. Contact — name (H1), email, phone, location, links (LinkedIn/GitHub).\n"
+            "2. Professional Summary — 2 to 3 sentence positioning statement.\n"
+            "3. Experience — reverse-chronological. For each role: title, company, dates, "
+            "and 3 to 5 bullet points using strong action verbs and quantified results.\n"
+            "4. Education — degree, institution, dates, key achievements.\n"
+            "5. Skills — grouped by category (e.g. Languages, Frameworks, Tools).\n"
+            "6. Projects or Publications — optional, only if provided."
+        ),
+        "voice": "confident, third-person implied (no pronouns), and results-focused",
+        "extras": (
+            "Every experience bullet MUST start with a strong action verb (Built, Led, "
+            "Reduced, Shipped, Automated). Quantify impact wherever possible (percentages, "
+            "team size, revenue, timelines). Do NOT invent facts — use only what the user "
+            "provides. Where information is missing, use placeholders like `[Company]` or "
+            "`[Metric]` so the user can fill them in."
+        ),
+    },
+}
+
+
+_DEFAULT_GUIDANCE = {
+    "word_target": "600-1000 words",
+    "structure": (
+        "Use clear headings for major sections and short paragraphs. "
+        "Group related ideas under H2 headings; use bullet lists for enumerable items."
+    ),
+    "voice": "clear, professional, and appropriate to the audience",
+    "extras": "Prefer clarity over cleverness. Cut anything that does not serve the reader.",
+}
+
+
+def _resolve_doc_type_guidance(doc_type: str) -> dict[str, str]:
+    """Return the writing guidance block for a doc type (case-insensitive)."""
+    return _DOC_TYPE_GUIDANCE.get((doc_type or "").strip().lower(), _DEFAULT_GUIDANCE)
+
+
+def _build_document_prompt(*, doc_type: str, title: str, prompt: str, format: str) -> str:
+    """Compose a rich, type-aware LLM prompt for document generation."""
+    guidance = _resolve_doc_type_guidance(doc_type)
+    format_hint = format.upper()
+
+    return (
+        f"You are a professional writer producing a {doc_type} titled \"{title}\".\n\n"
+        f"TARGET LENGTH: {guidance['word_target']}.\n"
+        f"VOICE: {guidance['voice']}.\n\n"
+        f"REQUIRED STRUCTURE:\n{guidance['structure']}\n\n"
+        f"STYLE NOTES:\n{guidance['extras']}\n\n"
+        f"FORMATTING RULES:\n"
+        f"- Return well-structured Markdown ready for rendering to {format_hint}.\n"
+        f"- Use `#` for the document title, `##` for major sections, `###` for subsections.\n"
+        f"- Use `-` for unordered lists and `1.` for ordered lists.\n"
+        f"- Use `**bold**` sparingly, only for emphasis or defined terms.\n"
+        f"- Do NOT wrap the output in ```markdown fences.\n"
+        f"- Do NOT include meta-commentary, disclaimers, or notes about the writing process.\n"
+        f"- Return ONLY the finished document body.\n\n"
+        f"USER REQUEST:\n{prompt.strip()}"
+    )
+
+
+def _max_tokens_for_type(doc_type: str) -> int:
+    """Budget output tokens based on the expected length of the doc type."""
+    key = (doc_type or "").strip().lower()
+    return {
+        "letter": 1500,
+        "cv": 2500,
+        "essay": 3000,
+        "presentation": 3500,
+        "report": 5000,
+    }.get(key, 3000)

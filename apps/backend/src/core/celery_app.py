@@ -127,6 +127,7 @@ try:
         notification_tasks,  # noqa: F401
         progress_tasks,  # noqa: F401
         billing_tasks,  # noqa: F401
+        personal_learning_tasks,  # noqa: F401
     )
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,

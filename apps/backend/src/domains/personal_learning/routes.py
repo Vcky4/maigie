@@ -514,7 +514,7 @@ async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUs
 
 @router.post("/documents", response_model=models.DocumentResponse, status_code=201)
 async def generate_document(body: models.DocumentGenerateRequest, current_user: CurrentUser):
-    """Generate an academic document from a natural-language prompt."""
+    """Generate an academic document from a natural-language prompt (synchronous)."""
     from .services import document_impl
 
     payload = body.model_dump()
@@ -528,6 +528,67 @@ async def generate_document(body: models.DocumentGenerateRequest, current_user: 
         course_id=payload.get("courseId"),
         topic_id=payload.get("topicId"),
     )
+
+
+@router.post("/documents/async", status_code=202)
+async def generate_document_async(
+    body: models.DocumentGenerateRequest, current_user: CurrentUser
+):
+    """
+    Queue a document generation job. Returns immediately with a task id.
+
+    Use ``GET /documents/jobs/{task_id}`` to poll for status. When the job
+    completes, the ``result`` field contains the full document record.
+    """
+    from src.workers.personal_learning_tasks import generate_document_task
+
+    payload = body.model_dump()
+    async_result = generate_document_task.apply_async(
+        kwargs={
+            "user_id": current_user.id,
+            "doc_type": payload["type"],
+            "title": payload["title"],
+            "prompt": payload["prompt"],
+            "format": payload.get("format", "pdf"),
+            "style": payload.get("style", "academic"),
+            "course_id": payload.get("courseId"),
+            "topic_id": payload.get("topicId"),
+        }
+    )
+    return {"taskId": async_result.id, "status": "queued"}
+
+
+@router.get("/documents/jobs/{task_id}")
+async def get_document_job(task_id: str, current_user: CurrentUser):
+    """
+    Poll the status of a queued document generation job.
+
+    Response shape:
+      - ``{"taskId": ..., "status": "queued|running|success|failed", "result": {...} | null}``
+    """
+    from celery.result import AsyncResult
+
+    from src.workers.celery_app import celery_app
+
+    result = AsyncResult(task_id, app=celery_app)
+    state = (result.state or "PENDING").lower()
+    status_map = {
+        "pending": "queued",
+        "received": "queued",
+        "started": "running",
+        "retry": "running",
+        "success": "success",
+        "failure": "failed",
+        "revoked": "failed",
+    }
+    friendly = status_map.get(state, state)
+
+    body: dict = {"taskId": task_id, "status": friendly, "result": None}
+    if result.successful():
+        body["result"] = result.result
+    elif result.failed():
+        body["error"] = str(result.result) if result.result else "Unknown error"
+    return body
 
 
 @router.get("/documents", response_model=models.DocumentListResponse)
