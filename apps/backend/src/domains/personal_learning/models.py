@@ -582,7 +582,7 @@ class ReflectionResponse(CamelModel):
     activities_layer: dict | None = None
     progress_layer: dict | None = None
     achievements_layer: dict | None = None
-    recommendations: dict | None = None
+    recommendations: list[str] | dict | None = None
     created_at: datetime
 
 

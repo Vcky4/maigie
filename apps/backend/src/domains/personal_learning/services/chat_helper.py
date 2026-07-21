@@ -73,27 +73,87 @@ async def send_message(*, user_id: str, message: str) -> dict[str, Any]:
         from src.domains.intelligence.reasoning.llm import generate_content
 
         prompt = f"{system_context}\n\nLearner: {message}\n\nMaigie:"
-        ai_response = await generate_content(prompt, max_tokens=1000)
+        ai_response = await generate_content(prompt, max_tokens=2000)
 
         return {
             "message": ai_response,
-            "suggestedAction": _suggest_action(message, due_count),
+            "suggestedAction": _suggest_action(
+                message=message,
+                ai_response=ai_response,
+                due_count=due_count,
+            ),
         }
 
 
-def _suggest_action(message: str, due_count: int) -> dict[str, Any] | None:
-    """Suggest a logical next action based on conversation content."""
-    message_lower = message.lower()
+# Ordered keyword → action mapping. First hit wins.
+_INTENT_ACTIONS: list[tuple[tuple[str, ...], dict[str, Any]]] = [
+    (
+        ("note", "write down", "capture", "jot"),
+        {"type": "create_note", "title": "Create a note"},
+    ),
+    (
+        ("flashcard", "spaced repetition", "review card"),
+        {"type": "review_flashcards", "title": "Review flashcards"},
+    ),
+    (
+        ("quiz", "practice question", "test myself", "mock"),
+        {"type": "start_quiz", "title": "Start a practice quiz"},
+    ),
+    (
+        ("study plan", "roadmap", "syllabus", "schedule"),
+        {"type": "view_study_plan", "title": "View your study plan"},
+    ),
+    (
+        ("summarize", "summary", "explain"),
+        {"type": "open_chat", "title": "Continue in chat"},
+    ),
+    (
+        ("resource", "material", "book", "reading"),
+        {"type": "browse_resources", "title": "Browse resources"},
+    ),
+    (
+        ("exam", "prep", "preparation"),
+        {"type": "view_exam_prep", "title": "Open exam prep"},
+    ),
+    (
+        ("study", "learn", "focus", "start", "today", "session"),
+        {"type": "start_session", "title": "Start today's session"},
+    ),
+]
 
-    if "note" in message_lower or "write" in message_lower:
-        return {"type": "create_note", "title": "Create a note"}
-    if "flashcard" in message_lower or "review" in message_lower:
-        return {"type": "review_flashcards", "title": "Review flashcards"}
-    if "quiz" in message_lower or "practice" in message_lower:
-        return {"type": "start_quiz", "title": "Start a practice quiz"}
-    if "plan" in message_lower or "schedule" in message_lower:
-        return {"type": "view_study_plan", "title": "View your study plan"}
+
+def _suggest_action(
+    *,
+    message: str,
+    ai_response: str,
+    due_count: int,
+) -> dict[str, Any] | None:
+    """
+    Suggest a logical next action.
+
+    Priority:
+      1. Explicit intent keywords in the learner's message.
+      2. Intent keywords in the AI response (Maigie's own suggestion).
+      3. State-based fallback (due flashcards).
+      4. Generic "start a session" as a last resort so this field is never null
+         for a normal message.
+    """
+    haystack_msg = message.lower()
+    haystack_ai = (ai_response or "").lower()
+
+    for keywords, action in _INTENT_ACTIONS:
+        if any(k in haystack_msg for k in keywords):
+            return action
+
+    for keywords, action in _INTENT_ACTIONS:
+        if any(k in haystack_ai for k in keywords):
+            return action
+
     if due_count > 0:
-        return {"type": "review_flashcards", "title": f"Review {due_count} due flashcards"}
+        return {
+            "type": "review_flashcards",
+            "title": f"Review {due_count} due flashcards",
+        }
 
-    return None
+    # Last resort — never leave the user without a next step.
+    return {"type": "start_session", "title": "Start today's session"}
