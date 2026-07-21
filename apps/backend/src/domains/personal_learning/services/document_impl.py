@@ -1246,17 +1246,30 @@ async def publish_document(*, user_id: str, doc_id: str):
     return await repo.find_document(doc_id, user_id)
 
 
-async def get_shared_document(share_id: str):
-    """Fetch a public document by its share id — no auth required."""
-    from src.shared.exceptions import NotFoundError
+async def list_documents(*, user_id: str, page: int = 1, page_size: int = 20):
+    """Return a page of generated documents for the current user, newest first."""
     from src.domains.personal_learning.repository import personal_learning_repo as repo
 
-    doc = await repo.find_document_by_share_id(share_id) if hasattr(
-        repo, "find_document_by_share_id"
-    ) else None
-    if not doc:
-        raise NotFoundError("SharedDocument", share_id)
+    skip = max(0, (page - 1) * page_size)
+    return await repo.list_documents(user_id, skip=skip, take=page_size)
+
+
+async def get_by_share_id(*, share_id: str):
+    """
+    Public accessor for a shared document — no auth.
+    Returns ``None`` if the id does not match a public document.
+    """
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    doc = await repo.find_document_by_share_id(share_id)
+    if not doc or not getattr(doc, "is_public", False):
+        return None
     return doc
+
+
+# Backwards-compatible alias for older callers.
+async def get_shared_document(share_id: str):
+    return await get_by_share_id(share_id=share_id)
 
 
 # ---------------------------------------------------------------------------
