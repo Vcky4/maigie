@@ -23,10 +23,15 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
 
     Req 4.1: Store subject, type (EXAM, CERTIFICATION, INTERVIEW, etc.), target date.
     """
+    # Parse targetDate string to datetime if needed
+    target_date = data["targetDate"]
+    if isinstance(target_date, str):
+        target_date = datetime.fromisoformat(target_date.replace("Z", "+00:00"))
+
     prep_data = {
         "userId": user_id,
         "subject": data["subject"],
-        "examDate": data["targetDate"],  # Maps to exam_date column
+        "examDate": target_date,
         "description": data.get("description"),
         "status": "SETUP",
     }
