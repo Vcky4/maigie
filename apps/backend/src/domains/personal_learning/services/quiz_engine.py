@@ -126,7 +126,8 @@ async def start_quiz(
 
     session = await repo.get_quiz_session(quiz_session.id, user_id)
     questions = await repo.list_quiz_questions(quiz_session.id)
-    return _build_quiz_response(session, questions)
+    # Newly created quiz has no answers yet
+    return _build_quiz_response(session, questions, [])
 
 
 async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -167,7 +168,7 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         options=question.options,
     )
 
-    # Record the answer
+    # Record the answer (critical — must persist before responding)
     await repo.create_quiz_answer(
         {
             "quizSessionId": quiz_id,
@@ -183,9 +184,12 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         new_correct = (quiz.correct_count or 0) + 1
         await repo.update_quiz_session(quiz_id, {"correctCount": new_correct})
 
-    # Update topic mastery
+    # Update topic mastery — fire-and-forget to avoid blocking the response.
+    # Any failure is logged; user experience is not affected.
     if question.prep_topic_id:
-        await _update_topic_mastery(question.prep_topic_id)
+        import asyncio
+
+        asyncio.create_task(_update_topic_mastery_safe(question.prep_topic_id))
 
     return {
         "questionId": question_id,
@@ -193,6 +197,14 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         "correctAnswer": question.correct_answer,
         "explanation": question.explanation,
     }
+
+
+async def _update_topic_mastery_safe(topic_id: str) -> None:
+    """Wrap _update_topic_mastery with error handling for fire-and-forget use."""
+    try:
+        await _update_topic_mastery(topic_id)
+    except Exception as e:
+        logger.warning(f"Background mastery update failed for topic {topic_id}: {e}")
 
 
 async def complete_quiz(
@@ -245,7 +257,8 @@ async def get_quiz(*, user_id: str, quiz_id: str) -> Any:
     if not quiz:
         raise NotFoundError("QuizSession", quiz_id)
     questions = await repo.list_quiz_questions(quiz_id)
-    return _build_quiz_response(quiz, questions)
+    answers = await repo.list_quiz_answers(quiz_id)
+    return _build_quiz_response(quiz, questions, answers)
 
 
 async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
@@ -254,11 +267,16 @@ async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
     if not prep:
         raise NotFoundError("Preparation", prep_id)
     quizzes = await repo.list_prep_quizzes(prep_id, user_id)
-    return [_build_quiz_response(q, []) for q in quizzes]
+    return [_build_quiz_response(q, [], []) for q in quizzes]
 
 
-def _build_quiz_response(quiz: Any, questions: list[Any]) -> dict[str, Any]:
-    """Build the quiz session response dict including questions."""
+def _build_quiz_response(
+    quiz: Any, questions: list[Any], answers: list[Any]
+) -> dict[str, Any]:
+    """Build the quiz session response dict including questions with user answers."""
+    # Index answers by question_id for O(1) lookup
+    answer_map = {a.question_id: a for a in answers}
+
     return {
         "id": quiz.id,
         "user_id": quiz.user_id,
@@ -272,17 +290,25 @@ def _build_quiz_response(quiz: Any, questions: list[Any]) -> dict[str, Any]:
         "duration_seconds": quiz.duration_seconds,
         "completed_at": quiz.completed_at,
         "created_at": quiz.created_at,
-        "questions": [
-            {
-                "id": q.id,
-                "question_text": q.question_text,
-                "question_type": q.question_type,
-                "options": q.options if isinstance(q.options, list) else None,
-                "order_index": q.order_index,
-                "prep_topic_id": q.prep_topic_id,
-            }
-            for q in questions
-        ],
+        "questions": [_question_dict(q, answer_map.get(q.id)) for q in questions],
+    }
+
+
+def _question_dict(question: Any, answer: Any | None) -> dict[str, Any]:
+    """Serialize a question with optional user answer attached."""
+    return {
+        "id": question.id,
+        "question_text": question.question_text,
+        "question_type": question.question_type,
+        "options": question.options if isinstance(question.options, list) else None,
+        "order_index": question.order_index,
+        "prep_topic_id": question.prep_topic_id,
+        "correct_answer": question.correct_answer,
+        "explanation": question.explanation,
+        "user_answer": answer.user_answer if answer else None,
+        "is_correct": answer.is_correct if answer else None,
+        "time_taken_seconds": answer.time_taken_seconds if answer else None,
+        "answered_at": answer.created_at if answer else None,
     }
 
 

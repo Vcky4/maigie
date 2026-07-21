@@ -485,6 +485,13 @@ class QuizQuestionResponse(CamelModel):
     options: list[str] | None = None
     order_index: int
     prep_topic_id: str | None = None
+    correct_answer: str
+    explanation: str | None = None
+    # User's answer (present if they've answered this question)
+    user_answer: str | None = None
+    is_correct: bool | None = None
+    time_taken_seconds: int | None = None
+    answered_at: datetime | None = None
 
 
 class QuizSessionResponse(CamelModel):
