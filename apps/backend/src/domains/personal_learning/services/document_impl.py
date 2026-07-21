@@ -247,6 +247,7 @@ class DocumentGenerationService:
         content: str,
         style: str = "academic",
         user_id: str | None = None,
+        doc_type: str | None = None,
     ) -> dict[str, Any]:
         """
         Generate a document in the specified format.
@@ -266,9 +267,14 @@ class DocumentGenerationService:
             logger.warning(f"Content truncated to {MAX_CONTENT_LENGTH} chars for user {user_id}")
 
         format = _normalize_format(format)
+        is_presentation = (doc_type or "").strip().lower() == "presentation"
 
-        # For pptx, content is a JSON string of slides; for pdf/docx it's HTML/markdown
-        if format == "pptx":
+        # Presentation as PDF gets a first-class HTML slide renderer.
+        if is_presentation and format == "pdf":
+            slides = self._extract_slides_from_content(content, title)
+            doc_bytes = render_presentation_pdf(title, slides, theme="indigo")
+            preview_html = build_presentation_html(title, slides, theme="indigo")
+        elif format == "pptx":
             doc_bytes = self._generate_pptx(title, content, style)
             preview_html = self._build_pptx_preview_html(title, content, style)
         else:
@@ -680,6 +686,14 @@ class DocumentGenerationService:
                 np.font.color.rgb = TEXT_GRAY
                 np.alignment = PP_ALIGN.RIGHT
 
+            # Speaker notes — visible only in Presenter view.
+            speaker_notes = (slide_data.get("notes") or "").strip()
+            if speaker_notes:
+                try:
+                    slide.notes_slide.notes_text_frame.text = speaker_notes
+                except Exception:  # pragma: no cover - defensive
+                    pass
+
         buffer = io.BytesIO()
         prs.save(buffer)
         buffer.seek(0)
@@ -731,25 +745,31 @@ class DocumentGenerationService:
             y += Inches(0.7)
 
     def _extract_slides_from_content(self, content: str, title: str) -> list[dict]:
-        """Extract slide data from content (HTML sections, JSON, or plain text)."""
+        """Extract slide data. Tries JSON, HTML <section>, markdown, then a text heuristic."""
         import json
 
-        # Try JSON first
+        cleaned = (content or "").strip()
+
+        # 1. JSON — either a list of slides or {"slides": [...]}
         try:
-            data = json.loads(content)
-            if isinstance(data, list) and len(data) > 0:
+            data = json.loads(cleaned)
+            if isinstance(data, list) and data:
                 return data
             if isinstance(data, dict) and "slides" in data:
                 return data["slides"]
         except (json.JSONDecodeError, TypeError):
             pass
 
-        # Try HTML <section> format
-        if "<section" in content:
-            return self._parse_sections_to_slides(content)
+        # 2. HTML <section> blocks
+        if "<section" in cleaned:
+            return self._parse_sections_to_slides(cleaned)
 
-        # Fallback: use the legacy parser
-        return self._parse_pptx_content(content, title)
+        # 3. Markdown with H1 as deck title and H2 as slide titles (our LLM output shape)
+        if _looks_like_markdown_slides(cleaned):
+            return _parse_markdown_to_slides(cleaned, fallback_title=title)
+
+        # 4. Last resort — the text heuristic parser
+        return self._parse_pptx_content(cleaned, title)
 
     def _parse_sections_to_slides(self, html: str) -> list[dict]:
         """Parse HTML <section> tags into slide data for PPTX, including tables."""
@@ -1174,6 +1194,7 @@ async def create_from_prompt(
         content=content,
         style=style,
         user_id=user_id,
+        doc_type=doc_type,
     )
 
     # Persist a DB record
@@ -1264,9 +1285,16 @@ _DOC_TYPE_GUIDANCE: dict[str, dict[str, str]] = {
         "word_target": "8 to 14 slides",
         "voice": "concise and speaker-friendly",
         "structure": (
-            "one H1 for the title slide, then one H2 per slide with 3 to 6 short bullets "
-            "each. Close with a summary slide and a thank-you or Q&A slide. Bullets should "
-            "be talking points, not full sentences."
+            "one `# Deck Title` line and an optional subtitle paragraph, then one slide "
+            "per `## Slide Title`. Give each slide 3 to 6 short bullets. To make the deck "
+            "visually varied, tag some slides with a layout using one of these prefixes "
+            "in the H2 title:\n"
+            "  - `## [section] Section Name` for a full-bleed section divider\n"
+            "  - `## [big] 87%` with the caption as a single bullet, for a big-number stat\n"
+            "  - `## [quote] \"Design is intelligence made visible.\"` with the author as the only bullet\n"
+            "  - `## [two-col | Pros | Cons] Comparison title` with the bullets split evenly between the two columns\n"
+            "Use these tags sparingly (2 to 4 across the deck) to add rhythm. End with a "
+            "`## Summary` slide and a `## [closer] Thank you` slide."
         ),
     },
     "letter": {
@@ -1432,11 +1460,13 @@ _FORMAT_ALIASES: dict[str, str] = {
     "docx": "docx",
     "doc": "docx",
     "word": "docx",
-    "pptx": "pptx",
-    "ppt": "pptx",
-    "powerpoint": "pptx",
-    "slides": "pptx",
-    "presentation": "pptx",
+    # PowerPoint output is disabled for now — the HTML/PDF slide renderer
+    # produces much better looking decks. All slide requests fall back to PDF.
+    "pptx": "pdf",
+    "ppt": "pdf",
+    "powerpoint": "pdf",
+    "slides": "pdf",
+    "presentation": "pdf",
 }
 
 
@@ -1448,3 +1478,667 @@ def _normalize_format(value: str | None) -> str:
             f"Unsupported format: {value}. Use 'pdf', 'docx', or 'pptx'."
         )
     return _FORMAT_ALIASES[key]
+
+
+
+# ---------------------------------------------------------------------------
+# Markdown → slide parser (for PPTX)
+# ---------------------------------------------------------------------------
+
+_MD_H1 = re.compile(r"^#\s+(.+)$")
+_MD_H2 = re.compile(r"^##\s+(.+)$")
+_MD_H3 = re.compile(r"^###\s+(.+)$")
+_MD_BULLET = re.compile(r"^\s*[-*+]\s+(.+)$")
+_MD_NUMBERED = re.compile(r"^\s*\d+\.\s+(.+)$")
+_MD_SPEAKER_NOTES = re.compile(r"^\s*(?:speaker\s+notes?|notes?)\s*[:：]\s*(.+)$", re.IGNORECASE)
+
+
+def _looks_like_markdown_slides(content: str) -> bool:
+    """Heuristic: content is markdown-style slides if it has at least one H2 heading."""
+    for line in content.splitlines():
+        if _MD_H2.match(line.strip()):
+            return True
+    return False
+
+
+def _parse_markdown_to_slides(content: str, *, fallback_title: str) -> list[dict]:
+    """
+    Parse a markdown document with H1 deck title and H2 per slide into slide dicts.
+
+    Recognized structure:
+
+        # Deck Title                       -> title slide
+        Optional subtitle line
+        ## Slide 1 title                   -> new slide
+        - bullet one
+        - bullet two
+        Speaker notes: extra context...    -> attached to previous slide as `notes`
+        ## Slide 2 title
+        ...
+
+    Returns a list of ``{title, bullets, subtitle?, notes?}`` dicts. Always
+    includes a title slide as the first element.
+    """
+    lines = content.splitlines()
+    deck_title: str | None = None
+    subtitle_lines: list[str] = []
+    slides: list[dict] = []
+    current: dict | None = None
+    in_preamble = True  # everything before the first H2 is deck-level
+
+    def _push(slide: dict | None) -> None:
+        if not slide:
+            return
+        # Drop empty slides
+        if not slide.get("title") and not slide.get("bullets"):
+            return
+        slides.append(slide)
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # H1 → deck title
+        m = _MD_H1.match(stripped)
+        if m:
+            deck_title = _clean_inline(m.group(1))
+            continue
+
+        # H2 → new slide
+        m = _MD_H2.match(stripped)
+        if m:
+            in_preamble = False
+            _push(current)
+            current = {"title": _clean_inline(m.group(1)), "bullets": [], "notes": ""}
+            continue
+
+        # H3 → treat as bold callout inside current slide (also opens a slide if none)
+        m = _MD_H3.match(stripped)
+        if m:
+            in_preamble = False
+            if current is None:
+                current = {"title": _clean_inline(m.group(1)), "bullets": [], "notes": ""}
+                continue
+            # Attach as a sub-item
+            current["bullets"].append(_clean_inline(m.group(1)))
+            continue
+
+        # Speaker notes → attach to the current slide
+        m = _MD_SPEAKER_NOTES.match(stripped)
+        if m and current is not None:
+            note = _clean_inline(m.group(1))
+            current["notes"] = (current["notes"] + " " + note).strip() if current["notes"] else note
+            continue
+
+        # Bullet (- or *)
+        m = _MD_BULLET.match(stripped) or _MD_NUMBERED.match(stripped)
+        if m:
+            in_preamble = False
+            if current is None:
+                # Bullets before any H2 — attach to a synthetic first slide
+                current = {"title": deck_title or fallback_title, "bullets": [], "notes": ""}
+            current["bullets"].append(_clean_inline(m.group(1)))
+            continue
+
+        # Plain paragraph
+        if in_preamble:
+            subtitle_lines.append(_clean_inline(stripped))
+        elif current is not None:
+            # A prose line inside a slide → treat as a bullet if we do not already have many,
+            # otherwise fold into speaker notes.
+            text = _clean_inline(stripped)
+            if len(current["bullets"]) < 6:
+                current["bullets"].append(text)
+            else:
+                current["notes"] = (current["notes"] + " " + text).strip() if current["notes"] else text
+
+    _push(current)
+
+    # Build the title slide, then the body slides.
+    result: list[dict] = [
+        {
+            "title": deck_title or fallback_title,
+            "subtitle": " ".join(subtitle_lines).strip() or None,
+            "bullets": [],
+            "notes": "",
+        }
+    ]
+    result.extend(slides)
+
+    # Ensure a closing slide exists.
+    def _looks_like_closer(t: str) -> bool:
+        lower = (t or "").lower()
+        # Strip a leading layout tag like "[closer] "
+        lower = re.sub(r"^\s*\[[^\]]+\]\s*", "", lower).strip()
+        return lower in {"thank you", "thanks", "questions", "q&a", "questions?"}
+
+    if not result or not _looks_like_closer(result[-1].get("title", "")):
+        result.append(
+            {
+                "title": "Thank you",
+                "subtitle": "Questions?",
+                "bullets": [],
+                "notes": "",
+            }
+        )
+
+    return result
+
+
+_INLINE_MD_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_INLINE_MD_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_INLINE_MD_CODE = re.compile(r"`([^`\n]+?)`")
+
+
+def _clean_inline(text: str) -> str:
+    """Strip inline markdown markers so the raw text renders cleanly in slides."""
+    if not text:
+        return ""
+    text = _INLINE_MD_BOLD.sub(r"\1", text)
+    text = _INLINE_MD_ITALIC.sub(r"\1", text)
+    text = _INLINE_MD_CODE.sub(r"\1", text)
+    return text.strip()
+
+
+
+# ---------------------------------------------------------------------------
+# HTML slide renderer for beautiful PDF presentations
+# ---------------------------------------------------------------------------
+
+# CSS palette — kept in one place so themes are easy to swap.
+_SLIDE_PALETTES = {
+    "indigo": {
+        "bg": "#0F172A",         # slide title/section bg
+        "bg_light": "#FFFFFF",   # content slide bg
+        "accent": "#6366F1",     # primary accent
+        "accent2": "#22D3EE",    # secondary accent
+        "text_dark": "#0F172A",
+        "text_muted": "#64748B",
+        "text_light": "#F8FAFC",
+        "border": "#E2E8F0",
+    },
+    "emerald": {
+        "bg": "#022C22",
+        "bg_light": "#FFFFFF",
+        "accent": "#10B981",
+        "accent2": "#F59E0B",
+        "text_dark": "#022C22",
+        "text_muted": "#64748B",
+        "text_light": "#ECFDF5",
+        "border": "#E2E8F0",
+    },
+    "rose": {
+        "bg": "#1F0A15",
+        "bg_light": "#FFFFFF",
+        "accent": "#F43F5E",
+        "accent2": "#F59E0B",
+        "text_dark": "#1F0A15",
+        "text_muted": "#64748B",
+        "text_light": "#FFF1F2",
+        "border": "#E2E8F0",
+    },
+}
+
+
+_SLIDE_CSS_TEMPLATE = """
+@page {
+    size: 33.87cm 19.05cm; /* 16:9 landscape (widescreen) */
+    margin: 0;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: {bg_light};
+    color: {text_dark};
+    -webkit-font-smoothing: antialiased;
+}
+.slide {
+    width: 33.87cm;
+    height: 19.05cm;
+    padding: 2.2cm 2.8cm;
+    page-break-after: always;
+    page-break-inside: avoid;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    overflow: hidden;
+}
+.slide:last-child { page-break-after: auto; }
+
+/* Slide numbers and brand */
+.slide-num {
+    position: absolute;
+    right: 1.4cm;
+    bottom: 1.0cm;
+    font-size: 10pt;
+    color: {text_muted};
+    letter-spacing: 0.1em;
+}
+.brand {
+    position: absolute;
+    left: 1.4cm;
+    bottom: 1.0cm;
+    font-size: 10pt;
+    color: {text_muted};
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-weight: 600;
+}
+
+/* Slide types */
+.slide-title {
+    background: {bg};
+    color: {text_light};
+    justify-content: center;
+    align-items: flex-start;
+    padding-left: 3.6cm;
+    padding-right: 3.6cm;
+}
+.slide-title h1 {
+    font-size: 60pt;
+    font-weight: 800;
+    line-height: 1.05;
+    max-width: 22cm;
+    letter-spacing: -0.02em;
+}
+.slide-title .subtitle {
+    font-size: 22pt;
+    color: rgba(255, 255, 255, 0.7);
+    margin-top: 0.6cm;
+    max-width: 22cm;
+    font-weight: 400;
+    line-height: 1.35;
+}
+.slide-title .accent-bar {
+    width: 6cm;
+    height: 4px;
+    background: {accent};
+    margin-bottom: 1.2cm;
+    border-radius: 2px;
+}
+.slide-title .brand,
+.slide-title .slide-num { color: rgba(255, 255, 255, 0.5); }
+
+.slide-section {
+    background: {accent};
+    color: {text_light};
+    justify-content: center;
+    align-items: flex-start;
+}
+.slide-section .eyebrow {
+    font-size: 12pt;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.75);
+    margin-bottom: 0.6cm;
+    font-weight: 600;
+}
+.slide-section h2 {
+    font-size: 56pt;
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    max-width: 24cm;
+}
+.slide-section .brand,
+.slide-section .slide-num { color: rgba(255, 255, 255, 0.6); }
+
+.slide-content { }
+.slide-content .eyebrow {
+    font-size: 11pt;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: {accent};
+    margin-bottom: 0.35cm;
+    font-weight: 700;
+}
+.slide-content h2 {
+    font-size: 34pt;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin-bottom: 1.0cm;
+    max-width: 24cm;
+}
+.slide-content ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-width: 24cm;
+}
+.slide-content li {
+    font-size: 18pt;
+    line-height: 1.5;
+    padding: 0.32cm 0 0.32cm 1.1cm;
+    position: relative;
+    color: {text_dark};
+    border-bottom: 1px solid {border};
+}
+.slide-content li:last-child { border-bottom: none; }
+.slide-content li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.75cm;
+    width: 0.55cm;
+    height: 2px;
+    background: {accent};
+    border-radius: 1px;
+}
+
+.slide-quote {
+    justify-content: center;
+    align-items: flex-start;
+    background: {bg_light};
+}
+.slide-quote .mark {
+    font-size: 96pt;
+    line-height: 0.6;
+    color: {accent};
+    font-family: Georgia, serif;
+    margin-bottom: 0.3cm;
+}
+.slide-quote blockquote {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 32pt;
+    line-height: 1.35;
+    color: {text_dark};
+    max-width: 26cm;
+    font-weight: 400;
+    font-style: italic;
+}
+.slide-quote .attribution {
+    margin-top: 0.9cm;
+    font-size: 14pt;
+    color: {text_muted};
+    letter-spacing: 0.05em;
+}
+
+.slide-big {
+    justify-content: center;
+    align-items: flex-start;
+}
+.slide-big .number {
+    font-size: 110pt;
+    font-weight: 900;
+    line-height: 1.0;
+    color: {accent};
+    letter-spacing: -0.04em;
+    max-width: 28cm;
+    /* Prevent awkward mid-token wrapping like "O(log n)" splitting to two lines */
+    white-space: nowrap;
+    overflow-wrap: normal;
+}
+/* Auto-shrink for anything longer than a short stat by dropping to a smaller base */
+.slide-big .number.long {
+    font-size: 68pt;
+    white-space: normal;
+    line-height: 1.05;
+}
+.slide-big .caption {
+    font-size: 22pt;
+    color: {text_dark};
+    margin-top: 0.8cm;
+    max-width: 26cm;
+    line-height: 1.3;
+    font-weight: 500;
+}
+.slide-big .eyebrow {
+    font-size: 11pt;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: {text_muted};
+    margin-bottom: 0.4cm;
+    font-weight: 700;
+}
+
+.slide-two-col { }
+.slide-two-col h2 {
+    font-size: 32pt;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin-bottom: 0.9cm;
+    max-width: 28cm;
+}
+.slide-two-col .cols {
+    display: table;
+    width: 100%;
+    border-spacing: 0.9cm 0;
+}
+.slide-two-col .col {
+    display: table-cell;
+    vertical-align: top;
+    width: 50%;
+}
+.slide-two-col .col-heading {
+    font-size: 14pt;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: {accent};
+    font-weight: 700;
+    margin-bottom: 0.4cm;
+    padding-bottom: 0.25cm;
+    border-bottom: 2px solid {accent};
+}
+.slide-two-col .col ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.slide-two-col .col li {
+    font-size: 15pt;
+    line-height: 1.5;
+    padding: 0.2cm 0 0.2cm 0.7cm;
+    position: relative;
+    color: {text_dark};
+}
+.slide-two-col .col li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.6cm;
+    width: 0.35cm;
+    height: 2px;
+    background: {accent};
+    border-radius: 1px;
+}
+
+.slide-closer {
+    background: {bg};
+    color: {text_light};
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+}
+.slide-closer h2 {
+    font-size: 72pt;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+}
+.slide-closer .subtitle {
+    font-size: 22pt;
+    color: rgba(255, 255, 255, 0.7);
+    margin-top: 0.8cm;
+    max-width: 24cm;
+}
+.slide-closer .brand,
+.slide-closer .slide-num { color: rgba(255, 255, 255, 0.5); }
+"""
+
+
+# Regex to detect a layout tag prefix on an H2, e.g. `## [big] 87%`
+_LAYOUT_TAG_PATTERN = re.compile(r"^\[\s*([a-z0-9_-]+)(?:\s*\|\s*([^\]]+))?\s*\]\s*(.*)$", re.IGNORECASE)
+
+
+def _apply_layout_tags(slides: list[dict]) -> list[dict]:
+    """
+    Look at each slide title for a leading `[layout]` or `[layout | arg | arg]` tag
+    and attach layout metadata. Removes the tag from the visible title.
+    """
+    for slide in slides:
+        title = (slide.get("title") or "").strip()
+        m = _LAYOUT_TAG_PATTERN.match(title)
+        if not m:
+            slide.setdefault("layout", "content")
+            continue
+        layout = m.group(1).lower()
+        args_raw = m.group(2) or ""
+        stripped_title = m.group(3).strip()
+        slide["layout"] = layout
+        if args_raw.strip():
+            slide["layout_args"] = [a.strip() for a in args_raw.split("|") if a.strip()]
+        slide["title"] = stripped_title
+    return slides
+
+
+def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> str:
+    """Render a single slide dict into an HTML `<section class="slide ...">` block."""
+    layout = (slide.get("layout") or "content").lower()
+    title = _html_escape(slide.get("title") or "")
+    subtitle = _html_escape(slide.get("subtitle") or "")
+    bullets = slide.get("bullets") or []
+    args = slide.get("layout_args") or []
+
+    slide_num_html = f'<span class="slide-num">{index:02d} / {total:02d}</span>' if index > 0 else ""
+    brand_html = f'<span class="brand">{_html_escape(deck_title)}</span>' if index > 0 else ""
+
+    # First slide is always the deck title.
+    if index == 0:
+        subtitle_html = f'<div class="subtitle">{subtitle}</div>' if subtitle else ""
+        return (
+            f'<section class="slide slide-title">'
+            f'<div class="accent-bar"></div>'
+            f'<h1>{title}</h1>{subtitle_html}'
+            f'{brand_html}{slide_num_html}'
+            f'</section>'
+        )
+
+    # Closing slides
+    if layout == "closer" or title.lower() in {"thank you", "questions", "q&a"}:
+        subtitle_html = (
+            f'<div class="subtitle">{subtitle or "Any questions?"}</div>'
+        )
+        return (
+            f'<section class="slide slide-closer">'
+            f'<h2>{title or "Thank you"}</h2>{subtitle_html}'
+            f'{brand_html}{slide_num_html}'
+            f'</section>'
+        )
+
+    if layout in {"section", "divider"}:
+        eyebrow = f'<div class="eyebrow">Section {_section_number(index)}</div>'
+        return (
+            f'<section class="slide slide-section">{eyebrow}<h2>{title}</h2>'
+            f'{brand_html}{slide_num_html}</section>'
+        )
+
+    if layout == "quote":
+        # bullets[0] is the attribution when present
+        attribution = _html_escape(bullets[0]) if bullets else ""
+        attribution_html = f'<div class="attribution">— {attribution}</div>' if attribution else ""
+        return (
+            f'<section class="slide slide-quote">'
+            f'<div class="mark">&ldquo;</div>'
+            f'<blockquote>{title}</blockquote>{attribution_html}'
+            f'{brand_html}{slide_num_html}</section>'
+        )
+
+    if layout in {"big", "big-number", "stat"}:
+        eyebrow = f'<div class="eyebrow">{_html_escape(args[0])}</div>' if args else ""
+        caption = " ".join(_html_escape(b) for b in bullets)
+        caption_html = f'<div class="caption">{caption}</div>' if caption else ""
+        # Short glyphs get the huge treatment; anything longer scales down.
+        number_class = "number" if len(title) <= 8 else "number long"
+        return (
+            f'<section class="slide slide-big">{eyebrow}'
+            f'<div class="{number_class}">{title}</div>{caption_html}'
+            f'{brand_html}{slide_num_html}</section>'
+        )
+
+    if layout in {"two-col", "twocol", "compare", "comparison"}:
+        left_title = _html_escape(args[0]) if len(args) >= 1 else "Left"
+        right_title = _html_escape(args[1]) if len(args) >= 2 else "Right"
+        # Split bullets into two halves; caller can also send a full-list slide.
+        half = (len(bullets) + 1) // 2
+        left_bullets = bullets[:half]
+        right_bullets = bullets[half:]
+        left_html = "".join(f"<li>{_html_escape(b)}</li>" for b in left_bullets)
+        right_html = "".join(f"<li>{_html_escape(b)}</li>" for b in right_bullets)
+        return (
+            f'<section class="slide slide-two-col">'
+            f'<h2>{title}</h2>'
+            f'<div class="cols">'
+            f'<div class="col"><div class="col-heading">{left_title}</div><ul>{left_html}</ul></div>'
+            f'<div class="col"><div class="col-heading">{right_title}</div><ul>{right_html}</ul></div>'
+            f'</div>{brand_html}{slide_num_html}</section>'
+        )
+
+    # Default: content slide with bullets.
+    eyebrow = f'<div class="eyebrow">{_section_number(index)}</div>'
+    items_html = "".join(f"<li>{_html_escape(b)}</li>" for b in bullets)
+    return (
+        f'<section class="slide slide-content">{eyebrow}<h2>{title}</h2>'
+        f'<ul>{items_html}</ul>'
+        f'{brand_html}{slide_num_html}</section>'
+    )
+
+
+def _section_number(index: int) -> str:
+    return f"{index:02d}"
+
+
+def _html_escape(value: str) -> str:
+    if value is None:
+        return ""
+    return (
+        str(value)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def build_presentation_html(deck_title: str, slides: list[dict], theme: str = "indigo") -> str:
+    """Compose the full HTML document for a themed slide deck."""
+    palette = _SLIDE_PALETTES.get(theme, _SLIDE_PALETTES["indigo"])
+    css = _SLIDE_CSS_TEMPLATE
+    for key, value in palette.items():
+        css = css.replace("{" + key + "}", value)
+    slides = _apply_layout_tags(slides)
+    total = len(slides)
+    body = "\n".join(
+        _render_slide_html(slide, i, total, deck_title) for i, slide in enumerate(slides)
+    )
+    return (
+        "<!DOCTYPE html>"
+        f'<html lang="en"><head><meta charset="utf-8">'
+        f"<title>{_html_escape(deck_title)}</title>"
+        f"<style>{css}</style></head>"
+        f"<body>{body}</body></html>"
+    )
+
+
+def render_presentation_pdf(deck_title: str, slides: list[dict], theme: str = "indigo") -> bytes:
+    """Render a slide deck to a widescreen PDF using WeasyPrint."""
+    html = build_presentation_html(deck_title, slides, theme=theme)
+    try:
+        from weasyprint import HTML as _WeasyHTML
+
+        return _WeasyHTML(string=html).write_pdf()
+    except (ImportError, OSError) as e:  # pragma: no cover - depends on system libs
+        logger.warning(
+            f"WeasyPrint unavailable ({type(e).__name__}: {e}). "
+            "Falling back to xhtml2pdf for slides."
+        )
+        from xhtml2pdf import pisa
+
+        buf = io.BytesIO()
+        pisa.CreatePDF(io.StringIO(html), dest=buf)
+        buf.seek(0)
+        return buf.getvalue()
