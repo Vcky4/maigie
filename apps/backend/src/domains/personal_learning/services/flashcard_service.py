@@ -66,7 +66,7 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
         f"Return ONLY the JSON array, no other text."
     )
 
-    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[])
+    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[], user_id=user_id)
     if not cards_data:
         return []
 
@@ -116,7 +116,7 @@ async def generate_from_topic(*, user_id: str, topic_id: str) -> list[Any]:
         f"Return ONLY the JSON array, no other text."
     )
 
-    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[])
+    cards_data = await generate_content_json(prompt, max_tokens=2000, fallback=[], user_id=user_id)
     if not cards_data:
         return []
 

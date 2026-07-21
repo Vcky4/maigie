@@ -389,12 +389,19 @@ class LearningProfileResponse(CamelModel):
     consistency_score: float | None = None
     best_day_of_week: str | None = None
     dropout_risk: float | None = None
+    preferred_llm_provider: str | None = None
     created_at: datetime | None = None
 
 
-class PurposeSetRequest(CamelModel):
+class PurposeSetRequest(BaseModel):
     purpose: str = Field(
         description="exam_prep, skill_building, course_completion, professional_certification, general_learning"
+    )
+
+
+class LlmProviderSetRequest(BaseModel):
+    provider: str = Field(
+        description="gemini, openai, or anthropic"
     )
 
 

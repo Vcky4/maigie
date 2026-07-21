@@ -1,11 +1,15 @@
 """
 Resilient LLM wrapper for the Personal Learning domain.
 
+Supports per-user provider switching (Gemini, OpenAI, Anthropic).
 Adds timeout, retry budget, and circuit breaker pattern around LLM calls.
-All personal learning services should import generate_content from here
-instead of directly from the intelligence domain.
 
-Circuit Breaker States:
+Provider Selection:
+- If user_id is provided, checks LearningProfile.preferred_llm_provider
+- Falls back to system default (Gemini) if no preference or provider unavailable
+- Supported values: "gemini", "openai", "anthropic"
+
+Circuit Breaker States (per-provider):
 - CLOSED: Normal operation; calls go through.
 - OPEN: Too many failures; calls short-circuit with fallback immediately.
 - HALF_OPEN: After cooldown, allow one test call. Success → CLOSED; failure → OPEN.
@@ -19,65 +23,179 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Circuit Breaker State
+# Configuration
 # ---------------------------------------------------------------------------
 
 _FAILURE_THRESHOLD = 5  # Consecutive failures before opening circuit
 _RECOVERY_TIMEOUT_S = 60  # Seconds before trying again after open
 _DEFAULT_TIMEOUT_S = 30  # Per-call timeout in seconds
 _MAX_RETRIES = 2  # Max retries per call (total attempts = MAX_RETRIES + 1)
+_DEFAULT_PROVIDER = "gemini"
 
-_failure_count: int = 0
-_last_failure_time: float = 0.0
-_circuit_state: str = "CLOSED"  # CLOSED | OPEN | HALF_OPEN
+# Supported providers
+SUPPORTED_PROVIDERS = ("gemini", "openai", "anthropic")
+
+# ---------------------------------------------------------------------------
+# Per-Provider Circuit Breaker State
+# ---------------------------------------------------------------------------
+
+_circuit_states: dict[str, dict[str, Any]] = {}
 
 
-def _is_circuit_open() -> bool:
-    """Check if the circuit breaker is open (blocking calls)."""
-    global _circuit_state, _failure_count, _last_failure_time
+def _get_circuit(provider: str) -> dict[str, Any]:
+    """Get or create circuit breaker state for a provider."""
+    if provider not in _circuit_states:
+        _circuit_states[provider] = {
+            "failure_count": 0,
+            "last_failure_time": 0.0,
+            "state": "CLOSED",
+        }
+    return _circuit_states[provider]
 
-    if _circuit_state == "CLOSED":
+
+def _is_circuit_open(provider: str) -> bool:
+    """Check if the circuit breaker is open for a specific provider."""
+    circuit = _get_circuit(provider)
+
+    if circuit["state"] == "CLOSED":
         return False
 
-    if _circuit_state == "OPEN":
-        # Check if cooldown period has passed
-        elapsed = time.monotonic() - _last_failure_time
+    if circuit["state"] == "OPEN":
+        elapsed = time.monotonic() - circuit["last_failure_time"]
         if elapsed >= _RECOVERY_TIMEOUT_S:
-            _circuit_state = "HALF_OPEN"
-            logger.info("LLM circuit breaker: HALF_OPEN (testing recovery)")
-            return False  # Allow one test call
-        return True  # Still blocking
+            circuit["state"] = "HALF_OPEN"
+            logger.info(f"LLM circuit breaker [{provider}]: HALF_OPEN (testing recovery)")
+            return False
+        return True
 
-    # HALF_OPEN: allow the call
-    return False
-
-
-def _record_success() -> None:
-    """Record a successful call — reset circuit breaker."""
-    global _failure_count, _circuit_state
-    _failure_count = 0
-    if _circuit_state != "CLOSED":
-        logger.info("LLM circuit breaker: CLOSED (recovered)")
-    _circuit_state = "CLOSED"
+    return False  # HALF_OPEN allows one call
 
 
-def _record_failure() -> None:
-    """Record a failed call — potentially open the circuit."""
-    global _failure_count, _circuit_state, _last_failure_time
+def _record_success(provider: str) -> None:
+    """Record a successful call — reset circuit breaker for provider."""
+    circuit = _get_circuit(provider)
+    circuit["failure_count"] = 0
+    if circuit["state"] != "CLOSED":
+        logger.info(f"LLM circuit breaker [{provider}]: CLOSED (recovered)")
+    circuit["state"] = "CLOSED"
 
-    _failure_count += 1
-    _last_failure_time = time.monotonic()
 
-    if _failure_count >= _FAILURE_THRESHOLD:
-        _circuit_state = "OPEN"
+def _record_failure(provider: str) -> None:
+    """Record a failed call — potentially open the circuit for provider."""
+    circuit = _get_circuit(provider)
+    circuit["failure_count"] += 1
+    circuit["last_failure_time"] = time.monotonic()
+
+    if circuit["failure_count"] >= _FAILURE_THRESHOLD:
+        circuit["state"] = "OPEN"
         logger.warning(
-            f"LLM circuit breaker: OPEN after {_failure_count} consecutive failures. "
-            f"Will retry in {_RECOVERY_TIMEOUT_S}s."
+            f"LLM circuit breaker [{provider}]: OPEN after {circuit['failure_count']} "
+            f"consecutive failures. Will retry in {_RECOVERY_TIMEOUT_S}s."
         )
-    elif _circuit_state == "HALF_OPEN":
-        # Test call failed — go back to OPEN
-        _circuit_state = "OPEN"
-        logger.warning("LLM circuit breaker: OPEN (recovery test failed)")
+    elif circuit["state"] == "HALF_OPEN":
+        circuit["state"] = "OPEN"
+        logger.warning(f"LLM circuit breaker [{provider}]: OPEN (recovery test failed)")
+
+
+# ---------------------------------------------------------------------------
+# Provider Implementations
+# ---------------------------------------------------------------------------
+
+
+async def _call_gemini(prompt: str, *, max_tokens: int, temperature: float) -> str:
+    """Call Gemini via the existing intelligence domain interface."""
+    from src.domains.intelligence.reasoning.llm import generate_content as _gemini_generate
+
+    return await _gemini_generate(prompt, max_tokens=max_tokens, temperature=temperature)
+
+
+async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> str:
+    """Call OpenAI directly."""
+    import openai
+    from src.config import get_settings
+
+    settings = get_settings()
+    if not settings.OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY not configured")
+
+    client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    completion = await client.chat.completions.create(
+        model=settings.OPENAI_DEFAULT_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    text = completion.choices[0].message.content or ""
+    if not text.strip():
+        raise RuntimeError("OpenAI returned empty response")
+    return text.strip()
+
+
+async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -> str:
+    """Call Anthropic directly."""
+    import anthropic
+    from src.config import get_settings
+
+    settings = get_settings()
+    if not settings.ANTHROPIC_API_KEY:
+        raise RuntimeError("ANTHROPIC_API_KEY not configured")
+
+    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    message = await client.messages.create(
+        model=settings.ANTHROPIC_DEFAULT_MODEL,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+    )
+    # Anthropic returns content blocks
+    text = "".join(
+        block.text for block in message.content if hasattr(block, "text")
+    )
+    if not text.strip():
+        raise RuntimeError("Anthropic returned empty response")
+    return text.strip()
+
+
+_PROVIDER_CALLABLES = {
+    "gemini": _call_gemini,
+    "openai": _call_openai,
+    "anthropic": _call_anthropic,
+}
+
+
+# ---------------------------------------------------------------------------
+# Provider Resolution
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_provider(user_id: str | None) -> str:
+    """Resolve the preferred LLM provider for a user.
+
+    Returns the provider name (gemini/openai/anthropic).
+    Falls back to system default if no preference set or user_id is None.
+    """
+    if not user_id:
+        return _DEFAULT_PROVIDER
+
+    from ..repository import personal_learning_repo as repo
+
+    profile = await repo.get_profile_by_user(user_id)
+    if profile and profile.preferred_llm_provider:
+        provider = profile.preferred_llm_provider.lower().strip()
+        if provider in SUPPORTED_PROVIDERS:
+            return provider
+        logger.warning(
+            f"Unknown LLM provider '{provider}' for user {user_id}, using default"
+        )
+
+    return _DEFAULT_PROVIDER
+
+
+def _get_fallback_providers(primary: str) -> list[str]:
+    """Get fallback provider order if primary fails."""
+    # Try other providers in a reasonable order
+    fallback_order = ["gemini", "openai", "anthropic"]
+    return [p for p in fallback_order if p != primary]
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +204,7 @@ def _record_failure() -> None:
 
 
 class LLMUnavailableError(Exception):
-    """Raised when the LLM is unavailable (circuit open) and no fallback provided."""
+    """Raised when the LLM is unavailable (all providers failed) and no fallback provided."""
 
     pass
 
@@ -99,76 +217,103 @@ async def generate_content(
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     max_retries: int = _MAX_RETRIES,
     fallback: str | None = None,
+    user_id: str | None = None,
 ) -> str:
-    """Generate text content with resilience guarantees.
+    """Generate text content with resilience and per-user provider routing.
 
     Features:
+    - Per-user provider selection (from LearningProfile.preferred_llm_provider)
     - Per-call timeout (default 30s)
     - Retry with exponential backoff (default 2 retries)
-    - Circuit breaker (opens after 5 consecutive failures, 60s cooldown)
-    - Optional fallback string returned when LLM is unavailable
+    - Per-provider circuit breaker (opens after 5 failures, 60s cooldown)
+    - Automatic fallback to other providers if primary is down
+    - Optional fallback string returned when all providers unavailable
 
     Args:
         prompt: The prompt to send.
         max_tokens: Max output tokens.
         temperature: Creativity parameter.
         timeout_s: Timeout per attempt in seconds.
-        max_retries: Max retry attempts (0 = no retries).
-        fallback: String to return if all attempts fail and circuit is open.
-                  If None and all attempts fail, raises LLMUnavailableError.
+        max_retries: Max retry attempts per provider.
+        fallback: String to return if all providers fail.
+        user_id: User ID to resolve provider preference (None = system default).
 
     Returns:
-        Generated text, or fallback string if LLM unavailable.
+        Generated text, or fallback string if all providers unavailable.
 
     Raises:
-        LLMUnavailableError: If LLM unavailable and no fallback provided.
+        LLMUnavailableError: If all providers unavailable and no fallback provided.
     """
-    # Circuit breaker check
-    if _is_circuit_open():
-        logger.debug("LLM circuit open — returning fallback or raising")
-        if fallback is not None:
-            return fallback
-        raise LLMUnavailableError("LLM circuit breaker is OPEN. Try again later.")
+    # Resolve preferred provider
+    primary_provider = await _resolve_provider(user_id)
 
-    from src.domains.intelligence.reasoning.llm import (
-        generate_content as _raw_generate,
-    )
+    # Build provider attempt order: primary first, then fallbacks
+    providers_to_try = [primary_provider] + _get_fallback_providers(primary_provider)
 
     last_error: Exception | None = None
 
-    for attempt in range(max_retries + 1):
-        try:
-            result = await asyncio.wait_for(
-                _raw_generate(prompt, max_tokens=max_tokens, temperature=temperature),
-                timeout=timeout_s,
-            )
-            _record_success()
-            return result
+    for provider in providers_to_try:
+        # Check circuit breaker for this provider
+        if _is_circuit_open(provider):
+            logger.debug(f"LLM circuit open for [{provider}] — skipping")
+            continue
 
-        except asyncio.TimeoutError:
-            last_error = asyncio.TimeoutError(
-                f"LLM call timed out after {timeout_s}s (attempt {attempt + 1})"
-            )
-            logger.warning(f"LLM timeout (attempt {attempt + 1}/{max_retries + 1})")
+        # Check if provider has an API key configured
+        call_fn = _PROVIDER_CALLABLES.get(provider)
+        if not call_fn:
+            continue
 
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                f"LLM call failed (attempt {attempt + 1}/{max_retries + 1}): {type(e).__name__}: {e}"
-            )
+        # Try this provider with retries
+        for attempt in range(max_retries + 1):
+            try:
+                result = await asyncio.wait_for(
+                    call_fn(prompt, max_tokens=max_tokens, temperature=temperature),
+                    timeout=timeout_s,
+                )
+                _record_success(provider)
+                return result
 
-        # Exponential backoff between retries (0.5s, 1s, 2s, ...)
-        if attempt < max_retries:
-            await asyncio.sleep(0.5 * (2**attempt))
+            except asyncio.TimeoutError:
+                last_error = asyncio.TimeoutError(
+                    f"[{provider}] timed out after {timeout_s}s (attempt {attempt + 1})"
+                )
+                logger.warning(
+                    f"LLM [{provider}] timeout (attempt {attempt + 1}/{max_retries + 1})"
+                )
 
-    # All attempts exhausted
-    _record_failure()
+            except RuntimeError as e:
+                # Provider not configured (no API key) — skip to next provider immediately
+                if "not configured" in str(e):
+                    logger.debug(f"LLM [{provider}] not configured, skipping")
+                    last_error = e
+                    break  # Don't retry, move to next provider
+                last_error = e
+                logger.warning(
+                    f"LLM [{provider}] failed (attempt {attempt + 1}/{max_retries + 1}): {e}"
+                )
 
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    f"LLM [{provider}] failed (attempt {attempt + 1}/{max_retries + 1}): "
+                    f"{type(e).__name__}: {e}"
+                )
+
+            # Exponential backoff between retries
+            if attempt < max_retries:
+                await asyncio.sleep(0.5 * (2**attempt))
+        else:
+            # All retries exhausted for this provider — record failure
+            _record_failure(provider)
+
+    # All providers exhausted
     if fallback is not None:
-        logger.info("LLM unavailable — using fallback response")
+        logger.info("All LLM providers unavailable — using fallback response")
         return fallback
 
-    raise LLMUnavailableError(f"LLM unavailable after {max_retries + 1} attempts: {last_error}")
+    raise LLMUnavailableError(
+        f"All LLM providers unavailable after trying {providers_to_try}: {last_error}"
+    )
 
 
 async def generate_content_json(
@@ -179,11 +324,12 @@ async def generate_content_json(
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     max_retries: int = _MAX_RETRIES,
     fallback: Any = None,
+    user_id: str | None = None,
 ) -> Any:
     """Generate content and parse as JSON. Returns fallback on failure.
 
     Convenience wrapper for the common pattern of:
-    1. Call LLM
+    1. Call LLM (with per-user provider routing)
     2. Parse response as JSON
     3. Fall back to a default on any failure (LLM down, bad JSON, etc.)
     """
@@ -197,6 +343,7 @@ async def generate_content_json(
             timeout_s=timeout_s,
             max_retries=max_retries,
             fallback=None,  # We handle fallback ourselves after JSON parse
+            user_id=user_id,
         )
         # Strip markdown fences if present
         cleaned = response.strip()
@@ -211,106 +358,27 @@ async def generate_content_json(
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Attempt repair: truncated arrays are common with LLM output limits
-            repaired = _try_repair_json(cleaned)
-            if repaired is not None:
-                return repaired
+            # Attempt repair: find first [ or { and last ] or }
+            first_bracket = -1
+            for i, c in enumerate(cleaned):
+                if c in "[{":
+                    first_bracket = i
+                    break
+            if first_bracket >= 0:
+                last_bracket = max(
+                    cleaned.rfind("]"),
+                    cleaned.rfind("}"),
+                )
+                if last_bracket > first_bracket:
+                    trimmed = cleaned[first_bracket : last_bracket + 1]
+                    try:
+                        return json.loads(trimmed)
+                    except json.JSONDecodeError:
+                        pass
             raise
+
     except (LLMUnavailableError, json.JSONDecodeError, Exception) as e:
         logger.warning(f"generate_content_json failed: {type(e).__name__}: {e}")
         if fallback is not None:
             return fallback
         raise
-
-
-def _try_repair_json(text: str) -> Any:
-    """Attempt to repair truncated JSON produced by an LLM.
-
-    Strategy: walk back from EOF to the last complete `}` or `]`,
-    trim any trailing comma, then close any still-open brackets in the
-    correct nesting order.
-
-    Examples that recover:
-      - Array of objects truncated mid-string:
-          [{"a": 1}, {"b": 2}, {"c": "trun...  →  [{"a": 1}, {"b": 2}]
-      - Object with a truncated nested array:
-          {"m": "hi", "items": [{"t": "a"}, {"t": "tr...  →  {"m": "hi", "items": [{"t": "a"}]}
-      - Trailing comma before EOF:
-          {"a": 1, "b": 2,  →  {"a": 1, "b": 2}
-    """
-    import json
-
-    stripped = text.strip()
-    if not stripped:
-        return None
-
-    # Fast path: brackets already balanced — the failure was something else.
-    if stripped.count("{") == stripped.count("}") and stripped.count("[") == stripped.count("]"):
-        try:
-            return json.loads(stripped)
-        except json.JSONDecodeError:
-            pass
-
-    def _close_openers(candidate: str) -> str | None:
-        """Walk the candidate to figure out the still-open bracket stack, then
-        close them in reverse order. Return None if the walker gets confused
-        (e.g. we're mid-string)."""
-        stack: list[str] = []
-        in_string = False
-        escape = False
-        for ch in candidate:
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch in "{[":
-                stack.append(ch)
-            elif ch == "}":
-                if not stack or stack[-1] != "{":
-                    return None
-                stack.pop()
-            elif ch == "]":
-                if not stack or stack[-1] != "[":
-                    return None
-                stack.pop()
-        # If we ended mid-string the candidate is not a clean boundary.
-        if in_string:
-            return None
-        closers = "".join("}" if opener == "{" else "]" for opener in reversed(stack))
-        return candidate + closers
-
-    # First, try just closing whatever is open on the whole string —
-    # handles cases like `{"a": 1, "b": 2,` where there's no closing brace.
-    whole = stripped.rstrip().rstrip(",").rstrip()
-    attempt = _close_openers(whole)
-    if attempt is not None:
-        try:
-            return json.loads(attempt)
-        except json.JSONDecodeError:
-            pass
-
-    # Then try progressively earlier boundary points (last `}` or `]`).
-    tried: set[int] = set()
-    for boundary_char in ("}", "]"):
-        idx = stripped.rfind(boundary_char)
-        while idx > 0:
-            if idx in tried:
-                idx = stripped.rfind(boundary_char, 0, idx)
-                continue
-            tried.add(idx)
-            candidate = stripped[: idx + 1].rstrip().rstrip(",").rstrip()
-            attempt = _close_openers(candidate)
-            if attempt is not None:
-                try:
-                    return json.loads(attempt)
-                except json.JSONDecodeError:
-                    pass
-            idx = stripped.rfind(boundary_char, 0, idx)
-
-    return None

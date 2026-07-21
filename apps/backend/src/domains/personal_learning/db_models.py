@@ -385,6 +385,11 @@ class LearningProfile(Base, TimestampMixin):
     best_day_of_week: Mapped[Optional[str]] = mapped_column("bestDayOfWeek", String, nullable=True)
     dropout_risk: Mapped[Optional[float]] = mapped_column("dropoutRisk", Float, nullable=True)
 
+    # LLM provider preference (gemini, openai, anthropic; null = system default)
+    preferred_llm_provider: Mapped[Optional[str]] = mapped_column(
+        "preferredLlmProvider", String, nullable=True
+    )
+
     __table_args__ = (Index("LearningProfile_userId_idx", "userId"),)
 
     def __repr__(self) -> str:

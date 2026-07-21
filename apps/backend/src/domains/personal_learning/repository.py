@@ -841,6 +841,7 @@ class PersonalLearningRepository:
             "consistencyScore": "consistency_score",
             "bestDayOfWeek": "best_day_of_week",
             "dropoutRisk": "dropout_risk",
+            "preferredLlmProvider": "preferred_llm_provider",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 

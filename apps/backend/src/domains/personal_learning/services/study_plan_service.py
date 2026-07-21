@@ -68,7 +68,7 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
 
     if not topics_to_plan:
         # Generate generic plan items from goal description via LLM
-        topics_to_plan = await _generate_topics_from_goal(title, goal_description)
+        topics_to_plan = await _generate_topics_from_goal(title, goal_description, user_id=user_id)
 
     # Calculate available days
     now = datetime.now(timezone.utc)
@@ -312,7 +312,7 @@ def _add_review_items(
 
 
 async def _generate_topics_from_goal(
-    title: str, goal_description: str | None
+    title: str, goal_description: str | None, *, user_id: str | None = None
 ) -> list[dict[str, Any]]:
     """Generate study topics from a goal description using AI."""
     from .llm_resilient import generate_content_json
@@ -327,7 +327,7 @@ async def _generate_topics_from_goal(
 
     try:
         topics_data = await generate_content_json(
-            prompt, max_tokens=2000, fallback=None
+            prompt, max_tokens=2000, fallback=None, user_id=user_id
         )
         return [
             {

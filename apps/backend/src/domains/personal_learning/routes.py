@@ -76,6 +76,31 @@ async def get_profile(current_user: CurrentUser):
     return profile
 
 
+@router.put("/profile/llm-provider", response_model=models.LearningProfileResponse)
+async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: CurrentUser):
+    """Set preferred LLM provider (gemini, openai, or anthropic)."""
+    from .services.llm_resilient import SUPPORTED_PROVIDERS
+    from .repository import personal_learning_repo as repo
+
+    provider = body.provider.lower().strip()
+    if provider not in SUPPORTED_PROVIDERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unsupported provider: '{provider}'. Must be one of: {', '.join(SUPPORTED_PROVIDERS)}",
+        )
+
+    profile = await repo.get_profile_by_user(current_user.id)
+    if not profile:
+        raise HTTPException(
+            status_code=404, detail="Learning profile not found. Complete onboarding first."
+        )
+
+    updated = await repo.update_profile(
+        current_user.id, {"preferredLlmProvider": provider}
+    )
+    return updated
+
+
 # ===========================================================================
 # Course Study
 # ===========================================================================

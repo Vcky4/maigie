@@ -270,6 +270,7 @@ Return ONLY valid JSON."""
             temperature=0.7,
             timeout_s=20,
             fallback=None,
+            user_id=user_id,
         )
 
         return {
