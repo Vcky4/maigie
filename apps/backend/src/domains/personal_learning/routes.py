@@ -308,8 +308,8 @@ async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: 
         user_id=current_user.id,
         prep_id=prep_id,
         mode=body.mode,
-        topic_id=body.topicId,
-        question_count=body.questionCount,
+        topic_id=body.topic_id,
+        question_count=body.question_count,
     )
 
 
