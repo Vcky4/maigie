@@ -1101,6 +1101,39 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    async def list_quiz_questions(
+        self, quiz_id: str, *, session: AsyncSession | None = None
+    ) -> list[QuizQuestion]:
+        """Return all questions for a quiz session ordered by orderIndex."""
+        async with self._use_session(session) as s:
+            stmt = (
+                select(QuizQuestion)
+                .where(QuizQuestion.quiz_session_id == quiz_id)
+                .order_by(QuizQuestion.order_index.asc())
+            )
+            result = await s.execute(stmt)
+            return list(result.scalars().all())
+
+    async def list_prep_quizzes(
+        self,
+        prep_id: str,
+        user_id: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list[QuizSession]:
+        """Return all quiz sessions for a preparation, newest first."""
+        async with self._use_session(session) as s:
+            stmt = (
+                select(QuizSession)
+                .where(
+                    QuizSession.prep_id == prep_id,
+                    QuizSession.user_id == user_id,
+                )
+                .order_by(QuizSession.created_at.desc())
+            )
+            result = await s.execute(stmt)
+            return list(result.scalars().all())
+
     # -----------------------------------------------------------------------
     # Field mapping helpers — Prep Topics, Materials & Quizzes
     # -----------------------------------------------------------------------

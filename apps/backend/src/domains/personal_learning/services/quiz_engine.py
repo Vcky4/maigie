@@ -124,7 +124,9 @@ async def start_quiz(
     if actual_count != count:
         await repo.update_quiz_session(quiz_session.id, {"totalQuestions": actual_count})
 
-    return await repo.get_quiz_session(quiz_session.id, user_id)
+    session = await repo.get_quiz_session(quiz_session.id, user_id)
+    questions = await repo.list_quiz_questions(quiz_session.id)
+    return _build_quiz_response(session, questions)
 
 
 async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -137,9 +139,13 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     if not quiz:
         raise NotFoundError("QuizSession", quiz_id)
 
-    question_id = data["questionId"]
-    user_answer = data["userAnswer"]
-    time_taken = data.get("timeTakenSeconds")
+    # Accept both snake_case (from model_dump) and camelCase (defensive)
+    question_id = data.get("question_id") or data.get("questionId")
+    user_answer = data.get("user_answer") or data.get("userAnswer")
+    time_taken = data.get("time_taken_seconds") or data.get("timeTakenSeconds")
+
+    if not question_id or user_answer is None:
+        raise ValueError("question_id and user_answer are required")
 
     # Get the question to check correctness
     from sqlalchemy import select as sa_select
@@ -234,11 +240,50 @@ async def complete_quiz(
 
 
 async def get_quiz(*, user_id: str, quiz_id: str) -> Any:
-    """Get a quiz session with its answers."""
+    """Get a quiz session with its questions."""
     quiz = await repo.get_quiz_session(quiz_id, user_id)
     if not quiz:
         raise NotFoundError("QuizSession", quiz_id)
-    return quiz
+    questions = await repo.list_quiz_questions(quiz_id)
+    return _build_quiz_response(quiz, questions)
+
+
+async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
+    """List all quiz sessions for a preparation, newest first."""
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+    quizzes = await repo.list_prep_quizzes(prep_id, user_id)
+    return [_build_quiz_response(q, []) for q in quizzes]
+
+
+def _build_quiz_response(quiz: Any, questions: list[Any]) -> dict[str, Any]:
+    """Build the quiz session response dict including questions."""
+    return {
+        "id": quiz.id,
+        "user_id": quiz.user_id,
+        "prep_id": quiz.prep_id,
+        "mode": quiz.mode,
+        "topic_id": quiz.topic_id,
+        "status": quiz.status,
+        "total_questions": quiz.total_questions,
+        "correct_count": quiz.correct_count,
+        "score_percentage": quiz.score_percentage,
+        "duration_seconds": quiz.duration_seconds,
+        "completed_at": quiz.completed_at,
+        "created_at": quiz.created_at,
+        "questions": [
+            {
+                "id": q.id,
+                "question_text": q.question_text,
+                "question_type": q.question_type,
+                "options": q.options if isinstance(q.options, list) else None,
+                "order_index": q.order_index,
+                "prep_topic_id": q.prep_topic_id,
+            }
+            for q in questions
+        ],
+    }
 
 
 async def _update_topic_mastery(topic_id: str) -> None:

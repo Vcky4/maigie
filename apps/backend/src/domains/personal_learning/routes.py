@@ -313,6 +313,14 @@ async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: 
     )
 
 
+@router.get(
+    "/preparations/{prep_id}/quizzes", response_model=list[models.QuizSessionResponse]
+)
+async def list_quizzes(prep_id: str, current_user: CurrentUser):
+    """List all quiz sessions for a preparation."""
+    return await quiz_engine.list_prep_quizzes(user_id=current_user.id, prep_id=prep_id)
+
+
 @router.post("/quizzes/{quiz_id}/answer", response_model=models.AnswerResultResponse)
 async def submit_answer(quiz_id: str, body: models.AnswerSubmitRequest, current_user: CurrentUser):
     """Submit an answer to a quiz question."""

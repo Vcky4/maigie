@@ -98,7 +98,7 @@ class NoteListResponse(BaseModel):
     pages: int
 
 
-class NoteImportRequest(BaseModel):
+class NoteImportRequest(CamelModel):
     """Import a personal note into a Learning Space."""
 
     spaceId: str
@@ -152,13 +152,13 @@ class QuizStartRequest(CamelModel):
     question_count: int | None = None
 
 
-class AnswerSubmitRequest(BaseModel):
+class AnswerSubmitRequest(CamelModel):
     question_id: str
     user_answer: str
     time_taken_seconds: int | None = None
 
 
-class QuizCompleteRequest(BaseModel):
+class QuizCompleteRequest(CamelModel):
     duration_seconds: int | None = None
 
 
@@ -167,7 +167,7 @@ class QuizCompleteRequest(BaseModel):
 # ===========================================================================
 
 
-class DocumentGenerateRequest(BaseModel):
+class DocumentGenerateRequest(CamelModel):
     """Request to generate an academic document."""
 
     type: str = Field(..., description="essay, report, presentation, letter, cv")
@@ -309,7 +309,7 @@ class FlashcardResponse(CamelModel):
     updated_at: datetime
 
 
-class FlashcardReviewRequest(BaseModel):
+class FlashcardReviewRequest(CamelModel):
     quality: int = Field(ge=0, le=5)
 
 
@@ -392,13 +392,13 @@ class LearningProfileResponse(CamelModel):
     created_at: datetime | None = None
 
 
-class PurposeSetRequest(BaseModel):
+class PurposeSetRequest(CamelModel):
     purpose: str = Field(
         description="exam_prep, skill_building, course_completion, professional_certification, general_learning"
     )
 
 
-class SubjectsSetRequest(BaseModel):
+class SubjectsSetRequest(CamelModel):
     subjects: list[str] | None = None
     goals: str | None = None
 
@@ -454,7 +454,7 @@ class PrepMaterialResponse(CamelModel):
     created_at: datetime
 
 
-class PrepCreateRequest(BaseModel):
+class PrepCreateRequest(CamelModel):
     subject: str
     type: str = Field(
         description="EXAM, CERTIFICATION, INTERVIEW, PRESENTATION, ASSIGNMENT, PROJECT"
@@ -478,12 +478,13 @@ class PrepSummaryResponse(CamelModel):
 # ===========================================================================
 
 
-class QuizQuestionResponse(BaseModel):
+class QuizQuestionResponse(CamelModel):
     id: str
-    questionText: str
-    questionType: str
+    question_text: str
+    question_type: str
     options: list[str] | None = None
-    orderIndex: int
+    order_index: int
+    prep_topic_id: str | None = None
 
 
 class QuizSessionResponse(CamelModel):
@@ -491,6 +492,7 @@ class QuizSessionResponse(CamelModel):
     user_id: str
     prep_id: str
     mode: str
+    topic_id: str | None = None
     status: str
     total_questions: int
     correct_count: int | None = None
@@ -498,6 +500,7 @@ class QuizSessionResponse(CamelModel):
     duration_seconds: int | None = None
     completed_at: datetime | None = None
     created_at: datetime
+    questions: list[QuizQuestionResponse] = []
 
 
 class AnswerResultResponse(BaseModel):
@@ -576,7 +579,7 @@ class ReflectionResponse(CamelModel):
     created_at: datetime
 
 
-class ReflectionGenerateRequest(BaseModel):
+class ReflectionGenerateRequest(CamelModel):
     type: str = Field(description="weekly or monthly")
 
 
