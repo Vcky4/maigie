@@ -1068,3 +1068,111 @@ Reveal.initialize({{
 
 # Module-level singleton
 document_generation_service = DocumentGenerationService()
+
+
+# ---------------------------------------------------------------------------
+# Public orchestration API (used by routes)
+# ---------------------------------------------------------------------------
+
+
+async def create_from_prompt(
+    *,
+    user_id: str,
+    doc_type: str,
+    title: str,
+    prompt: str,
+    format: str = "pdf",
+    style: str = "academic",
+    course_id: str | None = None,
+    topic_id: str | None = None,
+):
+    """
+    Generate a document from a natural-language prompt.
+
+    1. Uses the LLM to generate structured content based on the prompt and document type.
+    2. Renders the content to PDF/DOCX/PPTX via ``document_generation_service``.
+    3. Persists a ``GeneratedDocument`` record and returns it.
+    """
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.domains.intelligence.reasoning.llm import generate_content
+
+    # Ask the LLM to produce markdown content tailored to the doc type.
+    llm_prompt = (
+        f"You are producing a {doc_type} titled \"{title}\".\n"
+        f"Write it in well-structured Markdown suitable for direct rendering to {format.upper()}.\n"
+        f"Use headings, paragraphs, and bullet points where appropriate.\n"
+        f"Do NOT include meta-commentary — return only the document body.\n\n"
+        f"Request:\n{prompt}"
+    )
+
+    try:
+        content = await generate_content(llm_prompt, max_tokens=4000, temperature=0.7)
+    except Exception as e:
+        logger.error(f"LLM generation failed for document '{title}': {e}")
+        content = f"# {title}\n\n(Content generation failed. Please try again.)"
+
+    # Render the file bytes and upload
+    result = await document_generation_service.generate_document(
+        format=format,
+        title=title,
+        content=content,
+        style=style,
+        user_id=user_id,
+    )
+
+    # Persist a DB record
+    doc = await repo.create_document(
+        {
+            "userId": user_id,
+            "title": title,
+            "type": doc_type,
+            "format": format,
+            "style": style,
+            "filename": result.get("filename"),
+            "fileUrl": result.get("url"),
+            "previewUrl": result.get("preview_url"),
+            "courseId": course_id,
+            "topicId": topic_id,
+        }
+    )
+    return doc
+
+
+async def get_document(*, user_id: str, doc_id: str):
+    """Fetch a generated document by id."""
+    from src.shared.exceptions import NotFoundError
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    doc = await repo.find_document(doc_id, user_id)
+    if not doc:
+        raise NotFoundError("Document", doc_id)
+    return doc
+
+
+async def publish_document(*, user_id: str, doc_id: str):
+    """Mark a document as public and return a share id."""
+    import uuid as _uuid
+
+    from src.shared.exceptions import NotFoundError
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    doc = await repo.find_document(doc_id, user_id)
+    if not doc:
+        raise NotFoundError("Document", doc_id)
+
+    share_id = _uuid.uuid4().hex[:16]
+    await repo.update_document(doc_id, {"isPublic": True, "shareId": share_id})
+    return await repo.find_document(doc_id, user_id)
+
+
+async def get_shared_document(share_id: str):
+    """Fetch a public document by its share id — no auth required."""
+    from src.shared.exceptions import NotFoundError
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    doc = await repo.find_document_by_share_id(share_id) if hasattr(
+        repo, "find_document_by_share_id"
+    ) else None
+    if not doc:
+        raise NotFoundError("SharedDocument", share_id)
+    return doc

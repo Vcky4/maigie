@@ -514,10 +514,20 @@ async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUs
 
 @router.post("/documents", response_model=models.DocumentResponse, status_code=201)
 async def generate_document(body: models.DocumentGenerateRequest, current_user: CurrentUser):
-    """Generate an academic document."""
+    """Generate an academic document from a natural-language prompt."""
     from .services import document_impl
 
-    return await document_impl.generate_document(user_id=current_user.id, data=body.model_dump())
+    payload = body.model_dump()
+    return await document_impl.create_from_prompt(
+        user_id=current_user.id,
+        doc_type=payload["type"],
+        title=payload["title"],
+        prompt=payload["prompt"],
+        format=payload.get("format", "pdf"),
+        style=payload.get("style", "academic"),
+        course_id=payload.get("courseId"),
+        topic_id=payload.get("topicId"),
+    )
 
 
 @router.get("/documents", response_model=models.DocumentListResponse)
