@@ -88,7 +88,9 @@ def _serialize_document(doc) -> dict:
         "content_type": getattr(doc, "content_type", None),
         "share_id": getattr(doc, "share_id", None),
         "is_public": getattr(doc, "is_public", False),
-        "created_at": getattr(doc, "created_at", None).isoformat()
-        if getattr(doc, "created_at", None)
-        else None,
+        "created_at": (
+            getattr(doc, "created_at", None).isoformat()
+            if getattr(doc, "created_at", None)
+            else None
+        ),
     }

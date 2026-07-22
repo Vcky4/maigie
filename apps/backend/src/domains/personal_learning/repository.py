@@ -121,9 +121,7 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def count_user_notes(
-        self, user_id: str, *, session: AsyncSession | None = None
-    ) -> int:
+    async def count_user_notes(self, user_id: str, *, session: AsyncSession | None = None) -> int:
         """Count total notes for a user (excluding archived)."""
         async with self._use_session(session) as s:
             stmt = (
@@ -197,9 +195,7 @@ class PersonalLearningRepository:
 
         return await self.find_note(note_id, data.get("userId", ""))
 
-    async def delete_note(
-        self, note_id: str, *, session: AsyncSession | None = None
-    ) -> None:
+    async def delete_note(self, note_id: str, *, session: AsyncSession | None = None) -> None:
         async with self._use_session(session) as s:
             stmt = delete(Note).where(Note.id == note_id)
             await s.execute(stmt)
@@ -240,9 +236,7 @@ class PersonalLearningRepository:
     # Note Tags
     # -----------------------------------------------------------------------
 
-    async def delete_note_tags(
-        self, note_id: str, *, session: AsyncSession | None = None
-    ) -> None:
+    async def delete_note_tags(self, note_id: str, *, session: AsyncSession | None = None) -> None:
         async with self._use_session(session) as s:
             stmt = delete(NoteTag).where(NoteTag.note_id == note_id)
             await s.execute(stmt)
@@ -307,9 +301,7 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def delete_exam_prep(
-        self, prep_id: str, *, session: AsyncSession | None = None
-    ) -> None:
+    async def delete_exam_prep(self, prep_id: str, *, session: AsyncSession | None = None) -> None:
         async with self._use_session(session) as s:
             stmt = delete(ExamPrep).where(ExamPrep.id == prep_id)
             await s.execute(stmt)
@@ -741,7 +733,12 @@ class PersonalLearningRepository:
             return result.rowcount > 0
 
     async def update_resource_tags(
-        self, resource_id: str, user_id: str, tags: list[str], *, session: AsyncSession | None = None
+        self,
+        resource_id: str,
+        user_id: str,
+        tags: list[str],
+        *,
+        session: AsyncSession | None = None,
     ) -> SavedResource | None:
         async with self._use_session(session) as s:
             stmt = (
@@ -978,8 +975,12 @@ class PersonalLearningRepository:
             return list(result.scalars().all())
 
     async def update_status(
-        self, notification_id: str, status: str, delivered_at: datetime | None = None,
-        *, session: AsyncSession | None = None
+        self,
+        notification_id: str,
+        status: str,
+        delivered_at: datetime | None = None,
+        *,
+        session: AsyncSession | None = None,
     ) -> None:
         async with self._use_session(session) as s:
             values: dict[str, Any] = {"status": status}
@@ -1033,8 +1034,12 @@ class PersonalLearningRepository:
             return list(result.scalars().all())
 
     async def update_topic_mastery(
-        self, topic_id: str, mastery_score: float, status: str,
-        *, session: AsyncSession | None = None
+        self,
+        topic_id: str,
+        mastery_score: float,
+        status: str,
+        *,
+        session: AsyncSession | None = None,
     ) -> None:
         async with self._use_session(session) as s:
             stmt = (
@@ -1603,25 +1608,24 @@ class PersonalLearningRepository:
         """Return LearningProfiles in paginated batches (for background tasks)."""
         async with self._use_session(session) as s:
             stmt = (
-                select(LearningProfile)
-                .order_by(LearningProfile.user_id)
-                .offset(skip)
-                .limit(take)
+                select(LearningProfile).order_by(LearningProfile.user_id).offset(skip).limit(take)
             )
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
-    async def count_active_profiles(
-        self, *, session: AsyncSession | None = None
-    ) -> int:
+    async def count_active_profiles(self, *, session: AsyncSession | None = None) -> int:
         """Return total count of active learning profiles."""
         async with self._use_session(session) as s:
             stmt = select(func.count()).select_from(LearningProfile)
             return (await s.execute(stmt)).scalar() or 0
 
     async def list_declining_engagement_profiles(
-        self, min_declining_days: int = 3, *, skip: int = 0, take: int = 100,
-        session: AsyncSession | None = None
+        self,
+        min_declining_days: int = 3,
+        *,
+        skip: int = 0,
+        take: int = 100,
+        session: AsyncSession | None = None,
     ) -> list[LearningProfile]:
         """Return profiles with dropout_risk above threshold (paginated).
 

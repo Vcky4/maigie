@@ -139,9 +139,7 @@ async def auth_headers(client: AsyncClient):
 
     factory = get_session_factory()
     async with factory() as session:
-        await session.execute(
-            sa_update(User).where(User.email == email).values(is_active=True)
-        )
+        await session.execute(sa_update(User).where(User.email == email).values(is_active=True))
         await session.commit()
 
     login = await client.post(

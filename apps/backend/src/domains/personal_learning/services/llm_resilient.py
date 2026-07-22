@@ -148,9 +148,7 @@ async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -
         temperature=temperature,
     )
     # Anthropic returns content blocks
-    text = "".join(
-        block.text for block in message.content if hasattr(block, "text")
-    )
+    text = "".join(block.text for block in message.content if hasattr(block, "text"))
     if not text.strip():
         raise RuntimeError("Anthropic returned empty response")
     return text.strip()
@@ -186,9 +184,7 @@ async def _resolve_provider(user_id: str | None) -> str:
         if provider in SUPPORTED_PROVIDERS:
             logger.info(f"User {user_id} preferred LLM provider: {provider}")
             return provider
-        logger.warning(
-            f"Unknown LLM provider '{provider}' for user {user_id}, using default"
-        )
+        logger.warning(f"Unknown LLM provider '{provider}' for user {user_id}, using default")
     else:
         logger.debug(f"No LLM preference for user {user_id}, using default: {_DEFAULT_PROVIDER}")
 

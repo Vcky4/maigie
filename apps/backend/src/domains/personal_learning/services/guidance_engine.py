@@ -283,7 +283,11 @@ Return ONLY valid JSON."""
                 "actionData": None,
             },
             "readyForYou": [
-                {"type": "prepared", "title": item.get("title", ""), "description": item.get("description", "")}
+                {
+                    "type": "prepared",
+                    "title": item.get("title", ""),
+                    "description": item.get("description", ""),
+                }
                 for item in data.get("readyItems", [])
             ],
             "stage": "active",
@@ -353,8 +357,7 @@ async def _build_ready_from_prep(prep: Any, state: dict) -> list[dict[str, Any]]
             {
                 "type": "prep_topic",
                 "title": getattr(topic, "title", "Study topic"),
-                "description": getattr(topic, "description", None)
-                or f"Part of {prep.subject}",
+                "description": getattr(topic, "description", None) or f"Part of {prep.subject}",
                 "actionData": {
                     "prepId": prep.id,
                     "prepTopicId": getattr(topic, "id", None),

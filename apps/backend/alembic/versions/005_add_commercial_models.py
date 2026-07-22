@@ -46,9 +46,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "LearningProfile",
-        sa.Column(
-            "triggerDismissalCount", sa.Integer(), server_default="0", nullable=False
-        ),
+        sa.Column("triggerDismissalCount", sa.Integer(), server_default="0", nullable=False),
     )
     op.add_column(
         "LearningProfile",

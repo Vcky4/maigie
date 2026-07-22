@@ -75,7 +75,9 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
         await trial_service.record_plus_feature_used(user_id, "flashcard_generation")
     else:
         max_cards = 5
-        card_types_instruction = "Create standard Q&A flashcards (front: question/term, back: answer/definition)."
+        card_types_instruction = (
+            "Create standard Q&A flashcards (front: question/term, back: answer/definition)."
+        )
 
     prompt = (
         f"Extract key concepts from this note and create flashcards.\n"
@@ -228,7 +230,9 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
     total_reviews = new_repetition  # Approximate: use this card's repetition count as proxy
     # Get actual total reviewed cards for this user
     stats = await repo.get_flashcard_stats(user_id)
-    total_reviewed = stats.get("total", 0) - stats.get("due_today", 0)  # reviewed = total minus still-due
+    total_reviewed = stats.get("total", 0) - stats.get(
+        "due_today", 0
+    )  # reviewed = total minus still-due
     await milestone_service.check_milestones(user_id, {"total_flashcard_reviews": total_reviewed})
 
     return result

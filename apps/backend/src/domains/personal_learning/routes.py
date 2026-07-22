@@ -95,9 +95,7 @@ async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: Cur
             status_code=404, detail="Learning profile not found. Complete onboarding first."
         )
 
-    updated = await repo.update_profile(
-        current_user.id, {"preferredLlmProvider": provider}
-    )
+    updated = await repo.update_profile(current_user.id, {"preferredLlmProvider": provider})
     return updated
 
 
@@ -344,9 +342,7 @@ async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: 
     )
 
 
-@router.get(
-    "/preparations/{prep_id}/quizzes", response_model=list[models.QuizSessionResponse]
-)
+@router.get("/preparations/{prep_id}/quizzes", response_model=list[models.QuizSessionResponse])
 async def list_quizzes(prep_id: str, current_user: CurrentUser):
     """List all quiz sessions for a preparation."""
     return await quiz_engine.list_prep_quizzes(user_id=current_user.id, prep_id=prep_id)
@@ -563,9 +559,7 @@ async def generate_document(body: models.DocumentGenerateRequest, current_user: 
 
 
 @router.post("/documents/async", status_code=202)
-async def generate_document_async(
-    body: models.DocumentGenerateRequest, current_user: CurrentUser
-):
+async def generate_document_async(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """
     Queue a document generation job. Returns immediately with a task id.
 
@@ -864,9 +858,7 @@ async def get_trial_status(current_user: CurrentUser):
         "startsAt": status.started_at.isoformat() if status.started_at else None,
         "endsAt": status.ends_at.isoformat() if status.ends_at else None,
         "nextTrialAvailableAt": (
-            status.next_trial_available_at.isoformat()
-            if status.next_trial_available_at
-            else None
+            status.next_trial_available_at.isoformat() if status.next_trial_available_at else None
         ),
         "showcaseSuggestions": (
             [

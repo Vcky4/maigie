@@ -1141,9 +1141,7 @@ Reveal.initialize({{
         """Upload raw bytes via the storage client."""
         remote_path = f"{path.strip('/')}/{filename}"
         content_type = CONTENT_TYPES.get(filename.rsplit(".", 1)[-1], "application/octet-stream")
-        return await storage_service.upload_bytes(
-            content, remote_path, content_type=content_type
-        )
+        return await storage_service.upload_bytes(content, remote_path, content_type=content_type)
 
 
 # Module-level singleton
@@ -1187,6 +1185,7 @@ async def create_from_prompt(
         )
         if not cap_result.allowed:
             from fastapi import HTTPException
+
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -1206,6 +1205,7 @@ async def create_from_prompt(
         )
         if not cap_result.allowed:
             from fastapi import HTTPException
+
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -1222,7 +1222,9 @@ async def create_from_prompt(
     if format != "pdf" or style != "academic":
         await trial_service.record_plus_feature_used(user_id, "document_generation")
 
-    llm_prompt = _build_document_prompt(doc_type=doc_type, title=title, prompt=prompt, format=format)
+    llm_prompt = _build_document_prompt(
+        doc_type=doc_type, title=title, prompt=prompt, format=format
+    )
     max_tokens = _max_tokens_for_type(doc_type)
 
     try:
@@ -1375,7 +1377,7 @@ _DOC_TYPE_GUIDANCE: dict[str, dict[str, str]] = {
             "in the H2 title:\n"
             "  - `## [section] Section Name` for a full-bleed section divider\n"
             "  - `## [big] 87%` with the caption as a single bullet, for a big-number stat\n"
-            "  - `## [quote] \"Design is intelligence made visible.\"` with the author as the only bullet\n"
+            '  - `## [quote] "Design is intelligence made visible."` with the author as the only bullet\n'
             "  - `## [two-col | Pros | Cons] Comparison title` with the bullets split evenly between the two columns\n"
             "Use these tags sparingly (2 to 4 across the deck) to add rhythm. End with a "
             "`## Summary` slide and a `## [closer] Thank you` slide."
@@ -1425,7 +1427,7 @@ def _build_document_prompt(*, doc_type: str, title: str, prompt: str, format: st
 
     article = "an" if (doc_type or "").strip().lower()[:1] in "aeiou" else "a"
     return (
-        f"Write {article} {doc_type} titled \"{title}\".\n\n"
+        f'Write {article} {doc_type} titled "{title}".\n\n'
         f"{prompt.strip()}\n\n"
         f"Length: {guidance['word_target']}. Voice: {guidance['voice']}.\n"
         f"Structure it as: {guidance['structure']}\n\n"
@@ -1445,7 +1447,6 @@ def _max_tokens_for_type(doc_type: str) -> int:
         "presentation": 3500,
         "report": 5000,
     }.get(key, 3000)
-
 
 
 # ---------------------------------------------------------------------------
@@ -1534,7 +1535,6 @@ def _sanitize_llm_output(text: str) -> str:
     return cleaned.strip()
 
 
-
 # ---------------------------------------------------------------------------
 # Format normalization
 # ---------------------------------------------------------------------------
@@ -1558,11 +1558,8 @@ def _normalize_format(value: str | None) -> str:
     """Map user-supplied format strings to canonical values (pdf, docx, pptx)."""
     key = (value or "").strip().lower()
     if key not in _FORMAT_ALIASES:
-        raise ValueError(
-            f"Unsupported format: {value}. Use 'pdf', 'docx', or 'pptx'."
-        )
+        raise ValueError(f"Unsupported format: {value}. Use 'pdf', 'docx', or 'pptx'.")
     return _FORMAT_ALIASES[key]
-
 
 
 # ---------------------------------------------------------------------------
@@ -1676,7 +1673,9 @@ def _parse_markdown_to_slides(content: str, *, fallback_title: str) -> list[dict
             if len(current["bullets"]) < 6:
                 current["bullets"].append(text)
             else:
-                current["notes"] = (current["notes"] + " " + text).strip() if current["notes"] else text
+                current["notes"] = (
+                    (current["notes"] + " " + text).strip() if current["notes"] else text
+                )
 
     _push(current)
 
@@ -1726,7 +1725,6 @@ def _clean_inline(text: str) -> str:
     return text.strip()
 
 
-
 # ---------------------------------------------------------------------------
 # HTML slide renderer for beautiful PDF presentations
 # ---------------------------------------------------------------------------
@@ -1734,10 +1732,10 @@ def _clean_inline(text: str) -> str:
 # CSS palette — kept in one place so themes are easy to swap.
 _SLIDE_PALETTES = {
     "indigo": {
-        "bg": "#0F172A",         # slide title/section bg
-        "bg_light": "#FFFFFF",   # content slide bg
-        "accent": "#6366F1",     # primary accent
-        "accent2": "#22D3EE",    # secondary accent
+        "bg": "#0F172A",  # slide title/section bg
+        "bg_light": "#FFFFFF",  # content slide bg
+        "accent": "#6366F1",  # primary accent
+        "accent2": "#22D3EE",  # secondary accent
         "text_dark": "#0F172A",
         "text_muted": "#64748B",
         "text_light": "#F8FAFC",
@@ -2056,7 +2054,9 @@ body {
 
 
 # Regex to detect a layout tag prefix on an H2, e.g. `## [big] 87%`
-_LAYOUT_TAG_PATTERN = re.compile(r"^\[\s*([a-z0-9_-]+)(?:\s*\|\s*([^\]]+))?\s*\]\s*(.*)$", re.IGNORECASE)
+_LAYOUT_TAG_PATTERN = re.compile(
+    r"^\[\s*([a-z0-9_-]+)(?:\s*\|\s*([^\]]+))?\s*\]\s*(.*)$", re.IGNORECASE
+)
 
 
 def _apply_layout_tags(slides: list[dict]) -> list[dict]:
@@ -2088,7 +2088,9 @@ def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> 
     bullets = slide.get("bullets") or []
     args = slide.get("layout_args") or []
 
-    slide_num_html = f'<span class="slide-num">{index:02d} / {total:02d}</span>' if index > 0 else ""
+    slide_num_html = (
+        f'<span class="slide-num">{index:02d} / {total:02d}</span>' if index > 0 else ""
+    )
     brand_html = f'<span class="brand">{_html_escape(deck_title)}</span>' if index > 0 else ""
 
     # First slide is always the deck title.
@@ -2097,28 +2099,26 @@ def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> 
         return (
             f'<section class="slide slide-title">'
             f'<div class="accent-bar"></div>'
-            f'<h1>{title}</h1>{subtitle_html}'
-            f'{brand_html}{slide_num_html}'
-            f'</section>'
+            f"<h1>{title}</h1>{subtitle_html}"
+            f"{brand_html}{slide_num_html}"
+            f"</section>"
         )
 
     # Closing slides
     if layout == "closer" or title.lower() in {"thank you", "questions", "q&a"}:
-        subtitle_html = (
-            f'<div class="subtitle">{subtitle or "Any questions?"}</div>'
-        )
+        subtitle_html = f'<div class="subtitle">{subtitle or "Any questions?"}</div>'
         return (
             f'<section class="slide slide-closer">'
             f'<h2>{title or "Thank you"}</h2>{subtitle_html}'
-            f'{brand_html}{slide_num_html}'
-            f'</section>'
+            f"{brand_html}{slide_num_html}"
+            f"</section>"
         )
 
     if layout in {"section", "divider"}:
         eyebrow = f'<div class="eyebrow">Section {_section_number(index)}</div>'
         return (
             f'<section class="slide slide-section">{eyebrow}<h2>{title}</h2>'
-            f'{brand_html}{slide_num_html}</section>'
+            f"{brand_html}{slide_num_html}</section>"
         )
 
     if layout == "quote":
@@ -2128,8 +2128,8 @@ def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> 
         return (
             f'<section class="slide slide-quote">'
             f'<div class="mark">&ldquo;</div>'
-            f'<blockquote>{title}</blockquote>{attribution_html}'
-            f'{brand_html}{slide_num_html}</section>'
+            f"<blockquote>{title}</blockquote>{attribution_html}"
+            f"{brand_html}{slide_num_html}</section>"
         )
 
     if layout in {"big", "big-number", "stat"}:
@@ -2141,7 +2141,7 @@ def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> 
         return (
             f'<section class="slide slide-big">{eyebrow}'
             f'<div class="{number_class}">{title}</div>{caption_html}'
-            f'{brand_html}{slide_num_html}</section>'
+            f"{brand_html}{slide_num_html}</section>"
         )
 
     if layout in {"two-col", "twocol", "compare", "comparison"}:
@@ -2155,11 +2155,11 @@ def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> 
         right_html = "".join(f"<li>{_html_escape(b)}</li>" for b in right_bullets)
         return (
             f'<section class="slide slide-two-col">'
-            f'<h2>{title}</h2>'
+            f"<h2>{title}</h2>"
             f'<div class="cols">'
             f'<div class="col"><div class="col-heading">{left_title}</div><ul>{left_html}</ul></div>'
             f'<div class="col"><div class="col-heading">{right_title}</div><ul>{right_html}</ul></div>'
-            f'</div>{brand_html}{slide_num_html}</section>'
+            f"</div>{brand_html}{slide_num_html}</section>"
         )
 
     # Default: content slide with bullets.
@@ -2167,8 +2167,8 @@ def _render_slide_html(slide: dict, index: int, total: int, deck_title: str) -> 
     items_html = "".join(f"<li>{_html_escape(b)}</li>" for b in bullets)
     return (
         f'<section class="slide slide-content">{eyebrow}<h2>{title}</h2>'
-        f'<ul>{items_html}</ul>'
-        f'{brand_html}{slide_num_html}</section>'
+        f"<ul>{items_html}</ul>"
+        f"{brand_html}{slide_num_html}</section>"
     )
 
 

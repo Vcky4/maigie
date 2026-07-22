@@ -87,7 +87,9 @@ class TestDistributeItems:
         """No single day exceeds the daily limit."""
         topics = _make_topics(8, minutes=25)
         max_daily = 60.0
-        result = _distribute_items(topics, days_available=10, start=START, max_daily_minutes=max_daily)
+        result = _distribute_items(
+            topics, days_available=10, start=START, max_daily_minutes=max_daily
+        )
 
         # Group by date and sum minutes
         daily_totals: dict[datetime, float] = {}
@@ -135,7 +137,9 @@ class TestAddReviewItems:
     def test_adds_reviews_for_first_third(self):
         """Only the first third of items get review items."""
         topics = _make_topics(9, minutes=30)
-        plan_items = _distribute_items(topics, days_available=30, start=START, max_daily_minutes=120)
+        plan_items = _distribute_items(
+            topics, days_available=30, start=START, max_daily_minutes=120
+        )
         reviews = _add_review_items(plan_items, days_available=30, start=START)
 
         # 9 items // 3 = 3 items get reviews
@@ -144,7 +148,9 @@ class TestAddReviewItems:
     def test_review_scheduled_3_days_after_study(self):
         """Review date = study date + 3 days."""
         topics = _make_topics(3, minutes=30)
-        plan_items = _distribute_items(topics, days_available=30, start=START, max_daily_minutes=120)
+        plan_items = _distribute_items(
+            topics, days_available=30, start=START, max_daily_minutes=120
+        )
         reviews = _add_review_items(plan_items, days_available=30, start=START)
 
         # First item gets a review
@@ -158,7 +164,9 @@ class TestAddReviewItems:
         topics = _make_topics(6, minutes=30)
         # Use short deadline so reviews at +3 days would fall outside
         days = 2
-        plan_items = _distribute_items(topics, days_available=days, start=START, max_daily_minutes=120)
+        plan_items = _distribute_items(
+            topics, days_available=days, start=START, max_daily_minutes=120
+        )
         reviews = _add_review_items(plan_items, days_available=days, start=START)
 
         plan_end = START + timedelta(days=days)
@@ -168,7 +176,9 @@ class TestAddReviewItems:
     def test_review_type_is_REVIEW(self):
         """All review items have type = 'REVIEW'."""
         topics = _make_topics(6, minutes=30)
-        plan_items = _distribute_items(topics, days_available=30, start=START, max_daily_minutes=120)
+        plan_items = _distribute_items(
+            topics, days_available=30, start=START, max_daily_minutes=120
+        )
         reviews = _add_review_items(plan_items, days_available=30, start=START)
 
         for review in reviews:
@@ -177,7 +187,9 @@ class TestAddReviewItems:
     def test_review_estimated_minutes_is_15(self):
         """Review items are always 15 minutes."""
         topics = _make_topics(6, minutes=45)
-        plan_items = _distribute_items(topics, days_available=30, start=START, max_daily_minutes=120)
+        plan_items = _distribute_items(
+            topics, days_available=30, start=START, max_daily_minutes=120
+        )
         reviews = _add_review_items(plan_items, days_available=30, start=START)
 
         for review in reviews:
@@ -222,6 +234,6 @@ class TestStudyPlanCoverageInvariant:
             daily_totals[date] = daily_totals.get(date, 0) + item["estimatedMinutes"]
 
         for date, total in daily_totals.items():
-            assert total <= max_daily, (
-                f"Day {date.date()} has {total}min, exceeding sustainable limit {max_daily}min"
-            )
+            assert (
+                total <= max_daily
+            ), f"Day {date.date()} has {total}min, exceeding sustainable limit {max_daily}min"

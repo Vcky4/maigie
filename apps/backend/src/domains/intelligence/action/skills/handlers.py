@@ -1179,7 +1179,9 @@ async def handle_generate_document(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle generate_document tool call. Generates a PDF or DOCX document."""
-    from src.domains.personal_learning.services.document_generation import document_generation_service
+    from src.domains.personal_learning.services.document_generation import (
+        document_generation_service,
+    )
 
     doc_format = args.get("format", "pdf")
     title = args.get("title")

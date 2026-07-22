@@ -86,9 +86,7 @@ async def send_welcome_email(email: str, name: str | None = None) -> None:
     await _send_smtp_email(email, subject, html)
 
 
-async def send_password_reset_email(
-    email: str, otp_code: str, name: str | None = None
-) -> None:
+async def send_password_reset_email(email: str, otp_code: str, name: str | None = None) -> None:
     """Send password reset OTP email."""
     greeting = f"Hi {name}" if name else "Hello"
     subject = "Reset your Maigie password"

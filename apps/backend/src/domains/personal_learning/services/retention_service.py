@@ -114,10 +114,7 @@ async def calculate_churn_risk(user_id: str) -> ChurnRiskProfile:
     signals["days_since_activity"] = await _calc_inactivity_signal(user_id)
 
     # Calculate weighted score
-    score = sum(
-        signals.get(signal, 0.0) * weight
-        for signal, weight in SIGNAL_WEIGHTS.items()
-    )
+    score = sum(signals.get(signal, 0.0) * weight for signal, weight in SIGNAL_WEIGHTS.items())
     score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
 
     # Identify primary risk factor
@@ -213,9 +210,7 @@ async def generate_winback_offer(user_id: str) -> WinbackOffer | None:
     )
 
 
-async def record_intervention_outcome(
-    intervention_id: str, outcome: str
-) -> None:
+async def record_intervention_outcome(intervention_id: str, outcome: str) -> None:
     """
     Record the outcome of a retention intervention.
 
@@ -363,9 +358,8 @@ async def _calc_inactivity_signal(user_id: str) -> float:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import ActivityFeedEntry
 
-        stmt = (
-            select(func.max(ActivityFeedEntry.occurred_at))
-            .where(ActivityFeedEntry.user_id == user_id)
+        stmt = select(func.max(ActivityFeedEntry.occurred_at)).where(
+            ActivityFeedEntry.user_id == user_id
         )
         result = await session.execute(stmt)
         last_activity = result.scalar_one_or_none()

@@ -104,7 +104,9 @@ async def evaluate_educator_readiness(user_id: str) -> EducatorReadiness:
     signals: dict[str, bool] = {}
 
     # Signal 1: Maturity
-    signals["maturity"] = (profile.maturity_days or 0) >= EDUCATOR_READINESS_SIGNALS["maturity"]["threshold_days"]
+    signals["maturity"] = (profile.maturity_days or 0) >= EDUCATOR_READINESS_SIGNALS["maturity"][
+        "threshold_days"
+    ]
 
     # Signal 2: Content created (notes >= 10 OR preps >= 2)
     note_count = 0

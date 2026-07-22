@@ -316,10 +316,7 @@ def _evaluate_condition(trigger: dict, user_state: dict) -> bool:
 
     elif condition_type == "consistent_studier":
         consistency = user_state.get("consistency_score")
-        return (
-            consistency is not None
-            and consistency >= thresholds["min_consistency"]
-        )
+        return consistency is not None and consistency >= thresholds["min_consistency"]
 
     elif condition_type == "multi_prep":
         return user_state.get("active_preps", 0) >= thresholds["min_active_preps"]

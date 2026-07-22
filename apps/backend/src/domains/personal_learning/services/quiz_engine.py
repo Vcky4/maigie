@@ -41,6 +41,7 @@ async def start_quiz(
         )
         if not cap_result.allowed:
             from fastapi import HTTPException
+
             raise HTTPException(
                 status_code=403,
                 detail={
@@ -55,6 +56,7 @@ async def start_quiz(
         # Record PLUS feature usage
         await feature_tier_service.get_quality_tier(user_id)  # side-effect: validates tier
         from . import trial_service
+
         await trial_service.record_plus_feature_used(user_id, "quiz_modes")
 
     # Verify prep exists and belongs to user
@@ -316,9 +318,7 @@ async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
     return [_build_quiz_response(q, [], []) for q in quizzes]
 
 
-def _build_quiz_response(
-    quiz: Any, questions: list[Any], answers: list[Any]
-) -> dict[str, Any]:
+def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) -> dict[str, Any]:
     """Build the quiz session response dict including questions with user answers."""
     # Index answers by question_id for O(1) lookup
     answer_map = {a.question_id: a for a in answers}

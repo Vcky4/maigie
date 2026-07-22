@@ -611,7 +611,12 @@ async def create_chat_group(db: Any, space_id: str, user_id: str, data: ChatGrou
     await _verify_admin(db, space_id, user_id)
 
     # Plan-aware gate check (Task 5.4 / 8.3)
-    from src.domains.learning_spaces.services.space_gates import SpaceFeature, SpaceGateError, SpaceGateState, gate
+    from src.domains.learning_spaces.services.space_gates import (
+        SpaceFeature,
+        SpaceGateError,
+        SpaceGateState,
+        gate,
+    )
 
     space = await space_repo.find_space_basic(space_id)
 
@@ -1080,7 +1085,12 @@ async def create_group_session(db: Any, space_id: str, user_id: str, data: Sessi
     await _verify_admin(db, space_id, user_id)
 
     # Plan-aware gate check (Task 8.3)
-    from src.domains.learning_spaces.services.space_gates import SpaceFeature, SpaceGateError, SpaceGateState, gate
+    from src.domains.learning_spaces.services.space_gates import (
+        SpaceFeature,
+        SpaceGateError,
+        SpaceGateState,
+        gate,
+    )
 
     space = await space_repo.find_space_basic(space_id)
 
@@ -1253,7 +1263,11 @@ Provide your response strictly as valid JSON matching this schema:
         from google import genai
         from google.genai import types
 
-        from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for, gemini_api_key
+        from src.domains.intelligence.reasoning.llm.registry import (
+            LlmTask,
+            default_model_for,
+            gemini_api_key,
+        )
 
         client = genai.Client(api_key=gemini_api_key() or None)
         response = await client.aio.models.generate_content(

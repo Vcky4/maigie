@@ -133,9 +133,7 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def get_current_user_optional(
-    credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(_security_optional)
-    ],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_security_optional)],
     request: Request,
 ) -> User | None:
     """

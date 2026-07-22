@@ -135,9 +135,7 @@ async def generate_monthly_summary(user_id: str) -> ValueSummary:
     time_saved = docs_count * 15
 
     # Build headline
-    headline = _build_headline(
-        docs_count, flashcards_reviewed, quizzes_taken, plan_items_completed
-    )
+    headline = _build_headline(docs_count, flashcards_reviewed, quizzes_taken, plan_items_completed)
 
     # Build detail message
     detail = _build_detail_message(
@@ -302,7 +300,9 @@ async def generate_cancellation_summary(user_id: str) -> CancellationSummary:
     if summary.documents_generated > 0:
         outcomes.append(f"Generated {summary.documents_generated} documents this period")
     if summary.flashcards_reviewed > 0:
-        outcomes.append(f"Reviewed {summary.flashcards_reviewed} flashcards with enhanced generation")
+        outcomes.append(
+            f"Reviewed {summary.flashcards_reviewed} flashcards with enhanced generation"
+        )
     if summary.quizzes_taken > 0:
         outcomes.append(f"Completed {summary.quizzes_taken} enhanced quizzes")
 

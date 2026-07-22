@@ -45,6 +45,7 @@ def _tz_safe(dt: datetime | None) -> datetime | None:
         return dt.replace(tzinfo=UTC)
     return dt
 
+
 # Account deletion cooling-off period
 _DELETION_DAYS = 90
 
@@ -99,7 +100,10 @@ async def verify_email(*, email: str, code: str) -> None:
     now = datetime.now(UTC)
     if not user.verification_code or user.verification_code != code:
         raise ValidationError("Invalid verification code")
-    if _tz_safe(user.verification_code_expires_at) and _tz_safe(user.verification_code_expires_at) < now:
+    if (
+        _tz_safe(user.verification_code_expires_at)
+        and _tz_safe(user.verification_code_expires_at) < now
+    ):
         raise ValidationError("Verification code expired")
 
     await identity_repo.activate_user(user.id)

@@ -128,9 +128,7 @@ class ReferralReward:
 # ===========================================================================
 
 
-async def check_milestones(
-    user_id: str, action_context: dict[str, Any]
-) -> list[Milestone]:
+async def check_milestones(user_id: str, action_context: dict[str, Any]) -> list[Milestone]:
     """
     Check if any milestones were just achieved based on the action context.
 
@@ -195,9 +193,7 @@ async def get_achieved_milestones(user_id: str) -> list[Milestone]:
     milestones = []
     for record in records:
         # Find the milestone definition
-        milestone_def = next(
-            (m for m in MILESTONES if m["id"] == record.milestone_id), None
-        )
+        milestone_def = next((m for m in MILESTONES if m["id"] == record.milestone_id), None)
         milestones.append(
             Milestone(
                 milestone_id=record.milestone_id,
@@ -341,9 +337,7 @@ async def _get_existing_milestones(user_id: str) -> set[str]:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import LearningMilestone
 
-        stmt = select(LearningMilestone.milestone_id).where(
-            LearningMilestone.user_id == user_id
-        )
+        stmt = select(LearningMilestone.milestone_id).where(LearningMilestone.user_id == user_id)
         result = await session.execute(stmt)
         return {row[0] for row in result.all()}
 

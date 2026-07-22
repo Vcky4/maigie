@@ -141,9 +141,7 @@ class BunnyStorageClient:
             "path": path,
         }
 
-    async def upload_upload_file(
-        self, file: Any, path_prefix: str = ""
-    ) -> dict[str, Any]:
+    async def upload_upload_file(self, file: Any, path_prefix: str = "") -> dict[str, Any]:
         """
         Upload a FastAPI ``UploadFile`` to storage.
 
@@ -245,9 +243,7 @@ class BunnyStorageClient:
             return path
         return None
 
-    async def fetch_public_chat_image_bytes(
-        self, public_url: str
-    ) -> tuple[bytes, str] | None:
+    async def fetch_public_chat_image_bytes(self, public_url: str) -> tuple[bytes, str] | None:
         """Backwards-compatible helper used by chat/vision flows."""
         path = self.chat_images_storage_path(public_url)
         if not path:

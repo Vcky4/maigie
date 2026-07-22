@@ -277,7 +277,9 @@ class HomeResponse(BaseModel):
     reEngagement: ReEngagementResponse | None = None
     isOnboarding: bool  # Kept for backward compat
     # --- Commercial fields ---
-    premiumSuggestion: dict | None = None  # Conversion trigger (trigger, message, capability, upgradeUrl)
+    premiumSuggestion: dict | None = (
+        None  # Conversion trigger (trigger, message, capability, upgradeUrl)
+    )
     trialStatus: dict | None = None  # Trial status (isActive, dayNumber, daysRemaining)
     valueSummary: dict | None = None  # Value highlights (topAchievements, topFeaturesUsed)
     educatorPath: dict | None = None  # Educator transition (ready, message, actionUrl)
@@ -407,9 +409,7 @@ class PurposeSetRequest(BaseModel):
 
 
 class LlmProviderSetRequest(BaseModel):
-    provider: str = Field(
-        description="gemini, openai, or anthropic"
-    )
+    provider: str = Field(description="gemini, openai, or anthropic")
 
 
 class SubjectsSetRequest(CamelModel):

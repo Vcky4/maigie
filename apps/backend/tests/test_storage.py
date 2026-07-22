@@ -50,9 +50,7 @@ async def test_upload_bytes_success():
     assert result["filename"] == "hello.txt"
     assert result["url"] == "https://cdn.test.com/notes/hello.txt"
     assert result["size"] == 5
-    assert http.put.call_args[0][0] == (
-        "https://uk.storage.bunnycdn.com/test-zone/notes/hello.txt"
-    )
+    assert http.put.call_args[0][0] == ("https://uk.storage.bunnycdn.com/test-zone/notes/hello.txt")
 
 
 @pytest.mark.asyncio

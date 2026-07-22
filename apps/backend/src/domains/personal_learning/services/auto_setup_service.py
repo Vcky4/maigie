@@ -73,9 +73,7 @@ async def auto_setup_for_learner(*, user_id: str) -> dict[str, Any]:
         return {"status": "partial", "created": created, "error": str(e)}
 
 
-async def _create_preparation(
-    user_id: str, purpose: str, subjects: list[str], goals: str
-) -> Any:
+async def _create_preparation(user_id: str, purpose: str, subjects: list[str], goals: str) -> Any:
     """Create a preparation based on purpose and subjects."""
     from . import exam_prep_service
 
@@ -111,9 +109,7 @@ async def _create_preparation(
         return None
 
 
-async def _extract_topics(
-    user_id: str, prep_id: str, subjects: list[str], goals: str
-) -> list[Any]:
+async def _extract_topics(user_id: str, prep_id: str, subjects: list[str], goals: str) -> list[Any]:
     """Extract topics using AI from the subject matter."""
     from . import exam_prep_service
 
@@ -125,9 +121,7 @@ async def _extract_topics(
         return []
 
 
-async def _generate_initial_flashcards(
-    user_id: str, subjects: list[str]
-) -> list[Any]:
+async def _generate_initial_flashcards(user_id: str, subjects: list[str]) -> list[Any]:
     """Generate starter flashcards for the learner's subjects."""
     from src.domains.intelligence.reasoning.llm import generate_content
     from . import flashcard_service
@@ -173,9 +167,7 @@ async def _generate_initial_flashcards(
     return created_cards
 
 
-async def _create_study_plan(
-    user_id: str, prep: Any, topics: list[Any], goals: str
-) -> Any:
+async def _create_study_plan(user_id: str, prep: Any, topics: list[Any], goals: str) -> Any:
     """Create a study plan distributing topics across available days."""
     from . import study_plan_service
 
@@ -184,16 +176,16 @@ async def _create_study_plan(
 
     try:
         deadline = (
-            prep.exam_date
-            if prep.exam_date
-            else (datetime.now(timezone.utc) + timedelta(days=30))
+            prep.exam_date if prep.exam_date else (datetime.now(timezone.utc) + timedelta(days=30))
         )
         plan = await study_plan_service.generate_plan(
             user_id=user_id,
             data={
                 "title": f"Study Plan: {prep.subject}",
                 "goalDescription": goals or f"Master {prep.subject}",
-                "deadline": deadline.isoformat() if isinstance(deadline, datetime) else str(deadline),
+                "deadline": (
+                    deadline.isoformat() if isinstance(deadline, datetime) else str(deadline)
+                ),
                 "prepId": prep.id,
             },
         )

@@ -35,7 +35,11 @@ async def _call_gemini_for_plan(prompt: str, max_tokens: int = 1200) -> dict | N
     from google import genai
     from google.genai import types
 
-    from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for, gemini_api_key
+    from src.domains.intelligence.reasoning.llm.registry import (
+        LlmTask,
+        default_model_for,
+        gemini_api_key,
+    )
 
     api_key = gemini_api_key()
     if not api_key:

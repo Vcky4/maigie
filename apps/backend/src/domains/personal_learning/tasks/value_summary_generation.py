@@ -71,8 +71,7 @@ async def _run_value_summary_generation() -> dict:
             logger.error(f"Error generating value summary for {user_id}: {e}")
 
     logger.info(
-        f"Value summary generation complete: {total_generated} generated, "
-        f"{errors} errors"
+        f"Value summary generation complete: {total_generated} generated, " f"{errors} errors"
     )
 
     return {"total_generated": total_generated, "errors": errors}

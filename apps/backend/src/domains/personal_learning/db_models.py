@@ -41,9 +41,7 @@ class Note(Base, TimestampMixin):
     topic_id: Mapped[Optional[str]] = mapped_column(
         "topicId", String, ForeignKey("Topic.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    space_id: Mapped[Optional[str]] = mapped_column(
-        "spaceId", String, nullable=True, index=True
-    )
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
 
     last_edited_by_id: Mapped[Optional[str]] = mapped_column(
         "lastEditedById", String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True
@@ -176,9 +174,7 @@ class ExamPrep(Base, TimestampMixin):
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
 
-    space_id: Mapped[Optional[str]] = mapped_column(
-        "spaceId", String, nullable=True, index=True
-    )
+    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
 
     __table_args__ = (
         Index("ExamPrep_userId_examDate_idx", "userId", "examDate"),
@@ -833,9 +829,7 @@ class ConversionTriggerLog(Base):
         "capabilityHighlighted", String, nullable=False
     )
 
-    __table_args__ = (
-        Index("ConversionTriggerLog_userId_shownAt_idx", "userId", "shownAt"),
-    )
+    __table_args__ = (Index("ConversionTriggerLog_userId_shownAt_idx", "userId", "shownAt"),)
 
     def __repr__(self) -> str:
         return f"<ConversionTriggerLog id={self.id} trigger={self.trigger_id}>"
@@ -862,12 +856,8 @@ class LearningMilestone(Base):
     shared_at: Mapped[Optional[datetime]] = mapped_column(
         "sharedAt", DateTime(timezone=True), nullable=True
     )
-    share_card_url: Mapped[Optional[str]] = mapped_column(
-        "shareCardUrl", String, nullable=True
-    )
-    referral_link: Mapped[Optional[str]] = mapped_column(
-        "referralLink", String, nullable=True
-    )
+    share_card_url: Mapped[Optional[str]] = mapped_column("shareCardUrl", String, nullable=True)
+    referral_link: Mapped[Optional[str]] = mapped_column("referralLink", String, nullable=True)
 
     __table_args__ = (
         Index(
@@ -938,13 +928,9 @@ class ValueSummaryRecord(Base):
     delivered_at: Mapped[Optional[datetime]] = mapped_column(
         "deliveredAt", DateTime(timezone=True), nullable=True
     )
-    delivery_method: Mapped[str] = mapped_column(
-        "deliveryMethod", String, default="notification"
-    )
+    delivery_method: Mapped[str] = mapped_column("deliveryMethod", String, default="notification")
 
-    __table_args__ = (
-        Index("ValueSummaryRecord_userId_periodEnd_idx", "userId", "periodEnd"),
-    )
+    __table_args__ = (Index("ValueSummaryRecord_userId_periodEnd_idx", "userId", "periodEnd"),)
 
     def __repr__(self) -> str:
         return f"<ValueSummaryRecord id={self.id} userId={self.user_id}>"

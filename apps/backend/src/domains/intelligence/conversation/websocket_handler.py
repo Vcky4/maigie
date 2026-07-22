@@ -53,7 +53,10 @@ from src.domains.billing.services.credit_service import (
     consume_credits,
     get_credit_usage,
 )
-from src.domains.intelligence.reasoning.llm.adapter_registry import get_feature_flag_service, get_llm_router
+from src.domains.intelligence.reasoning.llm.adapter_registry import (
+    get_feature_flag_service,
+    get_llm_router,
+)
 from src.domains.intelligence.reasoning.llm.errors import LLMProviderError
 from src.domains.intelligence.reasoning.llm.feature_flags import (
     PERSONAL_SCOPE,
@@ -665,7 +668,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 # 4.1b Index uploaded images into knowledge base (fire-and-forget)
                 if file_urls_list:
                     try:
-                        from src.domains.knowledge.services.knowledge_base_service import index_user_uploads
+                        from src.domains.knowledge.services.knowledge_base_service import (
+                            index_user_uploads,
+                        )
 
                         asyncio.create_task(
                             index_user_uploads(

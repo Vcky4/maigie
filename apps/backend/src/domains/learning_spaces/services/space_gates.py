@@ -6,6 +6,7 @@ from typing import Any
 
 class SpaceFeature(StrEnum):
     """Features that can be gated per space."""
+
     AI_CHAT = "ai_chat"
     KB_UPLOAD = "kb_upload"
     MEMBER_INVITE = "member_invite"
@@ -14,6 +15,7 @@ class SpaceFeature(StrEnum):
 
 class SpaceGateState(StrEnum):
     """Gate states."""
+
     ALLOWED = "allowed"
     BLOCKED = "blocked"
     UPGRADE = "upgrade"

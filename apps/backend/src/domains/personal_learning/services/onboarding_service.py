@@ -136,9 +136,7 @@ async def is_onboarding(*, user_id: str) -> bool:
         return False
 
     # Any notes?
-    notes, note_count = await personal_learning_repo.list_notes(
-        user_id, where={}, skip=0, take=1
-    )
+    notes, note_count = await personal_learning_repo.list_notes(user_id, where={}, skip=0, take=1)
     if note_count > 0:
         return False
 

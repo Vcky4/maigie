@@ -59,9 +59,7 @@ class TestBuildGreeting:
     def test_morning_greeting(self):
         """Hour 8 → starts with 'Good morning'."""
         fake_now = datetime(2024, 6, 15, 8, 0, 0, tzinfo=timezone.utc)
-        with patch(
-            "src.domains.personal_learning.services.home_service.datetime"
-        ) as mock_dt:
+        with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             result = _build_greeting(FakeProfile(), None)
@@ -70,9 +68,7 @@ class TestBuildGreeting:
     def test_afternoon_greeting(self):
         """Hour 14 → starts with 'Good afternoon'."""
         fake_now = datetime(2024, 6, 15, 14, 0, 0, tzinfo=timezone.utc)
-        with patch(
-            "src.domains.personal_learning.services.home_service.datetime"
-        ) as mock_dt:
+        with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             result = _build_greeting(FakeProfile(), None)
@@ -81,9 +77,7 @@ class TestBuildGreeting:
     def test_evening_greeting(self):
         """Hour 19 → starts with 'Good evening'."""
         fake_now = datetime(2024, 6, 15, 19, 0, 0, tzinfo=timezone.utc)
-        with patch(
-            "src.domains.personal_learning.services.home_service.datetime"
-        ) as mock_dt:
+        with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             result = _build_greeting(FakeProfile(), None)
@@ -92,9 +86,7 @@ class TestBuildGreeting:
     def test_night_greeting(self):
         """Hour 23 → starts with 'Hello'."""
         fake_now = datetime(2024, 6, 15, 23, 0, 0, tzinfo=timezone.utc)
-        with patch(
-            "src.domains.personal_learning.services.home_service.datetime"
-        ) as mock_dt:
+        with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             result = _build_greeting(FakeProfile(), None)
@@ -103,9 +95,7 @@ class TestBuildGreeting:
     def test_streak_milestone_mention(self):
         """maturity_days=14 (multiple of 7) → mentions 14 days."""
         fake_now = datetime(2024, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
-        with patch(
-            "src.domains.personal_learning.services.home_service.datetime"
-        ) as mock_dt:
+        with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             result = _build_greeting(FakeProfile(maturity_days=14), None)
@@ -114,9 +104,7 @@ class TestBuildGreeting:
     def test_consistency_mention(self):
         """consistency >= 80 → mentions consistency."""
         fake_now = datetime(2024, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
-        with patch(
-            "src.domains.personal_learning.services.home_service.datetime"
-        ) as mock_dt:
+        with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             result = _build_greeting(FakeProfile(consistency_score=85.0), None)
@@ -171,10 +159,7 @@ class TestBuildDueReviews:
 
     def test_caps_at_10(self):
         """15 due cards → only 10 in output."""
-        cards = [
-            FakeFlashcard(id=f"card{i}", front=f"Q{i}")
-            for i in range(15)
-        ]
+        cards = [FakeFlashcard(id=f"card{i}", front=f"Q{i}") for i in range(15)]
         result = _build_due_reviews(cards)
         assert len(result) == 10
 
@@ -186,9 +171,7 @@ class TestBuildDueReviews:
             id="recent", front="Recent", next_review_at=now - timedelta(hours=1)
         )
         # Card 2: due 5 days ago (urgency should be higher)
-        card_old = FakeFlashcard(
-            id="old", front="Old", next_review_at=now - timedelta(days=5)
-        )
+        card_old = FakeFlashcard(id="old", front="Old", next_review_at=now - timedelta(days=5))
         result = _build_due_reviews([card_recent, card_old])
         assert result[1]["urgency"] > result[0]["urgency"]
 

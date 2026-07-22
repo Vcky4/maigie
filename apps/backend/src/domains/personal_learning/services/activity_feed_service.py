@@ -63,7 +63,6 @@ async def list_feed(*, user_id: str, page: int = 1, page_size: int = 20) -> tupl
     return await repo.list_feed_entries(user_id, skip=skip, take=page_size)
 
 
-
 async def _compute_current_streak(user_id: str) -> int:
     """
     Compute the current consecutive-day streak for a user.

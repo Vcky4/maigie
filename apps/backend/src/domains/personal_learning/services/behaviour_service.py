@@ -40,6 +40,7 @@ async def get_behaviour_profile(*, user_id: str) -> dict[str, Any]:
     if quality_tier == "plus":
         # PLUS: include predictive features
         from . import trial_service
+
         await trial_service.record_plus_feature_used(user_id, "behaviour_analytics")
         profile_data["predictiveScheduling"] = _compute_predictive_scheduling(profile_data)
         profile_data["optimalStudyTimes"] = _compute_optimal_times(profile_data)

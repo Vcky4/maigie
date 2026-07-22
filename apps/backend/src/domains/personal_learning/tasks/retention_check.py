@@ -46,11 +46,7 @@ async def _run_retention_check() -> dict:
 
     # Get all PLUS subscribers
     async with get_session() as session:
-        stmt = (
-            select(User.id)
-            .where(User.tier.like("PREMIUM%"))
-            .where(User.is_active.is_(True))
-        )
+        stmt = select(User.id).where(User.tier.like("PREMIUM%")).where(User.is_active.is_(True))
         result = await session.execute(stmt)
         user_ids = [row[0] for row in result.all()]
 

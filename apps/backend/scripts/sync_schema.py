@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 async def _exec(conn, sql: str, *, optional: bool = False):
     """Execute SQL with logging, using SAVEPOINTs for isolation.
-    
+
     Each statement runs in its own savepoint so a failure doesn't
     poison the entire transaction.
     """
@@ -35,7 +35,7 @@ async def _exec(conn, sql: str, *, optional: bool = False):
 
     short = sql.strip().split("\n")[0][:80]
     sp_name = f"sp_{uuid.uuid4().hex[:8]}"
-    
+
     try:
         # Create savepoint
         await conn.execute(text(f"SAVEPOINT {sp_name}"))
@@ -49,7 +49,7 @@ async def _exec(conn, sql: str, *, optional: bool = False):
             await conn.execute(text(f"ROLLBACK TO SAVEPOINT {sp_name}"))
         except Exception:
             pass  # If rollback itself fails, nothing we can do
-        
+
         err_str = str(e).lower()
         if "already exists" in err_str or "duplicate" in err_str:
             print(f"  ○ {short} (already exists)")
@@ -91,7 +91,7 @@ async def main():
 
     async with engine.begin() as conn:
         print("\n=== Phase 0: Circle → Space rename ===\n")
-        
+
         # Rename tables (IF the old name exists and new name doesn't)
         table_renames = [
             ("Circle", "Space"),
@@ -105,9 +105,11 @@ async def main():
             ("CircleSubscription", "SpaceSubscription"),
             ("CircleSeatAddon", "SpaceSeatAddon"),
         ]
-        
+
         for old_name, new_name in table_renames:
-            await _exec(conn, f"""
+            await _exec(
+                conn,
+                f"""
                 DO $$
                 BEGIN
                     IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = '{old_name}')
@@ -116,8 +118,10 @@ async def main():
                         RAISE NOTICE 'Renamed {old_name} → {new_name}';
                     END IF;
                 END $$;
-            """, optional=True)
-        
+            """,
+                optional=True,
+            )
+
         # Rename columns (circleId → spaceId, etc.)
         # Each entry: (table_name_after_rename, old_col, new_col)
         column_renames = [
@@ -140,9 +144,11 @@ async def main():
             ("Goal", "circleId", "spaceId"),
             ("LearningInsight", "circleId", "spaceId"),
         ]
-        
+
         for table, old_col, new_col in column_renames:
-            await _exec(conn, f"""
+            await _exec(
+                conn,
+                f"""
                 DO $$
                 BEGIN
                     IF EXISTS (
@@ -152,8 +158,10 @@ async def main():
                         ALTER TABLE "{table}" RENAME COLUMN "{old_col}" TO "{new_col}";
                     END IF;
                 END $$;
-            """, optional=True)
-        
+            """,
+                optional=True,
+            )
+
         # Rename indexes
         index_renames = [
             ("Circle_visibility_idx", "Space_visibility_idx"),
@@ -161,7 +169,10 @@ async def main():
             ("Circle_circlePlanActive_idx", "Space_spacePlanActive_idx"),
             ("CircleMember_circleId_userId_key", "SpaceMember_spaceId_userId_key"),
             ("CircleMember_circleId_seatTier_idx", "SpaceMember_spaceId_seatTier_idx"),
-            ("CircleChatGroupMember_chatGroupId_userId_key", "SpaceChatGroupMember_chatGroupId_userId_key"),
+            (
+                "CircleChatGroupMember_chatGroupId_userId_key",
+                "SpaceChatGroupMember_chatGroupId_userId_key",
+            ),
             ("CircleInvite_circleId_inviteeEmail_key", "SpaceInvite_spaceId_inviteeEmail_key"),
             ("CircleMemberStat_circleId_userId_key", "SpaceMemberStat_spaceId_userId_key"),
             ("CircleJoinRequest_circleId_userId_key", "SpaceJoinRequest_spaceId_userId_key"),
@@ -174,9 +185,13 @@ async def main():
             ("AiUsageRecord_circleId_userId_idx", "AiUsageRecord_spaceId_userId_idx"),
             ("AiUsageRecord_circleId_createdAt_idx", "AiUsageRecord_spaceId_createdAt_idx"),
         ]
-        
+
         for old_name, new_name in index_renames:
-            await _exec(conn, f"""ALTER INDEX IF EXISTS "{old_name}" RENAME TO "{new_name}";""", optional=True)
+            await _exec(
+                conn,
+                f"""ALTER INDEX IF EXISTS "{old_name}" RENAME TO "{new_name}";""",
+                optional=True,
+            )
 
         print("\n=== Phase 1: Add missing columns to existing tables ===\n")
 
