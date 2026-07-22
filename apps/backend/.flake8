@@ -8,4 +8,5 @@ extend-ignore = E203, E501, F401, F841
 exclude = .git,__pycache__,.venv,dist
 per-file-ignores =
     tests/*:E402
+    alembic/*:E402
     src/services/llm_service.py:F811

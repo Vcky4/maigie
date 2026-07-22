@@ -177,7 +177,6 @@ async def get_effective_tier(user_id: str) -> tuple[Literal["free", "plus"], boo
     Considers both subscription status and active trial.
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
-    from src.shared.database.session import get_session_factory
 
     repo = PersonalLearningRepository()
 

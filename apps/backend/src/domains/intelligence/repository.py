@@ -224,8 +224,8 @@ class IntelligenceRepository:
             conditions = [
                 UserFact.user_id == user_id,
                 UserFact.category == category,
-                UserFact.is_active == True,
-            ]  # noqa: E712
+                UserFact.is_active.is_(True),
+            ]
             stmt = select(UserFact).where(*conditions).limit(1)
             result = await session.execute(stmt)
             return result.scalar_one_or_none()

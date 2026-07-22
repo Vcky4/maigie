@@ -86,7 +86,7 @@ async def main():
     elif "&pgbouncer=true" in database_url:
         database_url = database_url.replace("&pgbouncer=true", "")
 
-    print(f"Connecting to database...")
+    print("Connecting to database...")
     engine = create_async_engine(database_url, echo=False)
 
     async with engine.begin() as conn:

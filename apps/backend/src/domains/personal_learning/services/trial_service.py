@@ -187,7 +187,6 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
     - Recent activity → suggest deep reflection on those patterns
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
-    from src.shared.database.session import get_session_factory
     from src.domains.personal_learning.db_models import (
         QuizSession,
         PrepTopic,
@@ -284,8 +283,8 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
                     capability_id="flashcard_generation",
                     title=f"Advanced flashcards from '{recent_note[1]}'",
                     description=(
-                        f"Generate cloze deletions and multiple-choice cards from your note — "
-                        f"varied question types improve retention by 40% vs basic Q&A."
+                        "Generate cloze deletions and multiple-choice cards from your note — "
+                        "varied question types improve retention by 40% vs basic Q&A."
                     ),
                     action_url=f"/learning/flashcards/generate/note/{recent_note[0]}",
                     reason=f"Your note '{recent_note[1]}' has content ideal for advanced cards",
@@ -381,11 +380,11 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
                     capability_id="document_generation",
                     title=f"Turn '{note_for_doc[1]}' into a presentation",
                     description=(
-                        f"Generate a polished PPTX from your note content — "
-                        f"great for study groups or revision summaries."
+                        "Generate a polished PPTX from your note content — "
+                        "great for study groups or revision summaries."
                     ),
                     action_url=f"/learning/documents?type=presentation&noteId={note_for_doc[0]}",
-                    reason=f"Your note has content ready to become a shareable presentation",
+                    reason="Your note has content ready to become a shareable presentation",
                 )
             )
 
@@ -427,7 +426,7 @@ async def generate_trial_summary(user_id: str) -> TrialSummary:
 
     # Remove empty strings
     outcomes = [o for o in outcomes if o]
-    losses = [l for l in losses if l]
+    losses = [loss for loss in losses if loss]
 
     return TrialSummary(
         trial_days=TRIAL_DURATION_DAYS,

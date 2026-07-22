@@ -194,8 +194,8 @@ class BillingRepository:
     async def find_pack(self, pack_id: str) -> CreditPack | None:
         async with await self._session() as session:
             stmt = select(CreditPack).where(
-                CreditPack.id == pack_id, CreditPack.is_active == True
-            )  # noqa: E712
+                CreditPack.id == pack_id, CreditPack.is_active.is_(True)
+            )
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 

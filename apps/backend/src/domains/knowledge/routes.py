@@ -35,55 +35,8 @@ async def generate_ai_course(
     current_user: CurrentUser,
 ):
     """Trigger AI course generation (returns immediately, updates via WebSocket)."""
-    # TODO: Re-enable when AI course generation is migrated
-    from fastapi import HTTPException as _HTTPException
-
-    raise _HTTPException(status_code=501, detail="AI course generation pending migration")
-
-    user_id = current_user.id
-
-    # Free tier limit
-    if str(current_user.tier) == "FREE":
-        from datetime import UTC, datetime, timedelta
-
-        thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
-        count = await knowledge_repo.count_courses(
-            {"userId": user_id, "createdAt": {"gte": thirty_days_ago}}
-        )
-        if count >= 2:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Free plan limited to 2 courses per month.",
-            )
-
-    # Consume credits
-    credits_needed = CREDIT_COSTS["ai_course_generation"]
-    await consume_credits(
-        current_user, credits_needed, operation="ai_course_generation", db_client=db
-    )
-
-    # Create placeholder
-    placeholder = await knowledge_repo.create_course(
-        {
-            "userId": user_id,
-            "title": f"Learning {body.topic}",
-            "description": "Waiting for AI generation...",
-            "difficulty": body.difficulty.value.upper(),
-            "isAIGenerated": True,
-            "progress": 0.0,
-        }
-    )
-
-    # Background task
-    background_tasks.add_task(
-        generate_course_content_task,
-        course_id=placeholder.id,
-        user_id=user_id,
-        topic_prompt=body.topic,
-        difficulty=body.difficulty.value,
-    )
-
-    return {"message": "AI generation started", "courseId": placeholder.id, "status": "queued"}
+    # AI course generation pending migration to new LLM architecture
+    raise HTTPException(status_code=501, detail="AI course generation pending migration")
 
 
 # ===========================================================================

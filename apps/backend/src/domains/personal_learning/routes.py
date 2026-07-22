@@ -830,13 +830,13 @@ async def start_trial(current_user: CurrentUser):
     from .services import trial_service
 
     try:
-        status = await trial_service.start_trial(user_id=current_user.id)
+        trial_status = await trial_service.start_trial(user_id=current_user.id)
         return {
-            "isActive": status.is_active,
-            "dayNumber": status.day_number,
-            "daysRemaining": status.days_remaining,
-            "startsAt": status.started_at.isoformat() if status.started_at else None,
-            "endsAt": status.ends_at.isoformat() if status.ends_at else None,
+            "isActive": trial_status.is_active,
+            "dayNumber": trial_status.day_number,
+            "daysRemaining": trial_status.days_remaining,
+            "startsAt": trial_status.started_at.isoformat() if trial_status.started_at else None,
+            "endsAt": trial_status.ends_at.isoformat() if trial_status.ends_at else None,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -847,18 +847,20 @@ async def get_trial_status(current_user: CurrentUser):
     """Get current trial status."""
     from .services import trial_service
 
-    status = await trial_service.get_trial_status(user_id=current_user.id)
-    if not status:
+    trial_status = await trial_service.get_trial_status(user_id=current_user.id)
+    if not trial_status:
         return {"isActive": False, "expired": False, "trialAvailable": True}
     return {
-        "isActive": status.is_active,
-        "dayNumber": status.day_number,
-        "daysRemaining": status.days_remaining,
-        "expired": status.expired,
-        "startsAt": status.started_at.isoformat() if status.started_at else None,
-        "endsAt": status.ends_at.isoformat() if status.ends_at else None,
+        "isActive": trial_status.is_active,
+        "dayNumber": trial_status.day_number,
+        "daysRemaining": trial_status.days_remaining,
+        "expired": trial_status.expired,
+        "startsAt": trial_status.started_at.isoformat() if trial_status.started_at else None,
+        "endsAt": trial_status.ends_at.isoformat() if trial_status.ends_at else None,
         "nextTrialAvailableAt": (
-            status.next_trial_available_at.isoformat() if status.next_trial_available_at else None
+            trial_status.next_trial_available_at.isoformat()
+            if trial_status.next_trial_available_at
+            else None
         ),
         "showcaseSuggestions": (
             [
@@ -871,7 +873,7 @@ async def get_trial_status(current_user: CurrentUser):
                 }
                 for s in await trial_service.get_showcase_suggestions(current_user.id)
             ]
-            if status.is_active
+            if trial_status.is_active
             else []
         ),
     }
@@ -882,8 +884,8 @@ async def get_trial_summary(current_user: CurrentUser):
     """Generate trial summary (available after trial expiry)."""
     from .services import trial_service
 
-    status = await trial_service.get_trial_status(user_id=current_user.id)
-    if not status or status.is_active:
+    trial_status = await trial_service.get_trial_status(user_id=current_user.id)
+    if not trial_status or trial_status.is_active:
         raise HTTPException(status_code=400, detail="Trial summary available only after trial ends")
 
     summary = await trial_service.generate_trial_summary(user_id=current_user.id)
@@ -1016,12 +1018,12 @@ async def start_space_trial(current_user: CurrentUser):
     from .services import transition_service
 
     try:
-        status = await transition_service.start_space_trial(user_id=current_user.id)
+        trial_status = await transition_service.start_space_trial(user_id=current_user.id)
         return {
-            "isActive": status.is_active,
-            "startedAt": status.started_at.isoformat() if status.started_at else None,
-            "endsAt": status.ends_at.isoformat() if status.ends_at else None,
-            "maxLearners": status.max_learners,
+            "isActive": trial_status.is_active,
+            "startedAt": trial_status.started_at.isoformat() if trial_status.started_at else None,
+            "endsAt": trial_status.ends_at.isoformat() if trial_status.ends_at else None,
+            "maxLearners": trial_status.max_learners,
         }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

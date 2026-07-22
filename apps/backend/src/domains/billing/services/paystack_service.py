@@ -11,8 +11,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from typing import Any
-
 import httpx
 
 from src.domains.identity.db_models import User

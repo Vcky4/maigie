@@ -73,7 +73,7 @@ async def admin_stats(admin_user: StaffUser):
             await session.execute(
                 select(func.count())
                 .select_from(User)
-                .where(User.role == "USER", User.is_active == True)
+                .where(User.role == "USER", User.is_active.is_(True))
             )
         ).scalar() or 0
         premium_users = (
