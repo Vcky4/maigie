@@ -228,6 +228,6 @@ async def add_summary(*, user_id: str, note_id: str) -> Any:
 
 async def import_to_space(*, user_id: str, note_id: str, space_id: str) -> Any:
     """Import a personal note into a Learning Space."""
-    from src.domains.personal_learning.services.note_impl import import_note_to_circle
+    from src.domains.personal_learning.services.note_impl import import_note_to_space
 
-    return await import_note_to_circle(None, note_id, space_id, user_id)
+    return await import_note_to_space(None, note_id, space_id, user_id)

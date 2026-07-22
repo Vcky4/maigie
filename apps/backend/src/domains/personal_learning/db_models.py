@@ -419,8 +419,8 @@ class LearningProfile(Base, TimestampMixin):
     educator_suggestion_shown_at: Mapped[Optional[datetime]] = mapped_column(
         "educatorSuggestionShownAt", DateTime(timezone=True), nullable=True
     )
-    circle_trial_started_at: Mapped[Optional[datetime]] = mapped_column(
-        "circleTrialStartedAt", DateTime(timezone=True), nullable=True
+    space_trial_started_at: Mapped[Optional[datetime]] = mapped_column(
+        "spaceTrialStartedAt", DateTime(timezone=True), nullable=True
     )
 
     # --- Commercial: Value tracking ---

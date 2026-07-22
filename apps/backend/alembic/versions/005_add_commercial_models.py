@@ -64,7 +64,7 @@ def upgrade() -> None:
     )
     op.add_column(
         "LearningProfile",
-        sa.Column("circleTrialStartedAt", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("spaceTrialStartedAt", sa.DateTime(timezone=True), nullable=True),
     )
     op.add_column(
         "LearningProfile",
@@ -185,7 +185,7 @@ def downgrade() -> None:
 
     op.drop_column("LearningProfile", "plusFeaturesUsedThisPeriod")
     op.drop_column("LearningProfile", "lastValueSummaryAt")
-    op.drop_column("LearningProfile", "circleTrialStartedAt")
+    op.drop_column("LearningProfile", "spaceTrialStartedAt")
     op.drop_column("LearningProfile", "educatorSuggestionShownAt")
     op.drop_column("LearningProfile", "educatorReadinessMetAt")
     op.drop_column("LearningProfile", "lastTriggerDismissedAt")

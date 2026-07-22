@@ -1018,13 +1018,13 @@ async def get_educator_readiness(current_user: CurrentUser):
     }
 
 
-@router.post("/educator-transition/circle-trial", status_code=201)
-async def start_circle_trial(current_user: CurrentUser):
-    """Start a Circle Plan trial for educator-ready users."""
+@router.post("/educator-transition/space-trial", status_code=201)
+async def start_space_trial(current_user: CurrentUser):
+    """Start a Learning Space Plan trial for educator-ready users."""
     from .services import transition_service
 
     try:
-        status = await transition_service.start_circle_trial(user_id=current_user.id)
+        status = await transition_service.start_space_trial(user_id=current_user.id)
         return {
             "isActive": status.is_active,
             "startedAt": status.started_at.isoformat() if status.started_at else None,

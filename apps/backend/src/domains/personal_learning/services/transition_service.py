@@ -33,8 +33,8 @@ EDUCATOR_READINESS_SIGNALS = {
 
 SIGNALS_REQUIRED = 3  # out of 4
 
-CIRCLE_TRIAL_DURATION_DAYS = 7
-CIRCLE_TRIAL_MAX_LEARNERS = 5
+SPACE_TRIAL_DURATION_DAYS = 7
+SPACE_TRIAL_MAX_LEARNERS = 5
 SUGGESTION_COOLDOWN_DAYS = 14
 
 # Purposes that indicate personal-only intent (don't push educator transition)
@@ -64,18 +64,18 @@ class TransitionSuggestion:
     title: str
     message: str
     action_url: str
-    circle_trial_available: bool
+    space_trial_available: bool
 
 
 @dataclass
-class CircleTrialStatus:
-    """Status of the educator Circle Plan trial."""
+class SpaceTrialStatus:
+    """Status of the educator Learning Space trial."""
 
     is_active: bool
     started_at: datetime | None = None
     ends_at: datetime | None = None
     spaces_created: int = 0
-    max_learners: int = CIRCLE_TRIAL_MAX_LEARNERS
+    max_learners: int = SPACE_TRIAL_MAX_LEARNERS
 
 
 # ===========================================================================
@@ -197,8 +197,8 @@ async def get_transition_suggestion(user_id: str) -> TransitionSuggestion | None
     # Record that we showed the suggestion
     await repo.update_profile(user_id, {"educatorSuggestionShownAt": now})
 
-    # Check if circle trial is available
-    circle_trial_available = profile.circle_trial_started_at is None
+    # Check if space trial is available
+    space_trial_available = profile.space_trial_started_at is None
 
     return TransitionSuggestion(
         title="Share Your Knowledge",
@@ -207,14 +207,14 @@ async def get_transition_suggestion(user_id: str) -> TransitionSuggestion | None
             "Have you considered helping others learn? You could create a "
             "Learning Space and invite learners to study together."
         ),
-        action_url="/circles/create",
-        circle_trial_available=circle_trial_available,
+        action_url="/spaces/create",
+        space_trial_available=space_trial_available,
     )
 
 
-async def start_circle_trial(user_id: str) -> CircleTrialStatus:
+async def start_space_trial(user_id: str) -> SpaceTrialStatus:
     """
-    Start a 7-day Circle Plan trial for educator-ready users.
+    Start a 7-day Learning Space trial for educator-ready users.
 
     Allows creating one Learning Space with up to 5 learners.
     Raises ValueError if user doesn't meet readiness or already trialed.
@@ -236,23 +236,23 @@ async def start_circle_trial(user_id: str) -> CircleTrialStatus:
         )
 
     # Check if already trialed
-    if profile.circle_trial_started_at:
-        raise ValueError("You've already used your Circle Plan trial.")
+    if profile.space_trial_started_at:
+        raise ValueError("You've already used your Learning Space trial.")
 
     # Start the trial
     now = datetime.now(timezone.utc)
-    await repo.update_profile(user_id, {"circleTrialStartedAt": now})
+    await repo.update_profile(user_id, {"spaceTrialStartedAt": now})
 
     # Track funnel event
     await track_transition_event(user_id, "trial_started")
 
-    logger.info(f"Circle trial started for user {user_id}")
+    logger.info(f"Learning Space trial started for user {user_id}")
 
-    return CircleTrialStatus(
+    return SpaceTrialStatus(
         is_active=True,
         started_at=now,
-        ends_at=now + timedelta(days=CIRCLE_TRIAL_DURATION_DAYS),
-        max_learners=CIRCLE_TRIAL_MAX_LEARNERS,
+        ends_at=now + timedelta(days=SPACE_TRIAL_DURATION_DAYS),
+        max_learners=SPACE_TRIAL_MAX_LEARNERS,
     )
 
 

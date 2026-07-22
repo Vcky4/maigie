@@ -879,7 +879,7 @@ class PersonalLearningRepository:
             "lastTriggerDismissedAt": "last_trigger_dismissed_at",
             "educatorReadinessMetAt": "educator_readiness_met_at",
             "educatorSuggestionShownAt": "educator_suggestion_shown_at",
-            "circleTrialStartedAt": "circle_trial_started_at",
+            "spaceTrialStartedAt": "space_trial_started_at",
             "lastValueSummaryAt": "last_value_summary_at",
             "plusFeaturesUsedThisPeriod": "plus_features_used_this_period",
         }
