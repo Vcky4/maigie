@@ -174,6 +174,7 @@ class DocumentGenerateRequest(CamelModel):
     title: str = Field(..., min_length=1, max_length=500)
     prompt: str = Field(..., min_length=1, max_length=5000)
     format: str = Field("pdf", description="pdf, docx, pptx")
+    style: str = Field("academic", description="academic, report, minimal")
     courseId: str | None = None
     topicId: str | None = None
 
