@@ -705,6 +705,354 @@ Now that you've created notes, flashcards, and preparations, verify:
 
 ---
 
+### Phase 15: Commercial — Feature Tier & Capabilities
+
+#### Test 15.1 — Get Capabilities (FREE User)
+
+**Endpoint:** `GET /api/v1/learning/capabilities`
+
+**Expected:** `200 OK`
+```json
+{
+  "effectiveTier": "free",
+  "isTrial": false,
+  "trialDaysRemaining": null,
+  "capabilities": [
+    {
+      "id": "flashcard_generation",
+      "name": "Flashcard Generation",
+      "freeDescription": "Generate up to 5 Q&A flashcards per note",
+      "plusDescription": "Generate up to 10 flashcards per note with varied question types",
+      "userLevel": "free",
+      "lockedFeatures": ["limit:max_per_note=10", "..."],
+      "upgradeValue": "Get 2x more flashcards per note with cloze, multiple-choice, and image-based cards"
+    },
+    ...
+  ]
+}
+```
+
+**Verify:**
+- `effectiveTier` is `"free"` for unpaid users
+- Each capability shows both free and plus descriptions
+- `lockedFeatures` lists what FREE users can't access
+- `upgradeValue` explains the benefit in learning terms
+
+#### Test 15.2 — Quiz Mode Gate (PAST_PAPER_SIM blocked for FREE)
+
+**Endpoint:** `POST /api/v1/learning/preparations/{prep_id}/quizzes`
+
+```json
+{
+  "mode": "PAST_PAPER_SIM",
+  "questionCount": 5
+}
+```
+
+**Expected:** `403 Forbidden`
+```json
+{
+  "detail": {
+    "upgradeRequired": true,
+    "reason": "'PAST_PAPER_SIM' mode requires Maigie Plus",
+    "capability": "quiz_modes",
+    "upgradeUrl": "/subscription",
+    "trialAvailable": true,
+    "upgradeValue": "Unlock adaptive quizzes that adjust difficulty..."
+  }
+}
+```
+
+#### Test 15.3 — Document Format Gate (DOCX blocked for FREE)
+
+**Endpoint:** `POST /api/v1/learning/documents`
+
+```json
+{
+  "type": "essay",
+  "title": "Test",
+  "prompt": "Write about anything",
+  "format": "docx"
+}
+```
+
+**Expected:** `403 Forbidden` with `upgradeRequired: true` and reason about format.
+
+#### Test 15.4 — Document Style Gate (report blocked for FREE)
+
+**Endpoint:** `POST /api/v1/learning/documents`
+
+```json
+{
+  "type": "essay",
+  "title": "Test",
+  "prompt": "Write about anything",
+  "format": "pdf",
+  "style": "report"
+}
+```
+
+**Expected:** `403 Forbidden` with reason about style.
+
+#### Test 15.5 — Flashcard Generation (FREE quality — 5 cards max)
+
+**Endpoint:** `POST /api/v1/learning/flashcards/generate/note/{note_id}`
+
+**Expected:** `200 OK` — Array of at most 5 basic Q&A flashcards (no cloze, multi-choice).
+
+#### Test 15.6 — Behaviour Profile (FREE — locked features shown)
+
+**Endpoint:** `GET /api/v1/learning/behaviour/profile`
+
+**Expected:** `200 OK`
+```json
+{
+  "preferredTimes": {...},
+  "avgSessionMinutes": ...,
+  "consistencyScore": ...,
+  "bestDayOfWeek": "...",
+  "dropoutRiskFactors": null,
+  "predictiveScheduling": null,
+  "optimalStudyTimes": null,
+  "tier": "free",
+  "lockedFeatures": ["predictive_scheduling", "optimal_time_suggestions", "dropout_prevention"]
+}
+```
+
+---
+
+### Phase 16: Commercial — Trial System
+
+#### Test 16.1 — Get Trial Status (Never Trialed)
+
+**Endpoint:** `GET /api/v1/learning/trial/status`
+
+**Expected:** `200 OK`
+```json
+{
+  "isActive": false,
+  "expired": false,
+  "trialAvailable": true
+}
+```
+
+#### Test 16.2 — Start Trial
+
+**Endpoint:** `POST /api/v1/learning/trial/start`
+
+**Expected:** `201 Created`
+```json
+{
+  "isActive": true,
+  "dayNumber": 1,
+  "daysRemaining": 7,
+  "startsAt": "2026-07-22T...",
+  "endsAt": "2026-07-29T..."
+}
+```
+
+#### Test 16.3 — Get Capabilities (During Trial)
+
+**Endpoint:** `GET /api/v1/learning/capabilities`
+
+**Expected:** `effectiveTier: "plus"`, `isTrial: true`, `trialDaysRemaining: 7`
+
+#### Test 16.4 — Quiz Mode Gate (ADAPTIVE allowed during trial)
+
+**Endpoint:** `POST /api/v1/learning/preparations/{prep_id}/quizzes`
+
+```json
+{
+  "mode": "ADAPTIVE",
+  "questionCount": 5
+}
+```
+
+**Expected:** `201 Created` — Quiz starts successfully (trial = plus access).
+
+#### Test 16.5 — Document Format (PPTX allowed during trial)
+
+**Endpoint:** `POST /api/v1/learning/documents`
+
+```json
+{
+  "type": "presentation",
+  "title": "Trial Test Presentation",
+  "prompt": "Create a short presentation about study techniques",
+  "format": "pptx"
+}
+```
+
+**Expected:** `201 Created` — Document generated in PPTX format.
+
+#### Test 16.6 — Get Trial Status (Active)
+
+**Endpoint:** `GET /api/v1/learning/trial/status`
+
+**Expected:**
+```json
+{
+  "isActive": true,
+  "dayNumber": 1,
+  "daysRemaining": 7,
+  "showcaseSuggestions": [
+    {"capabilityId": "quiz_modes", "title": "Try Adaptive Quizzes", ...},
+    ...
+  ]
+}
+```
+
+#### Test 16.7 — Start Trial Again (should fail)
+
+**Endpoint:** `POST /api/v1/learning/trial/start`
+
+**Expected:** `400 Bad Request` — "You already have an active trial."
+
+#### Test 16.8 — Trial Summary (should fail during active trial)
+
+**Endpoint:** `POST /api/v1/learning/trial/summary`
+
+**Expected:** `400 Bad Request` — "Trial summary available only after trial ends"
+
+---
+
+### Phase 17: Commercial — Conversion Triggers
+
+#### Test 17.1 — Dismiss a Trigger
+
+**Endpoint:** `POST /api/v1/learning/triggers/active_learner_discovery/dismiss`
+
+**Expected:** `204 No Content`
+
+**Verify:** The trigger won't show again for 30 days for this trigger type.
+
+---
+
+### Phase 18: Commercial — Value Summary
+
+#### Test 18.1 — Get Value Summary (FREE user — should fail)
+
+**Endpoint:** `GET /api/v1/learning/value-summary`
+
+**Expected:** `403 Forbidden` — "Value summary is for Plus subscribers"
+
+#### Test 18.2 — Get Value Summary (PLUS/Trial user)
+
+**Endpoint:** `GET /api/v1/learning/value-summary`
+
+(Run while trial is active)
+
+**Expected:** `200 OK`
+```json
+{
+  "periodStart": "...",
+  "periodEnd": "...",
+  "headline": "This month: ...",
+  "detailMessage": "...",
+  "metrics": {
+    "aiAssistedSessions": 2,
+    "documentsGenerated": 1,
+    "timeSavedMinutes": 15,
+    "flashcardsReviewed": 0,
+    "studyPlanItemsCompleted": 0,
+    "goalsAchieved": 0,
+    "quizzesTaken": 1
+  },
+  "topFeaturesUsed": ["Document Generation", "Quiz Practice"],
+  "plusExclusiveFeaturesUsed": ["document_generation", "quiz_modes"]
+}
+```
+
+---
+
+### Phase 19: Commercial — Milestones
+
+#### Test 19.1 — Get Milestones (Empty Initially)
+
+**Endpoint:** `GET /api/v1/learning/milestones`
+
+**Expected:** `200 OK`
+```json
+{
+  "milestones": []
+}
+```
+
+#### Test 19.2 — Share Milestone (Invalid)
+
+**Endpoint:** `POST /api/v1/learning/milestones/nonexistent/share`
+
+**Expected:** `404 Not Found`
+
+---
+
+### Phase 20: Commercial — Educator Transition
+
+#### Test 20.1 — Get Educator Readiness (New User)
+
+**Endpoint:** `GET /api/v1/learning/educator-readiness`
+
+**Expected:** `200 OK`
+```json
+{
+  "isReady": false,
+  "signalsMet": 0,
+  "totalSignals": 4,
+  "signals": {
+    "maturity": false,
+    "content_created": false,
+    "quiz_performance": false,
+    "plan_completion": false
+  },
+  "message": null
+}
+```
+
+#### Test 20.2 — Start Circle Trial (Not Ready — should fail)
+
+**Endpoint:** `POST /api/v1/learning/educator-transition/circle-trial`
+
+**Expected:** `400 Bad Request` — "You need to meet 3 of 4 educator readiness signals."
+
+---
+
+## Error Handling Verification (Commercial)
+
+### Test: 403 for Gated Feature Without Subscription
+
+Any PLUS-only capability requested by a FREE user (no trial) returns:
+```json
+{
+  "detail": {
+    "upgradeRequired": true,
+    "reason": "...",
+    "capability": "...",
+    "upgradeUrl": "/subscription",
+    "trialAvailable": true/false,
+    "upgradeValue": "..."
+  }
+}
+```
+
+### Test: Trial Cooldown Enforcement
+
+After trial expires, attempting `POST /api/v1/learning/trial/start` within 180 days returns:
+`400 Bad Request` — "Trial available again on [date]."
+
+---
+
+## Notes
+
+- **AI-dependent endpoints** (summary, retake, topic extraction, quiz generation, flashcard generation, document generation, reflection, chat) require a valid `GEMINI_API_KEY` in `.env`. Without it, these will return 500 errors.
+- **Background tasks** (daily plan, engagement check, behaviour analysis, recommendations, retention check, value summary generation, trial expiry) run via Celery beat — they won't fire during manual testing unless you run the worker: `poetry run celery -A src.core.celery_app:celery_app worker -Q default,heavy --loglevel=info`
+- **Flashcard due dates**: Cards won't appear in "due" until after their `next_review_at` timestamp passes (1 day after creation for new cards).
+- **Swagger "Try it out"**: Click the endpoint → "Try it out" → fill in parameters/body → "Execute"
+- **Trial testing**: The 7-day trial can be tested by manipulating `trialEndsAt` in the database to a past date, then calling the trial expiry task manually.
+- **Conversion triggers**: Triggers only fire for FREE users with 3+ days maturity and 72h since last trigger. To test, ensure your user has been active for several days and hasn't seen a trigger recently.
+- **Feature tier gates**: To test PLUS features without a real subscription, start a trial first (`POST /trial/start`). All PLUS capabilities become accessible during the trial.
+
+---
+
 ## Error Handling Verification
 
 ### Test: 404 for Non-Existent Resource
@@ -732,12 +1080,3 @@ Remove authorization (click 🔒 Authorize → Logout), then:
 **Endpoint:** `GET /api/v1/learning/home`
 
 **Expected:** `401 Unauthorized`
-
----
-
-## Notes
-
-- **AI-dependent endpoints** (summary, retake, topic extraction, quiz generation, flashcard generation, document generation, reflection, chat) require a valid `GEMINI_API_KEY` in `.env`. Without it, these will return 500 errors.
-- **Background tasks** (daily plan, engagement check, behaviour analysis, recommendations) run via Celery beat — they won't fire during manual testing unless you run the worker: `poetry run celery -A src.core.celery_app:celery_app worker -Q default,heavy --loglevel=info`
-- **Flashcard due dates**: Cards won't appear in "due" until after their `next_review_at` timestamp passes (1 day after creation for new cards).
-- **Swagger "Try it out"**: Click the endpoint → "Try it out" → fill in parameters/body → "Execute"
