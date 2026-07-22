@@ -180,143 +180,198 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
     """
     Suggest PLUS capabilities to try during the trial.
 
-    Returns up to 3 suggestions personalised based on:
-    - What the user is currently doing (active preps, notes, quizzes)
-    - Their stated purpose (exam_prep → quizzes, skill_building → study plans)
-    - What PLUS features they haven't tried yet
+    Deeply personalised — references specific content the user has:
+    - Weak quiz topics → suggest adaptive quiz on that specific topic
+    - Specific notes → suggest advanced flashcards from that note
+    - Active prep with deadline → suggest adaptive study plan for it
+    - Recent activity → suggest deep reflection on those patterns
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+    from src.shared.database.session import get_session_factory
+    from src.domains.personal_learning.db_models import (
+        QuizSession, PrepTopic, Note, ExamPrep, StudyPlan,
+    )
+    from sqlalchemy import select, func
 
     repo = PersonalLearningRepository()
     profile = await repo.get_profile_by_user(user_id)
 
     used_features = set(profile.plus_features_used_this_period or []) if profile else set()
-    purpose = profile.purpose if profile else None
+    suggestions: list[ShowcaseSuggestion] = []
 
-    # Count user's content to understand what they're doing
-    note_count = 0
-    prep_count = 0
-    try:
-        note_count = await repo.count_user_notes(user_id)
-    except (AttributeError, Exception):
-        pass
-    try:
-        preps = await repo.list_active_preparations(user_id)
-        prep_count = len(preps) if preps else 0
-    except (AttributeError, Exception):
-        pass
+    factory = get_session_factory()
 
-    # Build personalised suggestions with priority scores
-    scored_options: list[tuple[int, ShowcaseSuggestion]] = []
-
+    # --- 1. Adaptive Quiz: find weak topics from recent quizzes ---
     if "quiz_modes" not in used_features:
-        # Higher priority for exam_prep users or those with active preps
-        score = 50
-        if purpose in ("exam_prep", "professional_certification"):
-            score = 100
-        elif prep_count > 0:
-            score = 80
-        reason = (
-            f"With your {'exam preparation' if prep_count > 0 else 'learning goals'}, "
-            f"adaptive quizzes can target your weak areas automatically"
-        )
-        scored_options.append((score, ShowcaseSuggestion(
-            capability_id="quiz_modes",
-            title="Try Adaptive Quizzes",
-            description="Quizzes that adjust difficulty based on your performance — focusing where you need it most.",
-            action_url="/learning/preparations",
-            reason=reason,
-        )))
+        async with factory() as session:
+            # Find topics where mastery < 70% in user's preps
+            stmt = (
+                select(PrepTopic.title, PrepTopic.mastery_score, PrepTopic.prep_id)
+                .join(ExamPrep, ExamPrep.id == PrepTopic.prep_id)
+                .where(ExamPrep.user_id == user_id)
+                .where(PrepTopic.mastery_score < 70.0)
+                .where(PrepTopic.mastery_score > 0)  # Has been attempted
+                .order_by(PrepTopic.mastery_score.asc())
+                .limit(3)
+            )
+            result = await session.execute(stmt)
+            weak_topics = result.all()
 
-    if "document_generation" not in used_features:
-        score = 40
-        if purpose in ("course_completion", "skill_building"):
-            score = 70
-        elif note_count >= 3:
-            score = 60
-        reason = (
-            "Turn your notes into polished presentations or reports"
-            if note_count > 0
-            else "Generate professional documents from any topic description"
-        )
-        scored_options.append((score, ShowcaseSuggestion(
-            capability_id="document_generation",
-            title="Generate a Presentation",
-            description="Create a polished PPTX presentation from your notes or a topic description.",
-            action_url="/learning/documents",
-            reason=reason,
-        )))
+        if weak_topics:
+            topic_name = weak_topics[0][0]
+            score = int(weak_topics[0][1])
+            prep_id = weak_topics[0][2]
+            weak_names = [t[0] for t in weak_topics[:3]]
+            suggestions.append(ShowcaseSuggestion(
+                capability_id="quiz_modes",
+                title=f"Adaptive quiz: {topic_name}",
+                description=(
+                    f"You scored {score}% on '{topic_name}'. "
+                    f"Adaptive mode focuses questions on your weak areas until you master them."
+                ),
+                action_url=f"/learning/preparations/{prep_id}/quizzes?mode=ADAPTIVE",
+                reason=f"Weak areas detected: {', '.join(weak_names)}",
+            ))
+        else:
+            # No weak topics yet — check if they have preps at all
+            async with factory() as session:
+                stmt = (
+                    select(ExamPrep.id, ExamPrep.subject)
+                    .where(ExamPrep.user_id == user_id)
+                    .where(ExamPrep.status != "COMPLETED")
+                    .limit(1)
+                )
+                result = await session.execute(stmt)
+                active_prep = result.first()
 
-    if "study_plan" not in used_features:
-        score = 45
-        if prep_count > 0:
-            score = 75
-        elif purpose == "exam_prep":
-            score = 70
-        reason = (
-            f"With {prep_count} active preparation{'s' if prep_count != 1 else ''}, "
-            f"adaptive plans can balance your workload intelligently"
-            if prep_count > 0
-            else "Plans that adapt based on your quiz scores and study patterns"
-        )
-        scored_options.append((score, ShowcaseSuggestion(
-            capability_id="study_plan",
-            title="Adaptive Study Plan",
-            description="Get a study plan that automatically adjusts based on your quiz scores and patterns.",
-            action_url="/learning/study-plans",
-            reason=reason,
-        )))
+            if active_prep:
+                suggestions.append(ShowcaseSuggestion(
+                    capability_id="quiz_modes",
+                    title=f"Past paper simulation: {active_prep[1]}",
+                    description=(
+                        f"Simulate exam conditions for '{active_prep[1]}' — "
+                        f"timed questions in exam format to build confidence before the real thing."
+                    ),
+                    action_url=f"/learning/preparations/{active_prep[0]}/quizzes?mode=PAST_PAPER_SIM",
+                    reason="Practice under exam conditions to reduce test anxiety",
+                ))
 
-    if "reflection" not in used_features:
-        score = 30
-        if (profile and (profile.maturity_days or 0) >= 7):
-            score = 65
-        reason = (
-            "After a week of learning, deep reflections can reveal patterns across your topics"
-            if (profile and (profile.maturity_days or 0) >= 7)
-            else "Understand how your learning connects across different areas"
-        )
-        scored_options.append((score, ShowcaseSuggestion(
-            capability_id="reflection",
-            title="Deep Learning Reflection",
-            description="Get cross-topic pattern analysis with specific actionable recommendations.",
-            action_url="/learning/reflections",
-            reason=reason,
-        )))
-
+    # --- 2. Advanced Flashcards: find a specific note with content ---
     if "flashcard_generation" not in used_features:
-        score = 35
-        if note_count >= 2:
-            score = 70
-        reason = (
-            f"You have {note_count} notes — advanced flashcards with cloze and multi-choice "
-            f"can improve retention"
-            if note_count > 0
-            else "Varied card types improve retention through different recall mechanisms"
-        )
-        scored_options.append((score, ShowcaseSuggestion(
-            capability_id="flashcard_generation",
-            title="Advanced Flashcards",
-            description="Generate cloze, multiple-choice, and image-based flashcards from your notes.",
-            action_url="/learning/flashcards",
-            reason=reason,
-        )))
+        async with factory() as session:
+            stmt = (
+                select(Note.id, Note.title)
+                .where(Note.user_id == user_id)
+                .where(Note.content.isnot(None))
+                .where(Note.archived.is_(False))
+                .order_by(Note.updated_at.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            recent_note = result.first()
 
-    if "behaviour_analytics" not in used_features:
-        score = 25
-        if (profile and (profile.maturity_days or 0) >= 5):
-            score = 55
-        scored_options.append((score, ShowcaseSuggestion(
-            capability_id="behaviour_analytics",
-            title="Predictive Study Scheduling",
-            description="See your optimal study times and get proactive support for consistency.",
-            action_url="/learning/behaviour/profile",
-            reason="Learn when your brain works best based on your actual study patterns",
-        )))
+        if recent_note:
+            suggestions.append(ShowcaseSuggestion(
+                capability_id="flashcard_generation",
+                title=f"Advanced flashcards from '{recent_note[1]}'",
+                description=(
+                    f"Generate cloze deletions and multiple-choice cards from your note — "
+                    f"varied question types improve retention by 40% vs basic Q&A."
+                ),
+                action_url=f"/learning/flashcards/generate/note/{recent_note[0]}",
+                reason=f"Your note '{recent_note[1]}' has content ideal for advanced cards",
+            ))
 
-    # Sort by score (highest first) and return top 3
-    scored_options.sort(key=lambda x: x[0], reverse=True)
-    return [suggestion for _, suggestion in scored_options[:3]]
+    # --- 3. Adaptive Study Plan: find a prep with deadline ---
+    if "study_plan" not in used_features:
+        async with factory() as session:
+            stmt = (
+                select(ExamPrep.id, ExamPrep.subject, ExamPrep.exam_date)
+                .where(ExamPrep.user_id == user_id)
+                .where(ExamPrep.status != "COMPLETED")
+                .order_by(ExamPrep.exam_date.asc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            next_prep = result.first()
+
+        if next_prep:
+            from datetime import datetime, timezone
+            exam_date = next_prep[2]
+            if exam_date:
+                # Ensure timezone-aware for comparison
+                if exam_date.tzinfo is None:
+                    exam_date = exam_date.replace(tzinfo=timezone.utc)
+                days_until = (exam_date - datetime.now(timezone.utc)).days
+            else:
+                days_until = None
+            suggestions.append(ShowcaseSuggestion(
+                capability_id="study_plan",
+                title=f"Adaptive plan for {next_prep[1]}",
+                description=(
+                    f"{'Only ' + str(days_until) + ' days until your exam. ' if days_until and days_until < 60 else ''}"
+                    f"An adaptive plan adjusts daily based on your quiz performance — "
+                    f"spending more time on weak topics and less on what you've already mastered."
+                ),
+                action_url=f"/learning/study-plans?prepId={next_prep[0]}",
+                reason=f"Adaptive scheduling for '{next_prep[1]}' based on your actual performance",
+            ))
+
+    # --- 4. Deep Reflection: if user has enough activity ---
+    if "reflection" not in used_features and (profile and (profile.maturity_days or 0) >= 5):
+        async with factory() as session:
+            # Count recent activities
+            from datetime import timedelta
+            from src.domains.personal_learning.db_models import ActivityFeedEntry
+            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            stmt = (
+                select(func.count())
+                .select_from(ActivityFeedEntry)
+                .where(ActivityFeedEntry.user_id == user_id)
+                .where(ActivityFeedEntry.occurred_at >= week_ago)
+            )
+            result = await session.execute(stmt)
+            activity_count = result.scalar_one() or 0
+
+        if activity_count >= 3:
+            suggestions.append(ShowcaseSuggestion(
+                capability_id="reflection",
+                title="Deep analysis of your learning patterns",
+                description=(
+                    f"You've had {activity_count} learning activities this week. "
+                    f"A deep reflection can identify which topics reinforce each other "
+                    f"and predict what to focus on next."
+                ),
+                action_url="/learning/reflections/generate?type=weekly",
+                reason="Enough activity to identify meaningful cross-topic patterns",
+            ))
+
+    # --- 5. Document Generation: suggest based on notes/preps ---
+    if "document_generation" not in used_features and len(suggestions) < 3:
+        async with factory() as session:
+            stmt = (
+                select(Note.id, Note.title)
+                .where(Note.user_id == user_id)
+                .where(Note.content.isnot(None))
+                .order_by(Note.updated_at.desc())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            note_for_doc = result.first()
+
+        if note_for_doc:
+            suggestions.append(ShowcaseSuggestion(
+                capability_id="document_generation",
+                title=f"Turn '{note_for_doc[1]}' into a presentation",
+                description=(
+                    f"Generate a polished PPTX from your note content — "
+                    f"great for study groups or revision summaries."
+                ),
+                action_url=f"/learning/documents?type=presentation&noteId={note_for_doc[0]}",
+                reason=f"Your note has content ready to become a shareable presentation",
+            ))
+
+    return suggestions[:3]
 
 
 async def generate_trial_summary(user_id: str) -> TrialSummary:
