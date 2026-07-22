@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +332,8 @@ async def generate_cancellation_summary(user_id: str) -> CancellationSummary:
 
 async def _count_flashcard_reviews(user_id: str, since: datetime) -> int:
     """Count flashcard reviews since a date."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import Flashcard
 
@@ -349,7 +350,8 @@ async def _count_flashcard_reviews(user_id: str, since: datetime) -> int:
 
 async def _get_quiz_stats(user_id: str, since: datetime) -> tuple[int, float | None]:
     """Get quiz count and score trend since a date."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import QuizSession
 
@@ -371,7 +373,8 @@ async def _get_quiz_stats(user_id: str, since: datetime) -> tuple[int, float | N
 
 async def _count_plan_items_completed(user_id: str, since: datetime) -> int:
     """Count study plan items completed since a date."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import StudyPlanItem
 
@@ -389,7 +392,8 @@ async def _count_plan_items_completed(user_id: str, since: datetime) -> int:
 
 async def _count_preps_completed(user_id: str, since: datetime) -> int:
     """Count preparations completed since a date."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import ExamPrep
 
@@ -406,7 +410,8 @@ async def _count_preps_completed(user_id: str, since: datetime) -> int:
 
 async def _get_days_until_renewal(user_id: str) -> int | None:
     """Get days until the user's subscription renews."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.identity.db_models import User
 
@@ -424,7 +429,8 @@ async def _get_days_until_renewal(user_id: str) -> int | None:
 
 async def _store_summary(user_id: str, summary: ValueSummary) -> None:
     """Store the value summary for historical reference."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from src.domains.personal_learning.db_models import ValueSummaryRecord
 
         record = ValueSummaryRecord(

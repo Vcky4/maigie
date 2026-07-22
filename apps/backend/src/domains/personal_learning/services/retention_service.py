@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +221,8 @@ async def record_intervention_outcome(
 
     Outcomes: "retained", "churned", "paused"
     """
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import RetentionIntervention
 
@@ -246,7 +247,8 @@ async def _calc_login_decline(user_id: str) -> float:
     Compares last 14 days vs previous 14 days.
     Returns 0.0 (stable/growing) to 1.0 (severe decline).
     """
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import ActivityFeedEntry
 
@@ -285,7 +287,8 @@ async def _calc_login_decline(user_id: str) -> float:
 async def _calc_feature_decline(user_id: str) -> float:
     """Calculate feature usage decline vs previous period."""
     # Simplified: compare document + quiz counts between periods
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import GeneratedDocument, QuizSession
 
@@ -355,7 +358,8 @@ async def _calc_behaviour_dropout(user_id: str) -> float:
 
 async def _calc_inactivity_signal(user_id: str) -> float:
     """Calculate signal based on days since last activity."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import ActivityFeedEntry
 
@@ -385,7 +389,8 @@ async def _calc_inactivity_signal(user_id: str) -> float:
 
 async def _intervention_recently_delivered(user_id: str) -> bool:
     """Check if an intervention was delivered within the cooldown period."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import RetentionIntervention
 
@@ -450,7 +455,8 @@ async def _record_intervention(
     user_id: str, churn_risk_score: float, intervention_type: str
 ) -> None:
     """Record a delivered intervention."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from src.domains.personal_learning.db_models import RetentionIntervention
 
         record = RetentionIntervention(
@@ -468,7 +474,8 @@ async def _get_approximate_churn_date(user_id: str) -> datetime | None:
     """Get approximate date when user churned (tier changed to FREE from PREMIUM)."""
     # This would ideally check audit logs or subscription events.
     # Simplified: check if user is FREE with a last_trial_ended_at or similar signal.
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.identity.db_models import User
 

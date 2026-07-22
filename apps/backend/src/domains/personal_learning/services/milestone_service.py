@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,8 @@ async def check_milestones(
 
 async def get_achieved_milestones(user_id: str) -> list[Milestone]:
     """Get all achieved milestones for a user."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import LearningMilestone
 
@@ -226,7 +227,8 @@ async def generate_share_card(user_id: str, milestone_id: str) -> ShareCard:
     referral_link = await _get_or_create_referral_link(user_id)
 
     # Update the milestone record with share card URL
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import LearningMilestone
 
@@ -271,7 +273,8 @@ async def process_referral_completion(referrer_id: str, referred_id: str) -> Ref
         return None
 
     # Award credits to referrer's purchased_credits_balance
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select, update
         from src.domains.identity.db_models import User
 
@@ -333,7 +336,8 @@ def _evaluate_milestone_condition(milestone_def: dict, action_context: dict) -> 
 
 async def _get_existing_milestones(user_id: str) -> set[str]:
     """Get set of milestone IDs already achieved by this user."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import LearningMilestone
 
@@ -348,7 +352,8 @@ async def _record_milestone(
     user_id: str, milestone_id: str, achieved_at: datetime, referral_link: str | None
 ) -> None:
     """Record a newly achieved milestone (idempotent via unique index)."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from src.domains.personal_learning.db_models import LearningMilestone
 
         milestone = LearningMilestone(

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 

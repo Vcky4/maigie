@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +227,8 @@ async def record_conversion(user_id: str) -> None:
     now = datetime.now(timezone.utc)
 
     # Find the most recent trigger and mark it converted
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select, update
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 
@@ -351,7 +352,8 @@ async def _record_trigger_shown(
     await repo.update_profile(user_id, {"lastTriggerShownAt": now})
 
     # Create log entry
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 
         log = ConversionTriggerLog(
@@ -369,7 +371,8 @@ async def _get_recently_dismissed_triggers(user_id: str, now: datetime) -> set[s
     """Get trigger IDs that were dismissed within the last 30 days."""
     cutoff = now - timedelta(days=SAME_TRIGGER_COOLDOWN_DAYS)
 
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 
@@ -385,7 +388,8 @@ async def _get_recently_dismissed_triggers(user_id: str, now: datetime) -> set[s
 
 async def _mark_trigger_dismissed(user_id: str, trigger_id: str, now: datetime) -> None:
     """Mark the most recent instance of a trigger as dismissed."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,8 @@ async def track_transition_event(user_id: str, event: str) -> None:
 
 async def _get_average_quiz_score(user_id: str) -> float | None:
     """Get average quiz score across all completed quizzes."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import QuizSession
 
@@ -290,7 +291,8 @@ async def _get_average_quiz_score(user_id: str) -> float | None:
 
 async def _get_plan_completion_rate(user_id: str) -> float | None:
     """Get overall study plan completion rate (completed_items / total_items)."""
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import func, select
         from src.domains.personal_learning.db_models import StudyPlan
 

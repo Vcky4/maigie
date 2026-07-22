@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from src.shared.database.session import get_session
+from src.shared.database.session import get_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -177,11 +177,13 @@ async def get_effective_tier(user_id: str) -> tuple[Literal["free", "plus"], boo
     Considers both subscription status and active trial.
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+    from src.shared.database.session import get_session_factory
 
     repo = PersonalLearningRepository()
 
     # Check subscription tier first
-    async with get_session() as session:
+    factory = get_session_factory()
+    async with factory() as session:
         from sqlalchemy import select
         from src.domains.identity.db_models import User
 
