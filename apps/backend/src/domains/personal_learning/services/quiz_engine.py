@@ -271,6 +271,16 @@ async def complete_quiz(
     topic_breakdown = await _compute_topic_breakdown(quiz_id, answers)
     weak_areas = [t["title"] for t in topic_breakdown if t.get("score", 0) < 70]
 
+    # Record in activity feed
+    from . import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="quiz_completed",
+        title=f"Completed quiz — {round(score_pct, 1)}% ({correct}/{total})",
+        context={"source": "personal", "quizId": quiz_id, "score": round(score_pct, 1)},
+    )
+
     return {
         "quizId": quiz_id,
         "totalQuestions": total,

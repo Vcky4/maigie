@@ -1262,6 +1262,17 @@ async def create_from_prompt(
             "isPublic": False,
         }
     )
+
+    # Record in activity feed
+    from src.domains.personal_learning.services import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="document_generated",
+        title=f"Generated {doc_type}: {title}",
+        context={"source": "personal", "docId": doc.id, "format": format},
+    )
+
     return doc
 
 

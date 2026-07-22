@@ -25,6 +25,16 @@ async def create_note(*, user_id: str, data: dict[str, Any]) -> Any:
         await repo.create_note_tags(note.id, tags)
         note = await repo.find_note(note.id, user_id)
 
+    # Record in activity feed
+    from . import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="note_created",
+        title=f"Created note: {data.get('title', 'Untitled')}",
+        context={"source": "personal", "noteId": note.id},
+    )
+
     return note
 
 

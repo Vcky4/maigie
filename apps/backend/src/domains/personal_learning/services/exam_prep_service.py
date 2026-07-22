@@ -35,7 +35,19 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
         "description": data.get("description"),
         "status": "SETUP",
     }
-    return await repo.create_exam_prep(prep_data)
+    prep = await repo.create_exam_prep(prep_data)
+
+    # Record in activity feed
+    from . import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="preparation_created",
+        title=f"Started preparation: {data['subject']}",
+        context={"source": "personal", "prepId": prep.id, "type": data.get("type")},
+    )
+
+    return prep
 
 
 async def get_preparation(*, user_id: str, prep_id: str) -> Any:

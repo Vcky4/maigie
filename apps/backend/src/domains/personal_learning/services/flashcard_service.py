@@ -212,6 +212,16 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
     # Invalidate stats cache since a review changes due counts and mastery
     await _get_statistics_cached.invalidate(user_id=user_id)
 
+    # Record in activity feed
+    from . import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="flashcard_reviewed",
+        title=f"Reviewed flashcard (quality: {quality}/5)",
+        context={"source": "personal", "cardId": card_id, "quality": quality},
+    )
+
     return result
 
 

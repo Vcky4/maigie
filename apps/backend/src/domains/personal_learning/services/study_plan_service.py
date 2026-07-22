@@ -183,6 +183,16 @@ async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
     if new_completed >= (plan.total_items or 0):
         await repo.update_plan_status(plan_id, "COMPLETED")
 
+    # Record in activity feed
+    from . import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="plan_item_completed",
+        title=f"Completed study task ({new_completed}/{plan.total_items or 0})",
+        context={"source": "personal", "planId": plan_id, "itemId": item_id},
+    )
+
     # Check if behind schedule and redistribute if needed (Req 7.5)
     items = await repo.list_plan_items(plan_id)
     pending_past_due = [i for i in items if i.status == "PENDING" and i.scheduled_date < now]
