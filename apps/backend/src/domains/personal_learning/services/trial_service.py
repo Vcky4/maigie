@@ -180,8 +180,10 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
     """
     Suggest PLUS capabilities to try during the trial.
 
-    Returns up to 3 suggestions based on what the user is currently doing
-    and what PLUS features they haven't tried yet.
+    Returns up to 3 suggestions personalised based on:
+    - What the user is currently doing (active preps, notes, quizzes)
+    - Their stated purpose (exam_prep → quizzes, skill_building → study plans)
+    - What PLUS features they haven't tried yet
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
 
@@ -189,59 +191,132 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
     profile = await repo.get_profile_by_user(user_id)
 
     used_features = set(profile.plus_features_used_this_period or []) if profile else set()
-    suggestions: list[ShowcaseSuggestion] = []
+    purpose = profile.purpose if profile else None
 
-    # Suggest capabilities the user hasn't tried yet
-    showcase_options = [
-        ShowcaseSuggestion(
+    # Count user's content to understand what they're doing
+    note_count = 0
+    prep_count = 0
+    try:
+        note_count = await repo.count_user_notes(user_id)
+    except (AttributeError, Exception):
+        pass
+    try:
+        preps = await repo.list_active_preparations(user_id)
+        prep_count = len(preps) if preps else 0
+    except (AttributeError, Exception):
+        pass
+
+    # Build personalised suggestions with priority scores
+    scored_options: list[tuple[int, ShowcaseSuggestion]] = []
+
+    if "quiz_modes" not in used_features:
+        # Higher priority for exam_prep users or those with active preps
+        score = 50
+        if purpose in ("exam_prep", "professional_certification"):
+            score = 100
+        elif prep_count > 0:
+            score = 80
+        reason = (
+            f"With your {'exam preparation' if prep_count > 0 else 'learning goals'}, "
+            f"adaptive quizzes can target your weak areas automatically"
+        )
+        scored_options.append((score, ShowcaseSuggestion(
             capability_id="quiz_modes",
             title="Try Adaptive Quizzes",
-            description="Quizzes that adjust difficulty based on your performance — focus on what you need most.",
+            description="Quizzes that adjust difficulty based on your performance — focusing where you need it most.",
             action_url="/learning/preparations",
-            reason="Adaptive quizzes help you identify and strengthen weak areas faster",
-        ),
-        ShowcaseSuggestion(
+            reason=reason,
+        )))
+
+    if "document_generation" not in used_features:
+        score = 40
+        if purpose in ("course_completion", "skill_building"):
+            score = 70
+        elif note_count >= 3:
+            score = 60
+        reason = (
+            "Turn your notes into polished presentations or reports"
+            if note_count > 0
+            else "Generate professional documents from any topic description"
+        )
+        scored_options.append((score, ShowcaseSuggestion(
             capability_id="document_generation",
             title="Generate a Presentation",
             description="Create a polished PPTX presentation from your notes or a topic description.",
             action_url="/learning/documents",
-            reason="Turn your knowledge into shareable presentations",
-        ),
-        ShowcaseSuggestion(
+            reason=reason,
+        )))
+
+    if "study_plan" not in used_features:
+        score = 45
+        if prep_count > 0:
+            score = 75
+        elif purpose == "exam_prep":
+            score = 70
+        reason = (
+            f"With {prep_count} active preparation{'s' if prep_count != 1 else ''}, "
+            f"adaptive plans can balance your workload intelligently"
+            if prep_count > 0
+            else "Plans that adapt based on your quiz scores and study patterns"
+        )
+        scored_options.append((score, ShowcaseSuggestion(
             capability_id="study_plan",
             title="Adaptive Study Plan",
             description="Get a study plan that automatically adjusts based on your quiz scores and patterns.",
             action_url="/learning/study-plans",
-            reason="Plans that adapt as you learn help you stay on track",
-        ),
-        ShowcaseSuggestion(
+            reason=reason,
+        )))
+
+    if "reflection" not in used_features:
+        score = 30
+        if (profile and (profile.maturity_days or 0) >= 7):
+            score = 65
+        reason = (
+            "After a week of learning, deep reflections can reveal patterns across your topics"
+            if (profile and (profile.maturity_days or 0) >= 7)
+            else "Understand how your learning connects across different areas"
+        )
+        scored_options.append((score, ShowcaseSuggestion(
             capability_id="reflection",
             title="Deep Learning Reflection",
             description="Get cross-topic pattern analysis with specific actionable recommendations.",
             action_url="/learning/reflections",
-            reason="Understand how your learning connects across different areas",
-        ),
-        ShowcaseSuggestion(
+            reason=reason,
+        )))
+
+    if "flashcard_generation" not in used_features:
+        score = 35
+        if note_count >= 2:
+            score = 70
+        reason = (
+            f"You have {note_count} notes — advanced flashcards with cloze and multi-choice "
+            f"can improve retention"
+            if note_count > 0
+            else "Varied card types improve retention through different recall mechanisms"
+        )
+        scored_options.append((score, ShowcaseSuggestion(
             capability_id="flashcard_generation",
             title="Advanced Flashcards",
             description="Generate cloze, multiple-choice, and image-based flashcards from your notes.",
             action_url="/learning/flashcards",
-            reason="Varied card types improve retention through different recall mechanisms",
-        ),
-        ShowcaseSuggestion(
+            reason=reason,
+        )))
+
+    if "behaviour_analytics" not in used_features:
+        score = 25
+        if (profile and (profile.maturity_days or 0) >= 5):
+            score = 55
+        scored_options.append((score, ShowcaseSuggestion(
             capability_id="behaviour_analytics",
             title="Predictive Study Scheduling",
             description="See your optimal study times and get proactive support for consistency.",
             action_url="/learning/behaviour/profile",
-            reason="Learn when your brain works best",
-        ),
-    ]
+            reason="Learn when your brain works best based on your actual study patterns",
+        )))
 
-    for option in showcase_options:
-        if option.capability_id not in used_features and len(suggestions) < 3:
-            suggestions.append(option)
-
-    return suggestions
+    # Sort by score (highest first) and return top 3
+    scored_options.sort(key=lambda x: x[0], reverse=True)
+    return [suggestion for _, suggestion in scored_options[:3]]
 
 
 async def generate_trial_summary(user_id: str) -> TrialSummary:
