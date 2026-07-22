@@ -793,3 +793,243 @@ async def get_activity_feed(
         user_id=current_user.id, page=page, page_size=pageSize
     )
     return models.ActivityFeedResponse(items=items, total=total, page=page, pageSize=pageSize)
+
+
+# ===========================================================================
+# Commercial: Capabilities & Feature Tier
+# ===========================================================================
+
+
+@router.get("/capabilities")
+async def get_capabilities(current_user: CurrentUser):
+    """Get the user's feature tier and available/locked capabilities."""
+    from .services import feature_tier_service
+
+    summary = await feature_tier_service.get_capabilities_summary(user_id=current_user.id)
+    return {
+        "effectiveTier": summary.effective_tier,
+        "isTrial": summary.is_trial,
+        "trialDaysRemaining": summary.trial_days_remaining,
+        "capabilities": [
+            {
+                "id": cap.id,
+                "name": cap.name,
+                "freeDescription": cap.free_description,
+                "plusDescription": cap.plus_description,
+                "userLevel": cap.user_level,
+                "lockedFeatures": cap.locked_features,
+                "upgradeValue": cap.upgrade_value,
+            }
+            for cap in summary.capabilities
+        ],
+    }
+
+
+# ===========================================================================
+# Commercial: Trial
+# ===========================================================================
+
+
+@router.post("/trial/start", status_code=201)
+async def start_trial(current_user: CurrentUser):
+    """Start a 7-day Plus trial."""
+    from .services import trial_service
+
+    try:
+        status = await trial_service.start_trial(user_id=current_user.id)
+        return {
+            "isActive": status.is_active,
+            "dayNumber": status.day_number,
+            "daysRemaining": status.days_remaining,
+            "startsAt": status.started_at.isoformat() if status.started_at else None,
+            "endsAt": status.ends_at.isoformat() if status.ends_at else None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/trial/status")
+async def get_trial_status(current_user: CurrentUser):
+    """Get current trial status."""
+    from .services import trial_service
+
+    status = await trial_service.get_trial_status(user_id=current_user.id)
+    if not status:
+        return {"isActive": False, "expired": False, "trialAvailable": True}
+    return {
+        "isActive": status.is_active,
+        "dayNumber": status.day_number,
+        "daysRemaining": status.days_remaining,
+        "expired": status.expired,
+        "startsAt": status.started_at.isoformat() if status.started_at else None,
+        "endsAt": status.ends_at.isoformat() if status.ends_at else None,
+        "nextTrialAvailableAt": (
+            status.next_trial_available_at.isoformat()
+            if status.next_trial_available_at
+            else None
+        ),
+        "showcaseSuggestions": (
+            [
+                {
+                    "capabilityId": s.capability_id,
+                    "title": s.title,
+                    "description": s.description,
+                    "actionUrl": s.action_url,
+                    "reason": s.reason,
+                }
+                for s in await trial_service.get_showcase_suggestions(current_user.id)
+            ]
+            if status.is_active
+            else []
+        ),
+    }
+
+
+@router.post("/trial/summary")
+async def get_trial_summary(current_user: CurrentUser):
+    """Generate trial summary (available after trial expiry)."""
+    from .services import trial_service
+
+    status = await trial_service.get_trial_status(user_id=current_user.id)
+    if not status or status.is_active:
+        raise HTTPException(status_code=400, detail="Trial summary available only after trial ends")
+
+    summary = await trial_service.generate_trial_summary(user_id=current_user.id)
+    return {
+        "trialDays": summary.trial_days,
+        "plusFeaturesUsed": summary.plus_features_used,
+        "learningOutcomes": summary.learning_outcomes,
+        "whatYouWouldLose": summary.what_you_would_lose,
+        "upgradeUrl": summary.upgrade_url,
+    }
+
+
+# ===========================================================================
+# Commercial: Conversion Triggers
+# ===========================================================================
+
+
+@router.post("/triggers/{trigger_id}/dismiss", status_code=204)
+async def dismiss_trigger(trigger_id: str, current_user: CurrentUser):
+    """Dismiss a conversion trigger."""
+    from .services import conversion_engine
+
+    await conversion_engine.record_dismissal(user_id=current_user.id, trigger_id=trigger_id)
+
+
+# ===========================================================================
+# Commercial: Value Summary
+# ===========================================================================
+
+
+@router.get("/value-summary")
+async def get_value_summary(current_user: CurrentUser):
+    """Get current period value summary (for Plus subscribers)."""
+    from .services import feature_tier_service, value_summary_service
+
+    tier, _, _ = await feature_tier_service.get_effective_tier(current_user.id)
+    if tier != "plus":
+        raise HTTPException(status_code=403, detail="Value summary is for Plus subscribers")
+
+    summary = await value_summary_service.generate_monthly_summary(user_id=current_user.id)
+    return {
+        "periodStart": summary.period_start.isoformat(),
+        "periodEnd": summary.period_end.isoformat(),
+        "headline": summary.headline,
+        "detailMessage": summary.detail_message,
+        "metrics": {
+            "aiAssistedSessions": summary.ai_assisted_sessions,
+            "documentsGenerated": summary.documents_generated,
+            "timeSavedMinutes": summary.documents_time_saved_minutes,
+            "flashcardsReviewed": summary.flashcards_reviewed,
+            "studyPlanItemsCompleted": summary.study_plan_items_completed,
+            "goalsAchieved": summary.goals_achieved,
+            "quizzesTaken": summary.quizzes_taken,
+        },
+        "topFeaturesUsed": summary.top_features_used,
+        "plusExclusiveFeaturesUsed": summary.plus_exclusive_features_used,
+    }
+
+
+# ===========================================================================
+# Commercial: Milestones
+# ===========================================================================
+
+
+@router.get("/milestones")
+async def get_milestones(current_user: CurrentUser):
+    """Get achieved milestones."""
+    from .services import milestone_service
+
+    milestones = await milestone_service.get_achieved_milestones(user_id=current_user.id)
+    return {
+        "milestones": [
+            {
+                "milestoneId": m.milestone_id,
+                "title": m.title,
+                "achievedAt": m.achieved_at.isoformat(),
+                "shareText": m.share_text,
+                "referralLink": m.referral_link,
+                "shareCardUrl": m.share_card_url,
+                "icon": m.icon,
+            }
+            for m in milestones
+        ]
+    }
+
+
+@router.post("/milestones/{milestone_id}/share")
+async def share_milestone(milestone_id: str, current_user: CurrentUser):
+    """Generate a share card for a milestone."""
+    from .services import milestone_service
+
+    try:
+        card = await milestone_service.generate_share_card(
+            user_id=current_user.id, milestone_id=milestone_id
+        )
+        return {
+            "milestoneId": card.milestone_id,
+            "title": card.title,
+            "imageUrl": card.image_url,
+            "shareText": card.share_text,
+            "referralLink": card.referral_link,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# ===========================================================================
+# Commercial: Educator Transition
+# ===========================================================================
+
+
+@router.get("/educator-readiness")
+async def get_educator_readiness(current_user: CurrentUser):
+    """Get educator readiness evaluation."""
+    from .services import transition_service
+
+    readiness = await transition_service.evaluate_educator_readiness(user_id=current_user.id)
+    return {
+        "isReady": readiness.is_ready,
+        "signalsMet": readiness.signals_met,
+        "totalSignals": readiness.total_signals,
+        "signals": readiness.signals,
+        "message": readiness.message,
+    }
+
+
+@router.post("/educator-transition/circle-trial", status_code=201)
+async def start_circle_trial(current_user: CurrentUser):
+    """Start a Circle Plan trial for educator-ready users."""
+    from .services import transition_service
+
+    try:
+        status = await transition_service.start_circle_trial(user_id=current_user.id)
+        return {
+            "isActive": status.is_active,
+            "startedAt": status.started_at.isoformat() if status.started_at else None,
+            "endsAt": status.ends_at.isoformat() if status.ends_at else None,
+            "maxLearners": status.max_learners,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

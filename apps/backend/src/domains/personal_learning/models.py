@@ -275,6 +275,12 @@ class HomeResponse(BaseModel):
     recommendations: list[RecommendationResponse] = []  # Deprecated — replaced by readyForYou
     reEngagement: ReEngagementResponse | None = None
     isOnboarding: bool  # Kept for backward compat
+    # --- Commercial fields ---
+    premiumSuggestion: dict | None = None  # Conversion trigger (trigger, message, capability, upgradeUrl)
+    trialStatus: dict | None = None  # Trial status (isActive, dayNumber, daysRemaining)
+    valueSummary: dict | None = None  # Value highlights (topAchievements, topFeaturesUsed)
+    educatorPath: dict | None = None  # Educator transition (ready, message, actionUrl)
+    milestone: dict | None = None  # New milestone achieved (milestoneId, title, shareText)
 
 
 # ===========================================================================

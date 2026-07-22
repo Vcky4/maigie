@@ -390,6 +390,47 @@ class LearningProfile(Base, TimestampMixin):
         "preferredLlmProvider", String, nullable=True
     )
 
+    # --- Commercial: Trial tracking ---
+    trial_started_at: Mapped[Optional[datetime]] = mapped_column(
+        "trialStartedAt", DateTime(timezone=True), nullable=True
+    )
+    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(
+        "trialEndsAt", DateTime(timezone=True), nullable=True
+    )
+    last_trial_ended_at: Mapped[Optional[datetime]] = mapped_column(
+        "lastTrialEndedAt", DateTime(timezone=True), nullable=True
+    )
+
+    # --- Commercial: Conversion trigger tracking ---
+    last_trigger_shown_at: Mapped[Optional[datetime]] = mapped_column(
+        "lastTriggerShownAt", DateTime(timezone=True), nullable=True
+    )
+    trigger_dismissal_count: Mapped[int] = mapped_column(
+        "triggerDismissalCount", Integer, default=0, server_default="0"
+    )
+    last_trigger_dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+        "lastTriggerDismissedAt", DateTime(timezone=True), nullable=True
+    )
+
+    # --- Commercial: Educator transition tracking ---
+    educator_readiness_met_at: Mapped[Optional[datetime]] = mapped_column(
+        "educatorReadinessMetAt", DateTime(timezone=True), nullable=True
+    )
+    educator_suggestion_shown_at: Mapped[Optional[datetime]] = mapped_column(
+        "educatorSuggestionShownAt", DateTime(timezone=True), nullable=True
+    )
+    circle_trial_started_at: Mapped[Optional[datetime]] = mapped_column(
+        "circleTrialStartedAt", DateTime(timezone=True), nullable=True
+    )
+
+    # --- Commercial: Value tracking ---
+    last_value_summary_at: Mapped[Optional[datetime]] = mapped_column(
+        "lastValueSummaryAt", DateTime(timezone=True), nullable=True
+    )
+    plus_features_used_this_period: Mapped[Optional[dict]] = mapped_column(
+        "plusFeaturesUsedThisPeriod", JSON, nullable=True
+    )
+
     __table_args__ = (Index("LearningProfile_userId_idx", "userId"),)
 
     def __repr__(self) -> str:
@@ -764,3 +805,146 @@ class ActivityFeedEntry(Base):
 
     def __repr__(self) -> str:
         return f"<ActivityFeedEntry id={self.id} type={self.activity_type}>"
+
+
+# ---------------------------------------------------------------------------
+# ConversionTriggerLog
+# ---------------------------------------------------------------------------
+
+
+class ConversionTriggerLog(Base):
+    __tablename__ = "ConversionTriggerLog"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    trigger_id: Mapped[str] = mapped_column("triggerId", String, nullable=False)
+    shown_at: Mapped[datetime] = mapped_column("shownAt", DateTime(timezone=True), nullable=False)
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+        "dismissedAt", DateTime(timezone=True), nullable=True
+    )
+    converted_at: Mapped[Optional[datetime]] = mapped_column(
+        "convertedAt", DateTime(timezone=True), nullable=True
+    )
+    capability_highlighted: Mapped[str] = mapped_column(
+        "capabilityHighlighted", String, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ConversionTriggerLog_userId_shownAt_idx", "userId", "shownAt"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ConversionTriggerLog id={self.id} trigger={self.trigger_id}>"
+
+
+# ---------------------------------------------------------------------------
+# LearningMilestone
+# ---------------------------------------------------------------------------
+
+
+class LearningMilestone(Base):
+    __tablename__ = "LearningMilestone"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    milestone_id: Mapped[str] = mapped_column("milestoneId", String, nullable=False)
+    achieved_at: Mapped[datetime] = mapped_column(
+        "achievedAt", DateTime(timezone=True), nullable=False
+    )
+    shared_at: Mapped[Optional[datetime]] = mapped_column(
+        "sharedAt", DateTime(timezone=True), nullable=True
+    )
+    share_card_url: Mapped[Optional[str]] = mapped_column(
+        "shareCardUrl", String, nullable=True
+    )
+    referral_link: Mapped[Optional[str]] = mapped_column(
+        "referralLink", String, nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "LearningMilestone_userId_milestoneId_idx",
+            "userId",
+            "milestoneId",
+            unique=True,
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<LearningMilestone id={self.id} milestone={self.milestone_id}>"
+
+
+# ---------------------------------------------------------------------------
+# RetentionIntervention
+# ---------------------------------------------------------------------------
+
+
+class RetentionIntervention(Base):
+    __tablename__ = "RetentionIntervention"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    churn_risk_score: Mapped[float] = mapped_column("churnRiskScore", Float, nullable=False)
+    intervention_type: Mapped[str] = mapped_column("interventionType", String, nullable=False)
+    delivered_at: Mapped[datetime] = mapped_column(
+        "deliveredAt", DateTime(timezone=True), nullable=False
+    )
+    outcome: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    outcome_at: Mapped[Optional[datetime]] = mapped_column(
+        "outcomeAt", DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index("RetentionIntervention_userId_deliveredAt_idx", "userId", "deliveredAt"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<RetentionIntervention id={self.id} type={self.intervention_type}>"
+
+
+# ---------------------------------------------------------------------------
+# ValueSummaryRecord
+# ---------------------------------------------------------------------------
+
+
+class ValueSummaryRecord(Base):
+    __tablename__ = "ValueSummaryRecord"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    period_start: Mapped[datetime] = mapped_column(
+        "periodStart", DateTime(timezone=True), nullable=False
+    )
+    period_end: Mapped[datetime] = mapped_column(
+        "periodEnd", DateTime(timezone=True), nullable=False
+    )
+    summary_data: Mapped[dict] = mapped_column("summaryData", JSON, nullable=False)
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+        "deliveredAt", DateTime(timezone=True), nullable=True
+    )
+    delivery_method: Mapped[str] = mapped_column(
+        "deliveryMethod", String, default="notification"
+    )
+
+    __table_args__ = (
+        Index("ValueSummaryRecord_userId_periodEnd_idx", "userId", "periodEnd"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ValueSummaryRecord id={self.id} userId={self.user_id}>"

@@ -18,6 +18,13 @@ from . import (
     chat_helper,
     guidance_engine,
     auto_setup_service,
+    feature_tier_service,
+    trial_service,
+    conversion_engine,
+    transition_service,
+    milestone_service,
+    value_summary_service,
+    retention_service,
 )
 
 __all__ = [
@@ -38,4 +45,11 @@ __all__ = [
     "chat_helper",
     "guidance_engine",
     "auto_setup_service",
+    "feature_tier_service",
+    "trial_service",
+    "conversion_engine",
+    "transition_service",
+    "milestone_service",
+    "value_summary_service",
+    "retention_service",
 ]
