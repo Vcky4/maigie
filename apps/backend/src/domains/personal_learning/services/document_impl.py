@@ -1273,6 +1273,12 @@ async def create_from_prompt(
         context={"source": "personal", "docId": doc.id, "format": format},
     )
 
+    # Check milestones
+    from src.domains.personal_learning.services import milestone_service
+
+    doc_count = await repo.count_documents_since(user_id, datetime(2000, 1, 1, tzinfo=UTC))
+    await milestone_service.check_milestones(user_id, {"documents_generated": doc_count})
+
     return doc
 
 

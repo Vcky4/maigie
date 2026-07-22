@@ -281,6 +281,11 @@ async def complete_quiz(
         context={"source": "personal", "quizId": quiz_id, "score": round(score_pct, 1)},
     )
 
+    # Check milestones (quiz_90_plus)
+    from . import milestone_service
+
+    await milestone_service.check_milestones(user_id, {"quiz_score": round(score_pct, 1)})
+
     return {
         "quizId": quiz_id,
         "totalQuestions": total,

@@ -203,7 +203,26 @@ async def mark_completed(*, user_id: str, prep_id: str) -> Any:
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
-    return await repo.update_exam_prep(prep_id, {"status": "COMPLETED"})
+    result = await repo.update_exam_prep(prep_id, {"status": "COMPLETED"})
+
+    # Record in activity feed
+    from . import activity_feed_service
+
+    await activity_feed_service.record(
+        user_id=user_id,
+        activity_type="preparation_completed",
+        title=f"Completed preparation: {prep.subject}",
+        context={"source": "personal", "prepId": prep_id},
+    )
+
+    # Check milestones (first_prep_complete)
+    from . import milestone_service
+
+    completed_preps = await repo.list_exam_preps(user_id)
+    preps_completed = len([p for p in completed_preps if p.status == "COMPLETED"])
+    await milestone_service.check_milestones(user_id, {"preps_completed": preps_completed})
+
+    return result
 
 
 async def mark_overdue_preparations_completed() -> int:

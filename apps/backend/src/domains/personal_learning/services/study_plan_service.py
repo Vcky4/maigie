@@ -193,6 +193,12 @@ async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
         context={"source": "personal", "planId": plan_id, "itemId": item_id},
     )
 
+    # Check milestones (plan_complete)
+    from . import milestone_service
+
+    completion_pct = (new_completed / (plan.total_items or 1)) * 100
+    await milestone_service.check_milestones(user_id, {"plan_completion_percentage": completion_pct})
+
     # Check if behind schedule and redistribute if needed (Req 7.5)
     items = await repo.list_plan_items(plan_id)
     pending_past_due = [i for i in items if i.status == "PENDING" and i.scheduled_date < now]
