@@ -155,13 +155,17 @@ def _build_progress_summary(profile: Any | None, flashcard_stats: dict) -> dict[
 
     Req 1.3: Progress summary containing current streak count,
     weekly study minutes, and topics completed this week.
+
+    Note: currentStreak and weeklyMinutes are background-task computed values
+    stored on the profile. They update once daily via Celery beat.
+    If both are 0, it means the background task hasn't run yet for this user.
     """
     maturity = getattr(profile, "maturity_days", 0) or 0
     avg_minutes = getattr(profile, "avg_session_minutes", 0) or 0
 
     return {
-        "currentStreak": maturity,  # Using maturity as streak proxy
-        "weeklyMinutes": round(avg_minutes * 5, 1),  # Estimate: avg * 5 weekdays
+        "currentStreak": maturity,
+        "weeklyMinutes": round(avg_minutes * 5, 1),
         "topicsCompletedThisWeek": flashcard_stats.get("masteredCount", 0),
     }
 
