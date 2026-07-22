@@ -23,11 +23,23 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     Req 7.1: Distribute topics across available study days.
     Req 7.2: Respect learner's observed study patterns from behaviour tracker.
     Req 7.3: Interleave spaced repetition reviews among new material.
+
+    FREE: Basic timeline distribution.
+    PLUS: Adaptive scheduling that adjusts based on quiz performance and behaviour.
     """
+    from . import feature_tier_service, trial_service
+
     title = data["title"]
     goal_description = data.get("goalDescription")
     deadline_raw = data.get("deadline")
     prep_id = data.get("prepId")
+
+    # Determine quality tier for plan generation
+    quality_tier = await feature_tier_service.get_quality_tier(user_id)
+    is_adaptive = quality_tier == "plus"
+
+    if is_adaptive:
+        await trial_service.record_plus_feature_used(user_id, "study_plan")
 
     # Parse deadline — fall back to 30 days from now if not provided.
     if isinstance(deadline_raw, datetime):

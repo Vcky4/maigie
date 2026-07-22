@@ -1172,9 +1172,55 @@ async def create_from_prompt(
     1. Uses the LLM to generate structured content based on the prompt and document type.
     2. Renders the content to PDF/DOCX/PPTX via ``document_generation_service``.
     3. Persists a ``GeneratedDocument`` record and returns it.
+
+    FREE: PDF only, academic style only.
+    PLUS: PDF/DOCX/PPTX, all styles (academic, report, minimal).
     """
     from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.intelligence.reasoning.llm import generate_content
+    from src.domains.personal_learning.services import feature_tier_service, trial_service
+
+    # --- Commercial gate: check format access ---
+    if format != "pdf":
+        cap_result = await feature_tier_service.check_capability(
+            user_id, "document_generation", requested_value=format
+        )
+        if not cap_result.allowed:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "upgradeRequired": True,
+                    "reason": cap_result.reason,
+                    "capability": cap_result.capability,
+                    "upgradeUrl": cap_result.upgrade_url,
+                    "trialAvailable": cap_result.trial_available,
+                    "upgradeValue": cap_result.upgrade_value,
+                },
+            )
+
+    # --- Commercial gate: check style access ---
+    if style != "academic":
+        cap_result = await feature_tier_service.check_capability(
+            user_id, "document_generation", requested_value=style
+        )
+        if not cap_result.allowed:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "upgradeRequired": True,
+                    "reason": cap_result.reason,
+                    "capability": cap_result.capability,
+                    "upgradeUrl": cap_result.upgrade_url,
+                    "trialAvailable": cap_result.trial_available,
+                    "upgradeValue": cap_result.upgrade_value,
+                },
+            )
+
+    # Record PLUS feature usage if applicable
+    if format != "pdf" or style != "academic":
+        await trial_service.record_plus_feature_used(user_id, "document_generation")
 
     llm_prompt = _build_document_prompt(doc_type=doc_type, title=title, prompt=prompt, format=format)
     max_tokens = _max_tokens_for_type(doc_type)

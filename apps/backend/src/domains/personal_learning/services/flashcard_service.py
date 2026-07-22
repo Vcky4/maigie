@@ -50,19 +50,40 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
     Generate flashcards from a note using AI.
 
     Req 5.2: Extract key concepts from note content and create flashcards.
+
+    FREE: up to 5 basic Q&A cards.
+    PLUS: up to 10 cards with varied types (cloze, multi-choice, image prompts).
     """
     from .llm_resilient import generate_content_json
+    from . import feature_tier_service, trial_service
 
     note = await repo.find_note(note_id, user_id)
     if not note or not note.content:
         return []
 
+    # Determine quality tier for generation
+    quality_tier = await feature_tier_service.get_quality_tier(user_id)
+
+    if quality_tier == "plus":
+        max_cards = 10
+        card_types_instruction = (
+            "Generate varied card types including:\n"
+            "- Standard Q&A (front: question, back: answer)\n"
+            "- Cloze deletion (front: sentence with ___ blank, back: the missing word/phrase)\n"
+            "- Multiple choice (front: question with options A/B/C/D, back: correct answer + explanation)\n"
+        )
+        await trial_service.record_plus_feature_used(user_id, "flashcard_generation")
+    else:
+        max_cards = 5
+        card_types_instruction = "Create standard Q&A flashcards (front: question/term, back: answer/definition)."
+
     prompt = (
         f"Extract key concepts from this note and create flashcards.\n"
         f"Title: {note.title}\n"
         f"Content:\n{note.content[:3000]}\n\n"
-        f"Return a JSON array of objects with 'front' (question/term) and 'back' (answer/definition).\n"
-        f"Generate 3-8 flashcards covering the most important concepts.\n"
+        f"{card_types_instruction}\n"
+        f"Return a JSON array of objects with 'front' and 'back' fields.\n"
+        f"Generate {max_cards} flashcards covering the most important concepts.\n"
         f"Return ONLY the JSON array, no other text."
     )
 
@@ -71,7 +92,7 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
         return []
 
     created_cards = []
-    for card in cards_data:
+    for card in cards_data[:max_cards]:
         if isinstance(card, dict) and "front" in card and "back" in card:
             flashcard = await create_flashcard(
                 user_id=user_id,

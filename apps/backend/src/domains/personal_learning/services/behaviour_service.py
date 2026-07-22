@@ -25,9 +25,37 @@ async def get_behaviour_profile(*, user_id: str) -> dict[str, Any]:
     Req 11.4: Return preferred_times, avg_session_minutes, consistency_score,
     best_day_of_week, and dropout_risk_factors.
 
+    FREE: Basic profile (preferred times, avg session, consistency, best day).
+    PLUS: Full profile + predictive scheduling, optimal time suggestions, dropout prevention.
+
     Cached for 120s — behaviour data changes only via background task (daily).
     """
-    return await _get_behaviour_profile_cached(user_id=user_id)
+    from . import feature_tier_service
+
+    profile_data = await _get_behaviour_profile_cached(user_id=user_id)
+
+    # Check tier for predictive features
+    quality_tier = await feature_tier_service.get_quality_tier(user_id)
+
+    if quality_tier == "plus":
+        # PLUS: include predictive features
+        from . import trial_service
+        await trial_service.record_plus_feature_used(user_id, "behaviour_analytics")
+        profile_data["predictiveScheduling"] = _compute_predictive_scheduling(profile_data)
+        profile_data["optimalStudyTimes"] = _compute_optimal_times(profile_data)
+        profile_data["tier"] = "plus"
+    else:
+        # FREE: basic profile only — indicate locked features
+        profile_data["predictiveScheduling"] = None
+        profile_data["optimalStudyTimes"] = None
+        profile_data["tier"] = "free"
+        profile_data["lockedFeatures"] = [
+            "predictive_scheduling",
+            "optimal_time_suggestions",
+            "dropout_prevention",
+        ]
+
+    return profile_data
 
 
 @cached(ttl_seconds=120, max_size=1000, key_arg="user_id")
@@ -222,3 +250,54 @@ def _compute_risk_factors(dropout_risk: float | None) -> list[str] | None:
         factors.append("extended_inactivity")
 
     return factors if factors else None
+
+
+def _compute_predictive_scheduling(profile_data: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Compute predictive scheduling suggestions based on behaviour patterns.
+
+    PLUS-only feature: predicts optimal study schedule for the upcoming week.
+    """
+    preferred_times = profile_data.get("preferredTimes")
+    consistency = profile_data.get("consistencyScore")
+    avg_minutes = profile_data.get("avgSessionMinutes")
+
+    if not preferred_times or not avg_minutes:
+        return None
+
+    # Find the best time slot
+    best_slot = max(preferred_times, key=preferred_times.get) if preferred_times else "morning"
+    suggested_duration = int(avg_minutes * 1.1) if avg_minutes else 45  # Slightly stretch
+
+    return {
+        "suggestedSlot": best_slot,
+        "suggestedDurationMinutes": min(suggested_duration, 90),
+        "consistencyTrend": "improving" if (consistency or 0) > 60 else "building",
+        "weeklyGoalSessions": 5 if (consistency or 0) > 70 else 3,
+    }
+
+
+def _compute_optimal_times(profile_data: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Compute optimal study time suggestions.
+
+    PLUS-only feature: identifies when the learner performs best.
+    """
+    preferred_times = profile_data.get("preferredTimes")
+    if not preferred_times:
+        return None
+
+    # Rank time slots by usage
+    sorted_slots = sorted(preferred_times.items(), key=lambda x: x[1], reverse=True)
+
+    return {
+        "primarySlot": sorted_slots[0][0] if sorted_slots else "morning",
+        "primaryPercentage": sorted_slots[0][1] if sorted_slots else 0,
+        "secondarySlot": sorted_slots[1][0] if len(sorted_slots) > 1 else None,
+        "recommendation": (
+            f"You learn best in the {sorted_slots[0][0]} — "
+            f"{sorted_slots[0][1]:.0f}% of your study sessions happen then."
+            if sorted_slots
+            else "Keep studying to build enough data for personalised time suggestions."
+        ),
+    }

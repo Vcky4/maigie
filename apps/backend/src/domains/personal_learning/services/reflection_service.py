@@ -25,8 +25,12 @@ async def generate_reflection(*, user_id: str, type: str) -> Any:
     Req 12.2: Monthly — compare to previous months, growth trends, patterns.
     Req 12.3: Frame using Three Layer Model (Activities, Progress, Achievements).
     Req 12.4: Include prescriptive recommendations; deliver without if LLM fails.
+
+    FREE: Activity summary (standard depth).
+    PLUS: Deep analysis with cross-topic patterns and specific actionable recommendations.
     """
     from src.domains.intelligence.reasoning.llm import generate_content
+    from . import feature_tier_service, trial_service
 
     now = datetime.now(timezone.utc)
 
@@ -39,6 +43,9 @@ async def generate_reflection(*, user_id: str, type: str) -> Any:
         period_start = now - timedelta(days=7)
 
     period_end = now
+
+    # Determine quality tier for reflection depth
+    quality_tier = await feature_tier_service.get_quality_tier(user_id)
 
     # Gather data for the reflection (from profile and recent activity)
     profile = await repo.get_profile_by_user(user_id)
@@ -53,8 +60,24 @@ async def generate_reflection(*, user_id: str, type: str) -> Any:
         f"streak days (maturity)={getattr(profile, 'maturity_days', 0)}"
     )
 
+    # PLUS gets deeper analysis with cross-topic patterns
+    if quality_tier == "plus":
+        depth_instruction = (
+            "Provide DEEP ANALYSIS including:\n"
+            "- Cross-topic patterns: how different subjects connect and reinforce each other\n"
+            "- Specific actionable recommendations based on observed patterns\n"
+            "- Predictive insights: what the learner should focus on next based on trends\n"
+            "- Metacognitive observations: how their learning approach is evolving\n"
+        )
+        await trial_service.record_plus_feature_used(user_id, "reflection")
+    else:
+        depth_instruction = (
+            "Provide a clear activity summary of what was accomplished this period.\n"
+        )
+
     prompt = (
         f"Generate a learning reflection for this period:\n{context}\n\n"
+        f"{depth_instruction}\n"
         f"Structure the reflection using three layers:\n"
         f"1. ACTIVITIES: What the learner did (topics studied, sessions completed, notes created)\n"
         f"2. PROGRESS: What changed because of those activities (concepts mastered, consistency improved, knowledge retained)\n"

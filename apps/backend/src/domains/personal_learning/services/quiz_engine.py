@@ -32,6 +32,30 @@ async def start_quiz(
     Req 4.7: TOPIC_FOCUS — single specified topic
     """
     from .llm_resilient import generate_content_json
+    from . import feature_tier_service
+
+    # --- Commercial gate: check mode access ---
+    if mode in ("PAST_PAPER_SIM", "ADAPTIVE"):
+        cap_result = await feature_tier_service.check_capability(
+            user_id, "quiz_modes", requested_value=mode
+        )
+        if not cap_result.allowed:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "upgradeRequired": True,
+                    "reason": cap_result.reason,
+                    "capability": cap_result.capability,
+                    "upgradeUrl": cap_result.upgrade_url,
+                    "trialAvailable": cap_result.trial_available,
+                    "upgradeValue": cap_result.upgrade_value,
+                },
+            )
+        # Record PLUS feature usage
+        await feature_tier_service.get_quality_tier(user_id)  # side-effect: validates tier
+        from . import trial_service
+        await trial_service.record_plus_feature_used(user_id, "quiz_modes")
 
     # Verify prep exists and belongs to user
     prep = await repo.find_exam_prep(prep_id, user_id)
