@@ -21,7 +21,7 @@ poetry run alembic upgrade head
 .\scripts\serve.ps1
 # Or: .venv\Scripts\python.exe -m uvicorn src.app:app --reload --host 0.0.0.0 --port 8000
 ```
-
+ 
 ### 2. Required Services
 
 | Service | How to Start | Verify |
