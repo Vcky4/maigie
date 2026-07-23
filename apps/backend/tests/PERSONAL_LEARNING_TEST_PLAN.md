@@ -251,7 +251,7 @@ Use the `id` from Test 3.1 response.
   "content": "Updated: A BST is a sorted binary tree with efficient search, insert, and delete operations (O(log n) average)."
 }
 ```
-
+ 
 **Expected:** `200 OK` — Only content changed, title preserved.
 
 #### Test 3.8 — AI Summary (Requires GEMINI_API_KEY)

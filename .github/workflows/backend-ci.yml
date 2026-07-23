@@ -499,7 +499,25 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    python scripts/sync_schema.py || alembic upgrade head || echo 'Schema setup skipped';
+                    python -c '
+                  import asyncio
+                  from sqlalchemy import text
+                  from src.shared.database.session import connect_db, get_session_factory
+                  from src.shared.database.base import Base
+                  import src.domains.identity.db_models
+                  import src.domains.knowledge.db_models
+                  import src.domains.intelligence.db_models
+                  import src.domains.learning_spaces.db_models
+                  import src.domains.personal_learning.db_models
+                  import src.domains.billing.db_models
+                  async def init():
+                      await connect_db()
+                      from src.shared.database.session import _engine
+                      async with _engine.begin() as conn:
+                          await conn.run_sync(Base.metadata.create_all)
+                      print(\"Tables created successfully\")
+                  asyncio.run(init())
+                    ' && echo '✓ Schema initialized via create_all' || echo '⚠ create_all failed, trying alembic...' && alembic upgrade head || echo 'Schema setup skipped';
                     exec uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
