@@ -31,6 +31,7 @@ async def init():
 
     # Check if tables already exist (if User table exists, schema is already set up)
     from sqlalchemy import text
+
     async with engine.connect() as conn:
         result = await conn.execute(
             text("SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = 'User')")
@@ -49,6 +50,7 @@ async def init():
 
     # Stamp alembic to head so migrations don't try to recreate tables
     import subprocess
+
     subprocess.run(["alembic", "stamp", "head"], check=False)
     print("✓ Alembic stamped to head")
 
