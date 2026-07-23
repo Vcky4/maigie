@@ -640,40 +640,74 @@ jobs:
           if [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_TUNNEL_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
             echo "Adding Cloudflare Tunnel route and DNS record for ${PREVIEW_DOMAIN}..."
             
+            TUNNEL_CFG_URL="https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations"
+
             # Get tunnel config
             CURRENT_CONFIG=$(curl -s -X GET \
               -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
               -H "Content-Type: application/json" \
-              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations")
-            
-            # Extract current ingress rules
-            INGRESS_RULES=$(echo "$CURRENT_CONFIG" | jq -r '.result.config.ingress // []')
-            
-            # Check if hostname already exists and remove it
-            if echo "$INGRESS_RULES" | jq -e ".[] | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
-              INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
-            fi
-            
-            # Separate specific rules from catch-all rule (last rule must have no hostname)
-            CATCH_ALL=$(echo "$INGRESS_RULES" | jq '.[-1]')
-            SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq '.[:-1]')
-            
-            # Add new route to specific rules, then append catch-all at the end
-            NEW_RULE="{\"hostname\":\"${PREVIEW_DOMAIN}\",\"service\":\"http://localhost:80\"}"
-            INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] + [$CATCH_ALL]")
-            
-            # Update tunnel config
-            UPDATE_RESPONSE=$(curl -s -X PUT \
-              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              -d "{\"config\":{\"ingress\":$INGRESS_RULES}}" \
-              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations")
-            
-            if echo "$UPDATE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
-              echo "✓ Successfully added Cloudflare Tunnel route: ${PREVIEW_DOMAIN}"
+              "$TUNNEL_CFG_URL")
+
+            # Show what the API currently reports (helps diagnose empty/unexpected config)
+            echo "Current tunnel ingress (from API):"
+            echo "$CURRENT_CONFIG" | jq -c '.result.config.ingress // "MISSING"' || true
+
+            # Safety guard: never PUT unless the fetched config already contains the
+            # known production hostname. This prevents a malformed/empty GET response
+            # from producing a PUT that wipes prod/staging routes on the shared tunnel.
+            if ! echo "$CURRENT_CONFIG" | jq -e '.result.config.ingress[]? | select(.hostname == "api.maigie.com")' > /dev/null 2>&1; then
+              echo "⚠️  Safety abort: fetched tunnel config does not contain api.maigie.com."
+              echo "    Not updating the tunnel to avoid clobbering prod/staging routes."
+              echo "    Raw response:"
+              echo "$CURRENT_CONFIG" | jq '.' || echo "$CURRENT_CONFIG"
             else
-              echo "⚠️  Failed to add Cloudflare Tunnel route (non-critical)"
-              echo "$UPDATE_RESPONSE" | jq '.' || true
+              # Build the new ingress in a single jq pass so it can never emit null/empty rules:
+              #  - drop any existing rule for this preview hostname (idempotent re-deploy)
+              #  - keep only valid specific rules (has a non-empty hostname AND service)
+              #  - append the new preview rule
+              #  - append exactly one catch-all (reuse existing one, else default 404)
+              NEW_INGRESS=$(echo "$CURRENT_CONFIG" | jq -c \
+                --arg host "${PREVIEW_DOMAIN}" \
+                --arg svc "http://localhost:80" '
+                  (.result.config.ingress // []) as $ing
+                  | ($ing
+                      | map(select(
+                          (.hostname // "") != ""
+                          and .hostname != $host
+                          and (.service // "") != ""
+                        ))) as $specific
+                  | ($ing
+                      | map(select((.hostname // "") == "" and (.service // "") != ""))
+                      | (.[0] // {"service":"http_status:404"})) as $catch
+                  | $specific + [{"hostname":$host,"service":$svc}] + [$catch]
+                ')
+
+              echo "Proposed tunnel ingress:"
+              echo "$NEW_INGRESS" | jq -c '.' || true
+
+              # Update tunnel config
+              UPDATE_RESPONSE=$(curl -s -X PUT \
+                -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "{\"config\":{\"ingress\":${NEW_INGRESS}}}" \
+                "$TUNNEL_CFG_URL")
+
+              if echo "$UPDATE_RESPONSE" | jq -e '.success == true' > /dev/null 2>&1; then
+                # Read back to confirm the route actually persisted
+                READBACK=$(curl -s -X GET \
+                  -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  "$TUNNEL_CFG_URL")
+                if echo "$READBACK" | jq -e ".result.config.ingress[]? | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
+                  echo "✓ Verified Cloudflare Tunnel route is present: ${PREVIEW_DOMAIN}"
+                else
+                  echo "⚠️  PUT reported success but route not found on read-back: ${PREVIEW_DOMAIN}"
+                  echo "$READBACK" | jq -c '.result.config.ingress' || true
+                fi
+              else
+                echo "⚠️  Failed to add Cloudflare Tunnel route (non-critical)"
+                echo "$UPDATE_RESPONSE" | jq '.' || true
+              fi
             fi
             
             # Get tunnel hostname for DNS record target (use tunnel ID directly)
