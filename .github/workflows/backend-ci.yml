@@ -499,7 +499,7 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    python scripts/init_schema.py && echo '✓ Schema initialized' || echo '⚠ create_all failed, trying alembic...';
+                    python -m src.init_schema && echo '✓ Schema initialized' || echo '⚠ create_all failed, trying alembic...';
                     alembic upgrade head || echo 'Schema setup skipped';
                     exec uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
