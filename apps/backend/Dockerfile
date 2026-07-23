@@ -30,4 +30,4 @@ COPY . .
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
-CMD ["sh", "-c", "alembic upgrade head 2>&1 || echo '[WARN] alembic upgrade failed'; exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "python scripts/init_schema.py 2>&1 || echo '⚠ create_all skipped'; alembic upgrade head 2>&1 || echo '⚠ alembic upgrade skipped'; exec uvicorn src.main:app --host 0.0.0.0 --port 8000"]
