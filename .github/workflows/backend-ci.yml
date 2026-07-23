@@ -391,9 +391,8 @@ jobs:
               # Remove volumes
               docker volume rm ${{ steps.preview.outputs.id }}_postgres_data 2>/dev/null || true
               
-              # Remove Nginx config if it exists
               sudo rm -f /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf
-              sudo nginx -t && sudo nginx -s reload 2>/dev/null || true
+              sudo nginx -t && sudo /etc/init.d/nginx reload 2>/dev/null || true
               
               # Go back and remove directory
               cd ..
@@ -634,7 +633,7 @@ jobs:
           # Move to Nginx directory and reload
           ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo nginx -s reload"
+            "sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo /etc/init.d/nginx reload"
 
           echo "✓ Nginx config created and reloaded for ${PREVIEW_DOMAIN} → localhost:${PORT}"
 
@@ -1580,7 +1579,7 @@ jobs:
             docker rm -f maigie-preview-backend-${PREVIEW_ID} maigie-preview-postgres-${PREVIEW_ID} maigie-preview-redis-${PREVIEW_ID} 2>/dev/null || true && \
             docker volume rm ${PREVIEW_ID}_postgres_data 2>/dev/null || true && \
             sudo rm -f /www/server/panel/vhost/nginx/${PREVIEW_ID}.preview.conf && \
-            sudo nginx -t && sudo nginx -s reload 2>/dev/null || true && \
+            sudo nginx -t && sudo /etc/init.d/nginx reload 2>/dev/null || true && \
             docker rmi maigie-backend-preview:${PREVIEW_ID} 2>/dev/null || true && \
             echo '✓ Cleaned up preview environment'"
 
