@@ -499,7 +499,8 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    alembic upgrade head || echo 'Migration skipped' && uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    python scripts/sync_schema.py || alembic upgrade head || echo 'Schema setup skipped';
+                    exec uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
               worker:
