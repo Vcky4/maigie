@@ -654,13 +654,13 @@ jobs:
               INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
             fi
             
-            # Separate specific rules from catch-all rules
-            SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname != null and .hostname != \"\")]")
-            CATCH_ALL_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname == null or .hostname == \"\")]")
+            # Separate specific rules from catch-all rule (last rule must have no hostname)
+            CATCH_ALL=$(echo "$INGRESS_RULES" | jq '.[-1]')
+            SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq '.[:-1]')
             
-            # Add new route to specific rules, then append catch-all rules at the end
+            # Add new route to specific rules, then append catch-all at the end
             NEW_RULE="{\"hostname\":\"${PREVIEW_DOMAIN}\",\"service\":\"http://localhost:80\"}"
-            INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] | . + $CATCH_ALL_RULES")
+            INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] + [$CATCH_ALL]")
             
             # Update tunnel config
             UPDATE_RESPONSE=$(curl -s -X PUT \
