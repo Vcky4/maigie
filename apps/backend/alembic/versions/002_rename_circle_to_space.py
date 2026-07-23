@@ -29,6 +29,7 @@ Create Date: 2026-07-16
 """
 
 from alembic import op
+import sqlalchemy as sa
 
 revision = "002_rename_circle_to_space"
 down_revision = "001_drop_prisma_enums"
@@ -151,6 +152,20 @@ FK_UPDATES = [
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+
+    # Check if this is a fresh DB (no "Circle" table exists) — skip renames
+    result = conn.execute(
+        sa.text(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'Circle')"
+        )
+    )
+    circle_exists = result.scalar()
+
+    if not circle_exists:
+        # Fresh database — tables were never named "Circle". Nothing to rename.
+        return
+
     # 1. Rename tables
     for old_name, new_name in TABLE_RENAMES:
         op.rename_table(old_name, new_name)
