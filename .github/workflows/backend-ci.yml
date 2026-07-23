@@ -195,8 +195,12 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           PREVIEW_ID="pr-${PR_NUMBER}"
+          # Deterministic port: 9000 + PR number (avoids port drift on container restart)
+          PREVIEW_PORT=$((9000 + PR_NUMBER))
           echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
+          echo "port=$PREVIEW_PORT" >> $GITHUB_OUTPUT
           echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
+          echo "PREVIEW_PORT=$PREVIEW_PORT" >> $GITHUB_ENV
 
       - name: Build Docker Image
         working-directory: ./apps/backend
@@ -489,7 +493,7 @@ jobs:
                 environment:
                   PREVIEW_ID: ${{ steps.preview.outputs.id }}
                 ports:
-                  - "0:8000"
+                  - "${{ steps.preview.outputs.port }}:8000"
                 depends_on:
                   postgres:
                     condition: service_healthy
@@ -558,13 +562,8 @@ jobs:
             echo "Recent backend logs:"
             docker-compose logs --tail=20 backend || true
 
-            # Get the assigned port
-            PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
-            if [ -z "$PORT" ]; then
-              echo "❌ Failed to get port"
-              docker-compose logs backend
-              exit 1
-            fi
+            # Get the assigned port (deterministic based on PR number)
+            PORT=${{ steps.preview.outputs.port }}
             echo "Backend running on port $PORT"
             echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
             echo "Preview deployed on port: $PORT"
@@ -573,10 +572,8 @@ jobs:
         id: setup-domain
         if: github.event_name == 'pull_request'
         run: |
-          # Get PORT from VPS
-          PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cat /tmp/preview_port_${{ steps.preview.outputs.id }}.txt 2>/dev/null | cut -d= -f2")
+          # Use deterministic port
+          PORT=${{ steps.preview.outputs.port }}
 
           if [ -z "$PORT" ]; then
             PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
@@ -728,10 +725,7 @@ jobs:
           if [ -n "${{ steps.setup-domain.outputs.domain }}" ]; then
             PREVIEW_URL="https://${{ steps.setup-domain.outputs.domain }}"
           else
-            PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-              "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
-            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:$PORT"
+            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:${{ steps.preview.outputs.port }}"
           fi
           echo "PREVIEW_URL=$PREVIEW_URL" >> $GITHUB_ENV
           echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
