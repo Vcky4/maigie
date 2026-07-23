@@ -29,10 +29,28 @@ async def init():
     factory = get_session_factory()
     engine = factory.kw["bind"]
 
+    # Check if tables already exist (if User table exists, schema is already set up)
+    from sqlalchemy import text
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = 'User')")
+        )
+        exists = result.scalar()
+
+    if exists:
+        print("✓ Schema already exists (skipping create_all)")
+        return
+
+    # Fresh DB — create all tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     print("✓ Schema initialized (create_all complete)")
+
+    # Stamp alembic to head so migrations don't try to recreate tables
+    import subprocess
+    subprocess.run(["alembic", "stamp", "head"], check=False)
+    print("✓ Alembic stamped to head")
 
 
 if __name__ == "__main__":
