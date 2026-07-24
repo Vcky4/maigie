@@ -26,7 +26,6 @@ authlib = "^1.3.0"
 email-validator = "^2.1.0"
 redis = {extras = ["hiredis"], version = "^5.0.0"}
 celery = {extras = ["redis"], version = "^5.3.0"}
-prisma = "^0.15.0"
 python-json-logger = "^2.0.7"
 sentry-sdk = {extras = ["fastapi"], version = "^2.0.0"}
 prometheus-client = "^0.21.0"
@@ -51,6 +50,11 @@ firebase-admin = "^6.5.0"
 htmldocx = "^0.0.6"
 xhtml2pdf = "^0.2.16"
 python-pptx = "^1.0.0"
+sqlalchemy = {extras = ["asyncio"], version = "^2.0.51"}
+asyncpg = "^0.31.0"
+alembic = "^1.18.5"
+greenlet = "^3.5.3"
+weasyprint = "^69.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
@@ -109,8 +113,6 @@ filterwarnings = [
     "ignore::DeprecationWarning:starlette.*",
     "ignore::DeprecationWarning:pytest_asyncio.*",
     "ignore::DeprecationWarning:asyncio.*",
-    # Prisma ships a Pydantic v1 compat shim that warns on newer Python
-    "ignore:Core Pydantic V1 functionality isn't compatible:UserWarning",
     # Pydantic v2 migration (our models still use class-based Config in places)
     "ignore::pydantic.warnings.PydanticDeprecatedSince20",
 ]
@@ -120,5 +122,3 @@ filterwarnings = [
 [tool.isort]
 profile = "black"
 
-[tool.prisma]
-seed = "python prisma/seed.py"

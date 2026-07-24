@@ -73,6 +73,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             "schedule.*": {"queue": "heavy"},
             "exam_prep.*": {"queue": "heavy"},
             "resources.*": {"queue": "heavy"},
+            "learning.*": {"queue": "heavy"},
         },
         # Task time limits
         task_time_limit=300,  # Hard time limit (5 minutes) — override per-task for lightweight
@@ -119,18 +120,14 @@ def _install_sigchld_handler(**kwargs: Any) -> None:
 celery_app = create_celery_app()
 
 # Ensure feature tasks are imported so Celery registers them.
-# Celery worker entrypoint is `-A src.core.celery_app:celery_app`, so we import
-# task modules here to make them discoverable without requiring autodiscovery.
+# New domain-scoped task modules in src/workers/.
 try:
-    from ..tasks import (
-        agent_tasks,  # noqa: F401
-        course_generation,  # noqa: F401
-        email_notifications,  # noqa: F401
-        exam_prep_tasks,  # noqa: F401
-        push_notifications,  # noqa: F401
-        resource_recommendations,  # noqa: F401
-        schedule_generation,  # noqa: F401
-        spaced_repetition,  # noqa: F401
+    from src.workers import (
+        intelligence_tasks,  # noqa: F401
+        notification_tasks,  # noqa: F401
+        progress_tasks,  # noqa: F401
+        billing_tasks,  # noqa: F401
+        personal_learning_tasks,  # noqa: F401
     )
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,
@@ -138,6 +135,18 @@ except Exception as e:
     logger.exception("Failed to import Celery task modules: %s", e)
     # Celery boot logs can miss python logger output early; print ensures visibility.
     print(f"[celery_app] Failed to import Celery task modules: {e}")
+
+# Personal learning domain tasks (self-registering via @celery_app.task)
+try:
+    from src.domains.personal_learning import tasks as _learning_tasks  # noqa: F401
+
+    # Merge personal-learning beat schedule into the app
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_learning_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to import personal learning task modules: %s", e)
+    print(f"[celery_app] Failed to import personal learning task modules: {e}")
 
 
 def get_celery_app() -> Celery:

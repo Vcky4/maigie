@@ -58,11 +58,6 @@ jobs:
     - name: Type Checking (Mypy)
       run: poetry run mypy src/
 
-    - name: Generate Prisma Client
-      run: poetry run prisma generate
-      env:
-        DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
-
     - name: Run Tests
       run: poetry run pytest
       env:

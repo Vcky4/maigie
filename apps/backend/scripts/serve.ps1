@@ -35,9 +35,9 @@ try {
     Write-Host "Press Ctrl+C to stop the server`n" -ForegroundColor Yellow
     
     if (Test-Path ".venv\Scripts\python.exe") {
-        & ".venv\Scripts\python.exe" -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 --log-level info
+        & ".venv\Scripts\python.exe" -m uvicorn src.app:app --reload --host 0.0.0.0 --port 8000 --log-level info
     } elseif (Get-Command poetry -ErrorAction SilentlyContinue) {
-        poetry run uvicorn src.main:app --reload --host 0.0.0.0 --port 8000 --log-level info
+        poetry run uvicorn src.app:app --reload --host 0.0.0.0 --port 8000 --log-level info
     } else {
         Write-Host "Error: Neither virtual environment nor Poetry found" -ForegroundColor Red
         exit 1

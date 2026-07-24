@@ -47,10 +47,6 @@ jobs:
         run: |
           poetry run black . --check --diff || (poetry run black . --diff && exit 1)
           poetry run flake8 .
-      - name: Generate Prisma Client
-        run: poetry run prisma generate
-        env:
-          DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
       - name: Run Tests
         run: poetry run pytest
         env:

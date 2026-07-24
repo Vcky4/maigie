@@ -195,8 +195,12 @@ jobs:
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           PREVIEW_ID="pr-${PR_NUMBER}"
+          # Deterministic port: 9000 + PR number (avoids port drift on container restart)
+          PREVIEW_PORT=$((9000 + PR_NUMBER))
           echo "id=$PREVIEW_ID" >> $GITHUB_OUTPUT
+          echo "port=$PREVIEW_PORT" >> $GITHUB_OUTPUT
           echo "PREVIEW_ID=$PREVIEW_ID" >> $GITHUB_ENV
+          echo "PREVIEW_PORT=$PREVIEW_PORT" >> $GITHUB_ENV
 
       - name: Build Docker Image
         working-directory: ./apps/backend
@@ -391,9 +395,8 @@ jobs:
               # Remove volumes
               docker volume rm ${{ steps.preview.outputs.id }}_postgres_data 2>/dev/null || true
               
-              # Remove Nginx config if it exists
               sudo rm -f /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf
-              sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true
+              sudo nginx -t && sudo /etc/init.d/nginx reload 2>/dev/null || true
               
               # Go back and remove directory
               cd ..
@@ -490,7 +493,7 @@ jobs:
                 environment:
                   PREVIEW_ID: ${{ steps.preview.outputs.id }}
                 ports:
-                  - "0:8000"
+                  - "${{ steps.preview.outputs.port }}:8000"
                 depends_on:
                   postgres:
                     condition: service_healthy
@@ -500,10 +503,9 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss --skip-generate &&
-                    python prisma/seed.py &&
-                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    python -m src.init_schema && echo '✓ Schema initialized' || echo '⚠ create_all failed, trying alembic...';
+                    alembic upgrade head || echo 'Schema setup skipped';
+                    exec uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
               worker:
@@ -552,7 +554,7 @@ jobs:
             # Start preview environment (this will create fresh database)
             docker-compose up -d
 
-            # Give containers time to start (prisma db push + seed + uvicorn startup)
+            # Give containers time to start (alembic + uvicorn startup)
             echo "Waiting for containers to initialize..."
             sleep 30
             echo "Container status:"
@@ -560,13 +562,8 @@ jobs:
             echo "Recent backend logs:"
             docker-compose logs --tail=20 backend || true
 
-            # Get the assigned port
-            PORT=$(docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1)
-            if [ -z "$PORT" ]; then
-              echo "❌ Failed to get port"
-              docker-compose logs backend
-              exit 1
-            fi
+            # Get the assigned port (deterministic based on PR number)
+            PORT=${{ steps.preview.outputs.port }}
             echo "Backend running on port $PORT"
             echo "PORT=$PORT" > /tmp/preview_port_${{ steps.preview.outputs.id }}.txt
             echo "Preview deployed on port: $PORT"
@@ -575,10 +572,8 @@ jobs:
         id: setup-domain
         if: github.event_name == 'pull_request'
         run: |
-          # Get PORT from VPS
-          PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "cat /tmp/preview_port_${{ steps.preview.outputs.id }}.txt 2>/dev/null | cut -d= -f2")
+          # Use deterministic port
+          PORT=${{ steps.preview.outputs.port }}
 
           if [ -z "$PORT" ]; then
             PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
@@ -637,7 +632,7 @@ jobs:
           # Move to Nginx directory and reload
           ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
             ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-            "sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo systemctl reload nginx"
+            "sudo mv /tmp/nginx-preview-${{ steps.preview.outputs.id }}.conf /www/server/panel/vhost/nginx/${{ steps.preview.outputs.id }}.preview.conf && sudo nginx -t && sudo /etc/init.d/nginx reload"
 
           echo "✓ Nginx config created and reloaded for ${PREVIEW_DOMAIN} → localhost:${PORT}"
 
@@ -645,40 +640,74 @@ jobs:
           if [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_TUNNEL_ID }}" ] && [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] && [ -n "${{ secrets.CLOUDFLARE_ZONE_ID }}" ]; then
             echo "Adding Cloudflare Tunnel route and DNS record for ${PREVIEW_DOMAIN}..."
             
+            TUNNEL_CFG_URL="https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations"
+
             # Get tunnel config
             CURRENT_CONFIG=$(curl -s -X GET \
               -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
               -H "Content-Type: application/json" \
-              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations")
-            
-            # Extract current ingress rules
-            INGRESS_RULES=$(echo "$CURRENT_CONFIG" | jq -r '.result.config.ingress // []')
-            
-            # Check if hostname already exists and remove it
-            if echo "$INGRESS_RULES" | jq -e ".[] | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
-              INGRESS_RULES=$(echo "$INGRESS_RULES" | jq "map(select(.hostname != \"${PREVIEW_DOMAIN}\"))")
-            fi
-            
-            # Separate specific rules from catch-all rules
-            SPECIFIC_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname != null and .hostname != \"\")]")
-            CATCH_ALL_RULES=$(echo "$INGRESS_RULES" | jq "[.[] | select(.hostname == null or .hostname == \"\")]")
-            
-            # Add new route to specific rules, then append catch-all rules at the end
-            NEW_RULE="{\"hostname\":\"${PREVIEW_DOMAIN}\",\"service\":\"http://localhost:80\"}"
-            INGRESS_RULES=$(echo "$SPECIFIC_RULES" | jq ". + [$NEW_RULE] | . + $CATCH_ALL_RULES")
-            
-            # Update tunnel config
-            UPDATE_RESPONSE=$(curl -s -X PUT \
-              -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
-              -H "Content-Type: application/json" \
-              -d "{\"config\":{\"ingress\":$INGRESS_RULES}}" \
-              "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}/cfd_tunnel/${{ secrets.CLOUDFLARE_TUNNEL_ID }}/configurations")
-            
-            if echo "$UPDATE_RESPONSE" | jq -e '.success' > /dev/null 2>&1; then
-              echo "✓ Successfully added Cloudflare Tunnel route: ${PREVIEW_DOMAIN}"
+              "$TUNNEL_CFG_URL")
+
+            # Show what the API currently reports (helps diagnose empty/unexpected config)
+            echo "Current tunnel ingress (from API):"
+            echo "$CURRENT_CONFIG" | jq -c '.result.config.ingress // "MISSING"' || true
+
+            # Safety guard: never PUT unless the fetched config already contains the
+            # known production hostname. This prevents a malformed/empty GET response
+            # from producing a PUT that wipes prod/staging routes on the shared tunnel.
+            if ! echo "$CURRENT_CONFIG" | jq -e '.result.config.ingress[]? | select(.hostname == "api.maigie.com")' > /dev/null 2>&1; then
+              echo "⚠️  Safety abort: fetched tunnel config does not contain api.maigie.com."
+              echo "    Not updating the tunnel to avoid clobbering prod/staging routes."
+              echo "    Raw response:"
+              echo "$CURRENT_CONFIG" | jq '.' || echo "$CURRENT_CONFIG"
             else
-              echo "⚠️  Failed to add Cloudflare Tunnel route (non-critical)"
-              echo "$UPDATE_RESPONSE" | jq '.' || true
+              # Build the new ingress in a single jq pass so it can never emit null/empty rules:
+              #  - drop any existing rule for this preview hostname (idempotent re-deploy)
+              #  - keep only valid specific rules (has a non-empty hostname AND service)
+              #  - append the new preview rule
+              #  - append exactly one catch-all (reuse existing one, else default 404)
+              NEW_INGRESS=$(echo "$CURRENT_CONFIG" | jq -c \
+                --arg host "${PREVIEW_DOMAIN}" \
+                --arg svc "http://localhost:80" '
+                  (.result.config.ingress // []) as $ing
+                  | ($ing
+                      | map(select(
+                          (.hostname // "") != ""
+                          and .hostname != $host
+                          and (.service // "") != ""
+                        ))) as $specific
+                  | ($ing
+                      | map(select((.hostname // "") == "" and (.service // "") != ""))
+                      | (.[0] // {"service":"http_status:404"})) as $catch
+                  | $specific + [{"hostname":$host,"service":$svc}] + [$catch]
+                ')
+
+              echo "Proposed tunnel ingress:"
+              echo "$NEW_INGRESS" | jq -c '.' || true
+
+              # Update tunnel config
+              UPDATE_RESPONSE=$(curl -s -X PUT \
+                -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "{\"config\":{\"ingress\":${NEW_INGRESS}}}" \
+                "$TUNNEL_CFG_URL")
+
+              if echo "$UPDATE_RESPONSE" | jq -e '.success == true' > /dev/null 2>&1; then
+                # Read back to confirm the route actually persisted
+                READBACK=$(curl -s -X GET \
+                  -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_API_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  "$TUNNEL_CFG_URL")
+                if echo "$READBACK" | jq -e ".result.config.ingress[]? | select(.hostname == \"${PREVIEW_DOMAIN}\")" > /dev/null 2>&1; then
+                  echo "✓ Verified Cloudflare Tunnel route is present: ${PREVIEW_DOMAIN}"
+                else
+                  echo "⚠️  PUT reported success but route not found on read-back: ${PREVIEW_DOMAIN}"
+                  echo "$READBACK" | jq -c '.result.config.ingress' || true
+                fi
+              else
+                echo "⚠️  Failed to add Cloudflare Tunnel route (non-critical)"
+                echo "$UPDATE_RESPONSE" | jq '.' || true
+              fi
             fi
             
             # Get tunnel hostname for DNS record target (use tunnel ID directly)
@@ -730,10 +759,7 @@ jobs:
           if [ -n "${{ steps.setup-domain.outputs.domain }}" ]; then
             PREVIEW_URL="https://${{ steps.setup-domain.outputs.domain }}"
           else
-            PORT=$(ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no \
-              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-              "docker port maigie-preview-backend-${{ steps.preview.outputs.id }} 2>/dev/null | cut -d: -f2 | head -n1")
-            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:$PORT"
+            PREVIEW_URL="http://${{ secrets.VPS_HOST }}:${{ steps.preview.outputs.port }}"
           fi
           echo "PREVIEW_URL=$PREVIEW_URL" >> $GITHUB_ENV
           echo "url=$PREVIEW_URL" >> $GITHUB_OUTPUT
@@ -1026,9 +1052,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss --skip-generate &&
-                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    alembic upgrade head || echo 'Migration skipped' && uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
             volumes:
@@ -1443,10 +1467,7 @@ jobs:
                   - maigie_network
                 command: >
                   sh -c "
-                    python prisma/cleanup-duplicates.py || echo 'No duplicates to clean' &&
-                    prisma db push --accept-data-loss --skip-generate &&
-                    python prisma/seed.py &&
-                    uvicorn src.main:app --host 0.0.0.0 --port 8000
+                    alembic upgrade head || echo 'Migration skipped' && uvicorn src.main:app --host 0.0.0.0 --port 8000
                   "
 
             volumes:
@@ -1588,7 +1609,7 @@ jobs:
             docker rm -f maigie-preview-backend-${PREVIEW_ID} maigie-preview-postgres-${PREVIEW_ID} maigie-preview-redis-${PREVIEW_ID} 2>/dev/null || true && \
             docker volume rm ${PREVIEW_ID}_postgres_data 2>/dev/null || true && \
             sudo rm -f /www/server/panel/vhost/nginx/${PREVIEW_ID}.preview.conf && \
-            sudo nginx -t && sudo systemctl reload nginx 2>/dev/null || true && \
+            sudo nginx -t && sudo /etc/init.d/nginx reload 2>/dev/null || true && \
             docker rmi maigie-backend-preview:${PREVIEW_ID} 2>/dev/null || true && \
             echo '✓ Cleaned up preview environment'"
 

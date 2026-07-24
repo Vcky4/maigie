@@ -114,7 +114,7 @@ services:
           memory: 2G
     command: >
       sh -c "
-        prisma migrate deploy &&
+        alembic upgrade head &&
         uvicorn src.main:app --host 0.0.0.0 --port 8000 --workers 2 --limit-max-requests 5000
       "
 
