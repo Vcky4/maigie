@@ -65,6 +65,16 @@ async def set_subjects(body: models.SubjectsSetRequest, current_user: CurrentUse
     )
 
 
+@router.post("/onboarding/complete", status_code=200)
+async def complete_onboarding(current_user: CurrentUser):
+    """Mark onboarding as complete. Sets user.isOnboarded = True."""
+    from src.domains.identity.repository import IdentityRepository
+
+    identity_repo = IdentityRepository()
+    await identity_repo.set_onboarded(current_user.id)
+    return {"message": "Onboarding complete"}
+
+
 @router.get("/profile", response_model=models.LearningProfileResponse)
 async def get_profile(current_user: CurrentUser):
     """Get the learner's current learning profile."""
