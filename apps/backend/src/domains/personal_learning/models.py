@@ -259,6 +259,7 @@ class ScheduleBlockResponse(BaseModel):
     startAt: datetime
     endAt: datetime
     type: str
+    actionData: dict | None = None
 
 
 class RecommendationResponse(BaseModel):

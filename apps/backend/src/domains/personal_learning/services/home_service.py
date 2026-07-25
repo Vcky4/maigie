@@ -38,9 +38,6 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
         flashcard_service.get_statistics(user_id=user_id),
     )
 
-    # Build greeting
-    greeting = _build_greeting(profile, None)
-
     # Get progress summary
     progress_summary = _build_progress_summary(profile, flashcard_stats)
 
@@ -52,9 +49,13 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
 
     due_reviews = _build_due_reviews(due_flashcards)
 
+    # Build a contextual greeting that matches todaysFocus
+    todays_focus = guidance.get("todaysFocus")
+    greeting = _build_contextual_greeting(profile, todays_focus, due_flashcards)
+
     return {
         "greeting": greeting,
-        "todaysFocus": guidance.get("todaysFocus"),
+        "todaysFocus": todays_focus,
         "progressSummary": progress_summary,
         "dueReviews": due_reviews,
         "scheduleBlocks": schedule_blocks,
@@ -65,6 +66,33 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
         "reEngagement": _check_re_engagement(profile),
         "isOnboarding": guidance.get("stage") in ("fresh", "purpose_set", "setting_up"),
     }
+
+
+def _build_contextual_greeting(
+    profile: Any | None, todays_focus: dict | None, due_flashcards: list
+) -> str:
+    """Build a greeting message that matches today's focus.
+
+    This is displayed on the hero card (not the page heading), so it should
+    describe what the learner should do today rather than just say hello.
+    """
+    if due_flashcards:
+        count = len(due_flashcards)
+        return (
+            f"You have {count} flashcard{'s' if count != 1 else ''} ready for review. "
+            "Quick recall keeps knowledge fresh."
+        )
+
+    if todays_focus:
+        reason = todays_focus.get("reason", "")
+        title = todays_focus.get("title", "")
+        if reason:
+            return reason
+        if title:
+            return f"Continue with {title}. Every step builds understanding."
+
+    # Fallback — general encouragement
+    return "Every small step is part of your progress."
 
 
 def _build_greeting(profile: Any | None, behaviour: dict | None) -> str:
@@ -217,6 +245,7 @@ async def _get_schedule_blocks(user_id: str) -> list[dict[str, Any]]:
                     and item.scheduled_date.date() == today
                 ):
                     estimated_minutes = getattr(item, "estimated_minutes", 30) or 30
+                    item_type = getattr(item, "item_type", "STUDY") or "STUDY"
                     blocks.append(
                         {
                             "id": item.id,
@@ -225,7 +254,15 @@ async def _get_schedule_blocks(user_id: str) -> list[dict[str, Any]]:
                             "endAt": (
                                 item.scheduled_date + timedelta(minutes=estimated_minutes)
                             ).isoformat(),
-                            "type": getattr(item, "item_type", "STUDY") or "STUDY",
+                            "type": item_type,
+                            "actionData": {
+                                "planId": plan.id,
+                                "itemId": item.id,
+                                "topicId": getattr(item, "topic_id", None),
+                                "courseId": getattr(item, "course_id", None)
+                                or getattr(plan, "course_id", None),
+                                "type": item_type.lower(),
+                            },
                         }
                     )
 
