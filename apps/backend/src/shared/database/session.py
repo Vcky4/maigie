@@ -145,11 +145,10 @@ async def ensure_db() -> None:
                 await session.execute(__import__("sqlalchemy").text("SELECT 1"))
             return  # Engine is healthy on this loop
         except Exception:
-            # Engine is stale (different loop or closed connection) — dispose it
-            try:
-                await _engine.dispose()
-            except Exception:
-                pass
+            # Engine is stale (different loop or closed connection).
+            # Don't try to dispose — the old engine's connections are bound to a
+            # closed loop and disposing them triggers noisy RuntimeError logs.
+            # Just discard the references and create fresh ones.
             _engine = None
             _session_factory = None
 
