@@ -56,13 +56,27 @@ def _get_async_url(database_url: str) -> str:
 
 async def connect_db() -> None:
     """Create the async engine and session factory. Call on app startup."""
+    await _connect_db(pool_size=20, max_overflow=10)
+
+
+async def connect_db_worker() -> None:
+    """Create a minimal async engine for Celery worker processes.
+
+    Workers run tasks sequentially (concurrency=1 per fork) so they only need
+    a single reusable connection. This prevents exhausting PgBouncer's session
+    pool which is shared with the FastAPI app.
+    """
+    await _connect_db(pool_size=1, max_overflow=1)
+
+
+async def _connect_db(*, pool_size: int, max_overflow: int) -> None:
+    """Internal: create the async engine and session factory."""
     global _engine, _session_factory
 
     settings = get_settings()
     url = _get_async_url(settings.DATABASE_URL)
 
     # Remove pgbouncer param if present (asyncpg doesn't support it as URL param)
-    # Keep the connection but handle pgbouncer at the pool level
     if "?pgbouncer=true" in url:
         url = url.replace("?pgbouncer=true", "")
     elif "&pgbouncer=true" in url:
@@ -71,8 +85,8 @@ async def connect_db() -> None:
     _engine = create_async_engine(
         url,
         echo=settings.DEBUG,
-        pool_size=20,
-        max_overflow=10,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
         pool_pre_ping=True,
         pool_recycle=300,
         # Disable prepared statement caching for pgbouncer compatibility
@@ -85,7 +99,7 @@ async def connect_db() -> None:
         expire_on_commit=False,
     )
 
-    logger.info("SQLAlchemy async engine connected")
+    logger.info("SQLAlchemy async engine connected (pool_size=%d)", pool_size)
 
 
 async def disconnect_db() -> None:

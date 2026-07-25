@@ -116,10 +116,10 @@ def _install_sigchld_handler(**kwargs: Any) -> None:
 
     # Initialize the async database connection pool for this worker process
     try:
-        from src.shared.database.session import connect_db
+        from src.shared.database.session import connect_db_worker
 
         loop = asyncio.new_event_loop()
-        loop.run_until_complete(connect_db())
+        loop.run_until_complete(connect_db_worker())
         loop.close()
         logger.info("Database connected in Celery worker process")
     except Exception as e:
