@@ -14,13 +14,22 @@ Legacy entrypoint (still works):
     celery -A src.core.celery_app:celery_app worker
 """
 
-from .celery_app import celery_app
 from .manager import (
     check_worker_health,
     get_worker_info,
     get_worker_status,
     shutdown_worker,
 )
+
+
+def __getattr__(name):
+    """Lazy import celery_app to break the circular dependency chain."""
+    if name == "celery_app":
+        from src.core.celery_app import celery_app as _app
+
+        return _app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "celery_app",

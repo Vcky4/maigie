@@ -226,8 +226,18 @@ class TodaysFocusResponse(BaseModel):
 
 class ProgressSummaryResponse(BaseModel):
     currentStreak: int
-    weeklyMinutes: float
-    topicsCompletedThisWeek: int
+    activeDaysThisWeek: list[str] = Field(default_factory=list)
+    cardsReviewedThisWeek: int
+    cardsReviewedTotal: int
+    cardsMastered: int
+    totalCards: int
+    dueCards: int
+    consistencyScore: float | None = None
+    averageSessionMinutes: float | None = None
+    # Deprecated compatibility fields. They remain nullable/zero until a real
+    # study-session and topic-completion source is introduced.
+    weeklyMinutes: float | None = None
+    topicsCompletedThisWeek: int = 0
 
 
 class DueReviewResponse(BaseModel):
@@ -236,6 +246,11 @@ class DueReviewResponse(BaseModel):
     title: str
     dueAt: datetime
     urgency: int
+    deckId: str | None = None
+    deckTitle: str | None = None
+    repetitionCount: int = 0
+    intervalDays: int = 0
+    lastReviewedAt: datetime | None = None
 
 
 class ScheduleBlockResponse(BaseModel):

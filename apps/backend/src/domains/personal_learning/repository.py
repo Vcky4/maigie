@@ -539,6 +539,7 @@ class PersonalLearningRepository:
             now = datetime.now(timezone.utc)
             stmt = (
                 select(Flashcard)
+                .options(selectinload(Flashcard.deck))
                 .where(
                     Flashcard.user_id == user_id,
                     Flashcard.next_review_at <= now,
@@ -555,14 +556,14 @@ class PersonalLearningRepository:
     ) -> dict[str, Any]:
         async with self._use_session(session) as s:
             now = datetime.now(timezone.utc)
+            today = now.date()
+            week_start_date = today - timedelta(days=today.weekday())
 
-            # Total count
             total_stmt = (
                 select(func.count()).select_from(Flashcard).where(Flashcard.user_id == user_id)
             )
             total = (await s.execute(total_stmt)).scalar() or 0
 
-            # Due today count
             due_stmt = (
                 select(func.count())
                 .select_from(Flashcard)
@@ -573,7 +574,6 @@ class PersonalLearningRepository:
             )
             due_today = (await s.execute(due_stmt)).scalar() or 0
 
-            # Mastered count (interval > 21 days)
             mastered_stmt = (
                 select(func.count())
                 .select_from(Flashcard)
@@ -584,17 +584,43 @@ class PersonalLearningRepository:
             )
             mastered_count = (await s.execute(mastered_stmt)).scalar() or 0
 
-            # Average ease factor
             avg_ease_stmt = select(func.avg(Flashcard.ease_factor)).where(
                 Flashcard.user_id == user_id
             )
             avg_ease_factor = (await s.execute(avg_ease_stmt)).scalar() or 2.5
+
+            activity_stmt = select(Flashcard.last_reviewed_at).where(
+                Flashcard.user_id == user_id,
+                Flashcard.last_reviewed_at.is_not(None),
+            )
+            activity_result = await s.execute(activity_stmt)
+            review_timestamps = [value for value in activity_result.scalars().all() if value]
+            activity_dates = {value.date() for value in review_timestamps}
+            active_days_this_week = sorted(
+                value.isoformat() for value in activity_dates if value >= week_start_date
+            )
+            reviewed_this_week = sum(
+                1 for value in review_timestamps if value.date() >= week_start_date
+            )
+
+            streak_cursor = today
+            if streak_cursor not in activity_dates:
+                yesterday = today - timedelta(days=1)
+                streak_cursor = yesterday if yesterday in activity_dates else today
+            current_streak = 0
+            while streak_cursor in activity_dates:
+                current_streak += 1
+                streak_cursor -= timedelta(days=1)
 
             return {
                 "total": total,
                 "due_today": due_today,
                 "mastered_count": mastered_count,
                 "avg_ease_factor": round(float(avg_ease_factor), 2),
+                "reviewed_total": len(review_timestamps),
+                "reviewed_this_week": reviewed_this_week,
+                "active_days_this_week": active_days_this_week,
+                "current_streak": current_streak,
             }
 
     # -----------------------------------------------------------------------

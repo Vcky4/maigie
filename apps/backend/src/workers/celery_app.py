@@ -8,7 +8,25 @@ to the new domain-scoped structure.
 Worker entrypoint: celery -A src.workers.celery_app:celery_app worker
 """
 
-# Re-export the global Celery instance
-from src.core.celery_app import celery_app, get_celery_app
+import sys
 
-__all__ = ["celery_app", "get_celery_app"]
+
+class _LazyModule(type(sys.modules[__name__])):
+    """Lazy module that defers celery_app import to avoid circular dependency."""
+
+    def __getattr__(self, name):
+        if name == "celery_app":
+            from src.core.celery_app import celery_app as _app
+
+            return _app
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+sys.modules[__name__].__class__ = _LazyModule
+
+
+def get_celery_app():
+    """Lazy accessor to avoid circular import."""
+    from src.core.celery_app import get_celery_app as _get
+
+    return _get()

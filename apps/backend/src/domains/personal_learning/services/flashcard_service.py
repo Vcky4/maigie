@@ -267,6 +267,10 @@ async def _get_statistics_cached(*, user_id: str) -> dict[str, Any]:
         "dueToday": stats["due_today"],
         "masteredCount": stats["mastered_count"],
         "averageEaseFactor": stats["avg_ease_factor"],
+        "reviewedTotal": stats["reviewed_total"],
+        "reviewedThisWeek": stats["reviewed_this_week"],
+        "activeDaysThisWeek": stats["active_days_this_week"],
+        "currentStreak": stats["current_streak"],
     }
 
 

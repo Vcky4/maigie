@@ -53,7 +53,7 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
     due_reviews = _build_due_reviews(due_flashcards)
 
     return {
-        "greeting": guidance.get("message", greeting),
+        "greeting": greeting,
         "todaysFocus": guidance.get("todaysFocus"),
         "progressSummary": progress_summary,
         "dueReviews": due_reviews,
@@ -150,45 +150,48 @@ async def _compute_todays_focus(
 
 
 def _build_progress_summary(profile: Any | None, flashcard_stats: dict) -> dict[str, Any]:
-    """
-    Build progress summary from profile and stats.
-
-    Req 1.3: Progress summary containing current streak count,
-    weekly study minutes, and topics completed this week.
-
-    Note: currentStreak and weeklyMinutes are background-task computed values
-    stored on the profile. They update once daily via Celery beat.
-    If both are 0, it means the background task hasn't run yet for this user.
-    """
-    maturity = getattr(profile, "maturity_days", 0) or 0
-    avg_minutes = getattr(profile, "avg_session_minutes", 0) or 0
+    """Build a truthful progress summary from persisted learner activity."""
+    avg_minutes = getattr(profile, "avg_session_minutes", None)
+    consistency = getattr(profile, "consistency_score", None)
 
     return {
-        "currentStreak": maturity,
-        "weeklyMinutes": round(avg_minutes * 5, 1),
-        "topicsCompletedThisWeek": flashcard_stats.get("masteredCount", 0),
+        "currentStreak": flashcard_stats.get("currentStreak", 0),
+        "activeDaysThisWeek": flashcard_stats.get("activeDaysThisWeek", []),
+        "cardsReviewedThisWeek": flashcard_stats.get("reviewedThisWeek", 0),
+        "cardsReviewedTotal": flashcard_stats.get("reviewedTotal", 0),
+        "cardsMastered": flashcard_stats.get("masteredCount", 0),
+        "totalCards": flashcard_stats.get("total", 0),
+        "dueCards": flashcard_stats.get("dueToday", 0),
+        "consistencyScore": round(float(consistency), 1) if consistency is not None else None,
+        "averageSessionMinutes": round(float(avg_minutes), 1) if avg_minutes is not None else None,
+        "weeklyMinutes": None,
+        "topicsCompletedThisWeek": 0,
     }
 
 
 def _build_due_reviews(due_flashcards: list) -> list[dict[str, Any]]:
-    """
-    Build due review items from flashcards.
-
-    Req 1.4: Due spaced repetition reviews sorted by urgency.
-    """
+    """Build due review items directly from persisted flashcard state."""
     reviews = []
-    for card in due_flashcards[:10]:  # Cap at 10
+    for card in due_flashcards[:10]:
         overdue_hours = 0
         if card.next_review_at:
             delta = datetime.now(timezone.utc) - card.next_review_at
             overdue_hours = int(delta.total_seconds() / 3600)
+        deck = getattr(card, "deck", None)
         reviews.append(
             {
                 "id": card.id,
                 "type": "flashcard",
-                "title": card.front[:50],
+                "title": card.front[:80],
                 "dueAt": card.next_review_at.isoformat() if card.next_review_at else None,
                 "urgency": max(1, min(10, overdue_hours // 24 + 1)),
+                "deckId": card.deck_id,
+                "deckTitle": getattr(deck, "title", None),
+                "repetitionCount": card.repetition_count,
+                "intervalDays": card.interval_days,
+                "lastReviewedAt": (
+                    card.last_reviewed_at.isoformat() if card.last_reviewed_at else None
+                ),
             }
         )
     return reviews
