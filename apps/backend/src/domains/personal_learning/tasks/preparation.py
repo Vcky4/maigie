@@ -33,6 +33,9 @@ def mark_completed_preparations():
 
 
 async def _mark_completed_async():
+    from src.shared.database.session import ensure_db
+
+    await ensure_db()
     from src.domains.personal_learning.services import exam_prep_service
 
     logger.info("Mark completed preparations task started")

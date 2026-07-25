@@ -35,6 +35,9 @@ def generate_value_summaries():
 
 
 async def _run_value_summary_generation() -> dict:
+    from src.shared.database.session import ensure_db
+
+    await ensure_db()
     """Core async logic for value summary generation."""
     from datetime import datetime, timedelta, timezone
 

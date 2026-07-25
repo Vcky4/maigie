@@ -121,6 +121,42 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _session_factory
 
 
+async def ensure_db() -> None:
+    """Ensure the database is initialized on the current event loop.
+
+    Celery tasks create a new event loop per invocation. asyncpg connections are
+    bound to the loop they were created on, so we must re-initialize the engine
+    if the loop has changed or if we haven't connected yet.
+
+    Call this at the start of every async Celery task coroutine.
+    """
+    global _engine, _session_factory
+    import asyncio
+
+    current_loop = asyncio.get_running_loop()
+
+    if _engine is not None:
+        # Check if the existing engine's pool connections are on a different loop
+        # by checking if the engine was created on this loop. SQLAlchemy doesn't
+        # expose this directly, so we dispose and recreate on any mismatch.
+        # Simple heuristic: if _session_factory exists and works, keep it.
+        try:
+            async with _session_factory() as session:
+                await session.execute(__import__("sqlalchemy").text("SELECT 1"))
+            return  # Engine is healthy on this loop
+        except Exception:
+            # Engine is stale (different loop or closed connection) — dispose it
+            try:
+                await _engine.dispose()
+            except Exception:
+                pass
+            _engine = None
+            _session_factory = None
+
+    # (Re-)initialize with a minimal pool for worker use
+    await _connect_db(pool_size=1, max_overflow=1)
+
+
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that provides a database session per request.
 

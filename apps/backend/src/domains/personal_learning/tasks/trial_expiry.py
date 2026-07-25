@@ -35,6 +35,9 @@ def expire_trials():
 
 
 async def _run_trial_expiry() -> dict:
+    from src.shared.database.session import ensure_db
+
+    await ensure_db()
     """Core async logic for trial expiry."""
     from datetime import datetime, timezone
 

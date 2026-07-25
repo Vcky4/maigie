@@ -102,28 +102,16 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
 
 @worker_process_init.connect
 def _install_sigchld_handler(**kwargs: Any) -> None:
-    """Initialize worker process: auto-reap children and connect database.
+    """Initialize worker process: auto-reap children.
 
-    Celery worker forks do not go through FastAPI's startup event,
-    so we must initialize the async database engine here.
+    Database initialization is handled lazily per-task to avoid event loop
+    mismatch — each task creates its own asyncio loop, and asyncpg connections
+    are bound to the loop they were created on.
     """
-    import asyncio
-
     # Reap zombies from Prisma engine subprocesses
     if hasattr(signal, "SIGCHLD"):
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
         logger.debug("SIGCHLD set to SIG_IGN — zombies will be auto-reaped")
-
-    # Initialize the async database connection pool for this worker process
-    try:
-        from src.shared.database.session import connect_db_worker
-
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(connect_db_worker())
-        loop.close()
-        logger.info("Database connected in Celery worker process")
-    except Exception as e:
-        logger.error("Failed to initialize database in worker process: %s", e)
 
 
 # Global Celery app instance

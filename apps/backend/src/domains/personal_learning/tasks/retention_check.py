@@ -34,6 +34,9 @@ def check_retention():
 
 
 async def _run_retention_check() -> dict:
+    from src.shared.database.session import ensure_db
+
+    await ensure_db()
     """Core async logic for retention check."""
     from src.domains.personal_learning.repository import PersonalLearningRepository
     from src.domains.personal_learning.services import retention_service

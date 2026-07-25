@@ -38,6 +38,9 @@ def prepare_daily_plan():
 
 
 async def _prepare_daily_plan_async():
+    from src.shared.database.session import ensure_db
+
+    await ensure_db()
     from src.domains.personal_learning.services import (
         notification_service,
     )
