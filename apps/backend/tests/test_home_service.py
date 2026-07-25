@@ -38,6 +38,11 @@ class FakeFlashcard:
     id: str = "card1"
     front: str = "What is X?"
     next_review_at: datetime | None = None
+    deck_id: str | None = None
+    deck: object | None = None
+    repetition_count: int = 0
+    interval_days: int = 1
+    last_reviewed_at: datetime | None = None
 
 
 @dataclass
@@ -121,27 +126,28 @@ class TestBuildProgressSummary:
 
     def test_returns_expected_keys(self):
         profile = FakeProfile(maturity_days=10, avg_session_minutes=20.0)
-        stats = {"masteredCount": 5}
+        stats = {"masteredCount": 5, "currentStreak": 3}
         result = _build_progress_summary(profile, stats)
         assert "currentStreak" in result
         assert "weeklyMinutes" in result
         assert "topicsCompletedThisWeek" in result
 
-    def test_streak_from_maturity(self):
+    def test_streak_from_flashcard_stats(self):
         profile = FakeProfile(maturity_days=7)
-        result = _build_progress_summary(profile, {})
-        assert result["currentStreak"] == 7
+        result = _build_progress_summary(profile, {"currentStreak": 4})
+        assert result["currentStreak"] == 4
 
-    def test_weekly_minutes_calculation(self):
+    def test_weekly_minutes_is_none(self):
+        """weeklyMinutes is None until real study-session tracking is available."""
         profile = FakeProfile(avg_session_minutes=30.0)
         result = _build_progress_summary(profile, {})
-        assert result["weeklyMinutes"] == 150.0  # 30 * 5
+        assert result["weeklyMinutes"] is None
 
     def test_none_profile_uses_defaults(self):
         result = _build_progress_summary(None, {"masteredCount": 3})
         assert result["currentStreak"] == 0
-        assert result["weeklyMinutes"] == 0
-        assert result["topicsCompletedThisWeek"] == 3
+        assert result["weeklyMinutes"] is None
+        assert result["topicsCompletedThisWeek"] == 0
 
 
 # ---------------------------------------------------------------------------
