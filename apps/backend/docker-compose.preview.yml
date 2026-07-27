@@ -95,7 +95,7 @@ services:
       --loglevel=info
       --concurrency=1
       --max-tasks-per-child=20
-      --queues=default,heavy
+      --queues=default,heavy,exam_prep
       --without-gossip
       --without-mingle
       --without-heartbeat

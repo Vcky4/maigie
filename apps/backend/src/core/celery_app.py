@@ -71,6 +71,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
             "spaced_repetition.*": {"queue": "default"},
             "course.*": {"queue": "heavy"},
             "schedule.*": {"queue": "heavy"},
+            "exam_prep.process_materials": {"queue": "exam_prep"},
             "exam_prep.*": {"queue": "heavy"},
             "resources.*": {"queue": "heavy"},
         },

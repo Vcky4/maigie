@@ -523,7 +523,7 @@ jobs:
                   - preview_net_${{ steps.preview.outputs.id }}
                 command: >
                   sh -c "
-                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
+                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy,exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
                   "
 
               beat:
@@ -996,7 +996,7 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
-                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=3 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
+                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=3 --max-tasks-per-child=50 --queues=default,heavy,exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
 
               celery-beat:
                 image: maigie-backend:latest
@@ -1413,7 +1413,7 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
-                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
+                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy,exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
 
               celery-beat:
                 image: maigie-backend:staging

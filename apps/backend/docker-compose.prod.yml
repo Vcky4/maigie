@@ -122,7 +122,7 @@ services:
         --loglevel=info
         --concurrency=$$CONCURRENCY
         --max-tasks-per-child=50
-        --queues=default,heavy
+        --queues=default,heavy,exam_prep
         --without-gossip
         --without-mingle
         --without-heartbeat

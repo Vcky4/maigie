@@ -587,7 +587,7 @@ async def process_materials(
     try:
         task_result = process_exam_prep_task.apply_async(
             args=[exam_prep_id, exam_prep.userId],
-            queue="heavy",
+            queue="exam_prep",
             retry=True,
             retry_policy={"max_retries": 3, "interval_start": 0, "interval_step": 1},
         )
@@ -605,7 +605,7 @@ async def process_materials(
         ) from exc
 
     logger.info(
-        "Queued ExamPrep processing task %s for %s on heavy queue",
+        "Queued ExamPrep processing task %s for %s on exam_prep queue",
         task_result.id,
         exam_prep_id,
     )
@@ -649,7 +649,7 @@ async def get_processing_status(
             },
             data={"status": "SETUP"},
         )
-        if recovery.count:
+        if recovery:
             logger.error(
                 "Recovered stale ExamPrep %s left PROCESSING since %s",
                 exam_prep_id,
