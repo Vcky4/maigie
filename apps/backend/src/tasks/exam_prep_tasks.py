@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from billiard.exceptions import SoftTimeLimitExceeded
+
 from src.tasks.base import run_async_in_celery, task
 from src.tasks.registry import register_task
 
@@ -323,16 +325,69 @@ def _text_matches_topic(text: str, topic_title: str) -> bool:
     return matches >= max(1, len(topic_words) // 2)
 
 
+async def _reset_processing_after_failure(exam_prep_id: str, user_id: str, message: str) -> None:
+    """Return a failed processing job to setup so the user can retry."""
+    try:
+        await _ensure_db_connected()
+
+        from src.core.database import db
+
+        exam_prep = await db.examprep.find_first(
+            where={"id": exam_prep_id, "userId": user_id},
+            select={"status": True},
+        )
+        if exam_prep and exam_prep.status == "PROCESSING":
+            await db.examprep.update(
+                where={"id": exam_prep_id},
+                data={"status": "SETUP"},
+            )
+
+        await _emit_progress(user_id, exam_prep_id, "failed", 0, message)
+    except Exception:
+        logger.exception("Failed to reset ExamPrep %s after processing failure", exam_prep_id)
+
+
 @register_task(
     name=TASK_PROCESS_EXAM_PREP,
     description="Process exam prep materials: extract topics, parse questions, generate question bank",
     category="exam_prep",
     tags=["exam_prep", "ai", "processing"],
 )
-@task(name=TASK_PROCESS_EXAM_PREP, bind=True, max_retries=2)
+@task(
+    name=TASK_PROCESS_EXAM_PREP,
+    bind=True,
+    soft_time_limit=840,
+    time_limit=900,
+)
 def process_exam_prep_task(self: Any, exam_prep_id: str, user_id: str) -> dict[str, Any]:
     """Background task: process exam prep materials and generate question bank."""
-    return run_async_in_celery(_process_exam_prep(exam_prep_id, user_id))
+    task_id = getattr(self.request, "id", None)
+    logger.info("Starting ExamPrep processing task %s for %s", task_id, exam_prep_id)
+
+    try:
+        result = run_async_in_celery(_process_exam_prep(exam_prep_id, user_id))
+        logger.info("Completed ExamPrep processing task %s for %s", task_id, exam_prep_id)
+        return result
+    except SoftTimeLimitExceeded:
+        logger.exception("ExamPrep processing task %s timed out for %s", task_id, exam_prep_id)
+        run_async_in_celery(
+            _reset_processing_after_failure(
+                exam_prep_id,
+                user_id,
+                "Processing took too long. Please try again.",
+            )
+        )
+        raise
+    except Exception:
+        logger.exception("ExamPrep processing task %s failed for %s", task_id, exam_prep_id)
+        run_async_in_celery(
+            _reset_processing_after_failure(
+                exam_prep_id,
+                user_id,
+                "Processing failed. Please try again.",
+            )
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------

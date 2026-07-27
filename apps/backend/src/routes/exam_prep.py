@@ -5,7 +5,7 @@ progress tracking, and study plan generation.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
@@ -578,15 +578,42 @@ async def process_materials(
     if not exam_prep.materials:
         raise HTTPException(status_code=400, detail="No materials uploaded yet")
 
-    # Transition to PROCESSING
+    # Persist PROCESSING before publishing so a very fast worker cannot finish and
+    # then have its ACTIVE status overwritten by this request.
     await transition_status(db_client, exam_prep_id, current_user.id, "PROCESSING")
 
-    # Dispatch background task
     from src.tasks.exam_prep_tasks import process_exam_prep_task
 
-    process_exam_prep_task.delay(exam_prep_id, exam_prep.userId)
+    try:
+        task_result = process_exam_prep_task.apply_async(
+            args=[exam_prep_id, exam_prep.userId],
+            queue="heavy",
+            retry=True,
+            retry_policy={"max_retries": 3, "interval_start": 0, "interval_step": 1},
+        )
+    except Exception as exc:
+        # Publishing failed, so no worker can reset the status for us. Return the
+        # prep to SETUP immediately and let the user retry instead of polling forever.
+        logger.exception("Failed to enqueue ExamPrep processing for %s", exam_prep_id)
+        try:
+            await transition_status(db_client, exam_prep_id, current_user.id, "SETUP")
+        except Exception:
+            logger.exception("Failed to reset ExamPrep %s after enqueue failure", exam_prep_id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI processing is temporarily unavailable. Please try again.",
+        ) from exc
 
-    return {"status": "processing", "message": "AI analysis started. This may take a few minutes."}
+    logger.info(
+        "Queued ExamPrep processing task %s for %s on heavy queue",
+        task_result.id,
+        exam_prep_id,
+    )
+    return {
+        "status": "processing",
+        "taskId": task_result.id,
+        "message": "AI analysis started. This may take a few minutes.",
+    }
 
 
 @router.get("/{exam_prep_id}/processing-status")
@@ -596,17 +623,33 @@ async def get_processing_status(
     db_client: DBDep,
     circle_id: str | None = Query(None),
 ):
-    """Check processing status."""
+    """Check processing status and recover jobs abandoned by a lost worker."""
     await _get_accessible_exam_prep(db_client, exam_prep_id, current_user.id, circle_id)
     exam_prep = await db_client.examprep.find_unique(
         where={"id": exam_prep_id},
         include={"topics": {"include": {"questions": True}}},
     )
 
+    response_status = exam_prep.status
+    updated_at = exam_prep.updatedAt
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=UTC)
+
+    # The task has a 15-minute hard limit. If it is still PROCESSING well after
+    # that, it was never received or its worker was killed before failure cleanup.
+    if response_status == "PROCESSING" and datetime.now(UTC) - updated_at > timedelta(minutes=20):
+        logger.error(
+            "Recovering stale ExamPrep %s left PROCESSING since %s",
+            exam_prep_id,
+            updated_at.isoformat(),
+        )
+        await transition_status(db_client, exam_prep_id, current_user.id, "SETUP")
+        response_status = "SETUP"
+
     total_questions = sum(len(t.questions) for t in (exam_prep.topics or []))
 
     return {
-        "status": exam_prep.status,
+        "status": response_status,
         "topicCount": len(exam_prep.topics or []),
         "questionCount": total_questions,
     }

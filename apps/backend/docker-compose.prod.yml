@@ -55,6 +55,9 @@ services:
       - .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
       PORT: 8000
     ports:
       - "8000:8000"
@@ -96,6 +99,9 @@ services:
       - .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       redis:
         condition: service_healthy
@@ -136,6 +142,9 @@ services:
       - .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
     depends_on:
       redis:
         condition: service_healthy
