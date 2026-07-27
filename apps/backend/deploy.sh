@@ -32,13 +32,16 @@ case "$ACTION" in
     ;;
 
   --celery)
-    echo "🔄 Restarting Celery worker + beat..."
+    echo "📦 Building current Celery worker + beat images..."
+    docker compose -f "$COMPOSE_FILE" build celery-worker celery-beat
+
+    echo "🔄 Recreating Celery worker + beat..."
     docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps celery-worker celery-beat
     ;;
 
   *)
-    echo "📦 Building new image..."
-    docker compose -f "$COMPOSE_FILE" build --no-cache backend
+    echo "📦 Building backend, Celery worker, and beat from the same revision..."
+    docker compose -f "$COMPOSE_FILE" build --no-cache backend celery-worker celery-beat
 
     echo ""
     echo "🚀 Deploying backend (graceful restart)..."

@@ -637,14 +637,31 @@ async def get_processing_status(
 
     # The task has a 15-minute hard limit. If it is still PROCESSING well after
     # that, it was never received or its worker was killed before failure cleanup.
-    if response_status == "PROCESSING" and datetime.now(UTC) - updated_at > timedelta(minutes=20):
-        logger.error(
-            "Recovering stale ExamPrep %s left PROCESSING since %s",
-            exam_prep_id,
-            updated_at.isoformat(),
+    # The conditional update prevents this request from overwriting ACTIVE if the
+    # worker completes between the stale read above and this recovery write.
+    stale_cutoff = datetime.now(UTC) - timedelta(minutes=20)
+    if response_status == "PROCESSING" and updated_at <= stale_cutoff:
+        recovery = await db_client.examprep.update_many(
+            where={
+                "id": exam_prep_id,
+                "status": "PROCESSING",
+                "updatedAt": {"lte": stale_cutoff},
+            },
+            data={"status": "SETUP"},
         )
-        await transition_status(db_client, exam_prep_id, current_user.id, "SETUP")
-        response_status = "SETUP"
+        if recovery.count:
+            logger.error(
+                "Recovered stale ExamPrep %s left PROCESSING since %s",
+                exam_prep_id,
+                updated_at.isoformat(),
+            )
+            response_status = "SETUP"
+        else:
+            current = await db_client.examprep.find_unique(
+                where={"id": exam_prep_id},
+                select={"status": True},
+            )
+            response_status = current.status
 
     total_questions = sum(len(t.questions) for t in (exam_prep.topics or []))
 
