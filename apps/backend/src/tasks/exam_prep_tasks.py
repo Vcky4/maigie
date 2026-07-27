@@ -78,7 +78,6 @@ async def _process_exam_prep(exam_prep_id: str, user_id: str) -> dict[str, Any]:
 
     exam_status_check = await db.examprep.find_first(
         where={"id": exam_prep_id, "userId": user_id},
-        select={"status": True},
     )
     if exam_status_check and exam_status_check.status == "ACTIVE":
         logger.info("ExamPrep %s already ACTIVE — skipping duplicate processing", exam_prep_id)
@@ -334,7 +333,6 @@ async def _reset_processing_after_failure(exam_prep_id: str, user_id: str, messa
 
         exam_prep = await db.examprep.find_first(
             where={"id": exam_prep_id, "userId": user_id},
-            select={"status": True},
         )
         if exam_prep and exam_prep.status == "PROCESSING":
             await db.examprep.update(
