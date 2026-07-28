@@ -521,9 +521,33 @@ jobs:
                     condition: service_healthy
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
+                healthcheck:
+                  disable: true
                 command: >
                   sh -c "
-                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy,exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
+                    celery -A src.core.celery_app:celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
+                  "
+
+              exam-prep-worker:
+                image: maigie-backend-preview:${{ steps.preview.outputs.id }}
+                pull_policy: never
+                container_name: maigie-preview-exam-prep-worker-${{ steps.preview.outputs.id }}
+                env_file:
+                  - .env
+                environment:
+                  PREVIEW_ID: ${{ steps.preview.outputs.id }}
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                  redis:
+                    condition: service_healthy
+                networks:
+                  - preview_net_${{ steps.preview.outputs.id }}
+                healthcheck:
+                  disable: true
+                command: >
+                  sh -c "
+                    celery -A src.core.celery_app:celery_app worker --loglevel=info --autoscale=2,1 --max-tasks-per-child=20 --queues=exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
                   "
 
               beat:
@@ -539,6 +563,8 @@ jobs:
                     condition: service_healthy
                 networks:
                   - preview_net_${{ steps.preview.outputs.id }}
+                healthcheck:
+                  disable: true
                 command: celery -A src.core.celery_app:celery_app beat --loglevel=info
 
             volumes:
@@ -996,7 +1022,24 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
-                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=3 --max-tasks-per-child=50 --queues=default,heavy,exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
+                healthcheck:
+                  disable: true
+                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=3 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
+
+              exam-prep-worker:
+                image: maigie-backend:latest
+                pull_policy: never
+                container_name: maigie-exam-prep-worker-prod
+                restart: unless-stopped
+                env_file:
+                  - .env
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                healthcheck:
+                  disable: true
+                command: celery -A src.core.celery_app worker --loglevel=info --autoscale=2,1 --max-tasks-per-child=20 --queues=exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
 
               celery-beat:
                 image: maigie-backend:latest
@@ -1009,6 +1052,8 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
+                healthcheck:
+                  disable: true
                 command: celery -A src.core.celery_app beat --loglevel=info
 
               backend:
@@ -1413,7 +1458,24 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
-                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy,exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
+                healthcheck:
+                  disable: true
+                command: celery -A src.core.celery_app worker --loglevel=info --concurrency=1 --max-tasks-per-child=50 --queues=default,heavy --without-gossip --without-mingle --without-heartbeat -Ofair
+
+              exam-prep-worker:
+                image: maigie-backend:staging
+                pull_policy: never
+                container_name: maigie-exam-prep-worker-staging
+                restart: unless-stopped
+                env_file:
+                  - .env
+                depends_on:
+                  - redis
+                networks:
+                  - maigie_network
+                healthcheck:
+                  disable: true
+                command: celery -A src.core.celery_app worker --loglevel=info --autoscale=2,1 --max-tasks-per-child=20 --queues=exam_prep --without-gossip --without-mingle --without-heartbeat -Ofair
 
               celery-beat:
                 image: maigie-backend:staging
@@ -1426,6 +1488,8 @@ jobs:
                   - redis
                 networks:
                   - maigie_network
+                healthcheck:
+                  disable: true
                 command: celery -A src.core.celery_app beat --loglevel=info
 
               backend:

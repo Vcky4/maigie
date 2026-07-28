@@ -53,6 +53,8 @@ services:
       resources:
         limits:
           memory: 1G
+    healthcheck:
+      disable: true
     command: >
       sh -c "
         if [ \"$$ENVIRONMENT\" = 'production' ]; then
@@ -64,12 +66,43 @@ services:
         --loglevel=info
         --concurrency=$$CONCURRENCY
         --max-tasks-per-child=50
-        --queues=default,heavy,exam_prep
+        --queues=default,heavy
         --without-gossip
         --without-mingle
         --without-heartbeat
         -Ofair
       "
+
+  exam-prep-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: maigie-exam-prep-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      - redis
+    networks:
+      - maigie_network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    healthcheck:
+      disable: true
+    command: >
+      celery -A src.core.celery_app worker
+      --loglevel=info
+      --autoscale=2,1
+      --max-tasks-per-child=20
+      --queues=exam_prep
+      --without-gossip
+      --without-mingle
+      --without-heartbeat
+      -Ofair
 
   celery-beat:
     build:
@@ -89,6 +122,8 @@ services:
       resources:
         limits:
           memory: 128M
+    healthcheck:
+      disable: true
     command: celery -A src.core.celery_app beat --loglevel=info
 
   backend:

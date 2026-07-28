@@ -32,16 +32,16 @@ case "$ACTION" in
     ;;
 
   --celery)
-    echo "📦 Building current Celery worker + beat images..."
-    docker compose -f "$COMPOSE_FILE" build celery-worker celery-beat
+    echo "📦 Building current Celery workers + beat images..."
+    docker compose -f "$COMPOSE_FILE" build celery-worker exam-prep-worker celery-beat
 
-    echo "🔄 Recreating Celery worker + beat..."
-    docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps celery-worker celery-beat
+    echo "🔄 Recreating Celery workers + beat..."
+    docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps celery-worker exam-prep-worker celery-beat
     ;;
 
   *)
-    echo "📦 Building backend, Celery worker, and beat from the same revision..."
-    docker compose -f "$COMPOSE_FILE" build --no-cache backend celery-worker celery-beat
+    echo "📦 Building backend, Celery workers, and beat from the same revision..."
+    docker compose -f "$COMPOSE_FILE" build --no-cache backend celery-worker exam-prep-worker celery-beat
 
     echo ""
     echo "🚀 Deploying backend (graceful restart)..."
@@ -50,8 +50,8 @@ case "$ACTION" in
     docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps backend
 
     echo ""
-    echo "🔄 Updating Celery worker & beat..."
-    docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps celery-worker celery-beat
+    echo "🔄 Updating Celery workers & beat..."
+    docker compose -f "$COMPOSE_FILE" up -d --force-recreate --no-deps celery-worker exam-prep-worker celery-beat
     ;;
 esac
 
