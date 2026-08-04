@@ -9,9 +9,8 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from src.domains.identity.db_models import User
-
 from src.config import get_settings
+from src.domains.identity.db_models import User
 from src.shared.auth import (
     create_access_token,
     create_refresh_token,
@@ -33,6 +32,7 @@ from .events import (
     emit_user_registered,
     emit_user_verified,
 )
+from .exceptions import EmailVerificationRequiredError
 from .models import OAuthUserInfo, TokenResponse
 from .repository import identity_repo
 
@@ -160,7 +160,7 @@ async def login(*, email: str, password: str) -> TokenResponse:
         raise UnauthorizedError("Incorrect email or password")
 
     if not user.is_active:
-        raise ValidationError("Account inactive. Please verify your email.")
+        raise EmailVerificationRequiredError()
 
     return _create_tokens(user.email)
 
