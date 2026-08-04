@@ -6,10 +6,10 @@ SpaceChatGroup, SpaceSession, SpaceSeatAddon.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, update, delete, func, and_
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,11 +20,11 @@ from .db_models import (
     SpaceChatGroup,
     SpaceChatGroupMember,
     SpaceInvite,
+    SpaceJoinRequest,
     SpaceMember,
     SpaceMemberStat,
     SpaceSeatAddon,
     SpaceSession,
-    SpaceJoinRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -198,7 +198,11 @@ class LearningSpaceRepository:
         async with await self._session() as session:
             stmt = (
                 select(SpaceInvite)
-                .where(SpaceInvite.invitee_email == email, SpaceInvite.status == "PENDING")
+                .where(
+                    func.lower(SpaceInvite.invitee_email) == email.lower(),
+                    SpaceInvite.status == "PENDING",
+                    SpaceInvite.expires_at > datetime.now(UTC),
+                )
                 .order_by(SpaceInvite.created_at.desc())
             )
             result = await session.execute(stmt)

@@ -11,7 +11,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-
 # ===========================================================================
 # Space CRUD
 # ===========================================================================
@@ -23,7 +22,7 @@ class SpaceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: str | None = Field(None, max_length=500)
     creditsLimit: int | None = Field(None, ge=0)
-    visibility: str | None = Field(None, description="PUBLIC or PRIVATE (default PRIVATE)")
+    visibility: Literal["PUBLIC", "PRIVATE"] = "PRIVATE"
     category: str | None = Field(None, max_length=64)
 
 
@@ -79,6 +78,18 @@ class InviteResponse(BaseModel):
     createdAt: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PendingInviteResponse(BaseModel):
+    """A pending invitation available to the authenticated user."""
+
+    id: str
+    spaceId: str
+    spaceName: str
+    inviterId: str
+    inviteeEmail: str
+    role: str
+    expiresAt: datetime
 
 
 class TransferOwnershipRequest(BaseModel):

@@ -22,22 +22,23 @@ async def invite_members(
     seat_tier: str | None = None,
 ) -> list[Any]:
     """Invite users to a Learning Space by email."""
-    from src.domains.learning_spaces.services.space_impl import invite_members as _invite
     from src.domains.learning_spaces.models import InviteRequest
+    from src.domains.learning_spaces.services.space_impl import invite_members as _invite
 
     invite_data = InviteRequest(emails=emails, role=role, seat_tier=seat_tier)
     return await _invite(None, space_id, user_id, invite_data)
 
 
 async def accept_invite(*, invite_id: str, user_id: str) -> Any:
-    """Accept a pending invitation."""
+    """Accept a pending invitation addressed to the current user."""
     from src.domains.learning_spaces.services.space_impl import accept_invite as _accept
 
-    result = await _accept(None, invite_id, user_id)
-    if result:
-        await emit(
-            "space.member_joined", {"user_id": user_id, "space_id": result.get("spaceId", "")}
-        )
+    invite = await space_repo.find_invite(invite_id)
+    if not invite:
+        raise NotFoundError("Space invitation", invite_id)
+
+    result = await _accept(None, invite.space_id, invite_id, user_id)
+    await emit("space.member_joined", {"user_id": user_id, "space_id": invite.space_id})
     return result
 
 

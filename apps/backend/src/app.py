@@ -264,8 +264,8 @@ def _register_domains(app: FastAPI) -> None:
     prefix = "/api/v1"
 
     # --- Identity (fully migrated to SQLAlchemy) ---
-    from src.domains.identity.routes import auth_router, users_router
     from src.domains.identity.oauth_routes import oauth_router
+    from src.domains.identity.routes import auth_router, users_router
 
     app.include_router(auth_router, prefix=f"{prefix}/auth", tags=["auth"])
     app.include_router(oauth_router, prefix=f"{prefix}/auth", tags=["auth"])
@@ -281,9 +281,12 @@ def _register_domains(app: FastAPI) -> None:
 
     app.include_router(knowledge_router, prefix=f"{prefix}/knowledge", tags=["knowledge"])
 
-    # from src.domains.learning_spaces.routes import router as spaces_router
-    # app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
+    # --- Learning Spaces ---
+    from src.domains.learning_spaces.routes import router as spaces_router
 
+    app.include_router(spaces_router, prefix=f"{prefix}/spaces", tags=["learning-spaces"])
+
+    # Classrooms will be mounted when their public contract is normalized.
     # from src.domains.classrooms.routes import router as classrooms_router
     # app.include_router(classrooms_router, prefix=f"{prefix}/classrooms", tags=["classrooms"])
 
