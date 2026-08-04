@@ -6,7 +6,7 @@ These are the learner's private artifacts.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -26,6 +26,19 @@ class CamelModel(BaseModel):
         alias_generator=to_camel,
         populate_by_name=True,
     )
+
+
+ResponseT = TypeVar("ResponseT")
+
+
+class PaginatedResponse(CamelModel, Generic[ResponseT]):
+    """Canonical pagination envelope for personal-learning list endpoints."""
+
+    items: list[ResponseT]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 # ===========================================================================
@@ -88,14 +101,6 @@ class NoteResponse(CamelModel):
     attachments: list[NoteAttachmentResponse] = []
     created_at: datetime
     updated_at: datetime
-
-
-class NoteListResponse(BaseModel):
-    items: list[NoteResponse]
-    total: int
-    page: int
-    size: int
-    pages: int
 
 
 class NoteImportRequest(CamelModel):
@@ -398,38 +403,43 @@ class SavedResourceTagUpdate(BaseModel):
 # ===========================================================================
 
 
+LearningPurpose = Literal[
+    "exam_prep",
+    "skill_building",
+    "course_completion",
+    "professional_certification",
+    "general_learning",
+]
+LlmProvider = Literal["gemini", "openai", "anthropic"]
+
+
 class LearningProfileResponse(CamelModel):
     id: str
     user_id: str
-    purpose: str | None = None
-    subjects: list | None = None
+    purpose: LearningPurpose | None = None
+    subjects: list[str] | None = None
     goals_text: str | None = None
     preferred_explanation_style: str | None = None
     onboarding_completed_at: datetime | None = None
     maturity_days: int = 0
     quiet_hours_start: str | None = None
     quiet_hours_end: str | None = None
-    preferred_study_times: dict | None = None
-    avg_session_minutes: float | None = None
-    consistency_score: float | None = None
-    best_day_of_week: str | None = None
-    dropout_risk: float | None = None
-    preferred_llm_provider: str | None = None
-    created_at: datetime | None = None
+    max_daily_notifications: int = 5
+    preferred_llm_provider: LlmProvider | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class PurposeSetRequest(BaseModel):
-    purpose: str = Field(
-        description="exam_prep, skill_building, course_completion, professional_certification, general_learning"
-    )
+    purpose: LearningPurpose
 
 
 class LlmProviderSetRequest(BaseModel):
-    provider: str = Field(description="gemini, openai, or anthropic")
+    provider: LlmProvider
 
 
 class SubjectsSetRequest(CamelModel):
-    subjects: list[str] | None = None
+    subjects: list[str] = Field(default_factory=list)
     goals: str | None = None
 
 

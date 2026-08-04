@@ -15,19 +15,19 @@ from src.shared.auth import CurrentUser, OptionalCurrentUser
 
 from . import models
 from .services import (
-    home_service,
-    onboarding_service,
-    note_service,
+    activity_feed_service,
+    behaviour_service,
+    discovery_service,
     exam_prep_service,
-    quiz_engine,
     flashcard_service,
+    home_service,
+    note_service,
+    notification_service,
+    onboarding_service,
+    quiz_engine,
+    reflection_service,
     resource_service,
     study_plan_service,
-    notification_service,
-    discovery_service,
-    behaviour_service,
-    reflection_service,
-    activity_feed_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,14 +65,10 @@ async def set_subjects(body: models.SubjectsSetRequest, current_user: CurrentUse
     )
 
 
-@router.post("/onboarding/complete", status_code=200)
-async def complete_onboarding(current_user: CurrentUser):
-    """Mark onboarding as complete. Sets user.isOnboarded = True."""
-    from src.domains.identity.repository import IdentityRepository
-
-    identity_repo = IdentityRepository()
-    await identity_repo.set_onboarded(current_user.id)
-    return {"message": "Onboarding complete"}
+@router.post("/onboarding/complete", status_code=204)
+async def complete_onboarding(current_user: CurrentUser) -> None:
+    """Complete onboarding and record the profile completion time."""
+    await onboarding_service.complete_onboarding(user_id=current_user.id)
 
 
 @router.get("/profile", response_model=models.LearningProfileResponse)
@@ -88,25 +84,11 @@ async def get_profile(current_user: CurrentUser):
 
 @router.put("/profile/llm-provider", response_model=models.LearningProfileResponse)
 async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: CurrentUser):
-    """Set preferred LLM provider (gemini, openai, or anthropic)."""
-    from .services.llm_resilient import SUPPORTED_PROVIDERS
-    from .repository import personal_learning_repo as repo
-
-    provider = body.provider.lower().strip()
-    if provider not in SUPPORTED_PROVIDERS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Unsupported provider: '{provider}'. Must be one of: {', '.join(SUPPORTED_PROVIDERS)}",
-        )
-
-    profile = await repo.get_profile_by_user(current_user.id)
-    if not profile:
-        raise HTTPException(
-            status_code=404, detail="Learning profile not found. Complete onboarding first."
-        )
-
-    updated = await repo.update_profile(current_user.id, {"preferredLlmProvider": provider})
-    return updated
+    """Set the provider used for the learner's personal-learning AI calls."""
+    return await onboarding_service.set_preferred_llm_provider(
+        user_id=current_user.id,
+        provider=body.provider,
+    )
 
 
 # ===========================================================================
@@ -155,30 +137,36 @@ async def create_note(body: models.NoteCreate, current_user: CurrentUser):
     )
 
 
-@router.get("/notes", response_model=models.NoteListResponse)
+@router.get("/notes", response_model=models.PaginatedResponse[models.NoteResponse])
 async def list_notes(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    pageSize: int = Query(20, ge=1, le=100),
     search: str | None = Query(None),
     tag: str | None = Query(None),
     courseId: str | None = Query(None),
     topicId: str | None = Query(None),
     archived: bool | None = Query(False),
 ):
-    """List notes with filtering and pagination."""
+    """List notes using the canonical pagination envelope."""
     items, total = await note_service.list_notes(
         user_id=current_user.id,
         page=page,
-        size=size,
+        size=pageSize,
         search=search,
         tag=tag,
         course_id=courseId,
         topic_id=topicId,
         archived=archived,
     )
-    pages = (total + size - 1) // size if total > 0 else 0
-    return models.NoteListResponse(items=items, total=total, page=page, size=size, pages=pages)
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.NoteResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
 
 
 @router.get("/notes/{note_id}", response_model=models.NoteResponse)
@@ -737,18 +725,28 @@ async def get_behaviour_profile(current_user: CurrentUser):
     return await behaviour_service.get_behaviour_profile(user_id=current_user.id)
 
 
-@router.get("/reflections", response_model=list[models.ReflectionResponse])
+@router.get(
+    "/reflections",
+    response_model=models.PaginatedResponse[models.ReflectionResponse],
+)
 async def list_reflections(
     current_user: CurrentUser,
     type: str | None = Query(None),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ):
-    """List reflections."""
-    items, _ = await reflection_service.list_reflections(
+    """List reflections using the canonical pagination envelope."""
+    items, total = await reflection_service.list_reflections(
         user_id=current_user.id, type_filter=type, page=page, page_size=pageSize
     )
-    return items
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.ReflectionResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
 
 
 @router.post("/reflections/generate", response_model=models.ReflectionResponse, status_code=201)

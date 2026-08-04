@@ -6,7 +6,11 @@ Creates and progressively refines the LearningProfile.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
+
+from src.domains.identity.repository import IdentityRepository
+from src.shared.exceptions import NotFoundError
 
 from ..repository import personal_learning_repo as repo
 
@@ -83,11 +87,27 @@ async def set_subjects(
 
 
 async def get_profile(*, user_id: str) -> Any:
-    """
-    Get the learner's current learning profile.
-    Returns None if no profile exists yet.
-    """
+    """Get the learner's current learning profile."""
     return await repo.get_profile_by_user(user_id)
+
+
+async def complete_onboarding(*, user_id: str) -> None:
+    """Complete identity onboarding and record when the learning profile was completed."""
+    profile = await repo.get_profile_by_user(user_id)
+    if not profile:
+        raise NotFoundError("Learning profile", user_id)
+
+    await IdentityRepository().set_onboarded(user_id)
+    await repo.update_profile(user_id, {"onboardingCompletedAt": datetime.now(UTC)})
+
+
+async def set_preferred_llm_provider(*, user_id: str, provider: str) -> Any:
+    """Persist the provider used by resilient personal-learning LLM calls."""
+    profile = await repo.get_profile_by_user(user_id)
+    if not profile:
+        raise NotFoundError("Learning profile", user_id)
+
+    return await repo.update_profile(user_id, {"preferredLlmProvider": provider})
 
 
 async def update_maturity(*, user_id: str) -> None:
