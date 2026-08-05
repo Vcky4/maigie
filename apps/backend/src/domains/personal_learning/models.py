@@ -742,18 +742,18 @@ LearnEntityType = Literal[
 
 class LearnDashboardMeta(CamelModel):
     generated_at: datetime
-    degraded_sections: list[LearnDashboardSection] = Field(default_factory=list)
+    degraded_sections: list[LearnDashboardSection]
 
 
 class LearnFeaturedItem(CamelModel):
     entity_type: Literal["course", "topic"]
     entity_id: str
     course_id: str
-    topic_id: str | None = None
+    topic_id: str | None
     title: str
-    description: str | None = None
+    description: str | None
     course_title: str
-    estimated_minutes: int | None = None
+    estimated_minutes: int | None
     progress_percent: float
     completed_units: int
     total_units: int
@@ -763,7 +763,7 @@ class LearnReviewSummary(CamelModel):
     due_cards: int
     overdue_cards: int
     estimated_minutes: int
-    mastery_percent: float | None = None
+    mastery_percent: float | None
 
 
 class LearnDashboardStats(CamelModel):
@@ -777,24 +777,24 @@ class LearnDashboardStats(CamelModel):
 class LearnNextTopic(CamelModel):
     id: str
     title: str
-    estimated_minutes: int | None = None
+    estimated_minutes: int | None
 
 
 class LearnCourseSummary(CamelModel):
     id: str
     title: str
-    description: str | None = None
-    difficulty: str | None = None
+    description: str | None
+    difficulty: str | None
     progress_percent: float
     completed_topics: int
     total_topics: int
     module_count: int
-    next_topic: LearnNextTopic | None = None
+    next_topic: LearnNextTopic | None
     updated_at: datetime
 
 
 class LearnCourseList(CamelModel):
-    items: list[LearnCourseSummary] = Field(default_factory=list)
+    items: list[LearnCourseSummary]
     total: int
 
 
@@ -802,9 +802,9 @@ class LearnPathSummary(CamelModel):
     entity_type: Literal["study_plan", "preparation"]
     id: str
     title: str
-    description: str | None = None
+    description: str | None
     status: str
-    deadline: datetime | None = None
+    deadline: datetime | None
     completed_units: int
     total_units: int
     progress_percent: float
@@ -826,25 +826,31 @@ class LearnRecentItem(CamelModel):
     entity_type: Literal["note", "saved_resource", "document"]
     id: str
     title: str
-    context_label: str | None = None
+    context_label: str | None
     occurred_at: datetime
 
 
 class LearnCollectionSummary(CamelModel):
     id: str
     title: str
-    description: str | None = None
+    description: str | None
     item_count: int
     source: Literal["course", "topic", "tag"]
 
 
 class LearnDashboardResponse(CamelModel):
+    """Every field is always serialized.
+
+    Fields are required rather than defaulted so the published OpenAPI contract
+    matches what the service actually returns; nullable fields stay nullable.
+    """
+
     meta: LearnDashboardMeta
-    featured: LearnFeaturedItem | None = None
+    featured: LearnFeaturedItem | None
     review: LearnReviewSummary
     stats: LearnDashboardStats
     courses: LearnCourseList
-    paths: list[LearnPathSummary] = Field(default_factory=list)
-    tools: list[LearnToolSummary] = Field(default_factory=list)
-    recent_items: list[LearnRecentItem] = Field(default_factory=list)
-    collections: list[LearnCollectionSummary] = Field(default_factory=list)
+    paths: list[LearnPathSummary]
+    tools: list[LearnToolSummary]
+    recent_items: list[LearnRecentItem]
+    collections: list[LearnCollectionSummary]

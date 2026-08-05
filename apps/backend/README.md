@@ -85,6 +85,22 @@ poetry run ruff check src
 poetry run pytest
 ```
 
+## API Contract
+
+This repository owns the canonical OpenAPI schema at [`openapi.json`](./openapi.json).
+It is exported directly from the application factory, so no running server is required:
+
+```bash
+poetry run python scripts/export_openapi.py           # regenerate and write
+poetry run python scripts/export_openapi.py --check   # fail if out of date
+```
+
+Regenerate and commit `openapi.json` whenever a request or response contract
+changes. CI runs the `--check` mode, so contract drift fails the build.
+
+Client repositories generate their own TypeScript types from this schema and own
+that tooling; this repository stays Python-only.
+
 ## Key Endpoints
 
 | Endpoint | Description |
@@ -92,6 +108,7 @@ poetry run pytest
 | `POST /api/v1/auth/login` | Login |
 | `POST /api/v1/auth/register` | Register |
 | `GET /api/v1/learning/home` | Learning home feed |
+| `GET /api/v1/learning/dashboard` | Learn dashboard read model |
 | `GET /api/v1/learning/notes` | List notes |
 | `WS /api/v1/intelligence/ws` | AI chat WebSocket |
 | `GET /docs` | Swagger UI |
