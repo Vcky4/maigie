@@ -274,7 +274,7 @@ async def _get_statistics_cached(*, user_id: str) -> dict[str, Any]:
     }
 
 
-async def create_deck(*, user_id: str, data: dict[str, Any]) -> Any:
+async def create_deck(*, user_id: str, data: dict[str, Any]) -> dict[str, Any]:
     """Create a flashcard deck."""
     deck_data = {
         "userId": user_id,
@@ -284,12 +284,42 @@ async def create_deck(*, user_id: str, data: dict[str, Any]) -> Any:
         "topicId": data.get("topicId"),
         "prepId": data.get("prepId"),
     }
-    return await repo.create_deck(deck_data)
+    deck = await repo.create_deck(deck_data)
+    return {
+        "id": deck.id,
+        "userId": deck.user_id,
+        "title": deck.title,
+        "description": deck.description,
+        "courseId": deck.course_id,
+        "topicId": deck.topic_id,
+        "prepId": deck.prep_id,
+        # A new deck has no cards yet; both counts are known to be zero.
+        "cardCount": 0,
+        "dueCount": 0,
+        "createdAt": deck.created_at,
+        "updatedAt": deck.updated_at,
+    }
 
 
-async def list_decks(*, user_id: str) -> list[Any]:
-    """List all user's flashcard decks."""
-    return await repo.list_decks(user_id)
+async def list_decks(*, user_id: str) -> list[dict[str, Any]]:
+    """List all user's flashcard decks with card and due counts."""
+    rows = await repo.list_decks_with_counts(user_id)
+    return [
+        {
+            "id": deck.id,
+            "userId": deck.user_id,
+            "title": deck.title,
+            "description": deck.description,
+            "courseId": deck.course_id,
+            "topicId": deck.topic_id,
+            "prepId": deck.prep_id,
+            "cardCount": card_count,
+            "dueCount": due_count,
+            "createdAt": deck.created_at,
+            "updatedAt": deck.updated_at,
+        }
+        for deck, card_count, due_count in rows
+    ]
 
 
 async def list_deck_flashcards(*, user_id: str, deck_id: str) -> list[Any]:

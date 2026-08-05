@@ -114,11 +114,10 @@ async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: Cur
 # ===========================================================================
 
 
-@router.get("/courses", response_model=list[models.CourseProgressResponse])
-async def list_courses(current_user: CurrentUser):
-    """List enrolled courses with personal progress."""
-    # Placeholder: requires cross-domain integration with knowledge domain
-    return []
+# `GET /learning/courses` was removed. It returned an empty list unconditionally,
+# which was indistinguishable from "this learner has no courses" and hid the fact
+# that cross-domain integration was never implemented. Courses are owned by the
+# Knowledge domain: use `GET /api/v1/knowledge/courses`.
 
 
 @router.get("/courses/{course_id}/path", response_model=models.LearningPathResponse)
@@ -469,7 +468,7 @@ async def save_resource(body: models.SavedResourceCreate, current_user: CurrentU
     return await resource_service.save_resource(user_id=current_user.id, data=body.model_dump())
 
 
-@router.get("/resources", response_model=list[models.SavedResourceResponse])
+@router.get("/resources", response_model=models.PaginatedResponse[models.SavedResourceResponse])
 async def list_resources(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
@@ -477,15 +476,22 @@ async def list_resources(
     sourceType: str | None = Query(None),
     search: str | None = Query(None),
 ):
-    """List saved resources."""
-    items, _ = await resource_service.list_resources(
+    """List saved resources using the canonical pagination envelope."""
+    items, total = await resource_service.list_resources(
         user_id=current_user.id,
         source_type=sourceType,
         search=search,
         page=page,
         page_size=pageSize,
     )
-    return items
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.SavedResourceResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
 
 
 @router.delete("/resources/{resource_id}", status_code=204)

@@ -726,6 +726,32 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    async def list_decks_with_counts(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[tuple[FlashcardDeck, int, int]]:
+        """List decks with their card and due-card counts.
+
+        Counts are aggregated in a single grouped query rather than one query
+        per deck. Returns `(deck, card_count, due_count)` tuples.
+        """
+        async with self._use_session(session) as s:
+            now = datetime.now(UTC)
+            card_count = func.count(Flashcard.id)
+            due_count = func.count(Flashcard.id).filter(Flashcard.next_review_at <= now)
+            stmt = (
+                select(FlashcardDeck, card_count, due_count)
+                .outerjoin(
+                    Flashcard,
+                    (Flashcard.deck_id == FlashcardDeck.id)
+                    & (Flashcard.user_id == FlashcardDeck.user_id),
+                )
+                .where(FlashcardDeck.user_id == user_id)
+                .group_by(FlashcardDeck.id)
+                .order_by(FlashcardDeck.created_at.desc())
+            )
+            result = await s.execute(stmt)
+            return [(deck, cards or 0, due or 0) for deck, cards, due in result.all()]
+
     async def list_deck_flashcards(
         self, deck_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> list[Flashcard]:

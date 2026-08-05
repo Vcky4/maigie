@@ -329,9 +329,11 @@ class FlashcardResponse(CamelModel):
     interval_days: int
     repetition_count: int
     ease_factor: float
-    next_review_at: datetime | None = None
+    # `nextReviewAt` and `lastQuality` are NOT NULL columns, so they are always
+    # present. `lastQuality` uses -1 to mean "never reviewed".
+    next_review_at: datetime
     last_reviewed_at: datetime | None = None
-    last_quality: int | None = None
+    last_quality: int
     lapse_count: int
     source_type: str | None = None
     source_id: str | None = None
@@ -366,7 +368,11 @@ class DeckResponse(CamelModel):
     course_id: str | None = None
     topic_id: str | None = None
     prep_id: str | None = None
+    # Aggregated in a single grouped query by the deck listing.
+    card_count: int
+    due_count: int
     created_at: datetime
+    updated_at: datetime
 
 
 # ===========================================================================
@@ -580,13 +586,15 @@ class StudyPlanCreate(BaseModel):
 
 
 class StudyPlanItemResponse(CamelModel):
+    """Mirrors the persisted item; only genuinely nullable columns are optional."""
+
     id: str
     plan_id: str
     title: str
     description: str | None = None
-    scheduled_date: datetime | None = None
-    estimated_minutes: int | None = None
-    item_type: str | None = None
+    scheduled_date: datetime
+    estimated_minutes: int
+    item_type: str
     topic_id: str | None = None
     prep_topic_id: str | None = None
     status: str
@@ -594,17 +602,24 @@ class StudyPlanItemResponse(CamelModel):
 
 
 class StudyPlanResponse(CamelModel):
+    """Mirrors the persisted plan.
+
+    `deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and
+    plan queries eagerly load `items`, so these are always serialized.
+    """
+
     id: str
     user_id: str
     title: str
     goal_description: str | None = None
-    deadline: datetime | None = None
+    deadline: datetime
     prep_id: str | None = None
     status: str
-    total_items: int | None = None
-    completed_items: int | None = None
-    items: list[StudyPlanItemResponse] | None = None
+    total_items: int
+    completed_items: int
+    items: list[StudyPlanItemResponse]
     created_at: datetime
+    updated_at: datetime
 
 
 # ===========================================================================

@@ -668,61 +668,6 @@
         "title": "CourseOutlineSatisfactionCreate",
         "type": "object"
       },
-      "CourseProgressResponse": {
-        "properties": {
-          "completedTopics": {
-            "title": "Completedtopics",
-            "type": "integer"
-          },
-          "courseId": {
-            "title": "Courseid",
-            "type": "string"
-          },
-          "currentTopicId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Currenttopicid"
-          },
-          "currentTopicTitle": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Currenttopictitle"
-          },
-          "progress": {
-            "title": "Progress",
-            "type": "number"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "totalTopics": {
-            "title": "Totaltopics",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "courseId",
-          "title",
-          "progress",
-          "totalTopics",
-          "completedTopics"
-        ],
-        "title": "CourseProgressResponse",
-        "type": "object"
-      },
       "CourseResponse": {
         "properties": {
           "archived": {
@@ -962,6 +907,10 @@
       },
       "DeckResponse": {
         "properties": {
+          "cardCount": {
+            "title": "Cardcount",
+            "type": "integer"
+          },
           "courseId": {
             "anyOf": [
               {
@@ -988,6 +937,10 @@
               }
             ],
             "title": "Description"
+          },
+          "dueCount": {
+            "title": "Duecount",
+            "type": "integer"
           },
           "id": {
             "title": "Id",
@@ -1019,6 +972,11 @@
             ],
             "title": "Topicid"
           },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
           "userId": {
             "title": "Userid",
             "type": "string"
@@ -1028,7 +986,10 @@
           "id",
           "userId",
           "title",
-          "createdAt"
+          "cardCount",
+          "dueCount",
+          "createdAt",
+          "updatedAt"
         ],
         "title": "DeckResponse",
         "type": "object"
@@ -1513,15 +1474,8 @@
             "type": "integer"
           },
           "lastQuality": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Lastquality"
+            "title": "Lastquality",
+            "type": "integer"
           },
           "lastReviewedAt": {
             "anyOf": [
@@ -1536,16 +1490,9 @@
             "title": "Lastreviewedat"
           },
           "nextReviewAt": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Nextreviewat"
+            "format": "date-time",
+            "title": "Nextreviewat",
+            "type": "string"
           },
           "repetitionCount": {
             "title": "Repetitioncount",
@@ -1591,6 +1538,8 @@
           "intervalDays",
           "repetitionCount",
           "easeFactor",
+          "nextReviewAt",
+          "lastQuality",
           "lapseCount",
           "createdAt",
           "updatedAt"
@@ -3877,6 +3826,42 @@
           "pages"
         ],
         "title": "PaginatedResponse[ReflectionResponse]",
+        "type": "object"
+      },
+      "PaginatedResponse_SavedResourceResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedResourceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[SavedResourceResponse]",
         "type": "object"
       },
       "PendingDeletionResponse": {
@@ -6353,6 +6338,7 @@
         "type": "object"
       },
       "StudyPlanItemResponse": {
+        "description": "Mirrors the persisted item; only genuinely nullable columns are optional.",
         "properties": {
           "completedAt": {
             "anyOf": [
@@ -6378,30 +6364,16 @@
             "title": "Description"
           },
           "estimatedMinutes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Estimatedminutes"
+            "title": "Estimatedminutes",
+            "type": "integer"
           },
           "id": {
             "title": "Id",
             "type": "string"
           },
           "itemType": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Itemtype"
+            "title": "Itemtype",
+            "type": "string"
           },
           "planId": {
             "title": "Planid",
@@ -6419,16 +6391,9 @@
             "title": "Preptopicid"
           },
           "scheduledDate": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Scheduleddate"
+            "format": "date-time",
+            "title": "Scheduleddate",
+            "type": "string"
           },
           "status": {
             "title": "Status",
@@ -6454,23 +6419,20 @@
           "id",
           "planId",
           "title",
+          "scheduledDate",
+          "estimatedMinutes",
+          "itemType",
           "status"
         ],
         "title": "StudyPlanItemResponse",
         "type": "object"
       },
       "StudyPlanResponse": {
+        "description": "Mirrors the persisted plan.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and\nplan queries eagerly load `items`, so these are always serialized.",
         "properties": {
           "completedItems": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completeditems"
+            "title": "Completeditems",
+            "type": "integer"
           },
           "createdAt": {
             "format": "date-time",
@@ -6478,16 +6440,9 @@
             "type": "string"
           },
           "deadline": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Deadline"
+            "format": "date-time",
+            "title": "Deadline",
+            "type": "string"
           },
           "goalDescription": {
             "anyOf": [
@@ -6505,18 +6460,11 @@
             "type": "string"
           },
           "items": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/StudyPlanItemResponse"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Items"
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
           },
           "prepId": {
             "anyOf": [
@@ -6538,15 +6486,13 @@
             "type": "string"
           },
           "totalItems": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Totalitems"
+            "title": "Totalitems",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
           },
           "userId": {
             "title": "Userid",
@@ -6557,8 +6503,13 @@
           "id",
           "userId",
           "title",
+          "deadline",
           "status",
-          "createdAt"
+          "totalItems",
+          "completedItems",
+          "items",
+          "createdAt",
+          "updatedAt"
         ],
         "title": "StudyPlanResponse",
         "type": "object"
@@ -9492,38 +9443,6 @@
           }
         ],
         "summary": "Send Chat Message",
-        "tags": [
-          "personal-learning",
-          "personal-learning"
-        ]
-      }
-    },
-    "/api/v1/learning/courses": {
-      "get": {
-        "description": "List enrolled courses with personal progress.",
-        "operationId": "list_courses_api_v1_learning_courses_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/CourseProgressResponse"
-                  },
-                  "title": "Response List Courses Api V1 Learning Courses Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Courses",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -12644,7 +12563,7 @@
     },
     "/api/v1/learning/resources": {
       "get": {
-        "description": "List saved resources.",
+        "description": "List saved resources using the canonical pagination envelope.",
         "operationId": "list_resources_api_v1_learning_resources_get",
         "parameters": [
           {
@@ -12708,11 +12627,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/SavedResourceResponse"
-                  },
-                  "title": "Response List Resources Api V1 Learning Resources Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/PaginatedResponse_SavedResourceResponse_"
                 }
               }
             },
