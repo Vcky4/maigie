@@ -264,20 +264,42 @@ async def create_preparation(body: models.PrepCreateRequest, current_user: Curre
     )
 
 
-@router.get("/preparations", response_model=list[models.PrepSummaryResponse])
-async def list_preparations(current_user: CurrentUser):
-    """List all preparations sorted by target date."""
-    return await exam_prep_service.list_preparations(user_id=current_user.id)
+@router.get("/preparations", response_model=models.PaginatedResponse[models.PrepSummaryResponse])
+async def list_preparations(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    status: models.PreparationStatus | None = Query(None),
+    search: str | None = Query(None, max_length=200),
+):
+    """List preparations, ordered by target date, using the canonical envelope."""
+    items, total = await exam_prep_service.search_preparations(
+        user_id=current_user.id,
+        status=status,
+        search=search,
+        page=page,
+        page_size=pageSize,
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.PrepSummaryResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
 
 
-@router.get("/preparations/{prep_id}")
+@router.get("/preparations/{prep_id}", response_model=models.PrepSummaryResponse)
 async def get_preparation(prep_id: str, current_user: CurrentUser):
     """Get a preparation by ID."""
     return await exam_prep_service.get_preparation(user_id=current_user.id, prep_id=prep_id)
 
 
-@router.patch("/preparations/{prep_id}")
-async def update_preparation(prep_id: str, body: models.ExamPrepUpdate, current_user: CurrentUser):
+@router.patch("/preparations/{prep_id}", response_model=models.PrepSummaryResponse)
+async def update_preparation(
+    prep_id: str, body: models.PrepUpdateRequest, current_user: CurrentUser
+):
     """Update a preparation."""
     return await exam_prep_service.update_preparation(
         user_id=current_user.id, prep_id=prep_id, data=body.model_dump(exclude_unset=True)
@@ -295,11 +317,48 @@ async def delete_preparation(prep_id: str, current_user: CurrentUser):
 @router.post(
     "/preparations/{prep_id}/materials", response_model=models.PrepMaterialResponse, status_code=201
 )
-async def upload_material(prep_id: str, body: dict, current_user: CurrentUser):
-    """Upload material to a preparation."""
+async def upload_material(
+    prep_id: str, body: models.PrepMaterialCreateRequest, current_user: CurrentUser
+):
+    """Register material against a preparation."""
     return await exam_prep_service.upload_material(
-        user_id=current_user.id, prep_id=prep_id, data=body
+        user_id=current_user.id, prep_id=prep_id, data=body.model_dump(by_alias=True)
     )
+
+
+@router.get("/preparations/{prep_id}/materials", response_model=list[models.PrepMaterialSummary])
+async def list_materials(prep_id: str, current_user: CurrentUser):
+    """List a preparation's materials. Excludes extracted text."""
+    return await exam_prep_service.list_materials(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.patch(
+    "/preparations/{prep_id}/materials/{material_id}",
+    response_model=models.PrepMaterialResponse,
+)
+async def update_material(
+    prep_id: str,
+    material_id: str,
+    body: models.PrepMaterialUpdateRequest,
+    current_user: CurrentUser,
+):
+    """Update a material's category or label."""
+    return await exam_prep_service.update_material(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        material_id=material_id,
+        data=body.model_dump(exclude_unset=True),
+    )
+
+
+@router.delete("/preparations/{prep_id}/materials/{material_id}", status_code=204)
+async def delete_material(prep_id: str, material_id: str, current_user: CurrentUser):
+    """Remove a material from a preparation."""
+    deleted = await exam_prep_service.delete_material(
+        user_id=current_user.id, prep_id=prep_id, material_id=material_id
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Material not found")
 
 
 @router.post(
@@ -316,7 +375,33 @@ async def list_topics(prep_id: str, current_user: CurrentUser):
     return await exam_prep_service.list_topics(user_id=current_user.id, prep_id=prep_id)
 
 
-@router.post("/preparations/{prep_id}/study-plan")
+@router.patch("/preparations/{prep_id}/topics/{topic_id}", response_model=models.PrepTopicResponse)
+async def update_topic(
+    prep_id: str,
+    topic_id: str,
+    body: models.PrepTopicUpdateRequest,
+    current_user: CurrentUser,
+):
+    """Update a topic belonging to a preparation."""
+    return await exam_prep_service.update_topic(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        topic_id=topic_id,
+        data=body.model_dump(exclude_unset=True),
+    )
+
+
+@router.delete("/preparations/{prep_id}/topics/{topic_id}", status_code=204)
+async def delete_topic(prep_id: str, topic_id: str, current_user: CurrentUser):
+    """Remove a topic from a preparation."""
+    deleted = await exam_prep_service.delete_topic(
+        user_id=current_user.id, prep_id=prep_id, topic_id=topic_id
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+
+@router.post("/preparations/{prep_id}/study-plan", response_model=models.StudyPlanResponse)
 async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
     """Generate a study plan for a preparation."""
     prep = await exam_prep_service.get_preparation(user_id=current_user.id, prep_id=prep_id)
@@ -332,7 +417,7 @@ async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
     return plan
 
 
-@router.post("/preparations/{prep_id}/complete")
+@router.post("/preparations/{prep_id}/complete", response_model=models.PrepSummaryResponse)
 async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
     """Mark a preparation as completed."""
     return await exam_prep_service.mark_completed(user_id=current_user.id, prep_id=prep_id)

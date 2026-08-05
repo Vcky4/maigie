@@ -170,6 +170,10 @@ class ExamPrep(Base, TimestampMixin):
     )
 
     subject: Mapped[str] = mapped_column(String, nullable=False)
+    # What is being prepared for: EXAM, CERTIFICATION, INTERVIEW, PRESENTATION,
+    # ASSIGNMENT, PROJECT. Nullable because rows created before this column
+    # existed have no value to backfill from.
+    prep_type: Mapped[str | None] = mapped_column("type", String, nullable=True)
     exam_date: Mapped[datetime] = mapped_column("examDate", DateTime(timezone=True), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
@@ -590,7 +594,9 @@ class QuizQuestion(Base, TimestampMixin):
     )
     question_text: Mapped[str] = mapped_column("questionText", Text, nullable=False)
     question_type: Mapped[str] = mapped_column("questionType", String, default="MULTIPLE_CHOICE")
-    options: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Stored as a JSON array of answer strings. The previous `dict` annotation
+    # did not match what the generator writes.
+    options: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     correct_answer: Mapped[str] = mapped_column("correctAnswer", String, nullable=False)
     explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)

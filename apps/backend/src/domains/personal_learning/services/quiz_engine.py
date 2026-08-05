@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import MaigieError, NotFoundError
 
 from ..repository import personal_learning_repo as repo
 
@@ -67,7 +67,13 @@ async def start_quiz(
     # Get topics based on mode
     all_topics = await repo.list_prep_topics(prep_id)
     if not all_topics:
-        raise ValueError("No topics available for this preparation. Extract topics first.")
+        # A bare ValueError here reached clients as a generic 500 via the
+        # catch-all handler, hiding an actionable next step.
+        raise MaigieError(
+            "This preparation has no topics yet. Extract topics before practising.",
+            status_code=409,
+            code="PREP_TOPICS_REQUIRED",
+        )
 
     if mode == "FULL_PRACTICE":
         target_topics = all_topics
@@ -77,7 +83,11 @@ async def start_quiz(
             target_topics = all_topics  # Fallback to all if none are weak
     elif mode == "TOPIC_FOCUS":
         if not topic_id:
-            raise ValueError("topic_id required for TOPIC_FOCUS mode")
+            raise MaigieError(
+                "A topic is required for topic-focused practice.",
+                status_code=400,
+                code="PREP_TOPIC_REQUIRED",
+            )
         target_topics = [t for t in all_topics if t.id == topic_id]
         if not target_topics:
             raise NotFoundError("PrepTopic", topic_id)

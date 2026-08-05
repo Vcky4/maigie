@@ -1330,56 +1330,6 @@
         "title": "DueReviewResponse",
         "type": "object"
       },
-      "ExamPrepUpdate": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "exam_date": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exam Date"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          },
-          "subject": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Subject"
-          }
-        },
-        "title": "ExamPrepUpdate",
-        "type": "object"
-      },
       "FlashcardCreate": {
         "properties": {
           "back": {
@@ -3792,6 +3742,42 @@
         "title": "PaginatedResponse[NoteResponse]",
         "type": "object"
       },
+      "PaginatedResponse_PrepSummaryResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PrepSummaryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[PrepSummaryResponse]",
+        "type": "object"
+      },
       "PaginatedResponse_ReflectionResponse_": {
         "properties": {
           "items": {
@@ -4045,15 +4031,26 @@
             "title": "Description"
           },
           "subject": {
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Subject",
             "type": "string"
           },
           "targetDate": {
+            "description": "ISO-8601 target/exam date.",
             "title": "Targetdate",
             "type": "string"
           },
           "type": {
-            "description": "EXAM, CERTIFICATION, INTERVIEW, PRESENTATION, ASSIGNMENT, PROJECT",
+            "description": "What is being prepared for.",
+            "enum": [
+              "EXAM",
+              "CERTIFICATION",
+              "INTERVIEW",
+              "PRESENTATION",
+              "ASSIGNMENT",
+              "PROJECT"
+            ],
             "title": "Type",
             "type": "string"
           }
@@ -4066,7 +4063,91 @@
         "title": "PrepCreateRequest",
         "type": "object"
       },
+      "PrepMaterialCreateRequest": {
+        "description": "Replaces the previously untyped `body: dict`.",
+        "properties": {
+          "category": {
+            "default": "OTHER",
+            "enum": [
+              "TEXTBOOK",
+              "NOTES",
+              "PAST_QUESTION",
+              "LINK",
+              "SLIDE",
+              "OTHER"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "extractedText": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extractedtext"
+          },
+          "fileType": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filetype"
+          },
+          "filename": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "url": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "url"
+        ],
+        "title": "PrepMaterialCreateRequest",
+        "type": "object"
+      },
       "PrepMaterialResponse": {
+        "description": "Single material, including its extracted text.\n\nUse `PrepMaterialSummary` for listings: extracted text can be an entire\nchapter and must not be shipped once per row.",
         "properties": {
           "category": {
             "anyOf": [
@@ -4155,7 +4236,129 @@
         "title": "PrepMaterialResponse",
         "type": "object"
       },
+      "PrepMaterialSummary": {
+        "description": "Listing shape. Deliberately omits `extractedText`.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "fileType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filetype"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "hasExtractedText": {
+            "title": "Hasextractedtext",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "prepId": {
+            "title": "Prepid",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "prepId",
+          "filename",
+          "url",
+          "hasExtractedText",
+          "createdAt"
+        ],
+        "title": "PrepMaterialSummary",
+        "type": "object"
+      },
+      "PrepMaterialUpdateRequest": {
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "enum": [
+                  "TEXTBOOK",
+                  "NOTES",
+                  "PAST_QUESTION",
+                  "LINK",
+                  "SLIDE",
+                  "OTHER"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "title": "PrepMaterialUpdateRequest",
+        "type": "object"
+      },
       "PrepSummaryResponse": {
+        "description": "`examDate` is a NOT NULL column, so it is always present.",
         "properties": {
           "createdAt": {
             "format": "date-time",
@@ -4174,16 +4377,9 @@
             "title": "Description"
           },
           "examDate": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Examdate"
+            "format": "date-time",
+            "title": "Examdate",
+            "type": "string"
           },
           "id": {
             "title": "Id",
@@ -4197,6 +4393,30 @@
             "title": "Subject",
             "type": "string"
           },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "EXAM",
+                  "CERTIFICATION",
+                  "INTERVIEW",
+                  "PRESENTATION",
+                  "ASSIGNMENT",
+                  "PROJECT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
           "userId": {
             "title": "Userid",
             "type": "string"
@@ -4206,8 +4426,10 @@
           "id",
           "userId",
           "subject",
+          "examDate",
           "status",
-          "createdAt"
+          "createdAt",
+          "updatedAt"
         ],
         "title": "PrepSummaryResponse",
         "type": "object"
@@ -4282,6 +4504,162 @@
           "createdAt"
         ],
         "title": "PrepTopicResponse",
+        "type": "object"
+      },
+      "PrepTopicUpdateRequest": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "masteryScore": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masteryscore"
+          },
+          "orderIndex": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orderindex"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "PrepTopicUpdateRequest",
+        "type": "object"
+      },
+      "PrepUpdateRequest": {
+        "description": "Partial update. Only supplied fields are written.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "SETUP",
+                  "IN_PROGRESS",
+                  "COMPLETED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "targetDate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetdate"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "EXAM",
+                  "CERTIFICATION",
+                  "INTERVIEW",
+                  "PRESENTATION",
+                  "ASSIGNMENT",
+                  "PROJECT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "title": "PrepUpdateRequest",
         "type": "object"
       },
       "ProgressSummaryResponse": {
@@ -4519,6 +4897,7 @@
         "type": "object"
       },
       "QuizSessionResponse": {
+        "description": "`correctCount` is a NOT NULL column defaulting to 0, so it is always present.",
         "properties": {
           "completedAt": {
             "anyOf": [
@@ -4533,15 +4912,8 @@
             "title": "Completedat"
           },
           "correctCount": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Correctcount"
+            "title": "Correctcount",
+            "type": "integer"
           },
           "createdAt": {
             "format": "date-time",
@@ -4621,6 +4993,7 @@
           "mode",
           "status",
           "totalQuestions",
+          "correctCount",
           "createdAt"
         ],
         "title": "QuizSessionResponse",
@@ -4689,8 +5062,7 @@
           },
           "topicBreakdown": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/QuizTopicBreakdown"
             },
             "title": "Topicbreakdown",
             "type": "array"
@@ -4716,6 +5088,40 @@
           "weakAreas"
         ],
         "title": "QuizSummaryResponse",
+        "type": "object"
+      },
+      "QuizTopicBreakdown": {
+        "description": "Mirrors what `quiz_engine._compute_topic_breakdown` emits.",
+        "properties": {
+          "correct": {
+            "title": "Correct",
+            "type": "integer"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topicId": {
+            "title": "Topicid",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "topicId",
+          "title",
+          "total",
+          "correct",
+          "score"
+        ],
+        "title": "QuizTopicBreakdown",
         "type": "object"
       },
       "ReEngagementResponse": {
@@ -11546,22 +11952,91 @@
     },
     "/api/v1/learning/preparations": {
       "get": {
-        "description": "List all preparations sorted by target date.",
+        "description": "List preparations, ordered by target date, using the canonical envelope.",
         "operationId": "list_preparations_api_v1_learning_preparations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "SETUP",
+                    "IN_PROGRESS",
+                    "COMPLETED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/PrepSummaryResponse"
-                  },
-                  "title": "Response List Preparations Api V1 Learning Preparations Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/PaginatedResponse_PrepSummaryResponse_"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -11681,7 +12156,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PrepSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11726,7 +12203,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ExamPrepUpdate"
+                "$ref": "#/components/schemas/PrepUpdateRequest"
               }
             }
           },
@@ -11736,7 +12213,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PrepSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11783,7 +12262,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PrepSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -11865,8 +12346,59 @@
       }
     },
     "/api/v1/learning/preparations/{prep_id}/materials": {
+      "get": {
+        "description": "List a preparation's materials. Excludes extracted text.",
+        "operationId": "list_materials_api_v1_learning_preparations__prep_id__materials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PrepMaterialSummary"
+                  },
+                  "title": "Response List Materials Api V1 Learning Preparations  Prep Id  Materials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Materials",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
       "post": {
-        "description": "Upload material to a preparation.",
+        "description": "Register material against a preparation.",
         "operationId": "upload_material_api_v1_learning_preparations__prep_id__materials_post",
         "parameters": [
           {
@@ -11883,9 +12415,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "title": "Body",
-                "type": "object"
+                "$ref": "#/components/schemas/PrepMaterialCreateRequest"
               }
             }
           },
@@ -11919,6 +12449,123 @@
           }
         ],
         "summary": "Upload Material",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/materials/{material_id}": {
+      "delete": {
+        "description": "Remove a material from a preparation.",
+        "operationId": "delete_material_api_v1_learning_preparations__prep_id__materials__material_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Material",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Update a material's category or label.",
+        "operationId": "update_material_api_v1_learning_preparations__prep_id__materials__material_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepMaterialUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepMaterialResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Material",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -12054,7 +12701,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -12129,6 +12778,123 @@
           }
         ],
         "summary": "List Topics",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/topics/{topic_id}": {
+      "delete": {
+        "description": "Remove a topic from a preparation.",
+        "operationId": "delete_topic_api_v1_learning_preparations__prep_id__topics__topic_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Topic",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Update a topic belonging to a preparation.",
+        "operationId": "update_topic_api_v1_learning_preparations__prep_id__topics__topic_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepTopicUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepTopicResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Topic",
         "tags": [
           "personal-learning",
           "personal-learning"

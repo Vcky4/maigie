@@ -23,14 +23,16 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
 
     Req 4.1: Store subject, type (EXAM, CERTIFICATION, INTERVIEW, etc.), target date.
     """
-    # Parse targetDate string to datetime if needed
-    target_date = data["targetDate"]
+    # Accept both the field name and the wire alias.
+    target_date = data.get("target_date") or data.get("targetDate")
     if isinstance(target_date, str):
         target_date = datetime.fromisoformat(target_date.replace("Z", "+00:00"))
 
     prep_data = {
         "userId": user_id,
         "subject": data["subject"],
+        # Persisted since migration 006. Previously accepted and discarded.
+        "type": data.get("prep_type") or data.get("type"),
         "examDate": target_date,
         "description": data.get("description"),
         "status": "SETUP",
@@ -44,7 +46,7 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
         user_id=user_id,
         activity_type="preparation_created",
         title=f"Started preparation: {data['subject']}",
-        context={"source": "personal", "prepId": prep.id, "type": data.get("type")},
+        context={"source": "personal", "prepId": prep.id, "type": prep_data["type"]},
     )
 
     return prep
@@ -58,26 +60,58 @@ async def get_preparation(*, user_id: str, prep_id: str) -> Any:
     return prep
 
 
-async def list_preparations(*, user_id: str) -> list[Any]:
-    """
-    List all preparations sorted by target date with status and progress.
+# `list_preparations` was removed. It fetched every preparation and sorted in
+# Python; `search_preparations` below does the same ordering in SQL with
+# filtering and pagination, and is what the route uses.
 
-    Req 4.11: Return sorted by target date with progress percentage and days remaining.
-    """
-    preps = await repo.list_exam_preps(user_id)
-    # Sort by exam_date (target date)
-    preps.sort(
-        key=lambda p: p.exam_date if p.exam_date else datetime.max.replace(tzinfo=timezone.utc)
+
+async def search_preparations(
+    *,
+    user_id: str,
+    status: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[Any], int]:
+    """Filtered, paginated preparations ordered by target date."""
+    return await repo.search_exam_preps(
+        user_id,
+        status=status,
+        search=search,
+        skip=(page - 1) * page_size,
+        take=page_size,
     )
-    return preps
 
 
 async def update_preparation(*, user_id: str, prep_id: str, data: dict[str, Any]) -> Any:
-    """Update preparation fields."""
+    """Update preparation fields.
+
+    Translates the request's field names onto the repository's wire names and
+    parses the target date, so the route does not have to.
+    """
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
-    return await repo.update_exam_prep(prep_id, data)
+
+    mapped: dict[str, Any] = {}
+    if "subject" in data:
+        mapped["subject"] = data["subject"]
+    if "description" in data:
+        mapped["description"] = data["description"]
+    if "status" in data:
+        mapped["status"] = data["status"]
+    if "prep_type" in data:
+        mapped["type"] = data["prep_type"]
+    for key in ("target_date", "exam_date"):
+        if key in data and data[key] is not None:
+            value = data[key]
+            if isinstance(value, str):
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            mapped["examDate"] = value
+
+    if not mapped:
+        return prep
+    return await repo.update_exam_prep(prep_id, mapped)
 
 
 async def delete_preparation(*, user_id: str, prep_id: str) -> bool:
@@ -119,12 +153,100 @@ async def upload_material(*, user_id: str, prep_id: str, data: dict[str, Any]) -
     return material
 
 
-async def list_materials(*, user_id: str, prep_id: str) -> list[Any]:
-    """List materials for a preparation."""
+async def list_materials(*, user_id: str, prep_id: str) -> list[dict[str, Any]]:
+    """List materials for a preparation.
+
+    Returns listing shapes that omit `extractedText`: it can hold an entire
+    chapter per row and is not needed to render a material list.
+    """
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
-    return await repo.list_prep_materials(prep_id)
+
+    materials = await repo.list_prep_materials(prep_id)
+    return [
+        {
+            "id": material.id,
+            "prepId": material.prep_id,
+            "filename": material.filename,
+            "url": material.url,
+            "fileType": material.file_type,
+            "size": material.size,
+            "category": material.category,
+            "label": material.label,
+            "hasExtractedText": bool(material.extracted_text),
+            "createdAt": material.created_at,
+        }
+        for material in materials
+    ]
+
+
+async def update_material(
+    *, user_id: str, prep_id: str, material_id: str, data: dict[str, Any]
+) -> Any:
+    """Update a material's category or label."""
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    material = await repo.find_prep_material(material_id, prep_id)
+    if not material:
+        raise NotFoundError("PrepMaterial", material_id)
+
+    payload = {key: value for key, value in data.items() if key in ("category", "label")}
+    if not payload:
+        return material
+    return await repo.update_prep_material(material_id, payload)
+
+
+async def delete_material(*, user_id: str, prep_id: str, material_id: str) -> bool:
+    """Delete a material from a preparation."""
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    material = await repo.find_prep_material(material_id, prep_id)
+    if not material:
+        return False
+    await repo.delete_prep_material(material_id)
+    return True
+
+
+async def update_topic(*, user_id: str, prep_id: str, topic_id: str, data: dict[str, Any]) -> Any:
+    """Update a topic belonging to a preparation."""
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    topic = await repo.find_prep_topic(topic_id, prep_id)
+    if not topic:
+        raise NotFoundError("PrepTopic", topic_id)
+
+    field_map = {
+        "title": "title",
+        "description": "description",
+        "estimated_minutes": "estimatedMinutes",
+        "order_index": "orderIndex",
+        "mastery_score": "masteryScore",
+        "status": "status",
+    }
+    payload = {field_map[k]: v for k, v in data.items() if k in field_map}
+    if not payload:
+        return topic
+    return await repo.update_prep_topic(topic_id, payload)
+
+
+async def delete_topic(*, user_id: str, prep_id: str, topic_id: str) -> bool:
+    """Delete a topic from a preparation."""
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    topic = await repo.find_prep_topic(topic_id, prep_id)
+    if not topic:
+        return False
+    await repo.delete_prep_topic(topic_id)
+    return True
 
 
 async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:

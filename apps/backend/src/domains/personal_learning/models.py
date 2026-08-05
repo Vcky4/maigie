@@ -114,39 +114,10 @@ class NoteImportRequest(CamelModel):
 # ===========================================================================
 
 
-class ExamPrepCreate(BaseModel):
-    subject: str = Field(..., min_length=1, max_length=200)
-    exam_date: str = Field(..., description="ISO date string (e.g. 2025-03-15)")
-    description: str | None = None
-
-
-class ExamPrepUpdate(BaseModel):
-    subject: str | None = None
-    exam_date: str | None = None
-    description: str | None = None
-    status: str | None = None
-
-
-class ExamPrepMaterialResponse(BaseModel):
-    id: str
-    filename: str
-    url: str
-    extractedText: str | None = None
-    fileType: str | None = None
-    size: int | None = None
-    category: str = "OTHER"
-    label: str | None = None
-    createdAt: str
-
-
-class MaterialUpdate(BaseModel):
-    category: str | None = None
-    label: str | None = None
-
-
-class TopicUpdate(BaseModel):
-    title: str | None = None
-    description: str | None = None
+# Removed: ExamPrepCreate, ExamPrepUpdate, ExamPrepMaterialResponse, MaterialUpdate,
+# and TopicUpdate. None were referenced by any route or service. The live
+# equivalents are PrepCreateRequest, PrepUpdateRequest, PrepMaterialResponse,
+# PrepMaterialUpdateRequest, and PrepTopicUpdateRequest, further down this file.
 
 
 class QuizStartRequest(CamelModel):
@@ -475,6 +446,29 @@ class NotificationResponse(CamelModel):
 # ===========================================================================
 
 
+PreparationType = Literal[
+    "EXAM",
+    "CERTIFICATION",
+    "INTERVIEW",
+    "PRESENTATION",
+    "ASSIGNMENT",
+    "PROJECT",
+]
+
+# The only values the service ever writes. `SETUP` on create, `IN_PROGRESS` once
+# material is uploaded, `COMPLETED` on completion or when the target date passes.
+PreparationStatus = Literal["SETUP", "IN_PROGRESS", "COMPLETED"]
+
+PrepMaterialCategory = Literal[
+    "TEXTBOOK",
+    "NOTES",
+    "PAST_QUESTION",
+    "LINK",
+    "SLIDE",
+    "OTHER",
+]
+
+
 class PrepTopicResponse(CamelModel):
     id: str
     prep_id: str
@@ -488,6 +482,12 @@ class PrepTopicResponse(CamelModel):
 
 
 class PrepMaterialResponse(CamelModel):
+    """Single material, including its extracted text.
+
+    Use `PrepMaterialSummary` for listings: extracted text can be an entire
+    chapter and must not be shipped once per row.
+    """
+
     id: str
     prep_id: str
     filename: str
@@ -500,23 +500,86 @@ class PrepMaterialResponse(CamelModel):
     created_at: datetime
 
 
-class PrepCreateRequest(CamelModel):
-    subject: str
-    type: str = Field(
-        description="EXAM, CERTIFICATION, INTERVIEW, PRESENTATION, ASSIGNMENT, PROJECT"
-    )
-    targetDate: str
+class PrepMaterialSummary(CamelModel):
+    """Listing shape. Deliberately omits `extractedText`."""
+
+    id: str
+    prep_id: str
+    filename: str
+    url: str
+    file_type: str | None = None
+    size: int | None = None
+    category: str | None = None
+    label: str | None = None
+    # Whether extracted text is available, so the client can tell the learner
+    # whether topic extraction has anything to work from.
+    has_extracted_text: bool
+    created_at: datetime
+
+
+class PrepMaterialCreateRequest(CamelModel):
+    """Replaces the previously untyped `body: dict`."""
+
+    filename: str = Field(min_length=1, max_length=500)
+    url: str = Field(min_length=1, max_length=2000)
+    file_type: str | None = Field(default=None, max_length=100)
+    size: int | None = Field(default=None, ge=0)
+    extracted_text: str | None = None
+    category: PrepMaterialCategory = "OTHER"
+    label: str | None = Field(default=None, max_length=200)
+
+
+class PrepMaterialUpdateRequest(CamelModel):
+    category: PrepMaterialCategory | None = None
+    label: str | None = Field(default=None, max_length=200)
+
+
+class PrepTopicUpdateRequest(CamelModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
     description: str | None = None
+    estimated_minutes: int | None = Field(default=None, ge=0, le=600)
+    order_index: int | None = Field(default=None, ge=0)
+    mastery_score: float | None = Field(default=None, ge=0, le=100)
+    status: str | None = None
+
+
+class PrepCreateRequest(CamelModel):
+    subject: str = Field(min_length=1, max_length=200)
+    prep_type: PreparationType = Field(
+        validation_alias="type",
+        serialization_alias="type",
+        description="What is being prepared for.",
+    )
+    target_date: str = Field(description="ISO-8601 target/exam date.")
+    description: str | None = None
+
+
+class PrepUpdateRequest(CamelModel):
+    """Partial update. Only supplied fields are written."""
+
+    subject: str | None = Field(default=None, min_length=1, max_length=200)
+    prep_type: PreparationType | None = Field(
+        default=None, validation_alias="type", serialization_alias="type"
+    )
+    target_date: str | None = None
+    description: str | None = None
+    status: PreparationStatus | None = None
 
 
 class PrepSummaryResponse(CamelModel):
+    """`examDate` is a NOT NULL column, so it is always present."""
+
     id: str
     user_id: str
     subject: str
-    exam_date: datetime | None = None
+    prep_type: PreparationType | None = Field(
+        default=None, validation_alias="prep_type", serialization_alias="type"
+    )
+    exam_date: datetime
     description: str | None = None
     status: str
     created_at: datetime
+    updated_at: datetime
 
 
 # ===========================================================================
@@ -541,6 +604,8 @@ class QuizQuestionResponse(CamelModel):
 
 
 class QuizSessionResponse(CamelModel):
+    """`correctCount` is a NOT NULL column defaulting to 0, so it is always present."""
+
     id: str
     user_id: str
     prep_id: str
@@ -548,7 +613,7 @@ class QuizSessionResponse(CamelModel):
     topic_id: str | None = None
     status: str
     total_questions: int
-    correct_count: int | None = None
+    correct_count: int
     score_percentage: float | None = None
     duration_seconds: int | None = None
     completed_at: datetime | None = None
@@ -556,21 +621,31 @@ class QuizSessionResponse(CamelModel):
     questions: list[QuizQuestionResponse] = []
 
 
-class AnswerResultResponse(BaseModel):
-    questionId: str
-    isCorrect: bool
-    correctAnswer: str
+class AnswerResultResponse(CamelModel):
+    question_id: str
+    is_correct: bool
+    correct_answer: str
     explanation: str | None = None
 
 
-class QuizSummaryResponse(BaseModel):
-    quizId: str
-    totalQuestions: int
-    correctCount: int
-    scorePercentage: float
-    topicBreakdown: list[dict]
-    weakAreas: list[str]
-    suggestedNextStep: str | None = None
+class QuizTopicBreakdown(CamelModel):
+    """Mirrors what `quiz_engine._compute_topic_breakdown` emits."""
+
+    topic_id: str
+    title: str
+    total: int
+    correct: int
+    score: float
+
+
+class QuizSummaryResponse(CamelModel):
+    quiz_id: str
+    total_questions: int
+    correct_count: int
+    score_percentage: float
+    topic_breakdown: list[QuizTopicBreakdown]
+    weak_areas: list[str]
+    suggested_next_step: str | None = None
 
 
 # ===========================================================================

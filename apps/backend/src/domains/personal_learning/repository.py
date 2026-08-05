@@ -353,6 +353,44 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    async def search_exam_preps(
+        self,
+        user_id: str,
+        *,
+        status: str | None = None,
+        search: str | None = None,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[ExamPrep], int]:
+        """Filtered, paginated preparations ordered by target date.
+
+        Returns ``(items, total)`` where ``total`` counts every match, not just
+        the returned page. Separate from ``list_dashboard_exam_preps``, which
+        the Learn dashboard depends on filtering to non-completed rows.
+        """
+        async with self._use_session(session) as s:
+            filters = [ExamPrep.user_id == user_id]
+            if status:
+                filters.append(ExamPrep.status == status)
+            if search:
+                pattern = f"%{search}%"
+                filters.append(ExamPrep.subject.ilike(pattern))
+
+            total = (
+                await s.execute(select(func.count()).select_from(ExamPrep).where(*filters))
+            ).scalar_one() or 0
+
+            stmt = (
+                select(ExamPrep)
+                .where(*filters)
+                .order_by(ExamPrep.exam_date.asc())
+                .offset(skip)
+                .limit(take)
+            )
+            items = list((await s.execute(stmt)).scalars().all())
+            return items, total
+
     async def create_exam_prep(
         self, data: dict[str, Any], *, session: AsyncSession | None = None
     ) -> ExamPrep:
@@ -503,6 +541,7 @@ class PersonalLearningRepository:
         field_map = {
             "userId": "user_id",
             "subject": "subject",
+            "type": "prep_type",
             "examDate": "exam_date",
             "description": "description",
             "status": "status",
@@ -1178,6 +1217,45 @@ class PersonalLearningRepository:
             )
             await s.execute(stmt)
 
+    async def find_prep_topic(
+        self, topic_id: str, prep_id: str, *, session: AsyncSession | None = None
+    ) -> PrepTopic | None:
+        """Find a topic scoped to its preparation.
+
+        Callers must have already verified the preparation belongs to the user,
+        so scoping by ``prep_id`` is what prevents cross-preparation access.
+        """
+        async with self._use_session(session) as s:
+            stmt = select(PrepTopic).where(
+                PrepTopic.id == topic_id,
+                PrepTopic.prep_id == prep_id,
+            )
+            result = await s.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def update_prep_topic(
+        self, topic_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> PrepTopic | None:
+        async with self._use_session(session) as s:
+            mapped = self._map_prep_topic(data)
+            if mapped:
+                await s.execute(update(PrepTopic).where(PrepTopic.id == topic_id).values(**mapped))
+
+        async with self._use_session(None) as s:
+            result = await s.execute(select(PrepTopic).where(PrepTopic.id == topic_id))
+            return result.scalar_one_or_none()
+
+    async def delete_prep_topic(
+        self, topic_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
+            await s.execute(delete(PrepTopic).where(PrepTopic.id == topic_id))
+
+    async def count_prep_topics(self, prep_id: str, *, session: AsyncSession | None = None) -> int:
+        async with self._use_session(session) as s:
+            stmt = select(func.count()).select_from(PrepTopic).where(PrepTopic.prep_id == prep_id)
+            return (await s.execute(stmt)).scalar_one() or 0
+
     # -----------------------------------------------------------------------
     # Prep Materials
     # -----------------------------------------------------------------------
@@ -1203,6 +1281,37 @@ class PersonalLearningRepository:
             )
             result = await s.execute(stmt)
             return list(result.scalars().all())
+
+    async def find_prep_material(
+        self, material_id: str, prep_id: str, *, session: AsyncSession | None = None
+    ) -> PrepMaterial | None:
+        async with self._use_session(session) as s:
+            stmt = select(PrepMaterial).where(
+                PrepMaterial.id == material_id,
+                PrepMaterial.prep_id == prep_id,
+            )
+            result = await s.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def update_prep_material(
+        self, material_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> PrepMaterial | None:
+        async with self._use_session(session) as s:
+            mapped = self._map_prep_material(data)
+            if mapped:
+                await s.execute(
+                    update(PrepMaterial).where(PrepMaterial.id == material_id).values(**mapped)
+                )
+
+        async with self._use_session(None) as s:
+            result = await s.execute(select(PrepMaterial).where(PrepMaterial.id == material_id))
+            return result.scalar_one_or_none()
+
+    async def delete_prep_material(
+        self, material_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
+            await s.execute(delete(PrepMaterial).where(PrepMaterial.id == material_id))
 
     # -----------------------------------------------------------------------
     # Quiz Sessions, Questions & Answers
