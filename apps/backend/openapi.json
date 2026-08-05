@@ -4662,6 +4662,392 @@
         "title": "PrepUpdateRequest",
         "type": "object"
       },
+      "PreparationProgressSummary": {
+        "description": "A preparation with its derived progress.\n\n`progressPercent` is `topicsStrong / topicsTotal` and is the same number the\nLearn dashboard shows for this preparation. `averageMasteryPercent` is the\nmean topic mastery: a better readiness signal, but not a progress ratio, so\nit must not be rendered next to the unit counts as though it were one.",
+        "properties": {
+          "accuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracypercent"
+          },
+          "averageMasteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averagemasterypercent"
+          },
+          "daysUntilExam": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daysuntilexam"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "examDate": {
+            "format": "date-time",
+            "title": "Examdate",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "practiceReady": {
+            "title": "Practiceready",
+            "type": "boolean"
+          },
+          "progressPercent": {
+            "title": "Progresspercent",
+            "type": "number"
+          },
+          "questionsAnswered": {
+            "title": "Questionsanswered",
+            "type": "integer"
+          },
+          "quizzesTaken": {
+            "title": "Quizzestaken",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "topicsAssessed": {
+            "title": "Topicsassessed",
+            "type": "integer"
+          },
+          "topicsFocus": {
+            "title": "Topicsfocus",
+            "type": "integer"
+          },
+          "topicsStrong": {
+            "title": "Topicsstrong",
+            "type": "integer"
+          },
+          "topicsTotal": {
+            "title": "Topicstotal",
+            "type": "integer"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "EXAM",
+                  "CERTIFICATION",
+                  "INTERVIEW",
+                  "PRESENTATION",
+                  "ASSIGNMENT",
+                  "PROJECT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "id",
+          "subject",
+          "description",
+          "status",
+          "examDate",
+          "daysUntilExam",
+          "progressPercent",
+          "averageMasteryPercent",
+          "topicsTotal",
+          "topicsStrong",
+          "topicsFocus",
+          "topicsAssessed",
+          "questionsAnswered",
+          "accuracyPercent",
+          "quizzesTaken",
+          "practiceReady"
+        ],
+        "title": "PreparationProgressSummary",
+        "type": "object"
+      },
+      "PrepareDashboardMeta": {
+        "properties": {
+          "degradedSections": {
+            "items": {
+              "enum": [
+                "summary",
+                "preparations",
+                "focusTopics",
+                "recentSessions"
+              ],
+              "type": "string"
+            },
+            "title": "Degradedsections",
+            "type": "array"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "degradedSections"
+        ],
+        "title": "PrepareDashboardMeta",
+        "type": "object"
+      },
+      "PrepareDashboardResponse": {
+        "properties": {
+          "focusTopics": {
+            "items": {
+              "$ref": "#/components/schemas/PrepareFocusTopic"
+            },
+            "title": "Focustopics",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PrepareDashboardMeta"
+          },
+          "preparations": {
+            "items": {
+              "$ref": "#/components/schemas/PreparationProgressSummary"
+            },
+            "title": "Preparations",
+            "type": "array"
+          },
+          "preparationsTotal": {
+            "title": "Preparationstotal",
+            "type": "integer"
+          },
+          "recentSessions": {
+            "items": {
+              "$ref": "#/components/schemas/PrepareSessionSummary"
+            },
+            "title": "Recentsessions",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/PrepareSummaryStats"
+          }
+        },
+        "required": [
+          "meta",
+          "summary",
+          "preparations",
+          "preparationsTotal",
+          "focusTopics",
+          "recentSessions"
+        ],
+        "title": "PrepareDashboardResponse",
+        "type": "object"
+      },
+      "PrepareFocusTopic": {
+        "description": "A topic worth practising next, weakest first.",
+        "properties": {
+          "band": {
+            "enum": [
+              "focus",
+              "review",
+              "strong"
+            ],
+            "title": "Band",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "masteryPercent": {
+            "title": "Masterypercent",
+            "type": "number"
+          },
+          "orderIndex": {
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "preparationId": {
+            "title": "Preparationid",
+            "type": "string"
+          },
+          "preparationSubject": {
+            "title": "Preparationsubject",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "preparationId",
+          "preparationSubject",
+          "title",
+          "masteryPercent",
+          "band",
+          "orderIndex"
+        ],
+        "title": "PrepareFocusTopic",
+        "type": "object"
+      },
+      "PrepareSessionSummary": {
+        "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "correctCount": {
+            "title": "Correctcount",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "durationSeconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationseconds"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "preparationId": {
+            "title": "Preparationid",
+            "type": "string"
+          },
+          "preparationSubject": {
+            "title": "Preparationsubject",
+            "type": "string"
+          },
+          "scorePercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scorepercent"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "totalQuestions": {
+            "title": "Totalquestions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "preparationId",
+          "preparationSubject",
+          "mode",
+          "status",
+          "totalQuestions",
+          "correctCount",
+          "scorePercent",
+          "durationSeconds",
+          "completedAt",
+          "createdAt"
+        ],
+        "title": "PrepareSessionSummary",
+        "type": "object"
+      },
+      "PrepareSummaryStats": {
+        "description": "Totals across the learner's active preparations.",
+        "properties": {
+          "accuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracypercent"
+          },
+          "activePreparations": {
+            "title": "Activepreparations",
+            "type": "integer"
+          },
+          "practiceMinutes": {
+            "title": "Practiceminutes",
+            "type": "integer"
+          },
+          "questionsAnswered": {
+            "title": "Questionsanswered",
+            "type": "integer"
+          },
+          "quizzesTaken": {
+            "title": "Quizzestaken",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "activePreparations",
+          "questionsAnswered",
+          "accuracyPercent",
+          "practiceMinutes",
+          "quizzesTaken"
+        ],
+        "title": "PrepareSummaryStats",
+        "type": "object"
+      },
       "ProgressSummaryResponse": {
         "properties": {
           "activeDaysThisWeek": {
@@ -12895,6 +13281,82 @@
           }
         ],
         "summary": "Update Topic",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/prepare/dashboard": {
+      "get": {
+        "description": "Compose the authenticated learner's bounded Prepare dashboard.\n\nDeliberately mounted under `/prepare/` rather than `/preparations/dashboard`,\nwhich would be ambiguous with `/preparations/{prep_id}` and would depend on\nroute declaration order.",
+        "operationId": "get_prepare_dashboard_api_v1_learning_prepare_dashboard_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "preparationLimit",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 12,
+              "minimum": 1,
+              "title": "Preparationlimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topicLimit",
+            "required": false,
+            "schema": {
+              "default": 8,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Topiclimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sessionLimit",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Sessionlimit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepareDashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Prepare Dashboard",
         "tags": [
           "personal-learning",
           "personal-learning"

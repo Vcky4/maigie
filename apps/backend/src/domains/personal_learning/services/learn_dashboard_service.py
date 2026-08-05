@@ -14,7 +14,7 @@ from src.shared.exceptions import MaigieError
 
 from .. import models
 from ..repository import personal_learning_repo
-from . import document_impl, flashcard_service, note_service
+from . import document_impl, flashcard_service, note_service, prep_readiness
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,16 @@ async def _load_paths(user_id: str, limit: int) -> tuple[list[models.LearnPathSu
                 progress_percent=_percent(completed, total),
             )
         )
+    # Preparation progress comes from the shared mastery ladder, so this card and
+    # the Prepare surface cannot report different numbers for the same
+    # preparation. `progress_percent` is deliberately strong/total rather than
+    # mean mastery, because the client renders it directly above an
+    # "x / y complete" line and any other ratio would contradict it.
+    progress_by_prep = await prep_readiness.load_for_preparations(
+        [preparation.id for preparation in preparations]
+    )
     for preparation in preparations:
+        progress = progress_by_prep.get(preparation.id)
         paths.append(
             models.LearnPathSummary(
                 entity_type="preparation",
@@ -130,9 +139,9 @@ async def _load_paths(user_id: str, limit: int) -> tuple[list[models.LearnPathSu
                 description=preparation.description,
                 status=preparation.status,
                 deadline=preparation.exam_date,
-                completed_units=0,
-                total_units=0,
-                progress_percent=0,
+                completed_units=progress.topics_strong if progress else 0,
+                total_units=progress.topics_total if progress else 0,
+                progress_percent=progress.progress_percent if progress else 0,
             )
         )
     paths.sort(

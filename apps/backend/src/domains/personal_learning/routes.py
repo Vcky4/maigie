@@ -24,6 +24,7 @@ from .services import (
     note_service,
     notification_service,
     onboarding_service,
+    prepare_dashboard_service,
     quiz_engine,
     reflection_service,
     resource_service,
@@ -254,6 +255,27 @@ async def import_note(note_id: str, body: models.NoteImportRequest, current_user
 # ===========================================================================
 # Preparations
 # ===========================================================================
+
+
+@router.get("/prepare/dashboard", response_model=models.PrepareDashboardResponse)
+async def get_prepare_dashboard(
+    current_user: CurrentUser,
+    preparationLimit: int = Query(6, ge=1, le=12),
+    topicLimit: int = Query(8, ge=1, le=20),
+    sessionLimit: int = Query(6, ge=1, le=20),
+):
+    """Compose the authenticated learner's bounded Prepare dashboard.
+
+    Deliberately mounted under `/prepare/` rather than `/preparations/dashboard`,
+    which would be ambiguous with `/preparations/{prep_id}` and would depend on
+    route declaration order.
+    """
+    return await prepare_dashboard_service.get_dashboard(
+        user_id=current_user.id,
+        preparation_limit=preparationLimit,
+        topic_limit=topicLimit,
+        session_limit=sessionLimit,
+    )
 
 
 @router.post("/preparations", response_model=models.PrepSummaryResponse, status_code=201)

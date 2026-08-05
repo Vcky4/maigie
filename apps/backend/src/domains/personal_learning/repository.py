@@ -1217,6 +1217,148 @@ class PersonalLearningRepository:
             )
             await s.execute(stmt)
 
+    async def get_prep_progress_aggregates(
+        self,
+        prep_ids: list[str],
+        *,
+        strong_threshold: float,
+        focus_threshold: float,
+        session: AsyncSession | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Per-preparation topic and practice aggregates.
+
+        Four grouped queries regardless of how many preparations are passed, so
+        adding preparations does not add queries. Returns a mapping keyed by
+        preparation id; preparations with no rows are simply absent, and callers
+        substitute zeroes.
+
+        Thresholds are parameters rather than constants so the mastery ladder
+        stays owned by `services.prep_readiness` without this module importing
+        it, which would be a cycle.
+        """
+        if not prep_ids:
+            return {}
+
+        ready = strong_threshold
+        focus = focus_threshold
+        aggregates: dict[str, dict[str, Any]] = {}
+
+        def bucket(prep_id: str) -> dict[str, Any]:
+            return aggregates.setdefault(
+                prep_id,
+                {
+                    "topics_total": 0,
+                    "mastery_sum": 0.0,
+                    "topics_strong": 0,
+                    "topics_focus": 0,
+                    "topics_assessed": 0,
+                    "answers_total": 0,
+                    "answers_correct": 0,
+                    "quizzes_total": 0,
+                    "quizzes_completed": 0,
+                    "practice_seconds": 0,
+                },
+            )
+
+        async with self._use_session(session) as s:
+            topic_rows = await s.execute(
+                select(
+                    PrepTopic.prep_id,
+                    func.count(PrepTopic.id),
+                    func.coalesce(func.sum(PrepTopic.mastery_score), 0.0),
+                    func.count(PrepTopic.id).filter(PrepTopic.mastery_score >= ready),
+                    func.count(PrepTopic.id).filter(PrepTopic.mastery_score < focus),
+                )
+                .where(PrepTopic.prep_id.in_(prep_ids))
+                .group_by(PrepTopic.prep_id)
+            )
+            for prep_id, total, mastery_sum, strong, focus_count in topic_rows.all():
+                entry = bucket(prep_id)
+                entry["topics_total"] = total or 0
+                entry["mastery_sum"] = float(mastery_sum or 0.0)
+                entry["topics_strong"] = strong or 0
+                entry["topics_focus"] = focus_count or 0
+
+            answer_rows = await s.execute(
+                select(
+                    QuizSession.prep_id,
+                    func.count(QuizAnswer.id),
+                    func.count(QuizAnswer.id).filter(QuizAnswer.is_correct.is_(True)),
+                )
+                .join(QuizAnswer, QuizAnswer.quiz_session_id == QuizSession.id)
+                .where(QuizSession.prep_id.in_(prep_ids))
+                .group_by(QuizSession.prep_id)
+            )
+            for prep_id, answered, correct in answer_rows.all():
+                entry = bucket(prep_id)
+                entry["answers_total"] = answered or 0
+                entry["answers_correct"] = correct or 0
+
+            session_rows = await s.execute(
+                select(
+                    QuizSession.prep_id,
+                    func.count(QuizSession.id),
+                    func.count(QuizSession.id).filter(QuizSession.status == "COMPLETED"),
+                    func.coalesce(func.sum(QuizSession.duration_seconds), 0),
+                )
+                .where(QuizSession.prep_id.in_(prep_ids))
+                .group_by(QuizSession.prep_id)
+            )
+            for prep_id, quizzes, completed, seconds in session_rows.all():
+                entry = bucket(prep_id)
+                entry["quizzes_total"] = quizzes or 0
+                entry["quizzes_completed"] = completed or 0
+                entry["practice_seconds"] = int(seconds or 0)
+
+            # A topic counts as assessed once it has an answered question, which
+            # is stricter than reading `status`: a topic answered entirely wrong
+            # keeps mastery 0 and would otherwise look untouched.
+            assessed_rows = await s.execute(
+                select(
+                    QuizSession.prep_id,
+                    func.count(func.distinct(QuizQuestion.prep_topic_id)),
+                )
+                .join(QuizQuestion, QuizQuestion.quiz_session_id == QuizSession.id)
+                .join(QuizAnswer, QuizAnswer.question_id == QuizQuestion.id)
+                .where(
+                    QuizSession.prep_id.in_(prep_ids),
+                    QuizQuestion.prep_topic_id.is_not(None),
+                )
+                .group_by(QuizSession.prep_id)
+            )
+            for prep_id, assessed in assessed_rows.all():
+                bucket(prep_id)["topics_assessed"] = assessed or 0
+
+        return aggregates
+
+    async def list_weakest_prep_topics(
+        self, prep_ids: list[str], *, take: int = 8, session: AsyncSession | None = None
+    ) -> list[PrepTopic]:
+        """Weakest topics across the given preparations, lowest mastery first."""
+        if not prep_ids:
+            return []
+        async with self._use_session(session) as s:
+            stmt = (
+                select(PrepTopic)
+                .where(PrepTopic.prep_id.in_(prep_ids))
+                .order_by(PrepTopic.mastery_score.asc(), PrepTopic.order_index.asc())
+                .limit(take)
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def list_recent_quiz_sessions(
+        self, user_id: str, *, take: int = 6, session: AsyncSession | None = None
+    ) -> list[QuizSession]:
+        """The learner's most recent quiz sessions across all preparations."""
+        async with self._use_session(session) as s:
+            stmt = (
+                select(QuizSession)
+                .where(QuizSession.user_id == user_id)
+                .order_by(QuizSession.created_at.desc())
+                .limit(take)
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
     async def find_prep_topic(
         self, topic_id: str, prep_id: str, *, session: AsyncSession | None = None
     ) -> PrepTopic | None:

@@ -543,6 +543,103 @@ class PrepTopicUpdateRequest(CamelModel):
     status: str | None = None
 
 
+MasteryBand = Literal["focus", "review", "strong"]
+
+PrepareDashboardSection = Literal[
+    "summary",
+    "preparations",
+    "focusTopics",
+    "recentSessions",
+]
+
+
+class PrepareDashboardMeta(CamelModel):
+    generated_at: datetime
+    degraded_sections: list[PrepareDashboardSection]
+
+
+class PrepareSummaryStats(CamelModel):
+    """Totals across the learner's active preparations."""
+
+    active_preparations: int
+    questions_answered: int
+    # None until at least one question has been answered.
+    accuracy_percent: float | None
+    # Derived from recorded session durations, which are nullable, so this is
+    # tracked practice time rather than total time spent.
+    practice_minutes: int
+    quizzes_taken: int
+
+
+class PreparationProgressSummary(CamelModel):
+    """A preparation with its derived progress.
+
+    `progressPercent` is `topicsStrong / topicsTotal` and is the same number the
+    Learn dashboard shows for this preparation. `averageMasteryPercent` is the
+    mean topic mastery: a better readiness signal, but not a progress ratio, so
+    it must not be rendered next to the unit counts as though it were one.
+    """
+
+    id: str
+    subject: str
+    description: str | None
+    status: str
+    prep_type: PreparationType | None = Field(
+        default=None, validation_alias="prep_type", serialization_alias="type"
+    )
+    exam_date: datetime
+    # None once the target date has passed.
+    days_until_exam: int | None
+    progress_percent: float
+    average_mastery_percent: float | None
+    topics_total: int
+    topics_strong: int
+    topics_focus: int
+    # How many topics have actually been practised, so a surface can qualify the
+    # numbers above instead of implying an unpractised preparation is hopeless.
+    topics_assessed: int
+    questions_answered: int
+    accuracy_percent: float | None
+    quizzes_taken: int
+    # False until topics exist; practice cannot start before then.
+    practice_ready: bool
+
+
+class PrepareFocusTopic(CamelModel):
+    """A topic worth practising next, weakest first."""
+
+    id: str
+    preparation_id: str
+    preparation_subject: str
+    title: str
+    mastery_percent: float
+    band: MasteryBand
+    order_index: int
+
+
+class PrepareSessionSummary(CamelModel):
+    id: str
+    preparation_id: str
+    preparation_subject: str
+    mode: str
+    status: str
+    total_questions: int
+    correct_count: int
+    score_percent: float | None
+    duration_seconds: int | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class PrepareDashboardResponse(CamelModel):
+    meta: PrepareDashboardMeta
+    summary: PrepareSummaryStats
+    preparations: list[PreparationProgressSummary]
+    preparations_total: int
+    focus_topics: list[PrepareFocusTopic]
+    recent_sessions: list[PrepareSessionSummary]
+
+
 class PrepCreateRequest(CamelModel):
     subject: str = Field(min_length=1, max_length=200)
     prep_type: PreparationType = Field(
