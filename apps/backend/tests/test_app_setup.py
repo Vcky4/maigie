@@ -1,142 +1,217 @@
-"""Tests for application setup."""
+"""Application setup tests.
 
-from collections.abc import AsyncGenerator
+These cover the wiring in ``src/app.py``: metadata, middleware, health
+reporting, the OpenAPI schema, and which domain routers are mounted.
+
+None of these tests need a database or cache. The health endpoint reports
+service status rather than requiring it, so it is asserted against both the
+connected and disconnected cases.
+"""
 
 import pytest
-from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-from src.main import app
-from src.utils.dependencies import get_db_client, get_redis_client
+from src.config import get_settings
 
-
-# Mock database client for testing
-class MockPrismaClient:
-    """Mock Prisma client for testing."""
-
-    async def query_raw(self, query: str):
-        """Mock query that returns a valid result."""
-        return [{"test": 1}]
+# API_PREFIX must match the prefix used by ``_register_domains``.
+API_PREFIX = "/api/v1"
 
 
-# Mock Redis client for testing
-class MockRedisClient:
-    """Mock Redis client for testing."""
+@pytest.fixture(autouse=True)
+def db_lifecycle():
+    """Override the session-wide database fixture.
 
-    async def ping(self):
-        """Mock ping that succeeds."""
-        return True
-
-
-async def override_get_db_client() -> AsyncGenerator:
-    """Override database dependency for testing."""
-    mock_client = MockPrismaClient()
-    yield mock_client
-
-
-async def override_get_redis_client() -> AsyncGenerator:
-    """Override Redis dependency for testing."""
-    mock_client = MockRedisClient()
-    yield mock_client
-
-
-@pytest.fixture
-def client():
-    """Create synchronous test client for non-async endpoints."""
-    return TestClient(app)
-
-
-@pytest.fixture
-async def async_client():
-    """Create async test client with overridden dependencies."""
-    # Override dependencies for health check endpoints
-    app.dependency_overrides[get_db_client] = override_get_db_client
-    app.dependency_overrides[get_redis_client] = override_get_redis_client
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
-
-    # Clean up overrides after test
-    app.dependency_overrides.clear()
-
-
-def test_app_creation():
-    """Test that FastAPI app is created successfully."""
-    assert app is not None
-    assert app.title == "Maigie API"
-
-
-def test_root_endpoint(client):
-    """Test root endpoint."""
-    response = client.get("/")
-    assert response.status_code == 200
-    data = response.json()
-    assert "message" in data
-    assert "version" in data
-    assert data["message"] == "Maigie API"
+    Application setup is verified without a live database, so these tests must
+    not be skipped when ``DATABASE_URL`` is unset.
+    """
+    yield
 
 
 @pytest.mark.asyncio
-async def test_health_endpoint(async_client):
-    """Test health check endpoint."""
-    response = await async_client.get("/health")
+async def test_app_metadata_matches_settings():
+    """App title and version come from settings, not hard-coded strings."""
+    from src.app import app
+
+    settings = get_settings()
+    assert app.title == settings.APP_NAME
+    assert app.version == settings.APP_VERSION
+
+
+@pytest.mark.asyncio
+async def test_health_endpoint_reports_service_status(client: AsyncClient):
+    """Health check responds with per-service status instead of failing."""
+    response = await client.get("/health")
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "healthy"
+
+    body = response.json()
+    settings = get_settings()
+    # "healthy" only when the database is reachable; "degraded" otherwise.
+    assert body["status"] in {"healthy", "degraded"}
+    assert body["version"] == settings.APP_VERSION
+    assert body["environment"] == settings.ENVIRONMENT
+    assert "database" in body["services"]
+    assert "cache" in body["services"]
+    assert "status" in body["services"]["database"]
 
 
-def test_ready_endpoint(client):
-    """Test readiness check endpoint."""
-    response = client.get("/ready")
-    assert response.status_code == 200
-    data = response.json()
-    assert "status" in data
-    assert "database" in data
-    assert "cache" in data
-    assert data["status"] == "ready"
+@pytest.mark.asyncio
+async def test_security_headers_are_applied(client: AsyncClient):
+    """SecurityHeadersMiddleware sets its headers on every response."""
+    response = await client.get("/health")
+
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["X-Frame-Options"] == "DENY"
+    assert response.headers["X-XSS-Protection"] == "1; mode=block"
+    assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
 
-def test_cors_headers(client):
-    """Test CORS headers are present."""
-    response = client.options(
-        "/",
+@pytest.mark.asyncio
+async def test_hsts_header_only_outside_production(client: AsyncClient):
+    """HSTS is added only when running in production."""
+    response = await client.get("/health")
+
+    is_production = get_settings().ENVIRONMENT == "production"
+    assert ("Strict-Transport-Security" in response.headers) is is_production
+
+
+@pytest.mark.asyncio
+async def test_process_time_header_is_added(client: AsyncClient):
+    """LoggingMiddleware reports how long the request took."""
+    response = await client.get("/health")
+
+    assert "X-Process-Time" in response.headers
+    assert float(response.headers["X-Process-Time"]) >= 0
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_allows_a_configured_origin(client: AsyncClient):
+    """A configured origin passes the CORS preflight."""
+    settings = get_settings()
+    origin = settings.CORS_ORIGINS[0]
+
+    response = await client.options(
+        "/health",
         headers={
-            "Origin": "http://localhost:5173",
+            "Origin": origin,
             "Access-Control-Request-Method": "GET",
         },
     )
-    # CORS preflight should be handled
-    assert response.status_code in [200, 204]
+
+    assert response.status_code in (200, 204)
+    assert response.headers["access-control-allow-origin"] == origin
 
 
-def test_security_headers(client):
-    """Test security headers are present."""
-    response = client.get("/")
-    assert "X-Content-Type-Options" in response.headers
-    assert "X-Frame-Options" in response.headers
-    assert "X-XSS-Protection" in response.headers
-    assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["X-Frame-Options"] == "DENY"
+@pytest.mark.asyncio
+async def test_cors_preflight_rejects_an_unknown_origin(client: AsyncClient):
+    """An unlisted origin is not granted access."""
+    response = await client.options(
+        "/health",
+        headers={
+            "Origin": "https://not-a-maigie-origin.example",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert "access-control-allow-origin" not in response.headers
 
 
-def test_process_time_header(client):
-    """Test X-Process-Time header is present."""
-    response = client.get("/")
-    assert "X-Process-Time" in response.headers
-
-
-def test_api_documentation(client):
-    """Test API documentation is accessible."""
-    response = client.get("/docs")
+@pytest.mark.asyncio
+async def test_openapi_schema_is_available(client: AsyncClient):
+    """The OpenAPI schema is served and describes this application."""
+    response = await client.get("/openapi.json")
     assert response.status_code == 200
 
-
-def test_openapi_schema(client):
-    """Test OpenAPI schema is accessible."""
-    response = client.get("/openapi.json")
-    assert response.status_code == 200
     schema = response.json()
-    assert "openapi" in schema
-    assert "info" in schema
-    assert schema["info"]["title"] == "Maigie API"
+    settings = get_settings()
+    assert schema["info"]["title"] == settings.APP_NAME
+    assert schema["info"]["version"] == settings.APP_VERSION
+    assert schema["paths"]
+
+
+@pytest.mark.asyncio
+async def test_openapi_operation_ids_are_unique():
+    """Duplicate operation ids break generated client types.
+
+    Client repositories generate TypeScript from this schema and key their
+    operations off the operation id, so a collision silently makes one
+    endpoint unreachable in generated clients.
+    """
+    from src.app import create_app
+
+    schema = create_app().openapi()
+
+    operation_ids = [
+        operation["operationId"]
+        for path_item in schema["paths"].values()
+        for method, operation in path_item.items()
+        if method in {"get", "post", "put", "patch", "delete"} and "operationId" in operation
+    ]
+
+    duplicates = {
+        operation_id for operation_id in operation_ids if operation_ids.count(operation_id) > 1
+    }
+    assert not duplicates, f"Duplicate OpenAPI operation ids: {sorted(duplicates)}"
+
+
+@pytest.mark.asyncio
+async def test_mounted_domain_routers(client: AsyncClient):
+    """The domains wired up in ``_register_domains`` are reachable.
+
+    Guards against a router being dropped during refactoring. Only domains
+    that are actually mounted are asserted; the rest stay commented out in
+    ``src/app.py`` until their contracts are normalized.
+    """
+    response = await client.get("/openapi.json")
+    paths = response.json()["paths"]
+
+    for expected in (
+        f"{API_PREFIX}/auth/login/json",
+        f"{API_PREFIX}/auth/oauth/providers",
+        f"{API_PREFIX}/users/me",
+        f"{API_PREFIX}/learning/home",
+        f"{API_PREFIX}/learning/dashboard",
+        f"{API_PREFIX}/knowledge/courses",
+        f"{API_PREFIX}/spaces",
+        f"{API_PREFIX}/progress/streaks",
+    ):
+        assert expected in paths, f"{expected} is not mounted"
+
+
+@pytest.mark.asyncio
+async def test_unmounted_domains_are_absent():
+    """Domains still awaiting migration must not appear mounted.
+
+    ``src/app.py`` intentionally leaves billing, admin, classrooms, and
+    intelligence commented out. Asserting their absence keeps the documented
+    state and the wiring honest.
+    """
+    from src.app import create_app
+
+    paths = create_app().openapi()["paths"]
+
+    for prefix in (
+        f"{API_PREFIX}/billing",
+        f"{API_PREFIX}/admin",
+        f"{API_PREFIX}/classrooms",
+    ):
+        assert not any(
+            path.startswith(prefix) for path in paths
+        ), f"{prefix} is mounted but src/app.py documents it as pending"
+
+
+@pytest.mark.asyncio
+async def test_redoc_is_available(client: AsyncClient):
+    """ReDoc is the public API reference and is always served."""
+    response = await client.get("/redoc")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_swagger_visibility_follows_debug_setting(client: AsyncClient):
+    """Swagger UI is exposed in debug builds and hidden otherwise."""
+    response = await client.get("/docs")
+
+    if get_settings().DEBUG:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 404

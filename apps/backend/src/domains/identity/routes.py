@@ -157,11 +157,11 @@ async def link_referral(data: LinkReferralRequest, current_user: CurrentUser):
 
 # --- OAuth ---
 
-
-@auth_router.get("/oauth/providers")
-async def get_oauth_providers():
-    """List available OAuth providers."""
-    return {"providers": ["google"]}
+# `GET /oauth/providers` lives in `oauth_routes.py` with the rest of the OAuth
+# surface. A duplicate handler here registered the same path twice under the
+# same `/auth` prefix, which produced a duplicate OpenAPI operation id and made
+# generated client operation names ambiguous. The duplicate was unreachable at
+# runtime, so removing it does not change behaviour.
 
 
 # NOTE: OAuth authorize + callback endpoints require request context and

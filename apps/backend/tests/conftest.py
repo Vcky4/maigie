@@ -25,7 +25,6 @@ _LEGACY_IMPORT_MARKERS = (
     "src.services.",
     "src.routes.",
     "src.core.database",
-    "src.utils.dependencies",
     "src.schemas.subscription",
 )
 
