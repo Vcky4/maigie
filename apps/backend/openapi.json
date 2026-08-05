@@ -10090,7 +10090,7 @@
     },
     "/api/v1/learning/documents/jobs/{task_id}": {
       "get": {
-        "description": "Poll the status of a queued document generation job.\n\nResponse shape:\n  - ``{\"taskId\": ..., \"status\": \"queued|running|success|failed\", \"result\": {...} | null}``",
+        "description": "Poll the status of a queued document generation job.\n\nOnly the learner who queued the job can read it. Unknown, expired, and\nother learners' jobs are all reported as ``404`` so this endpoint cannot be\nused to discover that another learner's job exists.\n\nResponse shape:\n  - ``{\"taskId\": ..., \"status\": \"queued|running|success|failed\", \"result\": {...} | null}``",
         "operationId": "get_document_job_api_v1_learning_documents_jobs__task_id__get",
         "parameters": [
           {

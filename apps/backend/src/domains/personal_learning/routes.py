@@ -580,6 +580,16 @@ async def generate_document(body: models.DocumentGenerateRequest, current_user: 
     )
 
 
+# Document job ownership is recorded out-of-band because a Celery task id alone
+# proves nothing about who queued it. The TTL is far longer than the task's
+# 180-second time limit, so an in-flight job is always still attributable.
+_DOCUMENT_JOB_OWNER_TTL_SECONDS = 86_400
+
+
+def _document_job_owner_key(task_id: str) -> str:
+    return f"personal_learning:document_job_owner:{task_id}"
+
+
 @router.post("/documents/async", status_code=202)
 async def generate_document_async(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """
@@ -588,10 +598,33 @@ async def generate_document_async(body: models.DocumentGenerateRequest, current_
     Use ``GET /documents/jobs/{task_id}`` to poll for status. When the job
     completes, the ``result`` field contains the full document record.
     """
+    import uuid
+
+    from src.shared.infrastructure import cache
     from src.workers.personal_learning_tasks import generate_document_task
 
     payload = body.model_dump()
-    async_result = generate_document_task.apply_async(
+    task_id = uuid.uuid4().hex
+
+    # Record ownership before queueing. If this fails the job is never queued,
+    # because a job whose owner cannot be verified could never be polled.
+    owner_recorded = await cache.set(
+        _document_job_owner_key(task_id),
+        current_user.id,
+        expire=_DOCUMENT_JOB_OWNER_TTL_SECONDS,
+    )
+    if not owner_recorded:
+        logger.error(
+            "Refusing to queue document job: owner could not be recorded",
+            extra={"user_id": current_user.id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document generation is temporarily unavailable",
+        )
+
+    generate_document_task.apply_async(
+        task_id=task_id,
         kwargs={
             "user_id": current_user.id,
             "doc_type": payload["type"],
@@ -601,9 +634,9 @@ async def generate_document_async(body: models.DocumentGenerateRequest, current_
             "style": payload.get("style", "academic"),
             "course_id": payload.get("courseId"),
             "topic_id": payload.get("topicId"),
-        }
+        },
     )
-    return {"taskId": async_result.id, "status": "queued"}
+    return {"taskId": task_id, "status": "queued"}
 
 
 @router.get("/documents/jobs/{task_id}")
@@ -611,12 +644,21 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
     """
     Poll the status of a queued document generation job.
 
+    Only the learner who queued the job can read it. Unknown, expired, and
+    other learners' jobs are all reported as ``404`` so this endpoint cannot be
+    used to discover that another learner's job exists.
+
     Response shape:
       - ``{"taskId": ..., "status": "queued|running|success|failed", "result": {...} | null}``
     """
     from celery.result import AsyncResult
 
+    from src.shared.infrastructure import cache
     from src.workers.celery_app import celery_app
+
+    owner_id = await cache.get(_document_job_owner_key(task_id))
+    if owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Document job not found")
 
     result = AsyncResult(task_id, app=celery_app)
     state = (result.state or "PENDING").lower()
@@ -633,7 +675,15 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
 
     body: dict = {"taskId": task_id, "status": friendly, "result": None}
     if result.successful():
-        body["result"] = result.result
+        payload = result.result
+        # Defence in depth: never hand back a document owned by someone else.
+        if isinstance(payload, dict) and payload.get("user_id") not in (None, current_user.id):
+            logger.error(
+                "Document job result owner mismatch",
+                extra={"user_id": current_user.id, "task_id": task_id},
+            )
+            raise HTTPException(status_code=404, detail="Document job not found")
+        body["result"] = payload
     elif result.failed():
         body["error"] = str(result.result) if result.result else "Unknown error"
     return body
