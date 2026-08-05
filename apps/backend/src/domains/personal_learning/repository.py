@@ -14,7 +14,7 @@ Session management:
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select, update, delete, func
@@ -101,6 +101,83 @@ class PersonalLearningRepository:
                 except Exception:
                     await new_session.rollback()
                     raise
+
+    # -----------------------------------------------------------------------
+    # Learn dashboard (bounded read helpers)
+    # -----------------------------------------------------------------------
+
+    async def count_overdue_flashcards(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> int:
+        """Count cards due before the start of the current UTC day."""
+        async with self._use_session(session) as s:
+            now = datetime.now(UTC)
+            start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            stmt = (
+                select(func.count())
+                .select_from(Flashcard)
+                .where(
+                    Flashcard.user_id == user_id,
+                    Flashcard.next_review_at < start_of_today,
+                )
+            )
+            return (await s.execute(stmt)).scalar_one() or 0
+
+    async def list_recent_resources(
+        self,
+        user_id: str,
+        *,
+        take: int,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[SavedResource], int]:
+        """Return a bounded saved-resource page ordered by last use, then creation."""
+        async with self._use_session(session) as s:
+            condition = SavedResource.user_id == user_id
+            total_stmt = select(func.count()).select_from(SavedResource).where(condition)
+            total = (await s.execute(total_stmt)).scalar_one() or 0
+            occurred_at = func.coalesce(
+                SavedResource.last_accessed_at,
+                SavedResource.created_at,
+            )
+            stmt = select(SavedResource).where(condition).order_by(occurred_at.desc()).limit(take)
+            resources = list((await s.execute(stmt)).scalars().all())
+            return resources, total
+
+    async def list_dashboard_study_plans(
+        self,
+        user_id: str,
+        *,
+        take: int,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[StudyPlan], int]:
+        """Return bounded active plans and their full active count."""
+        async with self._use_session(session) as s:
+            condition = (StudyPlan.user_id == user_id) & (StudyPlan.status == "ACTIVE")
+            total_stmt = select(func.count()).select_from(StudyPlan).where(condition)
+            total = (await s.execute(total_stmt)).scalar_one() or 0
+            stmt = select(StudyPlan).where(condition).order_by(StudyPlan.deadline.asc()).limit(take)
+            plans = list((await s.execute(stmt)).scalars().all())
+            return plans, total
+
+    async def list_dashboard_exam_preps(
+        self,
+        user_id: str,
+        *,
+        take: int,
+        session: AsyncSession | None = None,
+    ) -> list[ExamPrep]:
+        """Return bounded unfinished preparations ordered by target date."""
+        async with self._use_session(session) as s:
+            stmt = (
+                select(ExamPrep)
+                .where(
+                    ExamPrep.user_id == user_id,
+                    ExamPrep.status != "COMPLETED",
+                )
+                .order_by(ExamPrep.exam_date.asc())
+                .limit(take)
+            )
+            return list((await s.execute(stmt)).scalars().all())
 
     # -----------------------------------------------------------------------
     # Notes

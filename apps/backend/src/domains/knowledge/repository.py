@@ -24,6 +24,29 @@ class KnowledgeRepository:
     async def _session(self) -> AsyncSession:
         return get_session_factory()()
 
+    async def get_course_dashboard_stats(self, user_id: str) -> tuple[int, int]:
+        """Return unarchived course and completed-topic counts for one user."""
+        async with await self._session() as session:
+            course_count_stmt = (
+                select(func.count())
+                .select_from(Course)
+                .where(Course.user_id == user_id, Course.archived.is_(False))
+            )
+            completed_topics_stmt = (
+                select(func.count())
+                .select_from(Topic)
+                .join(Module, Topic.module_id == Module.id)
+                .join(Course, Module.course_id == Course.id)
+                .where(
+                    Course.user_id == user_id,
+                    Course.archived.is_(False),
+                    Topic.completed.is_(True),
+                )
+            )
+            active_courses = (await session.execute(course_count_stmt)).scalar_one() or 0
+            completed_topics = (await session.execute(completed_topics_stmt)).scalar_one() or 0
+            return active_courses, completed_topics
+
     # -----------------------------------------------------------------------
     # Courses
     # -----------------------------------------------------------------------

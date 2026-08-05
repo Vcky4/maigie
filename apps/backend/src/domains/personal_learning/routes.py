@@ -46,6 +46,24 @@ async def get_home(current_user: CurrentUser):
     return await home_service.get_home(user_id=current_user.id)
 
 
+@router.get("/dashboard", response_model=models.LearnDashboardResponse)
+async def get_learn_dashboard(
+    current_user: CurrentUser,
+    courseLimit: int = Query(4, ge=1, le=8),
+    pathLimit: int = Query(3, ge=1, le=5),
+    recentLimit: int = Query(6, ge=1, le=10),
+):
+    """Compose the authenticated learner's bounded Learn dashboard."""
+    from .services import learn_dashboard_service
+
+    return await learn_dashboard_service.get_dashboard(
+        user_id=current_user.id,
+        course_limit=courseLimit,
+        path_limit=pathLimit,
+        recent_limit=recentLimit,
+    )
+
+
 # ===========================================================================
 # Onboarding & Profile
 # ===========================================================================

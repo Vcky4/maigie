@@ -712,3 +712,139 @@ class BehaviourProfileResponse(BaseModel):
     consistencyScore: float | None = None
     bestDayOfWeek: str | None = None
     dropoutRiskFactors: list[str] | None = None
+
+
+# ===========================================================================
+# Learn Dashboard
+# ===========================================================================
+
+
+LearnDashboardSection = Literal[
+    "featured",
+    "review",
+    "stats",
+    "courses",
+    "paths",
+    "tools",
+    "recentItems",
+    "collections",
+]
+LearnEntityType = Literal[
+    "course",
+    "topic",
+    "note",
+    "saved_resource",
+    "document",
+    "study_plan",
+    "preparation",
+]
+
+
+class LearnDashboardMeta(CamelModel):
+    generated_at: datetime
+    degraded_sections: list[LearnDashboardSection] = Field(default_factory=list)
+
+
+class LearnFeaturedItem(CamelModel):
+    entity_type: Literal["course", "topic"]
+    entity_id: str
+    course_id: str
+    topic_id: str | None = None
+    title: str
+    description: str | None = None
+    course_title: str
+    estimated_minutes: int | None = None
+    progress_percent: float
+    completed_units: int
+    total_units: int
+
+
+class LearnReviewSummary(CamelModel):
+    due_cards: int
+    overdue_cards: int
+    estimated_minutes: int
+    mastery_percent: float | None = None
+
+
+class LearnDashboardStats(CamelModel):
+    active_courses: int
+    completed_topics: int
+    saved_resources: int
+    personal_notes: int
+    generated_documents: int
+
+
+class LearnNextTopic(CamelModel):
+    id: str
+    title: str
+    estimated_minutes: int | None = None
+
+
+class LearnCourseSummary(CamelModel):
+    id: str
+    title: str
+    description: str | None = None
+    difficulty: str | None = None
+    progress_percent: float
+    completed_topics: int
+    total_topics: int
+    module_count: int
+    next_topic: LearnNextTopic | None = None
+    updated_at: datetime
+
+
+class LearnCourseList(CamelModel):
+    items: list[LearnCourseSummary] = Field(default_factory=list)
+    total: int
+
+
+class LearnPathSummary(CamelModel):
+    entity_type: Literal["study_plan", "preparation"]
+    id: str
+    title: str
+    description: str | None = None
+    status: str
+    deadline: datetime | None = None
+    completed_units: int
+    total_units: int
+    progress_percent: float
+
+
+class LearnToolSummary(CamelModel):
+    type: Literal[
+        "course",
+        "note",
+        "flashcard",
+        "saved_resource",
+        "document",
+        "study_plan",
+    ]
+    count: int
+
+
+class LearnRecentItem(CamelModel):
+    entity_type: Literal["note", "saved_resource", "document"]
+    id: str
+    title: str
+    context_label: str | None = None
+    occurred_at: datetime
+
+
+class LearnCollectionSummary(CamelModel):
+    id: str
+    title: str
+    description: str | None = None
+    item_count: int
+    source: Literal["course", "topic", "tag"]
+
+
+class LearnDashboardResponse(CamelModel):
+    meta: LearnDashboardMeta
+    featured: LearnFeaturedItem | None = None
+    review: LearnReviewSummary
+    stats: LearnDashboardStats
+    courses: LearnCourseList
+    paths: list[LearnPathSummary] = Field(default_factory=list)
+    tools: list[LearnToolSummary] = Field(default_factory=list)
+    recent_items: list[LearnRecentItem] = Field(default_factory=list)
+    collections: list[LearnCollectionSummary] = Field(default_factory=list)
