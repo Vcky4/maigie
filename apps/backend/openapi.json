@@ -215,7 +215,13 @@
         "type": "object"
       },
       "AnswerResultResponse": {
+        "description": "Result for the one question just submitted, including its key.\n\nThis is the only place an answer key is disclosed before the session\ncompletes, and only for a question the learner has now answered.",
         "properties": {
+          "alreadyAnswered": {
+            "default": false,
+            "title": "Alreadyanswered",
+            "type": "boolean"
+          },
           "correctAnswer": {
             "title": "Correctanswer",
             "type": "string"
@@ -5168,7 +5174,8 @@
         "title": "QuizCompleteRequest",
         "type": "object"
       },
-      "QuizQuestionResponse": {
+      "QuizQuestionPresentation": {
+        "description": "A question as delivered to the learner.\n\n`correctAnswer` and `explanation` are populated **as soon as this question\nhas been answered**, so the learner gets the explanation while they practise\nand keeps it if they navigate back or resume the session. They are withheld\nfor questions not yet attempted (Decision C). A completed session reveals\nevery question, including any left unanswered.\n\nThat makes both fields nullable on the wire even though `correctAnswer` is a\nNOT NULL column: the nullability describes what has been disclosed so far,\nnot what is stored.",
         "properties": {
           "answeredAt": {
             "anyOf": [
@@ -5183,8 +5190,15 @@
             "title": "Answeredat"
           },
           "correctAnswer": {
-            "title": "Correctanswer",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correctanswer"
           },
           "explanation": {
             "anyOf": [
@@ -5276,14 +5290,13 @@
           "id",
           "questionText",
           "questionType",
-          "orderIndex",
-          "correctAnswer"
+          "orderIndex"
         ],
-        "title": "QuizQuestionResponse",
+        "title": "QuizQuestionPresentation",
         "type": "object"
       },
       "QuizSessionResponse": {
-        "description": "`correctCount` is a NOT NULL column defaulting to 0, so it is always present.",
+        "description": "`correctCount` is a NOT NULL column defaulting to 0, so it is always present.\n\n`correctCount` and `scorePercentage` are derived from persisted answers by\nthe server; a client cannot influence them beyond submitting answers.",
         "properties": {
           "completedAt": {
             "anyOf": [
@@ -5332,7 +5345,7 @@
           "questions": {
             "default": [],
             "items": {
-              "$ref": "#/components/schemas/QuizQuestionResponse"
+              "$ref": "#/components/schemas/QuizQuestionPresentation"
             },
             "title": "Questions",
             "type": "array"
@@ -7657,6 +7670,59 @@
           }
         },
         "title": "TopicUpdate",
+        "type": "object"
+      },
+      "UpgradeRequiredDetail": {
+        "description": "Body of a `403` raised by a tier gate.\n\nPreviously an ad-hoc dict, so the client had nothing to render an upgrade\npath from. Built from `feature_tier_service.CapabilityDenied`.",
+        "properties": {
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "trialAvailable": {
+            "title": "Trialavailable",
+            "type": "boolean"
+          },
+          "upgradeRequired": {
+            "const": true,
+            "title": "Upgraderequired",
+            "type": "boolean"
+          },
+          "upgradeUrl": {
+            "title": "Upgradeurl",
+            "type": "string"
+          },
+          "upgradeValue": {
+            "title": "Upgradevalue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upgradeRequired",
+          "reason",
+          "capability",
+          "upgradeUrl",
+          "trialAvailable",
+          "upgradeValue"
+        ],
+        "title": "UpgradeRequiredDetail",
+        "type": "object"
+      },
+      "UpgradeRequiredResponse": {
+        "description": "`403` envelope. FastAPI nests `HTTPException.detail` under `detail`.",
+        "properties": {
+          "detail": {
+            "$ref": "#/components/schemas/UpgradeRequiredDetail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "UpgradeRequiredResponse",
         "type": "object"
       },
       "UserPreferencesResponse": {
@@ -13011,7 +13077,7 @@
         ]
       },
       "post": {
-        "description": "Start a quiz session.",
+        "description": "Start a quiz session.\n\nQuestions come back without their answer key. `correctAnswer` and\n`explanation` are disclosed per question once the learner has answered it,\neither in the answer response or on a subsequent read of the session.",
         "operationId": "start_quiz_api_v1_learning_preparations__prep_id__quizzes_post",
         "parameters": [
           {
@@ -13044,6 +13110,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeRequiredResponse"
+                }
+              }
+            },
+            "description": "The requested mode requires Maigie Plus. Declared so the client can render an upgrade path from a typed payload."
           },
           "422": {
             "content": {
@@ -13441,7 +13517,7 @@
     },
     "/api/v1/learning/quizzes/{quiz_id}": {
       "get": {
-        "description": "Get quiz results.",
+        "description": "Get a quiz session, for resuming it or reviewing a completed one.\n\n`correctAnswer` and `explanation` are populated for questions the learner has\nalready answered, so resuming a session keeps the explanations they have\nearned without revealing the ones they have not reached. A completed session\nreturns the full key.",
         "operationId": "get_quiz_api_v1_learning_quizzes__quiz_id__get",
         "parameters": [
           {

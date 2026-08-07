@@ -11,9 +11,16 @@ from typing import Any
 
 from src.shared.exceptions import MaigieError, NotFoundError
 
+from .. import models
 from ..repository import personal_learning_repo as repo
 
 logger = logging.getLogger(__name__)
+
+# A multiple-choice question needs at least two options to be a choice at all.
+_MIN_OPTIONS = 2
+
+# A topic at or below this score is reported as a weak area on completion.
+_WEAK_AREA_THRESHOLD = 70
 
 
 async def start_quiz(
@@ -42,17 +49,18 @@ async def start_quiz(
         if not cap_result.allowed:
             from fastapi import HTTPException
 
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "upgradeRequired": True,
-                    "reason": cap_result.reason,
-                    "capability": cap_result.capability,
-                    "upgradeUrl": cap_result.upgrade_url,
-                    "trialAvailable": cap_result.trial_available,
-                    "upgradeValue": cap_result.upgrade_value,
-                },
+            # Built through the published model rather than an inline dict, so
+            # the payload the client renders its upgrade path from cannot drift
+            # from the declared 403 schema.
+            detail = models.UpgradeRequiredDetail(
+                upgrade_required=True,
+                reason=cap_result.reason,
+                capability=cap_result.capability,
+                upgrade_url=cap_result.upgrade_url,
+                trial_available=cap_result.trial_available,
+                upgrade_value=cap_result.upgrade_value,
             )
+            raise HTTPException(status_code=403, detail=detail.model_dump(by_alias=True))
         # Record PLUS feature usage
         await feature_tier_service.get_quality_tier(user_id)  # side-effect: validates tier
         from . import trial_service
@@ -110,12 +118,21 @@ async def start_quiz(
         }
     )
 
-    # Generate questions via LLM
-    topics_text = "\n".join([f"- {t.title}: {t.description or ''}" for t in target_topics])
+    # Generate questions via LLM.
+    #
+    # Topics are numbered and the model is asked for the number rather than the
+    # title. Attribution used to be a lowercased match on an LLM-returned title,
+    # so any paraphrase silently produced `prepTopicId = None`, which broke both
+    # the topic breakdown and the per-topic mastery updates that readiness is
+    # derived from. Numbering also keeps internal topic ids out of the prompt.
+    topics_text = "\n".join(
+        f"{index}. {topic.title}: {topic.description or ''}"
+        for index, topic in enumerate(target_topics, start=1)
+    )
     prompt = (
-        f"Generate {count} quiz questions for these topics:\n{topics_text}\n\n"
+        f"Generate {count} quiz questions for these numbered topics:\n{topics_text}\n\n"
         f"Return a JSON array of question objects with:\n"
-        f"- 'topicTitle': which topic this tests\n"
+        f"- 'topicNumber': the number of the topic this tests, from the list above\n"
         f"- 'questionText': the question\n"
         f"- 'questionType': 'MULTIPLE_CHOICE'\n"
         f"- 'options': array of 4 options (strings)\n"
@@ -132,38 +149,165 @@ async def start_quiz(
         logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
         questions_data = []
 
-    # Create question records
-    topic_map = {t.title.lower(): t.id for t in target_topics}
-    for idx, q in enumerate(questions_data[:count]):
-        if not isinstance(q, dict) or "questionText" not in q:
+    if not isinstance(questions_data, list):
+        logger.warning(
+            "Quiz generation returned a non-list payload",
+            extra={"prep_id": prep_id, "quiz_id": quiz_session.id},
+        )
+        questions_data = []
+
+    # Persist only questions that can actually be scored — see _usable_question.
+    created = 0
+    rejected = 0
+    unattributed = 0
+    for candidate in questions_data:
+        if created >= count:
+            break
+        normalized = _usable_question(candidate)
+        if normalized is None:
+            rejected += 1
             continue
 
-        # Match topic
-        topic_title = q.get("topicTitle", "").lower()
-        matched_topic_id = topic_map.get(topic_title)
+        matched_topic_id = _resolve_topic_id(candidate, target_topics)
+        if matched_topic_id is None:
+            unattributed += 1
 
         await repo.create_quiz_question(
             {
                 "quizSessionId": quiz_session.id,
                 "prepTopicId": matched_topic_id,
-                "questionText": q["questionText"],
-                "questionType": q.get("questionType", "MULTIPLE_CHOICE"),
-                "options": q.get("options"),
-                "correctAnswer": q.get("correctAnswer", ""),
-                "explanation": q.get("explanation"),
-                "orderIndex": idx,
+                "questionText": normalized["question_text"],
+                "questionType": normalized["question_type"],
+                "options": normalized["options"],
+                "correctAnswer": normalized["correct_answer"],
+                "explanation": normalized["explanation"],
+                "orderIndex": created,
             }
         )
+        created += 1
 
-    # Update total questions to actual generated count
-    actual_count = min(len(questions_data), count)
-    if actual_count != count:
-        await repo.update_quiz_session(quiz_session.id, {"totalQuestions": actual_count})
+    if rejected or unattributed:
+        # Unattributed questions are still scorable, but they update no topic's
+        # mastery, so they quietly weaken readiness. Worth seeing in logs.
+        logger.warning(
+            "Generated quiz questions were discarded or unattributed",
+            extra={
+                "prep_id": prep_id,
+                "quiz_id": quiz_session.id,
+                "rejected": rejected,
+                "unattributed": unattributed,
+            },
+        )
+
+    if created == 0:
+        # Decision F: a session with no usable questions is a failure, not a
+        # quiz. The row is kept as FAILED so the attempt stays visible for
+        # support, and the caller is told, rather than being handed a 201 with an
+        # empty `questions` array that no client can render.
+        await repo.update_quiz_session(quiz_session.id, {"status": "FAILED", "totalQuestions": 0})
+        logger.error(
+            "Quiz generation produced no usable questions",
+            extra={
+                "prep_id": prep_id,
+                "quiz_id": quiz_session.id,
+                "mode": mode,
+                "returned": len(questions_data),
+            },
+        )
+        raise MaigieError(
+            "We could not generate questions for this practice session. Please try again.",
+            status_code=503,
+            code="QUIZ_GENERATION_FAILED",
+        )
+
+    # Partial generation still makes a usable quiz; report the real number so
+    # the score has an honest denominator.
+    if created != count:
+        await repo.update_quiz_session(quiz_session.id, {"totalQuestions": created})
 
     session = await repo.get_quiz_session(quiz_session.id, user_id)
     questions = await repo.list_quiz_questions(quiz_session.id)
-    # Newly created quiz has no answers yet
+    # A new quiz has no answers yet, and being IN_PROGRESS it carries no answer
+    # key either.
     return _build_quiz_response(session, questions, [])
+
+
+def _usable_question(candidate: Any) -> dict[str, Any] | None:
+    """Normalize one generated question, or return `None` if it cannot be scored.
+
+    Rejecting is better than repairing here, because each rejected case produces
+    a score the learner would be right to dispute:
+
+    - No `questionText`: nothing to ask.
+    - Empty `correctAnswer`: the column is NOT NULL and this previously
+      defaulted to `""`, so the question could never be answered correctly and
+      counted against the learner regardless of what they picked.
+    - Multiple choice whose `correctAnswer` is not one of its own `options`: the
+      right answer is not on offer, so the question can only ever be wrong.
+    """
+    if not isinstance(candidate, dict):
+        return None
+
+    question_text = str(candidate.get("questionText") or "").strip()
+    correct_answer = str(candidate.get("correctAnswer") or "").strip()
+    if not question_text or not correct_answer:
+        return None
+
+    question_type = str(candidate.get("questionType") or "MULTIPLE_CHOICE").strip()
+
+    raw_options = candidate.get("options")
+    options: list[str] | None = None
+    if isinstance(raw_options, list):
+        cleaned = [str(option).strip() for option in raw_options if str(option).strip()]
+        options = cleaned or None
+
+    if question_type == "MULTIPLE_CHOICE":
+        if not options or len(options) < _MIN_OPTIONS:
+            return None
+        if not any(option.lower() == correct_answer.lower() for option in options):
+            return None
+
+    explanation = candidate.get("explanation")
+    return {
+        "question_text": question_text,
+        "question_type": question_type,
+        "options": options,
+        "correct_answer": correct_answer,
+        "explanation": str(explanation).strip() or None if explanation is not None else None,
+    }
+
+
+def _resolve_topic_id(candidate: Any, target_topics: list[Any]) -> str | None:
+    """Attribute a generated question to one of the requested topics.
+
+    Tried in order of reliability: the topic number the prompt asked for, then a
+    title match for a model that ignored the instruction. With a single target
+    topic the attribution is unambiguous regardless of what came back.
+
+    Returns `None` when the question cannot be attributed. Such a question is
+    still scorable but updates no topic's mastery, so callers should count them.
+    """
+    if not target_topics:
+        return None
+    if len(target_topics) == 1:
+        return target_topics[0].id
+    if not isinstance(candidate, dict):
+        return None
+
+    try:
+        index = int(candidate.get("topicNumber")) - 1
+    except (TypeError, ValueError):
+        index = -1
+    if 0 <= index < len(target_topics):
+        return target_topics[index].id
+
+    title = str(candidate.get("topicTitle") or "").strip().lower()
+    if title:
+        for topic in target_topics:
+            if topic.title.strip().lower() == title:
+                return topic.id
+
+    return None
 
 
 async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -171,6 +315,10 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     Submit an answer to a quiz question.
 
     Req 4.8: Evaluate correctness, track time, update topic mastery.
+
+    Ownership is checked twice: the session must belong to `user_id`, and the
+    question must belong to that session. Both matter, because the response
+    discloses the answer key for the question submitted.
     """
     quiz = await repo.get_quiz_session(quiz_id, user_id)
     if not quiz:
@@ -182,21 +330,40 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     time_taken = data.get("time_taken_seconds") or data.get("timeTakenSeconds")
 
     if not question_id or user_answer is None:
-        raise ValueError("question_id and user_answer are required")
+        # Unreachable through the route, whose request model requires both, but
+        # a bare ValueError here would surface as a 500 rather than a 400.
+        raise MaigieError(
+            "questionId and userAnswer are required.",
+            status_code=400,
+            code="QUIZ_ANSWER_INVALID",
+        )
 
-    # Get the question to check correctness
-    from sqlalchemy import select as sa_select
-    from src.domains.personal_learning.db_models import QuizQuestion
-    from src.shared.database import get_session_factory
+    if quiz.status == "COMPLETED":
+        raise MaigieError(
+            "This practice session is already complete.",
+            status_code=409,
+            code="QUIZ_ALREADY_COMPLETED",
+        )
 
-    factory = get_session_factory()
-    async with factory() as session:
-        stmt = sa_select(QuizQuestion).where(QuizQuestion.id == question_id)
-        result = await session.execute(stmt)
-        question = result.scalar_one_or_none()
-
+    # Scoped to this session. The lookup was previously by question id alone, so
+    # any question id — including one from another learner's session — could be
+    # answered here and its answer key read back out of the response.
+    question = await repo.find_quiz_question(question_id, quiz_id)
     if not question:
         raise NotFoundError("QuizQuestion", question_id)
+
+    # Answering is idempotent. Resubmitting replays the stored result instead of
+    # scoring again, so the key disclosed by the first submission cannot be fed
+    # back to raise the score, and a client retry is harmless.
+    existing = await repo.find_quiz_answer(quiz_id, question_id)
+    if existing:
+        return {
+            "questionId": question_id,
+            "isCorrect": existing.is_correct,
+            "correctAnswer": question.correct_answer,
+            "explanation": question.explanation,
+            "alreadyAnswered": True,
+        }
 
     is_correct = _check_answer_correctness(
         user_answer=user_answer,
@@ -215,10 +382,11 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         }
     )
 
-    # Update quiz correct count
-    if is_correct:
-        new_correct = (quiz.correct_count or 0) + 1
-        await repo.update_quiz_session(quiz_id, {"correctCount": new_correct})
+    # Recomputed from persisted answers rather than incremented, so the count
+    # cannot drift from the answers or exceed the number of questions asked.
+    await repo.update_quiz_session(
+        quiz_id, {"correctCount": await repo.count_correct_quiz_answers(quiz_id)}
+    )
 
     # Update topic mastery — fire-and-forget to avoid blocking the response.
     # Any failure is logged; user experience is not affected.
@@ -232,6 +400,7 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         "isCorrect": is_correct,
         "correctAnswer": question.correct_answer,
         "explanation": question.explanation,
+        "alreadyAnswered": False,
     }
 
 
@@ -255,9 +424,40 @@ async def complete_quiz(
     if not quiz:
         raise NotFoundError("QuizSession", quiz_id)
 
+    if quiz.status == "FAILED":
+        raise MaigieError(
+            "This practice session could not be generated, so it cannot be completed.",
+            status_code=409,
+            code="QUIZ_GENERATION_FAILED",
+        )
+
+    answers = await repo.list_quiz_answers(quiz_id)
+
+    if quiz.status == "COMPLETED":
+        # Completing twice must not re-record the activity or re-check
+        # milestones, so an already-completed session returns its stored result.
+        topic_breakdown = await _compute_topic_breakdown(quiz_id, answers)
+        weak_areas = [
+            t["title"] for t in topic_breakdown if t.get("score", 0) < _WEAK_AREA_THRESHOLD
+        ]
+        return {
+            "quizId": quiz_id,
+            "totalQuestions": quiz.total_questions,
+            "correctCount": quiz.correct_count,
+            "scorePercentage": quiz.score_percentage or 0.0,
+            "topicBreakdown": topic_breakdown,
+            "weakAreas": weak_areas,
+            "suggestedNextStep": _suggest_next_step(weak_areas),
+        }
+
     now = datetime.now(timezone.utc)
-    total = quiz.total_questions or 1
-    correct = quiz.correct_count or 0
+    total = quiz.total_questions or 0
+    # Derived from persisted answers, then clamped to the questions actually
+    # asked. The denominator is no longer forced to 1 for a question-less
+    # session, which reported a real-looking 0% for a quiz that asked nothing.
+    correct = await repo.count_correct_quiz_answers(quiz_id)
+    if total > 0:
+        correct = min(correct, total)
     score_pct = (correct / total) * 100 if total > 0 else 0.0
 
     # Compute duration server-side if the client did not provide one.
@@ -267,11 +467,13 @@ async def complete_quiz(
             started_at = started_at.replace(tzinfo=timezone.utc)
         duration_seconds = int((now - started_at).total_seconds())
 
-    # Update quiz session
+    # Update quiz session. `correctCount` is written from the recomputed value so
+    # the persisted score and the returned summary cannot disagree.
     await repo.update_quiz_session(
         quiz_id,
         {
             "status": "COMPLETED",
+            "correctCount": correct,
             "scorePercentage": round(score_pct, 1),
             "durationSeconds": duration_seconds,
             "completedAt": now,
@@ -279,9 +481,8 @@ async def complete_quiz(
     )
 
     # Compute per-topic breakdown
-    answers = await repo.list_quiz_answers(quiz_id)
     topic_breakdown = await _compute_topic_breakdown(quiz_id, answers)
-    weak_areas = [t["title"] for t in topic_breakdown if t.get("score", 0) < 70]
+    weak_areas = [t["title"] for t in topic_breakdown if t.get("score", 0) < _WEAK_AREA_THRESHOLD]
 
     # Record in activity feed
     from . import activity_feed_service
@@ -329,9 +530,23 @@ async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
 
 
 def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) -> dict[str, Any]:
-    """Build the quiz session response dict including questions with user answers."""
+    """Build the quiz session response including questions and the learner's answers.
+
+    The answer key is disclosed **per question, as soon as that question has been
+    answered** — teaching in small steps is the point of practice, so the learner
+    keeps the explanation for what they have already attempted, including after
+    navigating back or resuming the session later.
+
+    What is withheld is the key for questions not yet attempted (Decision C). A
+    completed session reveals everything, including questions left unanswered, so
+    review is complete.
+
+    The distinction that matters is *answered*, not *in progress*: a client can
+    never see the answer to a question the learner has not yet committed to.
+    """
     # Index answers by question_id for O(1) lookup
     answer_map = {a.question_id: a for a in answers}
+    session_completed = quiz.status == "COMPLETED"
 
     return {
         "id": quiz.id,
@@ -346,12 +561,24 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
         "duration_seconds": quiz.duration_seconds,
         "completed_at": quiz.completed_at,
         "created_at": quiz.created_at,
-        "questions": [_question_dict(q, answer_map.get(q.id)) for q in questions],
+        "questions": [
+            _question_dict(
+                q,
+                answer_map.get(q.id),
+                reveal_answers=session_completed or q.id in answer_map,
+            )
+            for q in questions
+        ],
     }
 
 
-def _question_dict(question: Any, answer: Any | None) -> dict[str, Any]:
-    """Serialize a question with optional user answer attached."""
+def _question_dict(question: Any, answer: Any | None, *, reveal_answers: bool) -> dict[str, Any]:
+    """Serialize a question with the learner's answer attached, if they have one.
+
+    `reveal_answers` gates the answer key. It is not defaulted, so a new caller
+    has to state which side of the disclosure boundary it is on rather than
+    silently inheriting the leaky behaviour.
+    """
     return {
         "id": question.id,
         "question_text": question.question_text,
@@ -359,8 +586,8 @@ def _question_dict(question: Any, answer: Any | None) -> dict[str, Any]:
         "options": question.options if isinstance(question.options, list) else None,
         "order_index": question.order_index,
         "prep_topic_id": question.prep_topic_id,
-        "correct_answer": question.correct_answer,
-        "explanation": question.explanation,
+        "correct_answer": question.correct_answer if reveal_answers else None,
+        "explanation": question.explanation if reveal_answers else None,
         "user_answer": answer.user_answer if answer else None,
         "is_correct": answer.is_correct if answer else None,
         "time_taken_seconds": answer.time_taken_seconds if answer else None,

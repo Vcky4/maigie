@@ -451,10 +451,26 @@ async def mark_prep_completed(prep_id: str, current_user: CurrentUser):
 
 
 @router.post(
-    "/preparations/{prep_id}/quizzes", response_model=models.QuizSessionResponse, status_code=201
+    "/preparations/{prep_id}/quizzes",
+    response_model=models.QuizSessionResponse,
+    status_code=201,
+    responses={
+        403: {
+            "model": models.UpgradeRequiredResponse,
+            "description": (
+                "The requested mode requires Maigie Plus. Declared so the client "
+                "can render an upgrade path from a typed payload."
+            ),
+        }
+    },
 )
 async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: CurrentUser):
-    """Start a quiz session."""
+    """Start a quiz session.
+
+    Questions come back without their answer key. `correctAnswer` and
+    `explanation` are disclosed per question once the learner has answered it,
+    either in the answer response or on a subsequent read of the session.
+    """
     return await quiz_engine.start_quiz(
         user_id=current_user.id,
         prep_id=prep_id,
@@ -494,7 +510,13 @@ async def complete_quiz(
 
 @router.get("/quizzes/{quiz_id}", response_model=models.QuizSessionResponse)
 async def get_quiz(quiz_id: str, current_user: CurrentUser):
-    """Get quiz results."""
+    """Get a quiz session, for resuming it or reviewing a completed one.
+
+    `correctAnswer` and `explanation` are populated for questions the learner has
+    already answered, so resuming a session keeps the explanations they have
+    earned without revealing the ones they have not reached. A completed session
+    returns the full key.
+    """
     return await quiz_engine.get_quiz(user_id=current_user.id, quiz_id=quiz_id)
 
 

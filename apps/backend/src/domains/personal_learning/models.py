@@ -680,20 +680,62 @@ class PrepSummaryResponse(CamelModel):
 
 
 # ===========================================================================
+# Entitlement
+# ===========================================================================
+
+
+class UpgradeRequiredDetail(CamelModel):
+    """Body of a `403` raised by a tier gate.
+
+    Previously an ad-hoc dict, so the client had nothing to render an upgrade
+    path from. Built from `feature_tier_service.CapabilityDenied`.
+    """
+
+    # Required rather than defaulted, so it is a dependable discriminant in the
+    # generated client types instead of an optional flag.
+    upgrade_required: Literal[True]
+    reason: str
+    capability: str
+    upgrade_url: str
+    trial_available: bool
+    upgrade_value: str
+
+
+class UpgradeRequiredResponse(CamelModel):
+    """`403` envelope. FastAPI nests `HTTPException.detail` under `detail`."""
+
+    detail: UpgradeRequiredDetail
+
+
+# ===========================================================================
 # Quiz
 # ===========================================================================
 
 
-class QuizQuestionResponse(CamelModel):
+class QuizQuestionPresentation(CamelModel):
+    """A question as delivered to the learner.
+
+    `correctAnswer` and `explanation` are populated **as soon as this question
+    has been answered**, so the learner gets the explanation while they practise
+    and keeps it if they navigate back or resume the session. They are withheld
+    for questions not yet attempted (Decision C). A completed session reveals
+    every question, including any left unanswered.
+
+    That makes both fields nullable on the wire even though `correctAnswer` is a
+    NOT NULL column: the nullability describes what has been disclosed so far,
+    not what is stored.
+    """
+
     id: str
     question_text: str
     question_type: str
     options: list[str] | None = None
     order_index: int
     prep_topic_id: str | None = None
-    correct_answer: str
+    # Review-only. `None` unless the session is COMPLETED.
+    correct_answer: str | None = None
     explanation: str | None = None
-    # User's answer (present if they've answered this question)
+    # The learner's own answer, present once they have answered this question.
     user_answer: str | None = None
     is_correct: bool | None = None
     time_taken_seconds: int | None = None
@@ -701,7 +743,11 @@ class QuizQuestionResponse(CamelModel):
 
 
 class QuizSessionResponse(CamelModel):
-    """`correctCount` is a NOT NULL column defaulting to 0, so it is always present."""
+    """`correctCount` is a NOT NULL column defaulting to 0, so it is always present.
+
+    `correctCount` and `scorePercentage` are derived from persisted answers by
+    the server; a client cannot influence them beyond submitting answers.
+    """
 
     id: str
     user_id: str
@@ -715,14 +761,24 @@ class QuizSessionResponse(CamelModel):
     duration_seconds: int | None = None
     completed_at: datetime | None = None
     created_at: datetime
-    questions: list[QuizQuestionResponse] = []
+    questions: list[QuizQuestionPresentation] = []
 
 
 class AnswerResultResponse(CamelModel):
+    """Result for the one question just submitted, including its key.
+
+    This is the only place an answer key is disclosed before the session
+    completes, and only for a question the learner has now answered.
+    """
+
     question_id: str
     is_correct: bool
     correct_answer: str
     explanation: str | None = None
+    # True when this question had already been answered and the stored result
+    # was replayed. Resubmitting never re-scores, so a retry is safe and the
+    # key returned here cannot be used to raise the score.
+    already_answered: bool = False
 
 
 class QuizTopicBreakdown(CamelModel):

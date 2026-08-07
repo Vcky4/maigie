@@ -1349,11 +1349,19 @@ class PersonalLearningRepository:
     async def list_recent_quiz_sessions(
         self, user_id: str, *, take: int = 6, session: AsyncSession | None = None
     ) -> list[QuizSession]:
-        """The learner's most recent quiz sessions across all preparations."""
+        """The learner's most recent quiz sessions across all preparations.
+
+        `FAILED` sessions are excluded. They record a generation failure, not
+        something the learner did, so surfacing them as practice history would
+        misrepresent the account.
+        """
         async with self._use_session(session) as s:
             stmt = (
                 select(QuizSession)
-                .where(QuizSession.user_id == user_id)
+                .where(
+                    QuizSession.user_id == user_id,
+                    QuizSession.status != "FAILED",
+                )
                 .order_by(QuizSession.created_at.desc())
                 .limit(take)
             )
@@ -1518,6 +1526,66 @@ class PersonalLearningRepository:
             await s.flush()
             await s.refresh(answer)
             return answer
+
+    async def find_quiz_question(
+        self, question_id: str, quiz_id: str, *, session: AsyncSession | None = None
+    ) -> QuizQuestion | None:
+        """Find a question scoped to its quiz session.
+
+        Callers must have already verified the session belongs to the user, so
+        scoping by ``quiz_session_id`` is what stops a question id from another
+        session — including another learner's — being answered and its answer
+        key read back in the response.
+        """
+        async with self._use_session(session) as s:
+            stmt = select(QuizQuestion).where(
+                QuizQuestion.id == question_id,
+                QuizQuestion.quiz_session_id == quiz_id,
+            )
+            result = await s.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def find_quiz_answer(
+        self, quiz_id: str, question_id: str, *, session: AsyncSession | None = None
+    ) -> QuizAnswer | None:
+        """The existing answer for a question in a session, if there is one.
+
+        Returns the first match rather than requiring uniqueness: sessions
+        created before answers were made idempotent may hold more than one row
+        per question, and a read should not raise on that legacy data.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                select(QuizAnswer)
+                .where(
+                    QuizAnswer.quiz_session_id == quiz_id,
+                    QuizAnswer.question_id == question_id,
+                )
+                .order_by(QuizAnswer.created_at.asc())
+            )
+            result = await s.execute(stmt)
+            return result.scalars().first()
+
+    async def count_correct_quiz_answers(
+        self, quiz_id: str, *, session: AsyncSession | None = None
+    ) -> int:
+        """Count distinct correctly-answered questions in a session.
+
+        Counting questions rather than answer rows is what makes the score
+        authoritative: it is recomputed from persisted answers instead of
+        accumulated, so it cannot drift, and duplicate rows on legacy sessions
+        cannot inflate it.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                select(func.count(func.distinct(QuizAnswer.question_id)))
+                .select_from(QuizAnswer)
+                .where(
+                    QuizAnswer.quiz_session_id == quiz_id,
+                    QuizAnswer.is_correct.is_(True),
+                )
+            )
+            return (await s.execute(stmt)).scalar_one() or 0
 
     async def list_quiz_answers(
         self, quiz_id: str, *, session: AsyncSession | None = None
