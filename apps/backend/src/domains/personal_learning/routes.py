@@ -24,6 +24,7 @@ from .services import (
     note_service,
     notification_service,
     onboarding_service,
+    prep_snapshot_service,
     prepare_dashboard_service,
     quiz_engine,
     reflection_service,
@@ -477,6 +478,119 @@ async def start_quiz(prep_id: str, body: models.QuizStartRequest, current_user: 
         mode=body.mode,
         topic_id=body.topic_id,
         question_count=body.question_count,
+    )
+
+
+@router.get(
+    "/preparations/{prep_id}/questions",
+    response_model=models.PaginatedResponse[models.PrepQuestionBankItem],
+)
+async def list_question_bank(
+    prep_id: str,
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    topicId: str | None = Query(None),
+    difficulty: models.QuestionDifficulty | None = Query(None),
+    source: models.QuestionSource | None = Query(None),
+    flaggedOnly: bool = Query(False),
+):
+    """Browse a preparation's question bank.
+
+    Only expressible since migration `008` promoted questions from being owned by
+    a quiz session to being owned by the preparation.
+
+    The answer key is **not** included: browsing must not be a way to read answers
+    without practising.
+    """
+    items, total = await exam_prep_service.search_question_bank(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        topic_id=topicId,
+        difficulty=difficulty,
+        source=source,
+        flagged_only=flaggedOnly,
+        page=page,
+        page_size=pageSize,
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.PrepQuestionBankItem](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
+
+
+@router.get(
+    "/preparations/{prep_id}/timeline",
+    response_model=models.PrepTimelineResponse,
+)
+async def get_prep_timeline(prep_id: str, current_user: CurrentUser):
+    """A preparation's timeline.
+
+    Derived from the linked study plan's items plus the target date, rather than
+    from a separate milestone entity — a second source of truth for "what should I
+    do by when" would drift from the plan the first time either changed.
+    """
+    return await exam_prep_service.get_timeline(user_id=current_user.id, prep_id=prep_id)
+
+
+@router.get(
+    "/preparations/{prep_id}/readiness-trend",
+    response_model=models.PrepReadinessTrendResponse,
+)
+async def get_readiness_trend(
+    prep_id: str,
+    current_user: CurrentUser,
+    days: int = Query(30, ge=1, le=180),
+):
+    """A preparation's readiness over time.
+
+    Backed by daily snapshots, because mastery is a mutable value and a trend
+    cannot be derived from it after the fact.
+
+    Returns only days that were captured. A new preparation has no history, and the
+    client must render that as "no data yet" rather than a line through one point.
+    """
+    return await prep_snapshot_service.get_trend(
+        user_id=current_user.id, prep_id=prep_id, days=days
+    )
+
+
+@router.put(
+    "/preparations/{prep_id}/questions/{question_id}/flag",
+    response_model=models.PrepQuestionFlagResponse,
+)
+async def flag_question(
+    prep_id: str,
+    question_id: str,
+    current_user: CurrentUser,
+    body: models.PrepQuestionFlagRequest | None = None,
+):
+    """Flag a question for later review.
+
+    `PUT` rather than `POST` because it is idempotent: flagging an already-flagged
+    question updates the note and is otherwise a no-op, so a repeated tap is a
+    success, not a conflict.
+    """
+    return await exam_prep_service.flag_question(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        question_id=question_id,
+        note=body.note if body else None,
+    )
+
+
+@router.delete(
+    "/preparations/{prep_id}/questions/{question_id}/flag",
+    status_code=204,
+)
+async def unflag_question(prep_id: str, question_id: str, current_user: CurrentUser):
+    """Remove a flag. Succeeds whether or not the question was flagged."""
+    await exam_prep_service.unflag_question(
+        user_id=current_user.id, prep_id=prep_id, question_id=question_id
     )
 
 

@@ -7,10 +7,22 @@ Maps to existing PostgreSQL tables created by Prisma.
 Column names use camelCase to match the existing schema exactly.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey, Index, JSON
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
@@ -587,8 +599,163 @@ class QuizSession(Base, TimestampMixin):
 # ---------------------------------------------------------------------------
 
 
-class QuizQuestion(Base, TimestampMixin):
-    __tablename__ = "QuizQuestion"
+class PrepQuestion(Base, TimestampMixin):
+    """A question belonging to a *preparation*, not to a single quiz session.
+
+    Replaces the old ``QuizQuestion``, whose rows were owned by a session. That
+    ownership made "every question for this preparation" inexpressible, so the
+    workspace could not offer a question bank, and it meant every session
+    regenerated its questions from scratch even for material already covered.
+
+    A session now references banked questions through ``QuizSessionQuestion``,
+    which is what carries the per-session ordering.
+    """
+
+    __tablename__ = "PrepQuestion"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    prep_id: Mapped[str] = mapped_column(
+        "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
+    )
+    prep_topic_id: Mapped[Optional[str]] = mapped_column(
+        "prepTopicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True
+    )
+    question_text: Mapped[str] = mapped_column("questionText", Text, nullable=False)
+    question_type: Mapped[str] = mapped_column("questionType", String, default="MULTIPLE_CHOICE")
+    # A JSON array of answer strings. The original `dict` annotation never matched
+    # what the generator writes.
+    options: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    correct_answer: Mapped[str] = mapped_column("correctAnswer", String, nullable=False)
+    explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # EASY | MEDIUM | HARD. Nullable: questions banked before this existed have no
+    # difficulty, and inferring one would invent data.
+    difficulty: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # AI_GENERATED | PAST_PAPER. Set by the server, never reported by the
+    # generator: provenance a producer can self-declare is not provenance.
+    source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Only meaningful for past papers.
+    source_year: Mapped[Optional[int]] = mapped_column("sourceYear", Integer, nullable=True)
+    # Advice for tackling this kind of question. Disclosed with the answer key, not
+    # before: a tip written about a specific question can hint at its answer.
+    exam_tip: Mapped[Optional[str]] = mapped_column("examTip", Text, nullable=True)
+
+    # Lifetime statistics for this question, across every session that used it.
+    # Only expressible now that a question outlives a session.
+    times_answered: Mapped[int] = mapped_column(
+        "timesAnswered", Integer, default=0, server_default="0"
+    )
+    times_correct: Mapped[int] = mapped_column(
+        "timesCorrect", Integer, default=0, server_default="0"
+    )
+
+    __table_args__ = (Index("PrepQuestion_prepId_prepTopicId_idx", "prepId", "prepTopicId"),)
+
+    def __repr__(self) -> str:
+        return f"<PrepQuestion id={self.id} type={self.question_type}>"
+
+
+# ---------------------------------------------------------------------------
+# PrepReadinessSnapshot
+# ---------------------------------------------------------------------------
+
+
+class PrepReadinessSnapshot(Base, TimestampMixin):
+    """One day's readiness for one preparation.
+
+    The only history in the Prepare domain. Topic mastery is a mutable float, so
+    without this table yesterday's readiness is unrecoverable and a trend is not
+    derivable — no amount of querying fixes that.
+
+    Written from the same `prep_readiness` helper that serves live reads, so a
+    snapshot cannot disagree with what the dashboard showed that day.
+    """
+
+    __tablename__ = "PrepReadinessSnapshot"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    prep_id: Mapped[str] = mapped_column(
+        "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
+    )
+    # A day, not an instant: the unit of the trend, and what makes the writer
+    # idempotent through the unique constraint below.
+    captured_on: Mapped[date] = mapped_column("capturedOn", Date, nullable=False)
+
+    progress_percent: Mapped[float] = mapped_column("progressPercent", Float, nullable=False)
+    # Null when there are no topics to average — not measured, rather than zero.
+    average_mastery_percent: Mapped[Optional[float]] = mapped_column(
+        "averageMasteryPercent", Float, nullable=True
+    )
+    topics_total: Mapped[int] = mapped_column("topicsTotal", Integer, default=0)
+    topics_strong: Mapped[int] = mapped_column("topicsStrong", Integer, default=0)
+    topics_focus: Mapped[int] = mapped_column("topicsFocus", Integer, default=0)
+    topics_assessed: Mapped[int] = mapped_column("topicsAssessed", Integer, default=0)
+    questions_answered: Mapped[int] = mapped_column("questionsAnswered", Integer, default=0)
+    # Null until at least one question has been answered.
+    accuracy_percent: Mapped[Optional[float]] = mapped_column(
+        "accuracyPercent", Float, nullable=True
+    )
+    quizzes_taken: Mapped[int] = mapped_column("quizzesTaken", Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("prepId", "capturedOn", name="PrepReadinessSnapshot_unique"),
+        Index("PrepReadinessSnapshot_prepId_capturedOn_idx", "prepId", "capturedOn"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PrepReadinessSnapshot prep={self.prep_id} on={self.captured_on}>"
+
+
+# ---------------------------------------------------------------------------
+# PrepQuestionFlag
+# ---------------------------------------------------------------------------
+
+
+class PrepQuestionFlag(Base, TimestampMixin):
+    """A learner's flag on a banked question, for later review.
+
+    Scoped by learner and question rather than by session, so a flag survives the
+    session it was raised in — which is the only reason to flag anything.
+    """
+
+    __tablename__ = "PrepQuestionFlag"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    prep_question_id: Mapped[str] = mapped_column(
+        "prepQuestionId", String, ForeignKey("PrepQuestion.id", ondelete="CASCADE"), index=True
+    )
+    # Optional: the act of flagging is the signal, and requiring a reason would
+    # suppress it.
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (UniqueConstraint("userId", "prepQuestionId", name="PrepQuestionFlag_unique"),)
+
+    def __repr__(self) -> str:
+        return f"<PrepQuestionFlag user={self.user_id} question={self.prep_question_id}>"
+
+
+# ---------------------------------------------------------------------------
+# QuizSessionQuestion
+# ---------------------------------------------------------------------------
+
+
+class QuizSessionQuestion(Base, TimestampMixin):
+    """Which banked questions a session asked, and in what order.
+
+    Order lives here rather than on the question, because the same banked question
+    can appear at a different position in a later session.
+    """
+
+    __tablename__ = "QuizSessionQuestion"
 
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
@@ -596,20 +763,21 @@ class QuizQuestion(Base, TimestampMixin):
     quiz_session_id: Mapped[str] = mapped_column(
         "quizSessionId", String, ForeignKey("QuizSession.id", ondelete="CASCADE"), index=True
     )
-    prep_topic_id: Mapped[Optional[str]] = mapped_column(
-        "prepTopicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True
+    prep_question_id: Mapped[str] = mapped_column(
+        "prepQuestionId", String, ForeignKey("PrepQuestion.id", ondelete="CASCADE"), index=True
     )
-    question_text: Mapped[str] = mapped_column("questionText", Text, nullable=False)
-    question_type: Mapped[str] = mapped_column("questionType", String, default="MULTIPLE_CHOICE")
-    # Stored as a JSON array of answer strings. The previous `dict` annotation
-    # did not match what the generator writes.
-    options: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    correct_answer: Mapped[str] = mapped_column("correctAnswer", String, nullable=False)
-    explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)
 
+    __table_args__ = (
+        # A session asks a given question at most once.
+        UniqueConstraint("quizSessionId", "prepQuestionId", name="QuizSessionQuestion_unique"),
+        Index("QuizSessionQuestion_quizSessionId_orderIndex_idx", "quizSessionId", "orderIndex"),
+    )
+
     def __repr__(self) -> str:
-        return f"<QuizQuestion id={self.id} type={self.question_type}>"
+        return (
+            f"<QuizSessionQuestion session={self.quiz_session_id} question={self.prep_question_id}>"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -626,8 +794,11 @@ class QuizAnswer(Base, TimestampMixin):
     quiz_session_id: Mapped[str] = mapped_column(
         "quizSessionId", String, ForeignKey("QuizSession.id", ondelete="CASCADE"), index=True
     )
+    # Points at the banked question. The column keeps its name, and migration 008
+    # preserves question ids, so existing answer rows stay valid across the move
+    # from QuizQuestion to PrepQuestion without being rewritten.
     question_id: Mapped[str] = mapped_column(
-        "questionId", String, ForeignKey("QuizQuestion.id", ondelete="CASCADE")
+        "questionId", String, ForeignKey("PrepQuestion.id", ondelete="CASCADE")
     )
     user_answer: Mapped[str] = mapped_column("userAnswer", String, nullable=False)
     is_correct: Mapped[bool] = mapped_column("isCorrect", Boolean, default=False)

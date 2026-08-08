@@ -38,9 +38,12 @@ from .db_models import (
     Notification,
     PrepMaterial,
     PrepTopic,
+    PrepQuestion,
+    PrepQuestionFlag,
+    PrepReadinessSnapshot,
     QuizAnswer,
-    QuizQuestion,
     QuizSession,
+    QuizSessionQuestion,
     Reflection,
     SavedResource,
     StudyPlan,
@@ -1315,18 +1318,19 @@ class PersonalLearningRepository:
             # A topic counts as assessed once it has an answered question, which
             # is stricter than reading `status`: a topic answered entirely wrong
             # keeps mastery 0 and would otherwise look untouched.
+            # Counted from the banked question's own `prepId` rather than through
+            # the session, now that a question belongs to the preparation.
             assessed_rows = await s.execute(
                 select(
-                    QuizSession.prep_id,
-                    func.count(func.distinct(QuizQuestion.prep_topic_id)),
+                    PrepQuestion.prep_id,
+                    func.count(func.distinct(PrepQuestion.prep_topic_id)),
                 )
-                .join(QuizQuestion, QuizQuestion.quiz_session_id == QuizSession.id)
-                .join(QuizAnswer, QuizAnswer.question_id == QuizQuestion.id)
+                .join(QuizAnswer, QuizAnswer.question_id == PrepQuestion.id)
                 .where(
-                    QuizSession.prep_id.in_(prep_ids),
-                    QuizQuestion.prep_topic_id.is_not(None),
+                    PrepQuestion.prep_id.in_(prep_ids),
+                    PrepQuestion.prep_topic_id.is_not(None),
                 )
-                .group_by(QuizSession.prep_id)
+                .group_by(PrepQuestion.prep_id)
             )
             for prep_id, assessed in assessed_rows.all():
                 bucket(prep_id)["topics_assessed"] = assessed or 0
@@ -1510,15 +1514,269 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def create_quiz_question(
+    async def create_prep_question(
         self, data: dict[str, Any], *, session: AsyncSession | None = None
-    ) -> QuizQuestion:
+    ) -> PrepQuestion:
+        """Add a question to a preparation's bank."""
         async with self._use_session(session) as s:
-            question = QuizQuestion(**self._map_quiz_question(data))
+            question = PrepQuestion(**self._map_prep_question(data))
             s.add(question)
             await s.flush()
             await s.refresh(question)
             return question
+
+    async def attach_question_to_session(
+        self,
+        *,
+        quiz_session_id: str,
+        prep_question_id: str,
+        order_index: int,
+        session: AsyncSession | None = None,
+    ) -> QuizSessionQuestion:
+        """Record that a session asked a banked question, at a given position."""
+        async with self._use_session(session) as s:
+            link = QuizSessionQuestion(
+                quiz_session_id=quiz_session_id,
+                prep_question_id=prep_question_id,
+                order_index=order_index,
+            )
+            s.add(link)
+            await s.flush()
+            await s.refresh(link)
+            return link
+
+    async def search_prep_questions(
+        self,
+        prep_id: str,
+        *,
+        user_id: str,
+        topic_id: str | None = None,
+        difficulty: str | None = None,
+        source: str | None = None,
+        flagged_only: bool = False,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[tuple[PrepQuestion, PrepQuestionFlag | None]], int]:
+        """A page of a preparation's question bank, plus the full match count.
+
+        The query the old schema could not express: questions belonged to a
+        session, so "every question for this preparation" had no meaning.
+
+        Each row is ``(question, flag_or_none)``. The learner's own flag is
+        outer-joined in one query rather than fetched per question, and the join is
+        scoped to ``user_id`` so one learner never sees another's flags.
+        """
+        async with self._use_session(session) as s:
+            flag_join = (PrepQuestionFlag.prep_question_id == PrepQuestion.id) & (
+                PrepQuestionFlag.user_id == user_id
+            )
+
+            condition = PrepQuestion.prep_id == prep_id
+            if topic_id:
+                condition = condition & (PrepQuestion.prep_topic_id == topic_id)
+            if difficulty:
+                condition = condition & (PrepQuestion.difficulty == difficulty)
+            if source:
+                condition = condition & (PrepQuestion.source == source)
+            if flagged_only:
+                condition = condition & PrepQuestionFlag.id.is_not(None)
+
+            total = (
+                await s.execute(
+                    select(func.count())
+                    .select_from(PrepQuestion)
+                    .outerjoin(PrepQuestionFlag, flag_join)
+                    .where(condition)
+                )
+            ).scalar_one() or 0
+
+            stmt = (
+                select(PrepQuestion, PrepQuestionFlag)
+                .outerjoin(PrepQuestionFlag, flag_join)
+                .where(condition)
+                .order_by(PrepQuestion.created_at.desc())
+                .offset(skip)
+                .limit(take)
+            )
+            return [(row[0], row[1]) for row in (await s.execute(stmt)).all()], total
+
+    async def list_prep_study_plans(
+        self, prep_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[StudyPlan]:
+        """Study plans generated from a preparation, with their items eagerly loaded.
+
+        The preparation timeline is derived from these items rather than from a
+        separate milestone entity, so the items must come back with the plan.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                select(StudyPlan)
+                .options(selectinload(StudyPlan.items))
+                .where(
+                    StudyPlan.prep_id == prep_id,
+                    StudyPlan.user_id == user_id,
+                )
+                .order_by(StudyPlan.created_at.desc())
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def upsert_readiness_snapshot(
+        self,
+        *,
+        prep_id: str,
+        captured_on: date,
+        values: dict[str, Any],
+        session: AsyncSession | None = None,
+    ) -> PrepReadinessSnapshot:
+        """Write one day's readiness for a preparation.
+
+        Idempotent on ``(prepId, capturedOn)``, so a retry, a re-run, or two
+        workers on the same day update the row instead of duplicating the day.
+        """
+        async with self._use_session(session) as s:
+            existing = (
+                await s.execute(
+                    select(PrepReadinessSnapshot).where(
+                        PrepReadinessSnapshot.prep_id == prep_id,
+                        PrepReadinessSnapshot.captured_on == captured_on,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                for field, value in values.items():
+                    setattr(existing, field, value)
+                await s.flush()
+                return existing
+
+            snapshot = PrepReadinessSnapshot(prep_id=prep_id, captured_on=captured_on, **values)
+            s.add(snapshot)
+            await s.flush()
+            await s.refresh(snapshot)
+            return snapshot
+
+    async def list_readiness_snapshots(
+        self,
+        prep_id: str,
+        *,
+        since: date,
+        session: AsyncSession | None = None,
+    ) -> list[PrepReadinessSnapshot]:
+        """A preparation's snapshots from `since` onwards, oldest first.
+
+        Oldest first because a chart reads left to right, and bounded by `since`
+        because a trend does not need a preparation's entire history.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                select(PrepReadinessSnapshot)
+                .where(
+                    PrepReadinessSnapshot.prep_id == prep_id,
+                    PrepReadinessSnapshot.captured_on >= since,
+                )
+                .order_by(PrepReadinessSnapshot.captured_on.asc())
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def list_snapshot_candidate_preps(
+        self, *, skip: int = 0, take: int = 100, session: AsyncSession | None = None
+    ) -> list[ExamPrep]:
+        """Unfinished preparations, for the daily snapshot writer.
+
+        Completed preparations are excluded: their readiness no longer moves, so a
+        further snapshot would add a row per day saying nothing new.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                select(ExamPrep)
+                .where(ExamPrep.status != "COMPLETED")
+                .order_by(ExamPrep.created_at.asc())
+                .offset(skip)
+                .limit(take)
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def upsert_question_flag(
+        self,
+        *,
+        user_id: str,
+        prep_question_id: str,
+        note: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> PrepQuestionFlag:
+        """Flag a question, or update the note on an existing flag.
+
+        Idempotent, matching answer submission: pressing the button twice is not an
+        error, and the unique constraint means it cannot produce a duplicate.
+        """
+        async with self._use_session(session) as s:
+            existing = (
+                await s.execute(
+                    select(PrepQuestionFlag).where(
+                        PrepQuestionFlag.user_id == user_id,
+                        PrepQuestionFlag.prep_question_id == prep_question_id,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                if note is not None:
+                    existing.note = note
+                    await s.flush()
+                return existing
+
+            flag = PrepQuestionFlag(user_id=user_id, prep_question_id=prep_question_id, note=note)
+            s.add(flag)
+            await s.flush()
+            await s.refresh(flag)
+            return flag
+
+    async def delete_question_flag(
+        self, *, user_id: str, prep_question_id: str, session: AsyncSession | None = None
+    ) -> bool:
+        """Remove a learner's flag. Returns whether one was there to remove."""
+        async with self._use_session(session) as s:
+            result = await s.execute(
+                delete(PrepQuestionFlag).where(
+                    PrepQuestionFlag.user_id == user_id,
+                    PrepQuestionFlag.prep_question_id == prep_question_id,
+                )
+            )
+            return bool(result.rowcount)
+
+    async def find_prep_question(
+        self, question_id: str, prep_id: str, *, session: AsyncSession | None = None
+    ) -> PrepQuestion | None:
+        """Find a banked question scoped to its preparation.
+
+        Callers must have verified the preparation belongs to the user, so scoping
+        by ``prep_id`` is what prevents reaching another learner's question.
+        """
+        async with self._use_session(session) as s:
+            stmt = select(PrepQuestion).where(
+                PrepQuestion.id == question_id,
+                PrepQuestion.prep_id == prep_id,
+            )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def record_question_attempt(
+        self, question_id: str, *, correct: bool, session: AsyncSession | None = None
+    ) -> None:
+        """Increment a banked question's lifetime attempt statistics.
+
+        Incremented in SQL rather than read-modify-written, so concurrent answers
+        to the same question cannot lose a count.
+        """
+        async with self._use_session(session) as s:
+            await s.execute(
+                update(PrepQuestion)
+                .where(PrepQuestion.id == question_id)
+                .values(
+                    times_answered=PrepQuestion.times_answered + 1,
+                    times_correct=PrepQuestion.times_correct + (1 if correct else 0),
+                )
+            )
 
     async def create_quiz_answer(
         self, data: dict[str, Any], *, session: AsyncSession | None = None
@@ -1561,18 +1819,30 @@ class PersonalLearningRepository:
 
     async def find_quiz_question(
         self, question_id: str, quiz_id: str, *, session: AsyncSession | None = None
-    ) -> QuizQuestion | None:
-        """Find a question scoped to its quiz session.
+    ) -> PrepQuestion | None:
+        """Find a question scoped to the session that asked it.
 
-        Callers must have already verified the session belongs to the user, so
-        scoping by ``quiz_session_id`` is what stops a question id from another
-        session — including another learner's — being answered and its answer
-        key read back in the response.
+        Callers must have already verified the session belongs to the user, so this
+        scoping is what stops a question id from another session — including
+        another learner's — being answered and its answer key read back in the
+        response.
+
+        The scoping survives the move to a shared bank: a banked question is
+        answerable only through a session that actually asked it, so a question
+        the learner could legitimately see in the bank is still not answerable in
+        an unrelated session.
         """
         async with self._use_session(session) as s:
-            stmt = select(QuizQuestion).where(
-                QuizQuestion.id == question_id,
-                QuizQuestion.quiz_session_id == quiz_id,
+            stmt = (
+                select(PrepQuestion)
+                .join(
+                    QuizSessionQuestion,
+                    QuizSessionQuestion.prep_question_id == PrepQuestion.id,
+                )
+                .where(
+                    PrepQuestion.id == question_id,
+                    QuizSessionQuestion.quiz_session_id == quiz_id,
+                )
             )
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
@@ -1629,16 +1899,26 @@ class PersonalLearningRepository:
 
     async def list_quiz_questions(
         self, quiz_id: str, *, session: AsyncSession | None = None
-    ) -> list[QuizQuestion]:
-        """Return all questions for a quiz session ordered by orderIndex."""
+    ) -> list[tuple[PrepQuestion, int]]:
+        """A session's questions with their position in that session.
+
+        Returns ``(question, orderIndex)`` pairs rather than bare questions,
+        because order is now a property of the session that asked the question,
+        not of the question itself — the same banked question can appear at a
+        different position in a later session.
+        """
         async with self._use_session(session) as s:
             stmt = (
-                select(QuizQuestion)
-                .where(QuizQuestion.quiz_session_id == quiz_id)
-                .order_by(QuizQuestion.order_index.asc())
+                select(PrepQuestion, QuizSessionQuestion.order_index)
+                .join(
+                    QuizSessionQuestion,
+                    QuizSessionQuestion.prep_question_id == PrepQuestion.id,
+                )
+                .where(QuizSessionQuestion.quiz_session_id == quiz_id)
+                .order_by(QuizSessionQuestion.order_index.asc())
             )
             result = await s.execute(stmt)
-            return list(result.scalars().all())
+            return [(row[0], row[1]) for row in result.all()]
 
     async def list_prep_quizzes(
         self,
@@ -1708,16 +1988,19 @@ class PersonalLearningRepository:
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 
     @staticmethod
-    def _map_quiz_question(data: dict[str, Any]) -> dict[str, Any]:
+    def _map_prep_question(data: dict[str, Any]) -> dict[str, Any]:
         field_map = {
-            "quizSessionId": "quiz_session_id",
+            "prepId": "prep_id",
             "prepTopicId": "prep_topic_id",
             "questionText": "question_text",
             "questionType": "question_type",
             "options": "options",
             "correctAnswer": "correct_answer",
             "explanation": "explanation",
-            "orderIndex": "order_index",
+            "difficulty": "difficulty",
+            "source": "source",
+            "sourceYear": "source_year",
+            "examTip": "exam_tip",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 

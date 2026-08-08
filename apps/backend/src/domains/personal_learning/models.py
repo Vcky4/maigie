@@ -5,7 +5,7 @@ Covers notes, exam preparation, document generation, and study mode.
 These are the learner's private artifacts.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -648,6 +648,73 @@ PreparationConfidence = Literal["STARTING", "DEVELOPING", "CONFIDENT"]
 PreparationPace = Literal["LIGHT", "BALANCED", "INTENSIVE"]
 
 
+class PrepReadinessPoint(CamelModel):
+    """One day of a preparation's readiness.
+
+    Nullable percentages preserve the not-measured-versus-zero rule: a day on which
+    a preparation had no topics has no measurable readiness, and a chart should skip
+    the point rather than plot it at zero.
+    """
+
+    captured_on: date
+    progress_percent: float
+    average_mastery_percent: float | None = None
+    topics_total: int
+    topics_strong: int
+    topics_focus: int
+    topics_assessed: int
+    questions_answered: int
+    accuracy_percent: float | None = None
+    quizzes_taken: int
+
+
+class PrepReadinessTrendResponse(CamelModel):
+    """A preparation's readiness over a bounded window.
+
+    `points` contains **only days that were actually captured.** A preparation
+    created today has an empty series, and the client must say so rather than
+    drawing a line through a single point or back-filling from today's value —
+    either would fabricate the history the chart claims to show.
+    """
+
+    preparation_id: str
+    days: int
+    points: list[PrepReadinessPoint]
+
+
+class PrepTimelineMilestone(CamelModel):
+    """One point on a preparation's timeline.
+
+    Derived from a study-plan item, except the final `EXAM` entry which comes from
+    the preparation's own target date.
+    """
+
+    id: str
+    kind: Literal["STUDY", "EXAM"]
+    title: str
+    detail: str | None = None
+    scheduled_for: datetime
+    estimated_minutes: int | None = None
+    status: str
+    item_type: str | None = None
+    prep_topic_id: str | None = None
+    study_plan_id: str | None = None
+    completed_at: datetime | None = None
+
+
+class PrepTimelineResponse(CamelModel):
+    """A preparation's timeline, derived rather than stored.
+
+    `hasStudyPlan` is `False` until a plan has been generated, in which case
+    `milestones` contains only the exam. The client should offer plan generation
+    rather than rendering that as a planned-and-empty timeline.
+    """
+
+    preparation_id: str
+    has_study_plan: bool
+    milestones: list[PrepTimelineMilestone]
+
+
 class PrepCreateRequest(CamelModel):
     subject: str = Field(min_length=1, max_length=200)
     prep_type: PreparationType = Field(
@@ -758,7 +825,15 @@ class QuizQuestionPresentation(CamelModel):
     options: list[str] | None = None
     order_index: int
     prep_topic_id: str | None = None
-    # Review-only. `None` unless the session is COMPLETED.
+    # Safe to show before answering: metadata about the question, not about its
+    # answer. `None` for questions banked before difficulty was recorded.
+    difficulty: str | None = None
+    # Disclosed with the answer key, not before. A tip written about a specific
+    # question can hint at its answer, so it sits on the key's side of the
+    # boundary rather than being treated as neutral metadata.
+    exam_tip: str | None = None
+    # Review-only. `None` unless the learner has answered this question, or the
+    # session is COMPLETED.
     correct_answer: str | None = None
     explanation: str | None = None
     # The learner's own answer, present once they have answered this question.
@@ -788,6 +863,65 @@ class QuizSessionResponse(CamelModel):
     completed_at: datetime | None = None
     created_at: datetime
     questions: list[QuizQuestionPresentation] = []
+
+
+QuestionDifficulty = Literal["EASY", "MEDIUM", "HARD"]
+QuestionSource = Literal["AI_GENERATED", "PAST_PAPER"]
+
+
+class PrepQuestionBankItem(CamelModel):
+    """A banked question as shown in the workspace question bank.
+
+    **Deliberately omits `correctAnswer` and `explanation`.** The bank is a
+    browsing surface, so serving the answer key here would reopen exactly the leak
+    Decision C closed: a learner could read every answer before practising simply
+    by opening the tab. Answers are disclosed by answering, or on review of a
+    completed session.
+    """
+
+    id: str
+    prep_id: str
+    prep_topic_id: str | None = None
+    question_text: str
+    question_type: str
+    options: list[str] | None = None
+    # `EASY | MEDIUM | HARD`, or None for questions banked before this was recorded.
+    difficulty: str | None = None
+    # `AI_GENERATED | PAST_PAPER`. Server-set, so it can be trusted.
+    source: str | None = None
+    # Only meaningful for past papers.
+    source_year: int | None = None
+    # `examTip` is deliberately absent, for the same reason as the answer key: a
+    # tip about a specific question can hint at its answer, and browsing must not
+    # be a way to get either.
+    # Lifetime statistics across every session that asked this question. Only
+    # expressible now that a question outlives a session.
+    times_answered: int
+    times_correct: int
+    # None until the question has been answered at least once, keeping
+    # "not attempted" distinguishable from "always got it wrong".
+    accuracy_percent: float | None = None
+    # This learner's own flag. Scoped per user, so one learner never sees another's.
+    is_flagged: bool = False
+    flag_note: str | None = None
+    created_at: datetime
+
+
+class PrepQuestionFlagRequest(CamelModel):
+    """Optional note explaining why the question was flagged.
+
+    Optional on purpose: the act of flagging is the signal, and demanding a reason
+    would suppress it.
+    """
+
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class PrepQuestionFlagResponse(CamelModel):
+    question_id: str
+    is_flagged: bool
+    note: str | None = None
+    created_at: datetime
 
 
 class AnswerResultResponse(CamelModel):

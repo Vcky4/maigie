@@ -382,3 +382,187 @@ async def mark_overdue_preparations_completed() -> int:
             logger.error(f"Failed to mark prep {prep.id} as completed: {e}")
 
     return count
+
+
+async def search_question_bank(
+    *,
+    user_id: str,
+    prep_id: str,
+    topic_id: str | None = None,
+    difficulty: str | None = None,
+    source: str | None = None,
+    flagged_only: bool = False,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict[str, Any]], int]:
+    """A page of a preparation's question bank.
+
+    Returns listing shapes that **omit the answer key**. The bank is a browsing
+    surface, so including `correctAnswer` would let a learner read every answer
+    without practising — reopening the leak Decision C closed at quiz start.
+
+    Ownership is checked on the preparation, and the query is scoped to it, so a
+    topic or question id from another learner's preparation cannot be reached.
+    """
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    rows, total = await repo.search_prep_questions(
+        prep_id,
+        user_id=user_id,
+        topic_id=topic_id,
+        difficulty=difficulty,
+        source=source,
+        flagged_only=flagged_only,
+        skip=(page - 1) * page_size,
+        take=page_size,
+    )
+
+    items = [
+        {
+            "id": question.id,
+            "prepId": question.prep_id,
+            "prepTopicId": question.prep_topic_id,
+            "questionText": question.question_text,
+            "questionType": question.question_type,
+            "options": question.options if isinstance(question.options, list) else None,
+            "difficulty": question.difficulty,
+            "source": question.source,
+            "sourceYear": question.source_year,
+            "timesAnswered": question.times_answered or 0,
+            "timesCorrect": question.times_correct or 0,
+            # None rather than 0 until attempted, so an unpractised question does
+            # not read as one the learner always gets wrong.
+            "accuracyPercent": (
+                round((question.times_correct / question.times_answered) * 100, 1)
+                if question.times_answered
+                else None
+            ),
+            "isFlagged": flag is not None,
+            "flagNote": flag.note if flag is not None else None,
+            "createdAt": question.created_at,
+        }
+        for question, flag in rows
+    ]
+    return items, total
+
+
+async def flag_question(
+    *, user_id: str, prep_id: str, question_id: str, note: str | None = None
+) -> dict[str, Any]:
+    """Flag a banked question for later review.
+
+    Idempotent: flagging an already-flagged question updates the note if one is
+    supplied and otherwise changes nothing, so a repeated tap is not an error.
+
+    Scoped twice, as elsewhere: the preparation must belong to the learner, and the
+    question must belong to that preparation.
+    """
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    question = await repo.find_prep_question(question_id, prep_id)
+    if not question:
+        raise NotFoundError("PrepQuestion", question_id)
+
+    flag = await repo.upsert_question_flag(user_id=user_id, prep_question_id=question_id, note=note)
+    return {
+        "questionId": question_id,
+        "isFlagged": True,
+        "note": flag.note,
+        "createdAt": flag.created_at,
+    }
+
+
+async def unflag_question(*, user_id: str, prep_id: str, question_id: str) -> None:
+    """Remove a learner's flag from a question.
+
+    Succeeds whether or not a flag was present. Unflagging something already
+    unflagged is the outcome the caller wanted, not an error.
+    """
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    question = await repo.find_prep_question(question_id, prep_id)
+    if not question:
+        raise NotFoundError("PrepQuestion", question_id)
+
+    await repo.delete_question_flag(user_id=user_id, prep_question_id=question_id)
+
+
+# ---------------------------------------------------------------------------
+# Timeline
+# ---------------------------------------------------------------------------
+
+# The exam itself is always the last thing on the timeline, whatever the plan says.
+_EXAM_MILESTONE_KIND = "EXAM"
+_STUDY_MILESTONE_KIND = "STUDY"
+
+
+async def get_timeline(*, user_id: str, prep_id: str) -> dict[str, Any]:
+    """A preparation's timeline, derived from its linked study plan.
+
+    **No milestone entity.** A preparation can already generate a study plan whose
+    items carry a scheduled date, an estimate, a status, and a topic — which is a
+    timeline. Adding a parallel `PrepMilestone` table would create a second answer
+    to "what should I do by when", and the two would drift the first time a plan was
+    regenerated or an item rescheduled.
+
+    The target date is appended as a final milestone, because it is the one date the
+    learner is actually working towards and it belongs on the same axis.
+    """
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    plans = await repo.list_prep_study_plans(prep_id, user_id)
+
+    milestones: list[dict[str, Any]] = []
+    for plan in plans:
+        for item in plan.items or []:
+            milestones.append(
+                {
+                    "id": item.id,
+                    "kind": _STUDY_MILESTONE_KIND,
+                    "title": item.title,
+                    "detail": item.description,
+                    "scheduledFor": item.scheduled_date,
+                    "estimatedMinutes": item.estimated_minutes,
+                    "status": item.status,
+                    "itemType": item.item_type,
+                    "prepTopicId": item.prep_topic_id,
+                    "studyPlanId": plan.id,
+                    "completedAt": item.completed_at,
+                }
+            )
+
+    milestones.sort(key=lambda milestone: milestone["scheduledFor"])
+
+    # The exam is a milestone too, and the only one guaranteed to exist.
+    milestones.append(
+        {
+            "id": f"exam-{prep.id}",
+            "kind": _EXAM_MILESTONE_KIND,
+            "title": prep.subject,
+            "detail": None,
+            "scheduledFor": prep.exam_date,
+            "estimatedMinutes": None,
+            "status": prep.status,
+            "itemType": None,
+            "prepTopicId": None,
+            "studyPlanId": None,
+            "completedAt": None,
+        }
+    )
+
+    return {
+        "preparationId": prep_id,
+        # False when no plan has been generated yet. The client uses this to offer
+        # plan generation instead of rendering a timeline containing only the exam,
+        # which would read as though the work had been planned and found to be empty.
+        "hasStudyPlan": bool(plans),
+        "milestones": milestones,
+    }

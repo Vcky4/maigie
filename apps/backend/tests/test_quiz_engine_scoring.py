@@ -41,15 +41,20 @@ INTRUDER = "user-intruder"
 class FakeRepo:
     """In-memory stand-in that enforces the same scoping the database does.
 
-    Sessions are keyed by ``(quiz_id, user_id)`` and questions carry the session
-    they belong to, so a lookup that forgets to scope cannot accidentally pass.
+    Sessions are keyed by ``(quiz_id, user_id)``. Questions are owned by a
+    *preparation* and linked to the sessions that asked them, mirroring
+    ``PrepQuestion`` and ``QuizSessionQuestion``, so a lookup that forgets to
+    scope through the link cannot accidentally pass.
     """
 
     def __init__(self):
         self.sessions: dict[str, SimpleNamespace] = {}
         self.questions: dict[str, SimpleNamespace] = {}
+        # (quizSessionId, prepQuestionId) pairs — the session-to-bank link.
+        self.links: set[tuple[str, str]] = set()
         self.answers: list[SimpleNamespace] = []
         self.session_updates: list[tuple[str, dict]] = []
+        self.attempts: list[tuple[str, bool]] = []
 
     # --- seeding -------------------------------------------------------
 
@@ -71,18 +76,31 @@ class FakeRepo:
         return self.sessions[quiz_id]
 
     def add_question(self, question_id: str, quiz_id: str, *, key="right", topic_id="topic-1"):
+        """Bank a question and link it to the session that asked it."""
         self.questions[question_id] = SimpleNamespace(
             id=question_id,
-            quiz_session_id=quiz_id,
+            prep_id="prep-1",
             question_text=f"Question {question_id}?",
             question_type="MULTIPLE_CHOICE",
             options=[key, "wrong a", "wrong b"],
-            order_index=0,
             prep_topic_id=topic_id,
             correct_answer=key,
             explanation=f"why {key} is right",
+            times_answered=0,
+            times_correct=0,
         )
+        self.links.add((quiz_id, question_id))
         return self.questions[question_id]
+
+    def bank_question_without_asking(self, question_id: str, *, key="right"):
+        """Bank a question that no session has asked.
+
+        A learner may legitimately see such a question in the bank, which is why
+        it must still not be answerable inside an unrelated session.
+        """
+        question = self.add_question(question_id, "__unlinked__", key=key)
+        self.links.discard(("__unlinked__", question_id))
+        return question
 
     # --- repository surface --------------------------------------------
 
@@ -93,11 +111,18 @@ class FakeRepo:
         return session
 
     async def find_quiz_question(self, question_id: str, quiz_id: str):
-        question = self.questions.get(question_id)
-        # The scoping that matters: a question only resolves inside its own session.
-        if question is None or question.quiz_session_id != quiz_id:
+        # The scoping that matters: a banked question resolves only through a
+        # session that actually asked it.
+        if (quiz_id, question_id) not in self.links:
             return None
-        return question
+        return self.questions.get(question_id)
+
+    async def record_question_attempt(self, question_id: str, *, correct: bool):
+        self.attempts.append((question_id, correct))
+        question = self.questions.get(question_id)
+        if question is not None:
+            question.times_answered += 1
+            question.times_correct += 1 if correct else 0
 
     async def find_quiz_answer(self, quiz_id: str, question_id: str):
         for answer in self.answers:
@@ -524,3 +549,136 @@ class TestCompleteQuiz:
         await quiz_engine.complete_quiz(user_id=OWNER, quiz_id="quiz-1", duration_seconds=42)
 
         assert completion.repo.sessions["quiz-1"].duration_seconds == 42
+
+
+# ---------------------------------------------------------------------------
+# TestQuestionBankScoping
+# ---------------------------------------------------------------------------
+
+
+class TestQuestionBankScoping:
+    """A banked question outlives its session, which must not widen access.
+
+    Promoting questions to the preparation means a question is now visible in a
+    browsing surface. That makes it more important, not less, that answering is
+    only possible through a session that actually asked it.
+    """
+
+    async def test_banked_but_unasked_question_is_not_answerable(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.bank_question_without_asking("bank-1", key="right")
+
+        with pytest.raises(NotFoundError):
+            await quiz_engine.submit_answer(
+                user_id=OWNER,
+                quiz_id="quiz-1",
+                data={"question_id": "bank-1", "user_answer": "right"},
+            )
+        assert repo.answers == []
+
+    async def test_question_from_an_earlier_session_of_the_same_prep_is_not_answerable(self, repo):
+        """Both sessions belong to the same learner and the same preparation, so
+        only the session link distinguishes them."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1")
+        repo.add_session("quiz-2", OWNER)
+
+        with pytest.raises(NotFoundError):
+            await quiz_engine.submit_answer(
+                user_id=OWNER,
+                quiz_id="quiz-2",
+                data={"question_id": "q1", "user_answer": "right"},
+            )
+
+    async def test_reused_question_is_answerable_in_each_session_that_asked_it(self, repo):
+        """The point of a bank: one question, many sessions, separate answers."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_session("quiz-2", OWNER)
+        repo.add_question("shared", "quiz-1", key="right")
+        repo.links.add(("quiz-2", "shared"))
+
+        first = await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "shared", "user_answer": "right"}
+        )
+        second = await quiz_engine.submit_answer(
+            user_id=OWNER,
+            quiz_id="quiz-2",
+            data={"question_id": "shared", "user_answer": "wrong a"},
+        )
+
+        # Independent answers, not an idempotent replay: different sessions.
+        assert first["alreadyAnswered"] is False
+        assert second["alreadyAnswered"] is False
+        assert first["isCorrect"] is True
+        assert second["isCorrect"] is False
+        assert len(repo.answers) == 2
+
+
+# ---------------------------------------------------------------------------
+# TestQuestionStatistics
+# ---------------------------------------------------------------------------
+
+
+class TestQuestionStatistics:
+    """Lifetime per-question statistics, only expressible now questions persist."""
+
+    async def test_attempt_is_recorded_once_per_answer(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert repo.attempts == [("q1", True)]
+
+    async def test_incorrect_attempt_is_recorded_as_incorrect(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "wrong a"}
+        )
+
+        assert repo.attempts == [("q1", False)]
+
+    async def test_replayed_submission_does_not_double_count_the_attempt(self, repo):
+        """Statistics must not drift for the same reason the score must not."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        payload = {"question_id": "q1", "user_answer": "right"}
+        await quiz_engine.submit_answer(user_id=OWNER, quiz_id="quiz-1", data=payload)
+        await quiz_engine.submit_answer(user_id=OWNER, quiz_id="quiz-1", data=payload)
+
+        assert repo.attempts == [("q1", True)]
+        assert repo.questions["q1"].times_answered == 1
+
+    async def test_statistics_accumulate_across_sessions(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_session("quiz-2", OWNER)
+        repo.add_question("shared", "quiz-1", key="right")
+        repo.links.add(("quiz-2", "shared"))
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "shared", "user_answer": "right"}
+        )
+        await quiz_engine.submit_answer(
+            user_id=OWNER,
+            quiz_id="quiz-2",
+            data={"question_id": "shared", "user_answer": "wrong a"},
+        )
+
+        assert repo.questions["shared"].times_answered == 2
+        assert repo.questions["shared"].times_correct == 1
+
+    async def test_a_rejected_answer_records_no_attempt(self, repo):
+        repo.add_session("quiz-1", OWNER, status="COMPLETED")
+        repo.add_question("q1", "quiz-1")
+
+        with pytest.raises(MaigieError):
+            await quiz_engine.submit_answer(
+                user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+            )
+
+        assert repo.attempts == []

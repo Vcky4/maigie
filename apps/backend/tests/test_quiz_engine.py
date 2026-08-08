@@ -37,12 +37,13 @@ NOW = datetime(2026, 8, 7, 12, 0, tzinfo=UTC)
 
 
 def _question(qid: str = "q1", *, key: str = "the right one", explanation: str = "because reasons"):
+    """A banked question. Carries no order: that lives on the session link."""
     return SimpleNamespace(
         id=qid,
+        prep_id="prep-1",
         question_text=f"Question {qid}?",
         question_type="MULTIPLE_CHOICE",
         options=[key, "wrong a", "wrong b", "wrong c"],
-        order_index=0,
         prep_topic_id="topic-1",
         correct_answer=key,
         explanation=explanation,
@@ -77,8 +78,14 @@ def _answer(question_id: str, *, correct: bool = True):
 
 
 def _wire(status: str, questions, answers):
-    """Build the response and push it through the real model, as the route does."""
-    built = _build_quiz_response(_session(status), questions, answers)
+    """Build the response and push it through the real model, as the route does.
+
+    Questions are paired with their position in the session, because order now
+    belongs to the session that asked the question rather than to the banked
+    question itself.
+    """
+    ordered = [(question, index) for index, question in enumerate(questions)]
+    built = _build_quiz_response(_session(status), ordered, answers)
     dumped = models.QuizSessionResponse.model_validate(built).model_dump(by_alias=True)
     return {item["id"]: item for item in dumped["questions"]}
 
@@ -377,3 +384,88 @@ class TestSuggestNextStep:
     def test_many_weak_areas_are_truncated_to_three(self):
         result = _suggest_next_step(["A", "B", "C", "D"])
         assert "D" not in result
+
+
+# ---------------------------------------------------------------------------
+# TestQuestionMetadata
+# ---------------------------------------------------------------------------
+
+
+class TestQuestionMetadataNormalization:
+    """Metadata from the generator is normalized, never trusted."""
+
+    def test_recognised_difficulty_is_kept(self):
+        for value in ("EASY", "MEDIUM", "HARD"):
+            result = _usable_question({**BASE_CANDIDATE, "difficulty": value})
+            assert result["difficulty"] == value
+
+    def test_difficulty_is_upper_cased(self):
+        assert _usable_question({**BASE_CANDIDATE, "difficulty": "hard"})["difficulty"] == "HARD"
+
+    def test_unrecognised_difficulty_is_dropped_not_stored(self):
+        """A badge reading "quite hard" is worse than no badge: the client would
+        have to render it."""
+        for value in ("quite hard", "Level 4", "IMPOSSIBLE", "", 7):
+            result = _usable_question({**BASE_CANDIDATE, "difficulty": value})
+            assert result["difficulty"] is None
+
+    def test_missing_difficulty_is_none(self):
+        assert _usable_question(BASE_CANDIDATE)["difficulty"] is None
+
+    def test_exam_tip_is_kept_and_trimmed(self):
+        result = _usable_question({**BASE_CANDIDATE, "examTip": "  Watch the wording.  "})
+        assert result["exam_tip"] == "Watch the wording."
+
+    def test_exam_tip_is_capped(self):
+        """ "One sentence" is a request, not a guarantee."""
+        result = _usable_question({**BASE_CANDIDATE, "examTip": "x" * 5000})
+        assert len(result["exam_tip"]) == 500
+
+    def test_blank_exam_tip_becomes_none(self):
+        assert _usable_question({**BASE_CANDIDATE, "examTip": "   "})["exam_tip"] is None
+
+    def test_missing_exam_tip_is_none(self):
+        assert _usable_question(BASE_CANDIDATE)["exam_tip"] is None
+
+    def test_generator_cannot_declare_its_own_provenance(self):
+        """`source` is not among the normalized fields, so a model claiming its
+        output came from a past paper cannot make that stick."""
+        result = _usable_question({**BASE_CANDIDATE, "source": "PAST_PAPER", "sourceYear": 2019})
+        assert "source" not in result
+        assert "source_year" not in result
+
+
+class TestExamTipDisclosure:
+    """The tip follows the answer key, not the difficulty badge."""
+
+    def _question_with_metadata(self, qid="q1"):
+        return SimpleNamespace(
+            id=qid,
+            prep_id="prep-1",
+            question_text="Question?",
+            question_type="MULTIPLE_CHOICE",
+            options=["right", "wrong a", "wrong b", "wrong c"],
+            prep_topic_id="topic-1",
+            correct_answer="right",
+            explanation="because",
+            difficulty="HARD",
+            exam_tip="TIP_CANARY",
+        )
+
+    def test_difficulty_is_shown_before_answering(self):
+        """Difficulty describes the question, not its answer."""
+        wire = _wire("IN_PROGRESS", [self._question_with_metadata()], [])
+        assert wire["q1"]["difficulty"] == "HARD"
+
+    def test_exam_tip_is_withheld_before_answering(self):
+        wire = _wire("IN_PROGRESS", [self._question_with_metadata()], [])
+        assert wire["q1"]["examTip"] is None
+        assert "TIP_CANARY" not in str(wire)
+
+    def test_exam_tip_is_revealed_once_answered(self):
+        wire = _wire("IN_PROGRESS", [self._question_with_metadata()], [_answer("q1")])
+        assert wire["q1"]["examTip"] == "TIP_CANARY"
+
+    def test_exam_tip_is_revealed_on_a_completed_session(self):
+        wire = _wire("COMPLETED", [self._question_with_metadata()], [])
+        assert wire["q1"]["examTip"] == "TIP_CANARY"

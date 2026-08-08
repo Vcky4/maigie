@@ -3748,6 +3748,42 @@
         "title": "PaginatedResponse[NoteResponse]",
         "type": "object"
       },
+      "PaginatedResponse_PrepQuestionBankItem_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PrepQuestionBankItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[PrepQuestionBankItem]",
+        "type": "object"
+      },
       "PaginatedResponse_PrepSummaryResponse_": {
         "properties": {
           "items": {
@@ -4397,6 +4433,289 @@
         "title": "PrepMaterialUpdateRequest",
         "type": "object"
       },
+      "PrepQuestionBankItem": {
+        "description": "A banked question as shown in the workspace question bank.\n\n**Deliberately omits `correctAnswer` and `explanation`.** The bank is a\nbrowsing surface, so serving the answer key here would reopen exactly the leak\nDecision C closed: a learner could read every answer before practising simply\nby opening the tab. Answers are disclosed by answering, or on review of a\ncompleted session.",
+        "properties": {
+          "accuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracypercent"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "flagNote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flagnote"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isFlagged": {
+            "default": false,
+            "title": "Isflagged",
+            "type": "boolean"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "prepId": {
+            "title": "Prepid",
+            "type": "string"
+          },
+          "prepTopicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preptopicid"
+          },
+          "questionText": {
+            "title": "Questiontext",
+            "type": "string"
+          },
+          "questionType": {
+            "title": "Questiontype",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "sourceYear": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceyear"
+          },
+          "timesAnswered": {
+            "title": "Timesanswered",
+            "type": "integer"
+          },
+          "timesCorrect": {
+            "title": "Timescorrect",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "prepId",
+          "questionText",
+          "questionType",
+          "timesAnswered",
+          "timesCorrect",
+          "createdAt"
+        ],
+        "title": "PrepQuestionBankItem",
+        "type": "object"
+      },
+      "PrepQuestionFlagRequest": {
+        "description": "Optional note explaining why the question was flagged.\n\nOptional on purpose: the act of flagging is the signal, and demanding a reason\nwould suppress it.",
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "title": "PrepQuestionFlagRequest",
+        "type": "object"
+      },
+      "PrepQuestionFlagResponse": {
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "isFlagged": {
+            "title": "Isflagged",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "questionId": {
+            "title": "Questionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "questionId",
+          "isFlagged",
+          "createdAt"
+        ],
+        "title": "PrepQuestionFlagResponse",
+        "type": "object"
+      },
+      "PrepReadinessPoint": {
+        "description": "One day of a preparation's readiness.\n\nNullable percentages preserve the not-measured-versus-zero rule: a day on which\na preparation had no topics has no measurable readiness, and a chart should skip\nthe point rather than plot it at zero.",
+        "properties": {
+          "accuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracypercent"
+          },
+          "averageMasteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averagemasterypercent"
+          },
+          "capturedOn": {
+            "format": "date",
+            "title": "Capturedon",
+            "type": "string"
+          },
+          "progressPercent": {
+            "title": "Progresspercent",
+            "type": "number"
+          },
+          "questionsAnswered": {
+            "title": "Questionsanswered",
+            "type": "integer"
+          },
+          "quizzesTaken": {
+            "title": "Quizzestaken",
+            "type": "integer"
+          },
+          "topicsAssessed": {
+            "title": "Topicsassessed",
+            "type": "integer"
+          },
+          "topicsFocus": {
+            "title": "Topicsfocus",
+            "type": "integer"
+          },
+          "topicsStrong": {
+            "title": "Topicsstrong",
+            "type": "integer"
+          },
+          "topicsTotal": {
+            "title": "Topicstotal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "capturedOn",
+          "progressPercent",
+          "topicsTotal",
+          "topicsStrong",
+          "topicsFocus",
+          "topicsAssessed",
+          "questionsAnswered",
+          "quizzesTaken"
+        ],
+        "title": "PrepReadinessPoint",
+        "type": "object"
+      },
+      "PrepReadinessTrendResponse": {
+        "description": "A preparation's readiness over a bounded window.\n\n`points` contains **only days that were actually captured.** A preparation\ncreated today has an empty series, and the client must say so rather than\ndrawing a line through a single point or back-filling from today's value —\neither would fabricate the history the chart claims to show.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/PrepReadinessPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "preparationId": {
+            "title": "Preparationid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "preparationId",
+          "days",
+          "points"
+        ],
+        "title": "PrepReadinessTrendResponse",
+        "type": "object"
+      },
       "PrepSummaryResponse": {
         "description": "`examDate` is a NOT NULL column, so it is always present.",
         "properties": {
@@ -4494,6 +4813,139 @@
           "updatedAt"
         ],
         "title": "PrepSummaryResponse",
+        "type": "object"
+      },
+      "PrepTimelineMilestone": {
+        "description": "One point on a preparation's timeline.\n\nDerived from a study-plan item, except the final `EXAM` entry which comes from\nthe preparation's own target date.",
+        "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "itemType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Itemtype"
+          },
+          "kind": {
+            "enum": [
+              "STUDY",
+              "EXAM"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "prepTopicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preptopicid"
+          },
+          "scheduledFor": {
+            "format": "date-time",
+            "title": "Scheduledfor",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "studyPlanId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Studyplanid"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "scheduledFor",
+          "status"
+        ],
+        "title": "PrepTimelineMilestone",
+        "type": "object"
+      },
+      "PrepTimelineResponse": {
+        "description": "A preparation's timeline, derived rather than stored.\n\n`hasStudyPlan` is `False` until a plan has been generated, in which case\n`milestones` contains only the exam. The client should offer plan generation\nrather than rendering that as a planned-and-empty timeline.",
+        "properties": {
+          "hasStudyPlan": {
+            "title": "Hasstudyplan",
+            "type": "boolean"
+          },
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/PrepTimelineMilestone"
+            },
+            "title": "Milestones",
+            "type": "array"
+          },
+          "preparationId": {
+            "title": "Preparationid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "preparationId",
+          "hasStudyPlan",
+          "milestones"
+        ],
+        "title": "PrepTimelineResponse",
         "type": "object"
       },
       "PrepTopicResponse": {
@@ -5299,6 +5751,28 @@
               }
             ],
             "title": "Correctanswer"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "examTip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examtip"
           },
           "explanation": {
             "anyOf": [
@@ -13124,6 +13598,269 @@
         ]
       }
     },
+    "/api/v1/learning/preparations/{prep_id}/questions": {
+      "get": {
+        "description": "Browse a preparation's question bank.\n\nOnly expressible since migration `008` promoted questions from being owned by\na quiz session to being owned by the preparation.\n\nThe answer key is **not** included: browsing must not be a way to read answers\nwithout practising.",
+        "operationId": "list_question_bank_api_v1_learning_preparations__prep_id__questions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "topicId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topicid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "difficulty",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "EASY",
+                    "MEDIUM",
+                    "HARD"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Difficulty"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AI_GENERATED",
+                    "PAST_PAPER"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flaggedOnly",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Flaggedonly",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_PrepQuestionBankItem_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Question Bank",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/questions/{question_id}/flag": {
+      "delete": {
+        "description": "Remove a flag. Succeeds whether or not the question was flagged.",
+        "operationId": "unflag_question_api_v1_learning_preparations__prep_id__questions__question_id__flag_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unflag Question",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "put": {
+        "description": "Flag a question for later review.\n\n`PUT` rather than `POST` because it is idempotent: flagging an already-flagged\nquestion updates the note and is otherwise a no-op, so a repeated tap is a\nsuccess, not a conflict.",
+        "operationId": "flag_question_api_v1_learning_preparations__prep_id__questions__question_id__flag_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/PrepQuestionFlagRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepQuestionFlagResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Flag Question",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/preparations/{prep_id}/quizzes": {
       "get": {
         "description": "List all quiz sessions for a preparation.",
@@ -13244,6 +13981,67 @@
         ]
       }
     },
+    "/api/v1/learning/preparations/{prep_id}/readiness-trend": {
+      "get": {
+        "description": "A preparation's readiness over time.\n\nBacked by daily snapshots, because mastery is a mutable value and a trend\ncannot be derived from it after the fact.\n\nReturns only days that were captured. A new preparation has no history, and the\nclient must render that as \"no data yet\" rather than a line through one point.",
+        "operationId": "get_readiness_trend_api_v1_learning_preparations__prep_id__readiness_trend_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 180,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepReadinessTrendResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Readiness Trend",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/preparations/{prep_id}/study-plan": {
       "post": {
         "description": "Generate a study plan for a preparation.",
@@ -13287,6 +14085,55 @@
           }
         ],
         "summary": "Generate Prep Study Plan",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/timeline": {
+      "get": {
+        "description": "A preparation's timeline.\n\nDerived from the linked study plan's items plus the target date, rather than\nfrom a separate milestone entity — a second source of truth for \"what should I\ndo by when\" would drift from the plan the first time either changed.",
+        "operationId": "get_prep_timeline_api_v1_learning_preparations__prep_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepTimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Prep Timeline",
         "tags": [
           "personal-learning",
           "personal-learning"

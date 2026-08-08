@@ -19,6 +19,7 @@ from . import (  # noqa: F401
     recommendations,
     reflections,
     preparation,
+    readiness_snapshots,
     notifications,
 )
 
@@ -55,6 +56,14 @@ def get_beat_schedule() -> dict:
             "task": "learning.mark_completed_preparations",
             "schedule": crontab(hour=1, minute=0),
             "options": {"queue": "default"},
+        },
+        # Just after midnight, so a day's row reflects that day's finishing state.
+        # Idempotent on (prepId, capturedOn), so a retry updates rather than
+        # duplicating the day.
+        "learning.capture_readiness_snapshots": {
+            "task": "learning.capture_readiness_snapshots",
+            "schedule": crontab(hour=0, minute=30),
+            "options": {"queue": "heavy"},
         },
         "learning.notification_delivery": {
             "task": "learning.notification_delivery",

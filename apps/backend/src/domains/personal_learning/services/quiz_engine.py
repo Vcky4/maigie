@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 # A multiple-choice question needs at least two options to be a choice at all.
 _MIN_OPTIONS = 2
 
+# Recognised difficulty labels. Anything else the generator returns is dropped
+# rather than stored, so the column cannot become a free-text dumping ground.
+_DIFFICULTIES = ("EASY", "MEDIUM", "HARD")
+
+# Provenance. Always set by the server: a generator's claim about where its own
+# output came from is not evidence.
+QUESTION_SOURCE_AI = "AI_GENERATED"
+QUESTION_SOURCE_PAST_PAPER = "PAST_PAPER"
+
+# An exam tip is capped rather than trusted to be "one sentence".
+_MAX_EXAM_TIP_CHARS = 500
+
 # A topic at or below this score is reported as a weak area on completion.
 _WEAK_AREA_THRESHOLD = 70
 
@@ -141,7 +153,9 @@ async def start_quiz(
         f"- 'questionType': 'MULTIPLE_CHOICE'\n"
         f"- 'options': array of 4 options (strings)\n"
         f"- 'correctAnswer': the correct option (must match one of the options exactly)\n"
-        f"- 'explanation': brief explanation of why the answer is correct\n\n"
+        f"- 'explanation': brief explanation of why the answer is correct\n"
+        f"- 'difficulty': one of EASY, MEDIUM, HARD\n"
+        f"- 'examTip': one sentence on how to approach this kind of question\n\n"
         f"Return ONLY the JSON array."
     )
 
@@ -191,17 +205,30 @@ async def start_quiz(
         if matched_topic_id is None:
             unattributed += 1
 
-        await repo.create_quiz_question(
+        # The question is banked against the preparation, then linked to this
+        # session at this position. The bank outlives the session, so the question
+        # remains browsable and reusable afterwards.
+        question = await repo.create_prep_question(
             {
-                "quizSessionId": quiz_session.id,
+                "prepId": prep_id,
                 "prepTopicId": matched_topic_id,
                 "questionText": normalized["question_text"],
                 "questionType": normalized["question_type"],
                 "options": normalized["options"],
                 "correctAnswer": normalized["correct_answer"],
                 "explanation": normalized["explanation"],
-                "orderIndex": created,
+                "difficulty": normalized["difficulty"],
+                "examTip": normalized["exam_tip"],
+                # Set here, not taken from the model. A generator asked to report
+                # its own provenance is not a source of truth about it, and
+                # `sourceYear` stays null because a generated question has no year.
+                "source": QUESTION_SOURCE_AI,
             }
+        )
+        await repo.attach_question_to_session(
+            quiz_session_id=quiz_session.id,
+            prep_question_id=question.id,
+            order_index=created,
         )
         created += 1
 
@@ -289,12 +316,25 @@ def _usable_question(candidate: Any) -> dict[str, Any] | None:
             return None
 
     explanation = candidate.get("explanation")
+
+    # Metadata is normalized, never trusted. An unrecognised difficulty becomes
+    # None rather than being stored, because a badge reading "quite hard" or
+    # "Level 4" is worse than no badge: the client would have to render it.
+    difficulty = str(candidate.get("difficulty") or "").strip().upper()
+    if difficulty not in _DIFFICULTIES:
+        difficulty = None
+
+    exam_tip = candidate.get("examTip")
+    exam_tip = str(exam_tip).strip()[:_MAX_EXAM_TIP_CHARS] or None if exam_tip else None
+
     return {
         "question_text": question_text,
         "question_type": question_type,
         "options": options,
         "correct_answer": correct_answer,
         "explanation": str(explanation).strip() or None if explanation is not None else None,
+        "difficulty": difficulty,
+        "exam_tip": exam_tip,
     }
 
 
@@ -383,7 +423,7 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     # answered here and its answer key read back out of the response.
     question = await repo.find_quiz_question(question_id, quiz_id)
     if not question:
-        raise NotFoundError("QuizQuestion", question_id)
+        raise NotFoundError("PrepQuestion", question_id)
 
     # Answering is idempotent. Resubmitting replays the stored result instead of
     # scoring again, so the key disclosed by the first submission cannot be fed
@@ -420,6 +460,10 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     await repo.update_quiz_session(
         quiz_id, {"correctCount": await repo.count_correct_quiz_answers(quiz_id)}
     )
+
+    # Lifetime statistics on the banked question, across every session that has
+    # ever asked it. Incremented in SQL so concurrent answers cannot lose a count.
+    await repo.record_question_attempt(question_id, correct=is_correct)
 
     # Update topic mastery — fire-and-forget to avoid blocking the response.
     # Any failure is logged; user experience is not affected.
@@ -586,6 +630,9 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
     # Index answers by question_id for O(1) lookup
     answer_map = {a.question_id: a for a in answers}
     session_completed = quiz.status == "COMPLETED"
+    # `questions` is a list of (question, orderIndex) pairs: order belongs to the
+    # session that asked the question, not to the banked question.
+    ordered = [(q, i) for q, i in questions]
 
     return {
         "id": quiz.id,
@@ -602,16 +649,19 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
         "created_at": quiz.created_at,
         "questions": [
             _question_dict(
-                q,
-                answer_map.get(q.id),
-                reveal_answers=session_completed or q.id in answer_map,
+                question,
+                answer_map.get(question.id),
+                order_index=order_index,
+                reveal_answers=session_completed or question.id in answer_map,
             )
-            for q in questions
+            for question, order_index in ordered
         ],
     }
 
 
-def _question_dict(question: Any, answer: Any | None, *, reveal_answers: bool) -> dict[str, Any]:
+def _question_dict(
+    question: Any, answer: Any | None, *, order_index: int, reveal_answers: bool
+) -> dict[str, Any]:
     """Serialize a question with the learner's answer attached, if they have one.
 
     `reveal_answers` gates the answer key. It is not defaulted, so a new caller
@@ -623,10 +673,14 @@ def _question_dict(question: Any, answer: Any | None, *, reveal_answers: bool) -
         "question_text": question.question_text,
         "question_type": question.question_type,
         "options": question.options if isinstance(question.options, list) else None,
-        "order_index": question.order_index,
+        "order_index": order_index,
         "prep_topic_id": question.prep_topic_id,
+        # Shown from the start: difficulty describes the question, not the answer.
+        "difficulty": getattr(question, "difficulty", None),
         "correct_answer": question.correct_answer if reveal_answers else None,
         "explanation": question.explanation if reveal_answers else None,
+        # Withheld with the key: a tip about this question can hint at its answer.
+        "exam_tip": getattr(question, "exam_tip", None) if reveal_answers else None,
         "user_answer": answer.user_answer if answer else None,
         "is_correct": answer.is_correct if answer else None,
         "time_taken_seconds": answer.time_taken_seconds if answer else None,
@@ -637,15 +691,15 @@ def _question_dict(question: Any, answer: Any | None, *, reveal_answers: bool) -
 async def _update_topic_mastery(topic_id: str) -> None:
     """Recalculate topic mastery based on all quiz answers for this topic."""
     from sqlalchemy import select as sa_select
-    from src.domains.personal_learning.db_models import QuizAnswer, QuizQuestion
+    from src.domains.personal_learning.db_models import PrepQuestion, QuizAnswer
     from src.shared.database import get_session_factory
 
     factory = get_session_factory()
     async with factory() as session:
         stmt = (
             sa_select(QuizAnswer)
-            .join(QuizQuestion, QuizAnswer.question_id == QuizQuestion.id)
-            .where(QuizQuestion.prep_topic_id == topic_id)
+            .join(PrepQuestion, QuizAnswer.question_id == PrepQuestion.id)
+            .where(PrepQuestion.prep_topic_id == topic_id)
         )
         result = await session.execute(stmt)
         answers = list(result.scalars().all())
@@ -663,12 +717,25 @@ async def _update_topic_mastery(topic_id: str) -> None:
 async def _compute_topic_breakdown(quiz_id: str, answers: list[Any]) -> list[dict]:
     """Compute per-topic score breakdown."""
     from sqlalchemy import select as sa_select
-    from src.domains.personal_learning.db_models import QuizQuestion, PrepTopic
+    from src.domains.personal_learning.db_models import (
+        PrepQuestion,
+        PrepTopic,
+        QuizSessionQuestion,
+    )
     from src.shared.database import get_session_factory
 
     factory = get_session_factory()
     async with factory() as session:
-        stmt = sa_select(QuizQuestion).where(QuizQuestion.quiz_session_id == quiz_id)
+        # Reached through the session link, since a banked question is no longer
+        # owned by the session that asked it.
+        stmt = (
+            sa_select(PrepQuestion)
+            .join(
+                QuizSessionQuestion,
+                QuizSessionQuestion.prep_question_id == PrepQuestion.id,
+            )
+            .where(QuizSessionQuestion.quiz_session_id == quiz_id)
+        )
         result = await session.execute(stmt)
         questions = list(result.scalars().all())
 
