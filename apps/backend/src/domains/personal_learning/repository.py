@@ -14,7 +14,7 @@ Session management:
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select, update, delete, func
@@ -165,19 +165,19 @@ class PersonalLearningRepository:
         *,
         take: int,
         session: AsyncSession | None = None,
-    ) -> list[ExamPrep]:
-        """Return bounded unfinished preparations ordered by target date."""
+    ) -> tuple[list[ExamPrep], int]:
+        """Return bounded unfinished preparations and their full unfinished count.
+
+        Returns ``(items, total)`` to match ``list_dashboard_study_plans``: the
+        Learn dashboard renders both as paths, so it needs a total for each or its
+        card count and its total disagree.
+        """
         async with self._use_session(session) as s:
-            stmt = (
-                select(ExamPrep)
-                .where(
-                    ExamPrep.user_id == user_id,
-                    ExamPrep.status != "COMPLETED",
-                )
-                .order_by(ExamPrep.exam_date.asc())
-                .limit(take)
-            )
-            return list((await s.execute(stmt)).scalars().all())
+            condition = (ExamPrep.user_id == user_id) & (ExamPrep.status != "COMPLETED")
+            total_stmt = select(func.count()).select_from(ExamPrep).where(condition)
+            total = (await s.execute(total_stmt)).scalar_one() or 0
+            stmt = select(ExamPrep).where(condition).order_by(ExamPrep.exam_date.asc()).limit(take)
+            return list((await s.execute(stmt)).scalars().all()), total
 
     # -----------------------------------------------------------------------
     # Notes
@@ -542,6 +542,8 @@ class PersonalLearningRepository:
             "userId": "user_id",
             "subject": "subject",
             "type": "prep_type",
+            "confidence": "confidence",
+            "pace": "pace",
             "examDate": "exam_date",
             "description": "description",
             "status": "status",
@@ -1351,16 +1353,17 @@ class PersonalLearningRepository:
     ) -> list[QuizSession]:
         """The learner's most recent quiz sessions across all preparations.
 
-        `FAILED` sessions are excluded. They record a generation failure, not
-        something the learner did, so surfacing them as practice history would
-        misrepresent the account.
+        `FAILED` and `GENERATING` sessions are excluded. They record a generation
+        failure or an attempt still being prepared, neither of which is something
+        the learner did, so surfacing them as practice history would misrepresent
+        the account.
         """
         async with self._use_session(session) as s:
             stmt = (
                 select(QuizSession)
                 .where(
                     QuizSession.user_id == user_id,
-                    QuizSession.status != "FAILED",
+                    QuizSession.status.notin_(("FAILED", "GENERATING")),
                 )
                 .order_by(QuizSession.created_at.desc())
                 .limit(take)
@@ -1526,6 +1529,35 @@ class PersonalLearningRepository:
             await s.flush()
             await s.refresh(answer)
             return answer
+
+    async def list_practice_days(
+        self, user_id: str, *, since: datetime, session: AsyncSession | None = None
+    ) -> list[date]:
+        """Distinct UTC dates on which the learner completed a quiz session.
+
+        Bounded by ``since`` so the streak calculation reads a fixed window rather
+        than the learner's whole history. Grouping in SQL keeps one row per day
+        instead of one per session.
+        """
+        async with self._use_session(session) as s:
+            day = func.date(QuizSession.completed_at)
+            stmt = (
+                select(day)
+                .where(
+                    QuizSession.user_id == user_id,
+                    QuizSession.status == "COMPLETED",
+                    QuizSession.completed_at.is_not(None),
+                    QuizSession.completed_at >= since,
+                )
+                .group_by(day)
+                .order_by(day.desc())
+            )
+            rows = (await s.execute(stmt)).scalars().all()
+            days: list[date] = []
+            for row in rows:
+                # `func.date` returns a date on Postgres and a string on SQLite.
+                days.append(row if isinstance(row, date) else datetime.fromisoformat(row).date())
+            return days
 
     async def find_quiz_question(
         self, question_id: str, quiz_id: str, *, session: AsyncSession | None = None

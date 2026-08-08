@@ -4025,6 +4025,23 @@
       },
       "PrepCreateRequest": {
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "STARTING",
+                  "DEVELOPING",
+                  "CONFIDENT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The learner's self-reported starting point.",
+            "title": "Confidence"
+          },
           "description": {
             "anyOf": [
               {
@@ -4035,6 +4052,23 @@
               }
             ],
             "title": "Description"
+          },
+          "pace": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LIGHT",
+                  "BALANCED",
+                  "INTENSIVE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How hard the learner wants to push. Determines the study-plan effort budget: LIGHT ~3 sessions/week, BALANCED ~5, INTENSIVE daily.",
+            "title": "Pace"
           },
           "subject": {
             "maxLength": 200,
@@ -4366,6 +4400,17 @@
       "PrepSummaryResponse": {
         "description": "`examDate` is a NOT NULL column, so it is always present.",
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -4390,6 +4435,17 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "pace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pace"
           },
           "status": {
             "title": "Status",
@@ -4594,6 +4650,22 @@
       "PrepUpdateRequest": {
         "description": "Partial update. Only supplied fields are written.",
         "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "enum": [
+                  "STARTING",
+                  "DEVELOPING",
+                  "CONFIDENT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
           "description": {
             "anyOf": [
               {
@@ -4604,6 +4676,22 @@
               }
             ],
             "title": "Description"
+          },
+          "pace": {
+            "anyOf": [
+              {
+                "enum": [
+                  "LIGHT",
+                  "BALANCED",
+                  "INTENSIVE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pace"
           },
           "status": {
             "anyOf": [
@@ -5035,6 +5123,17 @@
             "title": "Practiceminutes",
             "type": "integer"
           },
+          "practiceStreak": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practicestreak"
+          },
           "questionsAnswered": {
             "title": "Questionsanswered",
             "type": "integer"
@@ -5049,7 +5148,8 @@
           "questionsAnswered",
           "accuracyPercent",
           "practiceMinutes",
-          "quizzesTaken"
+          "quizzesTaken",
+          "practiceStreak"
         ],
         "title": "PrepareSummaryStats",
         "type": "object"

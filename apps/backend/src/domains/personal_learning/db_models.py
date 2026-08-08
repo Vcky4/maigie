@@ -174,6 +174,13 @@ class ExamPrep(Base, TimestampMixin):
     # ASSIGNMENT, PROJECT. Nullable because rows created before this column
     # existed have no value to backfill from.
     prep_type: Mapped[str | None] = mapped_column("type", String, nullable=True)
+    # How the learner wants to work, captured by the create wizard.
+    # STARTING | DEVELOPING | CONFIDENT — self-reported starting point.
+    confidence: Mapped[str | None] = mapped_column(String, nullable=True)
+    # LIGHT | BALANCED | INTENSIVE — how hard they want to push. The effort this
+    # implies (sessions per week, weekly minutes) is derived in `prep_intent`
+    # rather than stored, so there is one definition of what each pace means.
+    pace: Mapped[str | None] = mapped_column(String, nullable=True)
     exam_date: Mapped[datetime] = mapped_column("examDate", DateTime(timezone=True), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")

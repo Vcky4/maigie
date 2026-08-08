@@ -569,6 +569,10 @@ class PrepareSummaryStats(CamelModel):
     # tracked practice time rather than total time spent.
     practice_minutes: int
     quizzes_taken: int
+    # Consecutive days with at least one completed quiz session (Decision I).
+    # None when the learner has never completed one; 0 once a streak has lapsed.
+    # A deliberately secondary signal — do not render it above readiness.
+    practice_streak: int | None
 
 
 class PreparationProgressSummary(CamelModel):
@@ -640,6 +644,10 @@ class PrepareDashboardResponse(CamelModel):
     recent_sessions: list[PrepareSessionSummary]
 
 
+PreparationConfidence = Literal["STARTING", "DEVELOPING", "CONFIDENT"]
+PreparationPace = Literal["LIGHT", "BALANCED", "INTENSIVE"]
+
+
 class PrepCreateRequest(CamelModel):
     subject: str = Field(min_length=1, max_length=200)
     prep_type: PreparationType = Field(
@@ -649,6 +657,18 @@ class PrepCreateRequest(CamelModel):
     )
     target_date: str = Field(description="ISO-8601 target/exam date.")
     description: str | None = None
+    # Collected by the create wizard. Optional because a preparation is perfectly
+    # valid without them; they shape scheduling, they are not prerequisites.
+    confidence: PreparationConfidence | None = Field(
+        default=None, description="The learner's self-reported starting point."
+    )
+    pace: PreparationPace | None = Field(
+        default=None,
+        description=(
+            "How hard the learner wants to push. Determines the study-plan effort "
+            "budget: LIGHT ~3 sessions/week, BALANCED ~5, INTENSIVE daily."
+        ),
+    )
 
 
 class PrepUpdateRequest(CamelModel):
@@ -661,6 +681,8 @@ class PrepUpdateRequest(CamelModel):
     target_date: str | None = None
     description: str | None = None
     status: PreparationStatus | None = None
+    confidence: PreparationConfidence | None = None
+    pace: PreparationPace | None = None
 
 
 class PrepSummaryResponse(CamelModel):
@@ -675,6 +697,10 @@ class PrepSummaryResponse(CamelModel):
     exam_date: datetime
     description: str | None = None
     status: str
+    # Plain strings on the way out, tolerant of legacy values, matching how
+    # `status` is handled: strict on write, tolerant on read.
+    confidence: str | None = None
+    pace: str | None = None
     created_at: datetime
     updated_at: datetime
 

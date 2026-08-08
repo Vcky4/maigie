@@ -12,6 +12,7 @@ from typing import Any
 from src.shared.exceptions import NotFoundError
 
 from ..repository import personal_learning_repo as repo
+from . import prep_intent
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,23 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     if profile and profile.avg_session_minutes:
         avg_session_minutes = profile.avg_session_minutes
 
-    # Sustainable daily limit: avg * 1.5 or max 120 min
-    max_daily_minutes = min(avg_session_minutes * 1.5, 120)
+    # When the plan comes from a preparation, respect the pace the learner chose in
+    # the create wizard. `daily_minute_budget` takes the smaller of stated intent
+    # and observed behaviour, so an ambitious pace cannot produce a plan the
+    # learner has never sustained. With no pace stored this yields the previous
+    # behaviour unchanged.
+    prep_pace: str | None = None
+    if prep_id:
+        prep_for_pace = await repo.find_exam_prep(prep_id, user_id)
+        prep_pace = getattr(prep_for_pace, "pace", None) if prep_for_pace else None
+
+    if prep_pace:
+        max_daily_minutes = prep_intent.daily_minute_budget(
+            prep_pace, behaviour_minutes=avg_session_minutes
+        )
+    else:
+        # Sustainable daily limit: avg * 1.5 or max 120 min
+        max_daily_minutes = min(avg_session_minutes * 1.5, 120)
 
     # Get topics to distribute (from prep if provided)
     topics_to_plan: list[dict[str, Any]] = []

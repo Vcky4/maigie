@@ -33,7 +33,9 @@ learner knows nothing.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from ..repository import personal_learning_repo as repo
@@ -136,6 +138,53 @@ def _build(aggregate: dict[str, Any] | None) -> PrepProgress:
         practice_seconds=int(data.get("practice_seconds", 0) or 0),
         mastery_sum=float(data.get("mastery_sum", 0.0) or 0.0),
     )
+
+
+# How far back the practice streak is allowed to look. A streak longer than this
+# is reported as this value; the window keeps the query bounded and no learner is
+# materially misrepresented by it.
+PRACTICE_STREAK_WINDOW_DAYS = 120
+
+
+def practice_streak(practice_days: Sequence[date], *, today: date) -> int | None:
+    """Consecutive days of completed practice, ending today or yesterday.
+
+    `practice_days` is the set of days the learner completed at least one quiz
+    session, newest first. Pure so the run-length rule is testable without a
+    database.
+
+    Returns `None` when the learner has never completed a session, and `0` when a
+    streak has lapsed, so "never practised" stays distinguishable from "broke a
+    streak" — the same not-measured-versus-zero rule the rest of this module uses.
+
+    **Yesterday still counts.** A learner who practised yesterday but not yet
+    today has not broken anything; treating that as `0` would pressure them into
+    practising to defend a number, which is the behaviour Decision I rules out.
+    """
+    if not practice_days:
+        return None
+
+    unique_days = sorted(set(practice_days), reverse=True)
+    most_recent = unique_days[0]
+
+    # More than one day since the last session means the run is over.
+    if (today - most_recent).days > 1:
+        return 0
+
+    streak = 1
+    for previous, current in zip(unique_days, unique_days[1:]):
+        if (previous - current).days != 1:
+            break
+        streak += 1
+    return streak
+
+
+async def load_practice_streak(user_id: str, *, today: date | None = None) -> int | None:
+    """Load the learner's practice streak over the bounded window."""
+    reference = today or datetime.now(UTC).date()
+    since = datetime.now(UTC) - timedelta(days=PRACTICE_STREAK_WINDOW_DAYS)
+    days = await repo.list_practice_days(user_id, since=since)
+    return practice_streak(days, today=reference)
 
 
 async def load_for_preparations(prep_ids: list[str]) -> dict[str, PrepProgress]:

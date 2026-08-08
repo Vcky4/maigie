@@ -72,9 +72,10 @@ async def get_dashboard(
 ) -> models.PrepareDashboardResponse:
     now = datetime.now(UTC)
 
-    preparations_result, sessions_result = await asyncio.gather(
+    preparations_result, sessions_result, streak_result = await asyncio.gather(
         _load_active_preparations(user_id, preparation_limit),
         repo.list_recent_quiz_sessions(user_id, take=session_limit),
+        prep_readiness.load_practice_streak(user_id),
         return_exceptions=True,
     )
 
@@ -106,6 +107,16 @@ async def get_dashboard(
         _log_source_failure(user_id, "sessions", sessions_result)
     else:
         recent_sessions = sessions_result
+
+    # A streak the learner does not have is not worth degrading the summary over,
+    # so a failure here reports the section degraded and leaves the value unknown
+    # rather than claiming zero.
+    practice_streak: int | None = None
+    if isinstance(streak_result, BaseException):
+        degraded.add("summary")
+        _log_source_failure(user_id, "practiceStreak", streak_result)
+    else:
+        practice_streak = streak_result
 
     prep_ids = [preparation.id for preparation in preparations]
     subject_by_id = {preparation.id: preparation.subject for preparation in preparations}
@@ -162,6 +173,7 @@ async def get_dashboard(
         accuracy_percent=(round((correct / answered) * 100, 1) if answered else None),
         practice_minutes=practice_seconds // 60,
         quizzes_taken=sum(progress.quizzes_taken for progress in progress_by_prep.values()),
+        practice_streak=practice_streak,
     )
 
     section_order: list[models.PrepareDashboardSection] = [

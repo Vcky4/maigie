@@ -36,6 +36,9 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
         "examDate": target_date,
         "description": data.get("description"),
         "status": "SETUP",
+        # Persisted since migration 007. The wizard collected both and dropped them.
+        "confidence": data.get("confidence"),
+        "pace": data.get("pace"),
     }
     prep = await repo.create_exam_prep(prep_data)
 
@@ -102,6 +105,9 @@ async def update_preparation(*, user_id: str, prep_id: str, data: dict[str, Any]
         mapped["status"] = data["status"]
     if "prep_type" in data:
         mapped["type"] = data["prep_type"]
+    for intent_field in ("confidence", "pace"):
+        if intent_field in data:
+            mapped[intent_field] = data[intent_field]
     for key in ("target_date", "exam_date"):
         if key in data and data[key] is not None:
             value = data[key]

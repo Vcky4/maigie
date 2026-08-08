@@ -100,7 +100,7 @@ async def _load_notes(user_id: str, limit: int) -> tuple[list[Any], int]:
 
 
 async def _load_paths(user_id: str, limit: int) -> tuple[list[models.LearnPathSummary], int]:
-    (plans, plan_total), preparations = await asyncio.gather(
+    (plans, plan_total), (preparations, prep_total) = await asyncio.gather(
         personal_learning_repo.list_dashboard_study_plans(user_id, take=limit),
         personal_learning_repo.list_dashboard_exam_preps(user_id, take=limit),
     )
@@ -149,7 +149,10 @@ async def _load_paths(user_id: str, limit: int) -> tuple[list[models.LearnPathSu
             _as_utc(item.deadline) if item.deadline else datetime.max.replace(tzinfo=UTC)
         )
     )
-    return paths[:limit], plan_total
+    # The total counts both kinds, because both are returned as paths. Reporting
+    # `plan_total` alone made the number contradict the cards beside it: a learner
+    # with two plans and three preparations saw five cards and a total of two.
+    return paths[:limit], plan_total + prep_total
 
 
 def _merge_recent_items(

@@ -6,6 +6,7 @@ TOPIC_FOCUS (single topic), and QUICK_REVIEW.
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -106,14 +107,17 @@ async def start_quiz(
     # Determine question count
     count = question_count or min(len(target_topics) * 2, 20)
 
-    # Create quiz session
+    # Create the session before generating, so an attempt is never lost, and mark
+    # it GENERATING rather than IN_PROGRESS (Decision H). A request that dies
+    # mid-generation would otherwise leave a 0-question session sitting in
+    # IN_PROGRESS forever, indistinguishable from one that is still working.
     quiz_session = await repo.create_quiz_session(
         {
             "userId": user_id,
             "prepId": prep_id,
             "mode": mode,
             "topicId": topic_id,
-            "status": "IN_PROGRESS",
+            "status": "GENERATING",
             "totalQuestions": count,
         }
     )
@@ -141,6 +145,10 @@ async def start_quiz(
         f"Return ONLY the JSON array."
     )
 
+    # Timed so the sync-versus-queued decision (Decision H) can be revisited from
+    # measurements rather than from opinion. The provider is chosen per user by
+    # llm_resilient, so this covers whichever of Gemini/OpenAI/Anthropic ran.
+    started = time.monotonic()
     try:
         questions_data = await generate_content_json(
             prompt, max_tokens=8000, timeout_s=60, fallback=[], user_id=user_id
@@ -148,6 +156,17 @@ async def start_quiz(
     except Exception as e:
         logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
         questions_data = []
+    generation_ms = int((time.monotonic() - started) * 1000)
+    logger.info(
+        "Quiz generation finished",
+        extra={
+            "prep_id": prep_id,
+            "quiz_id": quiz_session.id,
+            "mode": mode,
+            "requested": count,
+            "generation_ms": generation_ms,
+        },
+    )
 
     if not isinstance(questions_data, list):
         logger.warning(
@@ -220,10 +239,12 @@ async def start_quiz(
             code="QUIZ_GENERATION_FAILED",
         )
 
-    # Partial generation still makes a usable quiz; report the real number so
-    # the score has an honest denominator.
-    if created != count:
-        await repo.update_quiz_session(quiz_session.id, {"totalQuestions": created})
+    # Generation succeeded: the session is now playable. Partial generation still
+    # makes a usable quiz, so report the real number and give the score an honest
+    # denominator.
+    await repo.update_quiz_session(
+        quiz_session.id, {"status": "IN_PROGRESS", "totalQuestions": created}
+    )
 
     session = await repo.get_quiz_session(quiz_session.id, user_id)
     questions = await repo.list_quiz_questions(quiz_session.id)
@@ -344,6 +365,18 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
             status_code=409,
             code="QUIZ_ALREADY_COMPLETED",
         )
+    if quiz.status == "GENERATING":
+        raise MaigieError(
+            "This practice session is still being prepared. Try again in a moment.",
+            status_code=409,
+            code="QUIZ_GENERATING",
+        )
+    if quiz.status == "FAILED":
+        raise MaigieError(
+            "This practice session could not be generated, so it cannot be answered.",
+            status_code=409,
+            code="QUIZ_GENERATION_FAILED",
+        )
 
     # Scoped to this session. The lookup was previously by question id alone, so
     # any question id — including one from another learner's session — could be
@@ -429,6 +462,12 @@ async def complete_quiz(
             "This practice session could not be generated, so it cannot be completed.",
             status_code=409,
             code="QUIZ_GENERATION_FAILED",
+        )
+    if quiz.status == "GENERATING":
+        raise MaigieError(
+            "This practice session is still being prepared.",
+            status_code=409,
+            code="QUIZ_GENERATING",
         )
 
     answers = await repo.list_quiz_answers(quiz_id)
