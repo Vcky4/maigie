@@ -957,13 +957,20 @@ class AnswerResultResponse(CamelModel):
     """
 
     question_id: str
-    is_correct: bool
-    correct_answer: str
+    # Null under examination conditions (`PAST_PAPER_SIM`), where no feedback is
+    # given until the session completes. In every other mode these are populated:
+    # answering is what earns the answer.
+    is_correct: bool | None = None
+    correct_answer: str | None = None
     explanation: str | None = None
     # True when this question had already been answered and the stored result
     # was replayed. Resubmitting never re-scores, so a retry is safe and the
     # key returned here cannot be used to raise the score.
     already_answered: bool = False
+    # True when the answer was recorded but feedback is being withheld until the end
+    # of the session. The client should confirm the answer was received rather than
+    # rendering an empty result.
+    feedback_deferred: bool = False
 
 
 class QuizTopicBreakdown(CamelModel):

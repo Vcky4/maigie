@@ -51,9 +51,7 @@ class RagService:
         logger.debug("RAG retrieval skipped: no vector store configured")
         return []
 
-    async def search(
-        self, query: str, user_id: str, **kwargs: Any
-    ) -> list[dict[str, Any]]:
+    async def search(self, query: str, user_id: str, **kwargs: Any) -> list[dict[str, Any]]:
         """Alias kept for older call sites."""
         return await self.retrieve_relevant_context(query=query, user_id=user_id, **kwargs)
 

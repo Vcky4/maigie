@@ -389,7 +389,9 @@ class TestScoreIntegrity:
             user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
         )
 
-        quiz_engine._update_topic_mastery_safe.assert_called_once_with("topic-7")
+        # The learner is passed too, because the competence model that replaced the
+        # lifetime average reads that learner's observations.
+        quiz_engine._update_topic_mastery_safe.assert_called_once_with("topic-7", user_id=OWNER)
 
     async def test_unattributed_question_skips_mastery_update(self, repo):
         repo.add_session("quiz-1", OWNER)
@@ -954,3 +956,100 @@ class TestPracticeObservations:
 
         assert result["isCorrect"] is True
         assert len(repo.answers) == 1
+
+
+# ---------------------------------------------------------------------------
+# TestExamConditions
+# ---------------------------------------------------------------------------
+
+
+class TestExamConditions:
+    """`PAST_PAPER_SIM` defers all feedback to the end.
+
+    A deliberate, narrow exception to the per-question disclosure boundary: a
+    simulation that marks each question as you go simulates nothing. The guarantee
+    that matters is unchanged — a learner still never sees the answer to a question
+    they have not committed to.
+    """
+
+    async def test_answering_discloses_nothing(self, repo):
+        repo.add_session("exam-1", OWNER)
+        repo.sessions["exam-1"].mode = "PAST_PAPER_SIM"
+        repo.add_question("q1", "exam-1", key="right")
+
+        result = await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="exam-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert result["feedbackDeferred"] is True
+        assert result["isCorrect"] is None
+        assert result["correctAnswer"] is None
+        assert result["explanation"] is None
+
+    async def test_the_answer_is_still_recorded_and_scored(self, repo):
+        """Withholding feedback is not the same as not marking the paper."""
+        repo.add_session("exam-1", OWNER)
+        repo.sessions["exam-1"].mode = "PAST_PAPER_SIM"
+        repo.add_question("q1", "exam-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="exam-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert len(repo.answers) == 1
+        assert repo.answers[0].is_correct is True
+        assert repo.last_correct_count_written() == 1
+
+    async def test_a_replayed_answer_also_discloses_nothing(self, repo):
+        repo.add_session("exam-1", OWNER)
+        repo.sessions["exam-1"].mode = "PAST_PAPER_SIM"
+        repo.add_question("q1", "exam-1", key="right")
+
+        payload = {"question_id": "q1", "user_answer": "right"}
+        await quiz_engine.submit_answer(user_id=OWNER, quiz_id="exam-1", data=payload)
+        replay = await quiz_engine.submit_answer(user_id=OWNER, quiz_id="exam-1", data=payload)
+
+        assert replay["alreadyAnswered"] is True
+        assert replay["correctAnswer"] is None
+
+    async def test_hints_are_refused(self, repo):
+        repo.add_session("exam-1", OWNER)
+        repo.sessions["exam-1"].mode = "PAST_PAPER_SIM"
+        repo.add_question("q1", "exam-1")
+
+        with pytest.raises(MaigieError) as exc:
+            await quiz_engine.request_hint(user_id=OWNER, quiz_id="exam-1", question_id="q1")
+
+        assert exc.value.code == "QUIZ_EXAM_CONDITIONS"
+
+    async def test_observations_are_still_recorded(self, repo):
+        """The learner gets no feedback; the system still learns from the attempt."""
+        repo.add_session("exam-1", OWNER)
+        repo.sessions["exam-1"].mode = "PAST_PAPER_SIM"
+        repo.add_question("q1", "exam-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="exam-1", data={"question_id": "q1", "user_answer": "wrong a"}
+        )
+
+        assert len(repo.observations) == 1
+        assert repo.observations[0]["isCorrect"] is False
+
+    async def test_normal_modes_are_unaffected(self, repo):
+        """The exception must stay narrow."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        result = await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert result["feedbackDeferred"] is False
+        assert result["correctAnswer"] == "right"
+
+    def test_the_mode_predicate_is_narrow(self):
+        assert quiz_engine.defers_feedback("PAST_PAPER_SIM") is True
+        assert quiz_engine.defers_feedback("past_paper_sim") is True
+        for mode in ("FULL_PRACTICE", "WEAK_AREAS", "TOPIC_FOCUS", "ADAPTIVE", "QUICK_REVIEW"):
+            assert quiz_engine.defers_feedback(mode) is False
+        assert quiz_engine.defers_feedback(None) is False

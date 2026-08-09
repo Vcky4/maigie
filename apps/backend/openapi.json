@@ -223,8 +223,15 @@
             "type": "boolean"
           },
           "correctAnswer": {
-            "title": "Correctanswer",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correctanswer"
           },
           "explanation": {
             "anyOf": [
@@ -237,9 +244,21 @@
             ],
             "title": "Explanation"
           },
-          "isCorrect": {
-            "title": "Iscorrect",
+          "feedbackDeferred": {
+            "default": false,
+            "title": "Feedbackdeferred",
             "type": "boolean"
+          },
+          "isCorrect": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iscorrect"
           },
           "questionId": {
             "title": "Questionid",
@@ -247,9 +266,7 @@
           }
         },
         "required": [
-          "questionId",
-          "isCorrect",
-          "correctAnswer"
+          "questionId"
         ],
         "title": "AnswerResultResponse",
         "type": "object"

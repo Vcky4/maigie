@@ -1633,6 +1633,88 @@ class PersonalLearningRepository:
             await s.refresh(observation)
             return observation
 
+    async def list_bank_questions_for_reuse(
+        self,
+        *,
+        prep_id: str,
+        topic_id: str,
+        difficulty: str | None = None,
+        exclude_ids: list[str] | None = None,
+        take: int = 5,
+        session: AsyncSession | None = None,
+    ) -> list[PrepQuestion]:
+        """Banked questions available to ask again, least-recently-used first.
+
+        Only possible since questions were promoted out of the session that created
+        them. Ordered by ``timesAnswered`` so a session reaches for material the
+        learner has seen least, rather than repeating the same few questions.
+        """
+        async with self._use_session(session) as s:
+            condition = (PrepQuestion.prep_id == prep_id) & (PrepQuestion.prep_topic_id == topic_id)
+            if difficulty:
+                condition = condition & (PrepQuestion.difficulty == difficulty)
+            if exclude_ids:
+                condition = condition & PrepQuestion.id.notin_(exclude_ids)
+
+            stmt = (
+                select(PrepQuestion)
+                .where(condition)
+                .order_by(
+                    PrepQuestion.times_answered.asc(),
+                    PrepQuestion.created_at.asc(),
+                )
+                .limit(take)
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def list_topic_observations(
+        self,
+        *,
+        user_id: str,
+        topic_ids: list[str],
+        since: datetime,
+        session: AsyncSession | None = None,
+    ) -> list[PracticeObservation]:
+        """Observations for several topics in one read, newest first.
+
+        Bounded by ``since`` because the competence model decays old evidence to
+        near-nothing anyway — reading it would cost rows and change no answer.
+        """
+        if not topic_ids:
+            return []
+        async with self._use_session(session) as s:
+            stmt = (
+                select(PracticeObservation)
+                .where(
+                    PracticeObservation.user_id == user_id,
+                    PracticeObservation.prep_topic_id.in_(topic_ids),
+                    PracticeObservation.observed_at >= since,
+                )
+                .order_by(PracticeObservation.observed_at.desc())
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def list_prep_observations(
+        self,
+        *,
+        user_id: str,
+        prep_id: str,
+        since: datetime,
+        session: AsyncSession | None = None,
+    ) -> list[PracticeObservation]:
+        """Every observation for one preparation, newest first."""
+        async with self._use_session(session) as s:
+            stmt = (
+                select(PracticeObservation)
+                .where(
+                    PracticeObservation.user_id == user_id,
+                    PracticeObservation.prep_id == prep_id,
+                    PracticeObservation.observed_at >= since,
+                )
+                .order_by(PracticeObservation.observed_at.desc())
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
     async def find_session_question_link(
         self, *, quiz_session_id: str, prep_question_id: str, session: AsyncSession | None = None
     ) -> QuizSessionQuestion | None:

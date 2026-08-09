@@ -585,3 +585,46 @@ class TestHintStateOnRead:
         wire = _wire("IN_PROGRESS", [_question("q1"), _question("q2")], [], hints={"q1": 1})
         assert wire["q1"]["hintsUsed"] == 1
         assert wire["q2"]["hintsUsed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# TestExamConditionDisclosure
+# ---------------------------------------------------------------------------
+
+
+class TestExamConditionDisclosure:
+    """Reading an exam-simulation session mid-paper reveals nothing."""
+
+    def _exam_session(self, status: str):
+        session = _session(status)
+        session.mode = "PAST_PAPER_SIM"
+        return session
+
+    def _wire_exam(self, status: str, questions, answers):
+        ordered = [(question, _link(index)) for index, question in enumerate(questions)]
+        built = _build_quiz_response(self._exam_session(status), ordered, answers)
+        dumped = models.QuizSessionResponse.model_validate(built).model_dump(by_alias=True)
+        return {item["id"]: item for item in dumped["questions"]}
+
+    def test_an_answered_question_stays_sealed_mid_paper(self):
+        """The opposite of every other mode, and deliberately so."""
+        questions = [_question("q1", key="alpha", explanation="alpha wins")]
+        wire = self._wire_exam("IN_PROGRESS", questions, [_answer("q1")])
+        assert wire["q1"]["correctAnswer"] is None
+        assert wire["q1"]["explanation"] is None
+
+    def test_the_learners_own_answer_is_still_shown(self):
+        """They may review what they put down; they may not see if it was right."""
+        wire = self._wire_exam("IN_PROGRESS", [_question("q1")], [_answer("q1")])
+        assert wire["q1"]["userAnswer"] == "the right one"
+
+    def test_everything_is_revealed_once_the_paper_is_submitted(self):
+        questions = [_question("q1", key="alpha"), _question("q2", key="beta")]
+        wire = self._wire_exam("COMPLETED", questions, [_answer("q1")])
+        assert wire["q1"]["correctAnswer"] == "alpha"
+        assert wire["q2"]["correctAnswer"] == "beta"
+
+    def test_a_normal_session_still_reveals_on_answering(self):
+        questions = [_question("q1", key="alpha", explanation="alpha wins")]
+        wire = _wire("IN_PROGRESS", questions, [_answer("q1")])
+        assert wire["q1"]["correctAnswer"] == "alpha"

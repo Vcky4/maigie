@@ -14,6 +14,7 @@ from src.shared.exceptions import MaigieError, NotFoundError
 
 from .. import models
 from ..repository import personal_learning_repo as repo
+from . import prep_adaptive
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,23 @@ _MAX_HINT_CHARS = 300
 HINT_LEVEL_NUDGE = 1
 HINT_LEVEL_NARROW = 2
 MAX_HINT_LEVEL = HINT_LEVEL_NARROW
+
+# Modes played under examination conditions: no hints, and no feedback of any kind
+# until the session is complete.
+#
+# This is a deliberate, narrow exception to the per-question disclosure boundary,
+# not a hole in it. Learning in small steps and rehearsing an exam are opposite
+# requirements — one teaches as you go, the other measures you under pressure — and
+# a simulation that tells you the answer after every question simulates nothing.
+# The guarantee that matters is unchanged: a learner still never sees an answer to a
+# question they have not committed to.
+EXAM_CONDITION_MODES = ("PAST_PAPER_SIM",)
+
+
+def defers_feedback(mode: str | None) -> bool:
+    """Whether this mode withholds all feedback until the session completes."""
+    return (mode or "").upper() in EXAM_CONDITION_MODES
+
 
 # A topic at or below this score is reported as a weak area on completion.
 _WEAK_AREA_THRESHOLD = 70
@@ -121,12 +139,43 @@ async def start_quiz(
         target_topics = [t for t in all_topics if t.id == topic_id]
         if not target_topics:
             raise NotFoundError("PrepTopic", topic_id)
+    elif mode in ("ADAPTIVE", "PAST_PAPER_SIM"):
+        # Both work across the whole preparation. ADAPTIVE then narrows by
+        # competence below; PAST_PAPER_SIM deliberately covers everything, because
+        # an exam does not visit only your weak topics.
+        target_topics = all_topics
     else:
         # QUICK_REVIEW — mix of topics, fewer questions
         target_topics = all_topics[:5]
 
     # Determine question count
     count = question_count or min(len(target_topics) * 2, 20)
+
+    # PAST_PAPER_SIM is grounded in the learner's *own* uploaded material and is
+    # scoped to that learner. Nobody else's documents, and no third-party past
+    # papers — which would be someone else's copyright to license, not ours to use.
+    source_excerpt: str | None = None
+    if mode == "PAST_PAPER_SIM":
+        source_excerpt = await _own_material_excerpt(user_id=user_id, prep_id=prep_id)
+        if not source_excerpt:
+            raise MaigieError(
+                "Upload some course material first — exam simulation is built from "
+                "your own documents.",
+                status_code=409,
+                code="PREP_MATERIAL_REQUIRED",
+            )
+
+    # ADAPTIVE composes a plan from what practice has revealed: which topics, at
+    # which difficulty, ordered to ramp gently. Before this, the mode was billed as
+    # a Plus feature and behaved exactly like the free quick-review path.
+    adaptive_plan: list[Any] = []
+    if mode == "ADAPTIVE":
+        adaptive_plan, _competence = await prep_adaptive.load_plan(
+            user_id=user_id, topics=target_topics, count=count
+        )
+        if adaptive_plan:
+            planned_ids = {slot.topic_id for slot in adaptive_plan}
+            target_topics = [t for t in target_topics if t.id in planned_ids] or target_topics
 
     # Create the session before generating, so an attempt is never lost, and mark
     # it GENERATING rather than IN_PROGRESS (Decision H). A request that dies
@@ -143,6 +192,19 @@ async def start_quiz(
         }
     )
 
+    # ADAPTIVE draws on the bank before generating anything. This is the first real
+    # payoff of promoting questions out of the session that created them: a question
+    # written last week at the right difficulty beats a fresh one, because it is
+    # already validated and it carries its own answer history. Done *before*
+    # generation so we do not pay for questions we would then discard.
+    reused = 0
+    if adaptive_plan:
+        reused = await _fill_from_bank(
+            prep_id=prep_id, quiz_session_id=quiz_session.id, plan=adaptive_plan
+        )
+
+    remaining = max(0, count - reused)
+
     # Generate questions via LLM.
     #
     # Topics are numbered and the model is asked for the number rather than the
@@ -154,8 +216,21 @@ async def start_quiz(
         f"{index}. {topic.title}: {topic.description or ''}"
         for index, topic in enumerate(target_topics, start=1)
     )
+    # Exam simulation is grounded in the learner's own material rather than invented
+    # from the topic titles, so the questions test what they were actually given.
+    grounding = ""
+    if source_excerpt:
+        grounding = (
+            "Base every question strictly on this source material, which the learner "
+            "uploaded themselves. Do not introduce facts that are not present in it.\n"
+            f"--- SOURCE MATERIAL ---\n{source_excerpt}\n--- END SOURCE MATERIAL ---\n\n"
+            "Write questions in the style of a written examination: no hints in the "
+            "wording, and a spread of difficulty across the paper.\n\n"
+        )
+
     prompt = (
-        f"Generate {count} quiz questions for these numbered topics:\n{topics_text}\n\n"
+        f"{grounding}"
+        f"Generate {remaining} quiz questions for these numbered topics:\n{topics_text}\n\n"
         f"Return a JSON array of question objects with:\n"
         f"- 'topicNumber': the number of the topic this tests, from the list above\n"
         f"- 'questionText': the question\n"
@@ -174,13 +249,15 @@ async def start_quiz(
     # measurements rather than from opinion. The provider is chosen per user by
     # llm_resilient, so this covers whichever of Gemini/OpenAI/Anthropic ran.
     started = time.monotonic()
-    try:
-        questions_data = await generate_content_json(
-            prompt, max_tokens=8000, timeout_s=60, fallback=[], user_id=user_id
-        )
-    except Exception as e:
-        logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
-        questions_data = []
+    questions_data: Any = []
+    if remaining > 0:
+        try:
+            questions_data = await generate_content_json(
+                prompt, max_tokens=8000, timeout_s=60, fallback=[], user_id=user_id
+            )
+        except Exception as e:
+            logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
+            questions_data = []
     generation_ms = int((time.monotonic() - started) * 1000)
     logger.info(
         "Quiz generation finished",
@@ -201,7 +278,8 @@ async def start_quiz(
         questions_data = []
 
     # Persist only questions that can actually be scored — see _usable_question.
-    created = 0
+    # Generation fills whatever the bank could not supply.
+    created = reused
     rejected = 0
     unattributed = 0
     for candidate in questions_data:
@@ -471,13 +549,13 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     # back to raise the score, and a client retry is harmless.
     existing = await repo.find_quiz_answer(quiz_id, question_id)
     if existing:
-        return {
-            "questionId": question_id,
-            "isCorrect": existing.is_correct,
-            "correctAnswer": question.correct_answer,
-            "explanation": question.explanation,
-            "alreadyAnswered": True,
-        }
+        return _answer_result(
+            question_id=question_id,
+            question=question,
+            is_correct=existing.is_correct,
+            mode=quiz.mode,
+            already_answered=True,
+        )
 
     is_correct = _check_answer_correctness(
         user_answer=user_answer,
@@ -506,10 +584,11 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     # ever asked it. Incremented in SQL so concurrent answers cannot lose a count.
     await repo.record_question_attempt(question_id, correct=is_correct)
 
-    # Phase A of the learning-intelligence design: keep the evidence, not just the
-    # verdict. Nothing consumes this yet — the reasoning layer is Phase B — but
-    # without it a conclusion about a learner can never be revisited, because the
-    # observations behind it were never kept.
+    # Keep the evidence, not just the verdict, so a conclusion about a learner can
+    # be revisited later rather than being a number with no reasoning behind it.
+    #
+    # Awaited *before* the mastery recompute below, which reads observations: the
+    # newest answer has to be visible to it, or every estimate lags by one question.
     await _record_observation(
         user_id=user_id,
         quiz=quiz,
@@ -523,15 +602,129 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     if question.prep_topic_id:
         import asyncio
 
-        asyncio.create_task(_update_topic_mastery_safe(question.prep_topic_id))
+        asyncio.create_task(_update_topic_mastery_safe(question.prep_topic_id, user_id=user_id))
+
+    return _answer_result(
+        question_id=question_id,
+        question=question,
+        is_correct=is_correct,
+        mode=quiz.mode,
+        already_answered=False,
+    )
+
+
+def _answer_result(
+    *,
+    question_id: str,
+    question: Any,
+    is_correct: bool,
+    mode: str | None,
+    already_answered: bool,
+) -> dict[str, Any]:
+    """Build the answer result, respecting examination conditions.
+
+    Under `PAST_PAPER_SIM` the answer is recorded but nothing is disclosed — not the
+    key, not the explanation, not even whether it was right. A simulation that marks
+    each question as you go is not simulating an exam.
+    """
+    if defers_feedback(mode):
+        return {
+            "questionId": question_id,
+            "isCorrect": None,
+            "correctAnswer": None,
+            "explanation": None,
+            "alreadyAnswered": already_answered,
+            "feedbackDeferred": True,
+        }
 
     return {
         "questionId": question_id,
         "isCorrect": is_correct,
         "correctAnswer": question.correct_answer,
         "explanation": question.explanation,
-        "alreadyAnswered": False,
+        "alreadyAnswered": already_answered,
+        "feedbackDeferred": False,
     }
+
+
+# How much of the learner's own material to ground an exam simulation in. The same
+# cap topic extraction already uses, for the same reason: prompts have limits and a
+# textbook chapter does not fit in one.
+_MATERIAL_EXCERPT_CHARS = 5000
+
+
+async def _own_material_excerpt(*, user_id: str, prep_id: str) -> str | None:
+    """Text from the learner's own uploaded material for this preparation.
+
+    Ownership is verified on the preparation before any material is read, so one
+    learner's documents can never ground another learner's exam simulation.
+
+    Returns `None` when there is nothing to work from — a preparation may have
+    materials whose text was never extracted, which is different from having none.
+    """
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    materials = await repo.list_prep_materials(prep_id)
+
+    excerpts: list[str] = []
+    budget = _MATERIAL_EXCERPT_CHARS
+    for material in materials:
+        text = (material.extracted_text or "").strip()
+        if not text:
+            continue
+        excerpts.append(text[:budget])
+        budget -= len(excerpts[-1])
+        if budget <= 0:
+            break
+
+    return "\n\n".join(excerpts) if excerpts else None
+
+
+async def _fill_from_bank(*, prep_id: str, quiz_session_id: str, plan: list[Any]) -> int:
+    """Satisfy as many planned slots as possible from the existing bank.
+
+    Returns how many questions were attached. Each banked question is used at most
+    once per session, which the session link's unique constraint would enforce
+    anyway — this just avoids relying on an error for control flow.
+
+    A slot the bank cannot fill is left for generation rather than substituted with
+    the wrong difficulty: asking a HARD question because no MEDIUM one exists would
+    quietly defeat the point of planning.
+    """
+    used: list[str] = []
+
+    for slot in plan:
+        candidates = await repo.list_bank_questions_for_reuse(
+            prep_id=prep_id,
+            topic_id=slot.topic_id,
+            difficulty=slot.difficulty,
+            exclude_ids=used,
+            take=1,
+        )
+        if not candidates:
+            continue
+
+        question = candidates[0]
+        await repo.attach_question_to_session(
+            quiz_session_id=quiz_session_id,
+            prep_question_id=question.id,
+            order_index=len(used),
+        )
+        used.append(question.id)
+
+    if used:
+        logger.info(
+            "Adaptive session reused banked questions",
+            extra={
+                "prep_id": prep_id,
+                "quiz_id": quiz_session_id,
+                "reused": len(used),
+                "planned": len(plan),
+            },
+        )
+    return len(used)
 
 
 async def _record_observation(
@@ -618,6 +811,13 @@ async def request_hint(
             code="QUIZ_NOT_IN_PROGRESS",
         )
 
+    if defers_feedback(quiz.mode):
+        raise MaigieError(
+            "This is an exam simulation — hints are not available.",
+            status_code=409,
+            code="QUIZ_EXAM_CONDITIONS",
+        )
+
     # Scoped through the session link, exactly as answering is.
     question = await repo.find_quiz_question(question_id, quiz_id)
     if not question:
@@ -680,10 +880,10 @@ def _eliminable_option(question: Any) -> str | None:
     return None
 
 
-async def _update_topic_mastery_safe(topic_id: str) -> None:
+async def _update_topic_mastery_safe(topic_id: str, *, user_id: str) -> None:
     """Wrap _update_topic_mastery with error handling for fire-and-forget use."""
     try:
-        await _update_topic_mastery(topic_id)
+        await _update_topic_mastery(topic_id, user_id=user_id)
     except Exception as e:
         logger.warning(f"Background mastery update failed for topic {topic_id}: {e}")
 
@@ -829,6 +1029,9 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
     # Index answers by question_id for O(1) lookup
     answer_map = {a.question_id: a for a in answers}
     session_completed = quiz.status == "COMPLETED"
+    # Under examination conditions, answering a question earns no disclosure. Review
+    # happens once, at the end. Everywhere else, answering reveals that question.
+    reveal_on_answer = not defers_feedback(quiz.mode)
     # `questions` is a list of (question, link) pairs. Everything session-specific
     # — position, hints taken — belongs to the link, not to the banked question.
     ordered = list(questions)
@@ -852,7 +1055,8 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
                 answer_map.get(question.id),
                 order_index=link.order_index,
                 hints_used=getattr(link, "hint_count", 0) or 0,
-                reveal_answers=session_completed or question.id in answer_map,
+                reveal_answers=session_completed
+                or (reveal_on_answer and question.id in answer_map),
             )
             for question, link in ordered
         ],
@@ -896,30 +1100,45 @@ def _question_dict(
     }
 
 
-async def _update_topic_mastery(topic_id: str) -> None:
-    """Recalculate topic mastery based on all quiz answers for this topic."""
-    from sqlalchemy import select as sa_select
-    from src.domains.personal_learning.db_models import PrepQuestion, QuizAnswer
-    from src.shared.database import get_session_factory
+async def _update_topic_mastery(topic_id: str, *, user_id: str) -> None:
+    """Recompute a topic's mastery from the competence model.
 
-    factory = get_session_factory()
-    async with factory() as session:
-        stmt = (
-            sa_select(QuizAnswer)
-            .join(PrepQuestion, QuizAnswer.question_id == PrepQuestion.id)
-            .where(PrepQuestion.prep_topic_id == topic_id)
+    Phase B. This used to be `correct / total` over every answer ever recorded,
+    which the book rules out twice: it never forgot a bad week, and it let a single
+    mistake stand as the whole assessment.
+
+    `PrepTopic.mastery_score` is now a **cache of the model's `retention`** rather
+    than a truth of its own. Everything downstream — readiness, the Learn card, the
+    dashboard aggregates — keeps reading the same column and simply gets a better
+    number, so no consumer had to change.
+
+    A topic with too little evidence is left **untouched** rather than written to
+    zero. Writing zero would assert that the learner knows nothing, which is a claim
+    three answers do not support.
+    """
+    from . import prep_competence
+
+    competence = await prep_competence.load_for_topic(user_id=user_id, topic_id=topic_id)
+
+    if not competence.is_measurable or competence.retention is None:
+        logger.debug(
+            "Topic mastery left unchanged: not enough evidence",
+            extra={
+                "topic_id": topic_id,
+                "observations": competence.observations,
+                "effective_weight": competence.effective_weight,
+            },
         )
-        result = await session.execute(stmt)
-        answers = list(result.scalars().all())
-
-    if not answers:
         return
 
-    correct = sum(1 for a in answers if a.is_correct)
-    mastery = (correct / len(answers)) * 100
-    status = "MASTERED" if mastery >= 80 else "IN_PROGRESS" if mastery > 0 else "NOT_STARTED"
+    band = competence.band
+    status = {
+        "strong": "MASTERED",
+        "review": "IN_PROGRESS",
+        "focus": "IN_PROGRESS",
+    }.get(band or "focus", "IN_PROGRESS")
 
-    await repo.update_topic_mastery(topic_id, mastery, status)
+    await repo.update_topic_mastery(topic_id, competence.retention, status)
 
 
 async def _compute_topic_breakdown(quiz_id: str, answers: list[Any]) -> list[dict]:
