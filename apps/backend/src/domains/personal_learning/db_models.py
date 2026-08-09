@@ -371,9 +371,28 @@ class LearningProfile(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), unique=True, index=True
     )
+
+    # Onboarding state machine
+    onboarding_state: Mapped[str] = mapped_column(
+        "onboardingState",
+        String,
+        nullable=False,
+        default="not_started",
+        server_default="not_started",
+    )
+
+    # Purpose and context
     purpose: Mapped[str | None] = mapped_column(String, nullable=True)
     subjects: Mapped[dict | None] = mapped_column("subjects", JSON, nullable=True)
     goals_text: Mapped[str | None] = mapped_column("goalsText", Text, nullable=True)
+
+    # Exam prep specific fields
+    exam_name: Mapped[str | None] = mapped_column("examName", String, nullable=True)
+    exam_date: Mapped[date | None] = mapped_column("examDate", Date, nullable=True)
+
+    # Skill building specific fields
+    skill_name: Mapped[str | None] = mapped_column("skillName", String, nullable=True)
+    current_level: Mapped[str | None] = mapped_column("currentLevel", String, nullable=True)
     preferred_explanation_style: Mapped[str | None] = mapped_column(
         "preferredExplanationStyle", String, nullable=True
     )

@@ -77,9 +77,44 @@ async def set_purpose(body: models.PurposeSetRequest, current_user: CurrentUser)
     return await onboarding_service.set_purpose(user_id=current_user.id, purpose=body.purpose)
 
 
+@router.post("/onboarding/exam-details", response_model=models.LearningProfileResponse)
+async def set_exam_details(body: models.ExamDetailsRequest, current_user: CurrentUser):
+    """Set exam preparation details. For EXAM_PREP purpose learners."""
+    return await onboarding_service.set_exam_details(
+        user_id=current_user.id,
+        exam_name=body.exam_name,
+        exam_date=body.exam_date,
+        subjects=body.subjects,
+        goals=body.goals,
+    )
+
+
+@router.post("/onboarding/skill-details", response_model=models.LearningProfileResponse)
+async def set_skill_details(body: models.SkillDetailsRequest, current_user: CurrentUser):
+    """Set skill building details. For SKILL_BUILDING purpose learners."""
+    return await onboarding_service.set_skill_details(
+        user_id=current_user.id,
+        skill_name=body.skill_name,
+        current_level=body.current_level,
+        subjects=body.subjects,
+        goals=body.goals,
+    )
+
+
+@router.get("/onboarding/status", response_model=models.OnboardingStatusResponse)
+async def get_onboarding_status(current_user: CurrentUser):
+    """Get current onboarding status for progress polling."""
+    return await onboarding_service.get_onboarding_status(user_id=current_user.id)
+
+
 @router.post("/onboarding/subjects", response_model=models.LearningProfileResponse)
 async def set_subjects(body: models.SubjectsSetRequest, current_user: CurrentUser):
-    """Set initial subjects and/or goals."""
+    """
+    Set initial subjects and/or goals.
+
+    DEPRECATED: Use /onboarding/exam-details or /onboarding/skill-details instead.
+    Kept for backward compatibility.
+    """
     return await onboarding_service.set_subjects(
         user_id=current_user.id, subjects=body.subjects, goals=body.goals
     )

@@ -385,17 +385,35 @@ LearningPurpose = Literal[
     "skill_building",
     "course_completion",
     "professional_certification",
+    "teaching",
+    "community",
     "general_learning",
 ]
+
+OnboardingState = Literal[
+    "not_started",
+    "purpose_set",
+    "details_set",
+    "content_ready",
+    "completed",
+]
+
+SkillLevel = Literal["beginner", "intermediate", "advanced"]
+
 LlmProvider = Literal["gemini", "openai", "anthropic"]
 
 
 class LearningProfileResponse(CamelModel):
     id: str
     user_id: str
+    onboarding_state: OnboardingState = "not_started"
     purpose: LearningPurpose | None = None
     subjects: list[str] | None = None
     goals_text: str | None = None
+    exam_name: str | None = None
+    exam_date: date | None = None
+    skill_name: str | None = None
+    current_level: SkillLevel | None = None
     preferred_explanation_style: str | None = None
     onboarding_completed_at: datetime | None = None
     maturity_days: int = 0
@@ -418,6 +436,27 @@ class LlmProviderSetRequest(BaseModel):
 class SubjectsSetRequest(CamelModel):
     subjects: list[str] = Field(default_factory=list)
     goals: str | None = None
+
+
+class ExamDetailsRequest(CamelModel):
+    exam_name: str = Field(min_length=1, max_length=200)
+    exam_date: date | None = None
+    subjects: list[str] = Field(default_factory=list)
+    goals: str | None = None
+
+
+class SkillDetailsRequest(CamelModel):
+    skill_name: str = Field(min_length=1, max_length=200)
+    current_level: SkillLevel | None = None
+    subjects: list[str] = Field(default_factory=list)
+    goals: str | None = None
+
+
+class OnboardingStatusResponse(CamelModel):
+    state: OnboardingState
+    progress: dict[str, bool] = Field(default_factory=dict)
+    estimated_seconds_remaining: int | None = None
+    first_preparation: dict[str, str] | None = None
 
 
 # ===========================================================================
