@@ -5,7 +5,7 @@ description = "Maigie FastAPI backend"
 authors = [
     {name = "Maigie Team"}
 ]
-license = {text = "BUSL-1.1"}
+license = "BUSL-1.1"
 requires-python = ">=3.11,<4.0"
 dynamic = ["dependencies"]
 
@@ -62,7 +62,6 @@ ruff = "^0.6.0"
 black = "^25.12.0"
 mypy = "^1.11.0"
 coverage = "^7.12.0"
-flake8 = "^7.3.0"
 isort = "^7.0.0"
 
 [build-system]
@@ -89,6 +88,19 @@ ignore = ["E501", "E203", "N818", "F401", "F841", "N803", "N815", "UP035"]
 [tool.ruff.lint.per-file-ignores]
 # Test files set env vars before imports (SKIP_DB_FIXTURE pattern)
 "tests/**" = ["E402"]
+# Alembic requires the config to be set up before the models are imported.
+"alembic/env.py" = ["E402"]
+# N806 flags UPPER_CASE locals as badly-named variables. In these three files they are
+# genuine constants that cannot be hoisted to module level, because they are built from
+# heavy optional dependencies (python-pptx, weasyprint) that are imported lazily inside
+# the function on purpose. N811 is the same lazy weasyprint import, aliased to keep it
+# out of the module namespace.
+"src/domains/personal_learning/services/document_impl.py" = ["N806", "N811"]
+"src/domains/billing/services/google_play_service.py" = ["N806"]
+"src/domains/intelligence/action/skills/registry.py" = ["N806"]
+# `_LazyModule` subclasses ModuleType, so `__getattr__(self, name)` is a normal instance
+# method. Ruff reads the `type(...)` base as a metaclass and expects `cls`.
+"src/workers/celery_app.py" = ["N804"]
 
 [tool.black]
 line-length = 100

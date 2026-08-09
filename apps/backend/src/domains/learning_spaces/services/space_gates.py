@@ -1,28 +1,33 @@
 """Plan-aware gates for space features.
 
-This replaces a stub whose contract disagreed with its callers in every respect, so
-both gated features crashed rather than being gated. ``space_impl`` expects:
+Replaces a stub whose contract disagreed with its callers in every respect, so both gated
+features raised `TypeError` instead of being gated. The stub exposed `SpaceGateState` as a
+`StrEnum` while callers construct it with keyword fields, had no `CHAT_GROUP_CREATE`
+member, and returned `ALLOWED` from an async `gate(space_id, feature)`.
 
-* ``SpaceGateState`` to be a data object carrying ``space_plan_active``,
-  ``has_any_active_addon`` and a count, not a ``StrEnum``;
-* ``gate(feature, state)`` to be synchronous and to take the feature first;
-* a block to be signalled by raising ``SpaceGateError`` carrying ``status_code``,
-  ``code`` and ``message``, which the caller turns into an ``HTTPException``.
+The rules below are not invented. They are recovered from `tests/test_circle_gates.py`,
+which specifies every feature, limit, error code and status code, and which is now
+repointed at this module. Two consequences worth stating plainly, because an earlier pass
+guessed at these and guessed wrong:
 
-The stub instead exposed a ``StrEnum`` named ``SpaceGateState``, an async
-``gate(space_id, feature)`` returning ``ALLOWED``, and an error class with different
-attributes. ``SpaceGateState(space_plan_active=...)`` therefore raised ``TypeError``
-against the enum, and the enum had no ``CHAT_GROUP_CREATE`` or ``GROUP_SESSION_START``
-member either.
+* The free group-session allowance is **3**, not 1.
+* A space *with* a plan still has a chat-group ceiling of **10**, which is a different
+  error (`409 CHAT_GROUP_LIMIT_REACHED`) from hitting the free limit
+  (`402 CHAT_GROUPS_REQUIRE_CIRCLE_PLAN`). The distinction matters: one is "pay to
+  continue", the other is "you cannot have more".
 
-The allowance rule follows from the fields the callers already assemble: a space with
-an active plan or any active seat add-on is unrestricted, and a space with neither gets
-a small free allowance before being asked to upgrade.
+`gate()` returns `True` when allowed and raises `SpaceGateError` when not, which is what
+`space_impl` is written against; it converts the error's `status_code`, `code` and
+`message` into an `HTTPException`.
 
-NOTE ON THE LIMITS: the two ``FREE_*_LIMIT`` values below are not documented anywhere
-in the repository or the specs, so they are a conservative starting point rather than a
-recovered policy. They are isolated here so the numbers can be set in one place once
-confirmed. Nothing else in the module needs to change.
+NOTE ON UNKNOWN FEATURES: an unrecognised feature is **allowed**. That is the recovered
+behaviour, and it is deliberate in the original: plan gating is not authorization, and a
+newly added feature should not be silently unavailable because nobody wrote a rule for it
+yet. It does mean a feature intended to be paid is free until it appears below, so adding
+a `SpaceFeature` member and adding its rule need to happen together.
+
+The field is `space_plan_active` rather than the original `circle_plan_active`, matching
+the circle-to-space rename and the current callers.
 """
 
 from dataclasses import dataclass
@@ -32,15 +37,38 @@ from fastapi import status
 
 
 class SpaceFeature(StrEnum):
-    """Space features that are gated by plan."""
+    """Space features whose availability depends on the plan."""
 
     CHAT_GROUP_CREATE = "chat_group_create"
     GROUP_SESSION_START = "group_session_start"
+    DM_OPEN = "dm_open"
+    BANNER_THEME = "banner_theme"
+    MODERATOR_ROLE = "moderator_role"
+    AI_TUTOR = "ai_tutor"
+    GROUP_AI = "group_ai"
+    VERSION_HISTORY = "version_history"
+    DETAILED_ANALYTICS = "detailed_analytics"
+    FEATURED_ELIGIBILITY = "featured_eligibility"
 
 
-# Provisional. See the note in the module docstring.
+# Limits, recovered from tests/test_space_gates.py.
 FREE_CHAT_GROUP_LIMIT = 1
-FREE_GROUP_SESSION_LIMIT = 1
+PLAN_CHAT_GROUP_LIMIT = 10
+FREE_GROUP_SESSION_LIMIT = 3
+FREE_PINNED_RESOURCE_LIMIT = 5
+
+# Features that simply require a space plan, with the code each reports.
+_PLAN_ONLY_FEATURES: dict[SpaceFeature, str] = {
+    SpaceFeature.DM_OPEN: "DMS_REQUIRE_CIRCLE_PLAN",
+    SpaceFeature.BANNER_THEME: "BANNER_THEME_REQUIRES_CIRCLE_PLAN",
+    SpaceFeature.MODERATOR_ROLE: "MODERATOR_REQUIRES_CIRCLE_PLAN",
+    SpaceFeature.VERSION_HISTORY: "VERSION_HISTORY_REQUIRES_CIRCLE_PLAN",
+    SpaceFeature.DETAILED_ANALYTICS: "DETAILED_ANALYTICS_REQUIRES_CIRCLE_PLAN",
+    SpaceFeature.FEATURED_ELIGIBILITY: "FEATURED_REQUIRES_CIRCLE_PLAN",
+}
+
+# AI features accept a seat add-on as an alternative to a full space plan.
+_ADDON_ELIGIBLE_FEATURES = frozenset({SpaceFeature.AI_TUTOR, SpaceFeature.GROUP_AI})
 
 
 @dataclass(frozen=True)
@@ -52,13 +80,9 @@ class SpaceGateState:
     chat_group_count: int = 0
     group_session_count: int = 0
 
-    @property
-    def has_paid_entitlement(self) -> bool:
-        return self.space_plan_active or self.has_any_active_addon
-
 
 class SpaceGateError(Exception):
-    """Raised when a feature is not available for a space on its current plan."""
+    """Raised when a feature is not available to a space on its current plan."""
 
     def __init__(
         self,
@@ -72,43 +96,74 @@ class SpaceGateError(Exception):
         super().__init__(message)
 
 
-def gate(feature: SpaceFeature, state: SpaceGateState) -> None:
-    """Allow the feature, or raise ``SpaceGateError`` explaining why not.
+def gate(feature: SpaceFeature | str, state: SpaceGateState) -> bool:
+    """Return ``True`` if the feature is available, or raise ``SpaceGateError``.
 
-    Returns ``None`` when allowed. Raising rather than returning a status is what the
-    callers are written against, and it means a gate that is accidentally not consulted
-    cannot read as permission.
+    Raises:
+        SpaceGateError: Carrying ``code``, ``message`` and ``status_code``, which the
+            caller turns into an HTTP response.
     """
-    if state.has_paid_entitlement:
-        return
-
-    if feature is SpaceFeature.CHAT_GROUP_CREATE:
-        if state.chat_group_count >= FREE_CHAT_GROUP_LIMIT:
+    if feature == SpaceFeature.CHAT_GROUP_CREATE:
+        if not state.space_plan_active:
+            if state.chat_group_count >= FREE_CHAT_GROUP_LIMIT:
+                raise SpaceGateError(
+                    code="CHAT_GROUPS_REQUIRE_CIRCLE_PLAN",
+                    message="A space plan is required to create more chat groups.",
+                )
+            return True
+        # On a plan there is still a ceiling, and it is not a payment problem.
+        if state.chat_group_count >= PLAN_CHAT_GROUP_LIMIT:
             raise SpaceGateError(
-                code="SPACE_PLAN_REQUIRED",
+                code="CHAT_GROUP_LIMIT_REACHED",
+                message=f"A space can have at most {PLAN_CHAT_GROUP_LIMIT} chat groups.",
+                status_code=status.HTTP_409_CONFLICT,
+            )
+        return True
+
+    if feature == SpaceFeature.GROUP_SESSION_START:
+        if not state.space_plan_active and state.group_session_count >= FREE_GROUP_SESSION_LIMIT:
+            raise SpaceGateError(
+                code="GROUP_SESSION_LIMIT_REACHED",
                 message=(
-                    f"A space plan or seat add-on is required for more than "
-                    f"{FREE_CHAT_GROUP_LIMIT} chat group"
-                    f"{'s' if FREE_CHAT_GROUP_LIMIT != 1 else ''}."
+                    f"Free spaces are limited to {FREE_GROUP_SESSION_LIMIT} group sessions. "
+                    "A space plan removes the limit."
                 ),
             )
-        return
+        return True
 
-    if feature is SpaceFeature.GROUP_SESSION_START:
-        if state.group_session_count >= FREE_GROUP_SESSION_LIMIT:
-            raise SpaceGateError(
-                code="SPACE_PLAN_REQUIRED",
-                message=(
-                    f"A space plan or seat add-on is required for more than "
-                    f"{FREE_GROUP_SESSION_LIMIT} group session"
-                    f"{'s' if FREE_GROUP_SESSION_LIMIT != 1 else ''}."
-                ),
-            )
-        return
+    if feature in _ADDON_ELIGIBLE_FEATURES:
+        if state.space_plan_active or state.has_any_active_addon:
+            return True
+        raise SpaceGateError(
+            code="AI_REQUIRES_CIRCLE_PLAN_OR_ADDON",
+            message="AI in a space requires a space plan or an active seat add-on.",
+        )
 
-    # An unrecognised feature must not be silently permitted.
-    raise SpaceGateError(
-        code="SPACE_FEATURE_UNKNOWN",
-        message=f"Unknown space feature: {feature!r}",
-        status_code=status.HTTP_403_FORBIDDEN,
-    )
+    if feature in _PLAN_ONLY_FEATURES:
+        if state.space_plan_active:
+            return True
+        raise SpaceGateError(
+            code=_PLAN_ONLY_FEATURES[SpaceFeature(feature)],
+            message="This feature requires a space plan.",
+        )
+
+    # Unknown features are allowed; see the note in the module docstring.
+    return True
+
+
+def check_pinned_resource_limit(state: SpaceGateState, pinned_count: int) -> bool:
+    """Return ``True`` if another resource may be pinned, or raise.
+
+    A space plan lifts the limit entirely.
+    """
+    if state.space_plan_active:
+        return True
+    if pinned_count >= FREE_PINNED_RESOURCE_LIMIT:
+        raise SpaceGateError(
+            code="PINNED_RESOURCE_LIMIT_REACHED",
+            message=(
+                f"Free spaces can pin up to {FREE_PINNED_RESOURCE_LIMIT} resources. "
+                "A space plan removes the limit."
+            ),
+        )
+    return True

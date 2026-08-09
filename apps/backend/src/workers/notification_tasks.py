@@ -45,7 +45,7 @@ def send_schedule_reminders_task():
     """Send schedule reminders to users with upcoming study blocks."""
     import asyncio
 
-    from src.tasks.email_notifications import send_schedule_reminders
+    from src.domains.progress.services.schedule_reminders import send_schedule_reminders
 
     loop = asyncio.new_event_loop()
     try:

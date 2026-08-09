@@ -46,7 +46,7 @@ jobs:
       - name: Run Linting
         run: |
           poetry run black . --check --diff || (poetry run black . --diff && exit 1)
-          poetry run flake8 .
+          poetry run ruff check src tests alembic
       - name: Verify OpenAPI Contract Is Committed
         run: poetry run python scripts/export_openapi.py --check
       - name: Run Tests

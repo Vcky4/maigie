@@ -17,6 +17,7 @@ os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
 import inspect  # noqa: E402
 import logging  # noqa: E402
+from datetime import UTC, datetime  # noqa: E402
 
 import pytest  # noqa: E402
 
@@ -103,78 +104,67 @@ def test_profit_margin_percentage():
 # ---------------------------------------------------------------------------
 
 
+# The gate's own rules live in ``test_space_gates.py``, the recovered spec covering every
+# feature, limit, error code and status code. What is asserted here is the integration
+# contract with ``space_impl``, which that spec predates: the call shape, the exact keyword
+# fields the caller assembles, and the attributes it reads off the exception.
+
+
 def test_gate_signature_matches_its_callers():
-    """``space_impl`` calls ``gate(feature, state)`` synchronously."""
+    """``space_impl`` calls ``gate(feature, state)`` synchronously, without awaiting."""
     params = list(inspect.signature(gate).parameters)
     assert params == ["feature", "state"]
     assert not inspect.iscoroutinefunction(gate)
 
 
-def test_gate_state_accepts_the_fields_the_callers_assemble():
-    """The stub was a StrEnum, so this construction raised TypeError."""
-    state = SpaceGateState(
+def test_gate_state_accepts_the_fields_the_caller_assembles():
+    """The stub was a StrEnum, so this construction raised TypeError.
+
+    These are the exact keywords used at both ``space_impl`` call sites.
+    """
+    chat = SpaceGateState(
         space_plan_active=False,
         has_any_active_addon=False,
         chat_group_count=0,
     )
-    assert state.has_paid_entitlement is False
-
-
-@pytest.mark.parametrize("feature", list(SpaceFeature))
-def test_an_active_plan_allows_everything(feature):
-    gate(
-        feature, SpaceGateState(space_plan_active=True, chat_group_count=99, group_session_count=99)
+    session = SpaceGateState(
+        space_plan_active=False,
+        has_any_active_addon=False,
+        group_session_count=0,
     )
+    assert gate(SpaceFeature.CHAT_GROUP_CREATE, chat) is True
+    assert gate(SpaceFeature.GROUP_SESSION_START, session) is True
 
 
-@pytest.mark.parametrize("feature", list(SpaceFeature))
-def test_an_active_addon_allows_everything(feature):
-    gate(
-        feature,
-        SpaceGateState(has_any_active_addon=True, chat_group_count=99, group_session_count=99),
-    )
-
-
-def test_free_space_gets_its_allowance_then_is_asked_to_upgrade():
-    within = SpaceGateState(chat_group_count=FREE_CHAT_GROUP_LIMIT - 1)
-    gate(SpaceFeature.CHAT_GROUP_CREATE, within)
-
-    at_limit = SpaceGateState(chat_group_count=FREE_CHAT_GROUP_LIMIT)
+def test_the_error_carries_everything_the_caller_puts_in_the_response():
+    """``space_impl`` reads ``status_code``, ``code`` and ``message`` off the exception."""
     with pytest.raises(SpaceGateError) as excinfo:
-        gate(SpaceFeature.CHAT_GROUP_CREATE, at_limit)
+        gate(SpaceFeature.CHAT_GROUP_CREATE, SpaceGateState(chat_group_count=99))
 
-    # The caller reads all three of these off the exception.
-    assert excinfo.value.code == "SPACE_PLAN_REQUIRED"
-    assert excinfo.value.status_code == 402
-    assert excinfo.value.message
-
-
-def test_group_session_allowance_is_enforced_separately():
-    gate(
-        SpaceFeature.GROUP_SESSION_START,
-        SpaceGateState(group_session_count=FREE_GROUP_SESSION_LIMIT - 1),
-    )
-
-    with pytest.raises(SpaceGateError):
-        gate(
-            SpaceFeature.GROUP_SESSION_START,
-            SpaceGateState(group_session_count=FREE_GROUP_SESSION_LIMIT),
-        )
+    error = excinfo.value
+    assert isinstance(error.status_code, int)
+    assert error.code
+    assert error.message
 
 
 def test_chat_group_count_does_not_gate_group_sessions():
     """The two allowances are independent; one must not consume the other."""
-    gate(
-        SpaceFeature.GROUP_SESSION_START, SpaceGateState(chat_group_count=99, group_session_count=0)
+    assert (
+        gate(
+            SpaceFeature.GROUP_SESSION_START,
+            SpaceGateState(chat_group_count=99, group_session_count=0),
+        )
+        is True
     )
 
 
-def test_an_unknown_feature_is_denied_rather_than_permitted():
-    with pytest.raises(SpaceGateError) as excinfo:
-        gate("not_a_feature", SpaceGateState())  # type: ignore[arg-type]
+def test_the_free_limits_are_the_recovered_values_not_a_guess():
+    """An earlier pass guessed both; the group-session limit was wrong.
 
-    assert excinfo.value.code == "SPACE_FEATURE_UNKNOWN"
-    assert excinfo.value.status_code == 403
+    Pinned so that changing either has to be deliberate.
+    """
+    assert FREE_CHAT_GROUP_LIMIT == 1
+    assert FREE_GROUP_SESSION_LIMIT == 3
 
 
 # ---------------------------------------------------------------------------
@@ -302,3 +292,201 @@ async def test_a_database_failure_still_leaves_the_log_record(monkeypatch, caplo
 
     assert [r for r in caplog.records if getattr(r, "audit", False)]
     assert any("Failed to persist" in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Google Calendar
+# ---------------------------------------------------------------------------
+
+
+def test_recurring_rules_convert_to_rrule():
+    from src.integrations.google_calendar.service import google_calendar_service as gcal
+
+    start = datetime(2026, 8, 9, 10, 0, tzinfo=UTC)  # a Sunday
+    assert gcal._convert_recurring_rule_to_rrule("DAILY", start) == "RRULE:FREQ=DAILY"
+    assert gcal._convert_recurring_rule_to_rrule("MONTHLY", start) == "RRULE:FREQ=MONTHLY"
+    assert gcal._convert_recurring_rule_to_rrule("YEARLY", start) == "RRULE:FREQ=YEARLY"
+    # A weekly repeat is anchored to the day the block starts on.
+    assert gcal._convert_recurring_rule_to_rrule("weekly", start) == "RRULE:FREQ=WEEKLY;BYDAY=SU"
+
+
+def test_an_existing_rrule_is_passed_through_untouched():
+    from src.integrations.google_calendar.service import google_calendar_service as gcal
+
+    start = datetime(2026, 8, 9, 10, 0, tzinfo=UTC)
+    rule = "RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=10"
+    assert gcal._convert_recurring_rule_to_rrule(rule, start) == rule
+
+
+@pytest.mark.parametrize("rule", ["", None, "every other tuesday"])
+def test_an_unusable_rule_produces_no_recurrence_rather_than_a_bad_one(rule):
+    from src.integrations.google_calendar.service import google_calendar_service as gcal
+
+    start = datetime(2026, 8, 9, 10, 0, tzinfo=UTC)
+    assert gcal._convert_recurring_rule_to_rrule(rule, start) is None
+
+
+def test_event_body_sends_utc_and_omits_recurrence_when_there_is_none():
+    from types import SimpleNamespace
+
+    from src.integrations.google_calendar.service import google_calendar_service as gcal
+
+    block = SimpleNamespace(
+        title="Revise thermodynamics",
+        description="Chapter 4",
+        start_at=datetime(2026, 8, 9, 10, 0, tzinfo=UTC),
+        end_at=datetime(2026, 8, 9, 11, 0, tzinfo=UTC),
+        recurring_rule=None,
+    )
+    body = gcal._event_body(block)
+
+    assert body["summary"] == "Revise thermodynamics"
+    assert body["start"]["timeZone"] == "UTC"
+    assert body["end"]["dateTime"].startswith("2026-08-09T11:00")
+    assert "recurrence" not in body
+
+
+def test_naive_block_times_are_treated_as_utc_not_local():
+    from types import SimpleNamespace
+
+    from src.integrations.google_calendar.service import google_calendar_service as gcal
+
+    block = SimpleNamespace(
+        title="T",
+        description=None,
+        start_at=datetime(2026, 8, 9, 10, 0),
+        end_at=datetime(2026, 8, 9, 11, 0),
+        recurring_rule="DAILY",
+    )
+    body = gcal._event_body(block)
+
+    assert body["start"]["dateTime"].endswith("+00:00")
+    assert body["recurrence"] == ["RRULE:FREQ=DAILY"]
+    # A missing description must be sent as empty, not the string "None".
+    assert body["description"] == ""
+
+
+# ---------------------------------------------------------------------------
+# AI usage records
+# ---------------------------------------------------------------------------
+
+
+async def test_ai_usage_is_recorded_with_the_callers_keyword_names(monkeypatch):
+    """The stub required a `scope` argument its caller never passed, so every call raised.
+
+    The call site swallows exceptions, so nothing surfaced.
+    """
+    from src.domains.billing.services import usage_tracking
+
+    added: list = []
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def add(self, obj):
+            added.append(obj)
+
+        async def commit(self):
+            pass
+
+    monkeypatch.setattr("src.shared.database.get_session_factory", lambda: (lambda: FakeSession()))
+
+    await usage_tracking.emit_ai_usage(
+        user_id="u1",
+        usage_scope=usage_tracking.PERSONAL_USAGE_SCOPE,
+        space_id=None,
+        provider="gemini",
+        model=None,
+        feature="ai_course_generation",
+        input_tokens=10,
+        output_tokens=20,
+        request_count=1,
+    )
+
+    assert len(added) == 1
+    row = added[0]
+    assert row.user_id == "u1"
+    assert row.usage_scope == "personal"
+    assert row.feature == "ai_course_generation"
+    assert row.input_tokens == 10
+    assert row.output_tokens == 20
+
+
+async def test_usage_recording_failure_never_breaks_the_generation(monkeypatch):
+    from src.domains.billing.services import usage_tracking
+
+    def boom():
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("src.shared.database.get_session_factory", boom)
+
+    # Must not raise: the tokens were already spent.
+    await usage_tracking.emit_ai_usage(user_id="u1", feature="f")
+
+
+def test_circle_usage_scope_is_namespaced():
+    from src.domains.billing.services import usage_tracking
+
+    assert usage_tracking.build_circle_usage_scope("sp1") == "circle:sp1"
+    assert usage_tracking.PERSONAL_USAGE_SCOPE == "personal"
+
+
+# ---------------------------------------------------------------------------
+# Websocket event bus
+# ---------------------------------------------------------------------------
+
+
+async def test_ws_event_is_delivered_with_a_type_and_timestamp(monkeypatch):
+    from src.shared.infrastructure import ws_event_bus
+
+    sent: list[tuple[str, dict]] = []
+
+    class FakeManager:
+        async def send_to_user(self, user_id, message):
+            sent.append((user_id, message))
+
+    monkeypatch.setattr("src.core.websocket.manager", FakeManager())
+
+    await ws_event_bus.publish_ws_event(
+        user_id="u1", event_type="CREDITS_GRANTED", payload={"credits": 500}
+    )
+
+    assert len(sent) == 1
+    user_id, message = sent[0]
+    assert user_id == "u1"
+    assert message["type"] == "CREDITS_GRANTED"
+    assert message["credits"] == 500
+    assert message["timestamp"]
+
+
+async def test_ws_event_without_a_user_is_a_no_op(monkeypatch):
+    from src.shared.infrastructure import ws_event_bus
+
+    sent: list = []
+
+    class FakeManager:
+        async def send_to_user(self, user_id, message):
+            sent.append(user_id)
+
+    monkeypatch.setattr("src.core.websocket.manager", FakeManager())
+
+    await ws_event_bus.publish_ws_event(event_type="X", payload={})
+
+    assert sent == []
+
+
+async def test_a_closed_socket_does_not_fail_the_publisher(monkeypatch):
+    from src.shared.infrastructure import ws_event_bus
+
+    class FakeManager:
+        async def send_to_user(self, user_id, message):
+            raise RuntimeError("socket closed")
+
+    monkeypatch.setattr("src.core.websocket.manager", FakeManager())
+
+    # Must not raise: the purchase it announces has already completed.
+    await ws_event_bus.publish_ws_event(user_id="u1", event_type="X", payload={})

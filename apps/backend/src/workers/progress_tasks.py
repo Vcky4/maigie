@@ -17,7 +17,7 @@ def process_spaced_repetition_task():
     """Process due spaced repetition reviews and create schedule blocks."""
     import asyncio
 
-    from src.tasks.spaced_repetition import process_due_reviews
+    from src.domains.progress.services.spaced_repetition_impl import process_due_reviews
 
     loop = asyncio.new_event_loop()
     try:

@@ -14,6 +14,12 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from src.shared.database import get_session_factory
+
+from ..db_models import ReviewItem
 from ..repository import progress_repo
 
 logger = logging.getLogger(__name__)
@@ -414,3 +420,71 @@ async def log_behaviour(
             "metadata": metadata,
         }
     )
+
+
+async def process_due_reviews() -> dict[str, int]:
+    """Give every soon-due review item a calendar block.
+
+    This is the background sweep that ``progress.process_spaced_repetition`` runs. It was
+    missing: the worker imported it from ``src.tasks.spaced_repetition``, a module that no
+    longer exists, and because the import sits inside the task body nothing detected it.
+    The interactive side of spaced repetition was migrated and works, so reviews came due
+    and were answerable, but nothing put them on the calendar on a schedule.
+
+    Looks ahead to the end of tomorrow rather than only at what is due now, so a learner
+    opening their schedule sees tomorrow's reviews already placed.
+
+    ``ScheduleBlock.reviewItemId`` is unique, so an item can hold only one block. An
+    existing block that has not yet ended is left alone; one that has already ended is
+    unlinked first, which frees the unique slot for the new block.
+
+    Returns counts so an empty run is distinguishable from a broken one.
+    """
+    now = datetime.now(UTC)
+    end_of_tomorrow = (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(ReviewItem)
+            .options(
+                selectinload(ReviewItem.topic),
+                selectinload(ReviewItem.schedule_block),
+            )
+            .where(ReviewItem.next_review_at <= end_of_tomorrow)
+            .order_by(ReviewItem.next_review_at.asc())
+        )
+        items = list(result.scalars().all())
+
+    created = 0
+    skipped = 0
+    failed = 0
+
+    for review in items:
+        try:
+            existing = getattr(review, "schedule_block", None)
+            if existing is not None:
+                end_at = existing.end_at
+                if end_at is not None and end_at.tzinfo is None:
+                    end_at = end_at.replace(tzinfo=UTC)
+                if end_at is not None and end_at >= now:
+                    # Still upcoming or in progress; leave it.
+                    skipped += 1
+                    continue
+                # Stale block: release the unique reviewItemId before creating a new one.
+                await progress_repo.update_block(existing.id, {"reviewItemId": None})
+
+            if await create_schedule_block_for_review(review) is None:
+                # A review item whose topic has gone cannot be scheduled.
+                skipped += 1
+                continue
+            created += 1
+        except Exception:
+            # One bad row must not stop the sweep.
+            failed += 1
+            logger.exception("Failed to schedule review item %s", review.id)
+
+    summary = {"considered": len(items), "created": created, "skipped": skipped, "failed": failed}
+    if items:
+        logger.info("Spaced repetition sweep: %s", summary)
+    return summary

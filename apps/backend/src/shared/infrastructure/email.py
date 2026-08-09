@@ -485,6 +485,60 @@ async def send_subscription_success_email(
         logger.exception("Failed to send subscription success email to %s", email)
 
 
+async def send_schedule_reminder_email(
+    email: str,
+    name: str | None,
+    schedule_title: str,
+    schedule_time: str,
+    schedule_description: str | None = None,
+    **_kwargs: object,
+) -> None:
+    """Remind a learner that a study block is about to start.
+
+    The pre-migration version asked an LLM to draft the subject and body through an
+    ``ai_email_service`` module that was not migrated. The subject and lead line are
+    composed deterministically here instead: a reminder needs to arrive in the fifteen
+    minutes before a block starts, and making that depend on a model call adds a
+    failure mode and a latency budget for no benefit the learner can perceive.
+    """
+    if not _email_transport_configured():
+        logger.warning(
+            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
+            "Skipping schedule reminder to %s",
+            email,
+        )
+        return
+
+    schedule_url = f"{_get_frontend_base_url()}/schedule"
+    template_data = {
+        "name": name or "there",
+        "schedule_title": schedule_title,
+        "schedule_time": schedule_time,
+        "schedule_description": schedule_description or None,
+        "schedule_url": schedule_url,
+        "reminder_message": f"{schedule_title} starts at {schedule_time}.",
+        "app_name": APP_NAME,
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+    }
+
+    html_body, text_body = _render(
+        "schedule_reminder",
+        f"{schedule_title} starts at {schedule_time}. Open your schedule: {schedule_url}",
+        **template_data,
+    )
+
+    try:
+        await _send_multipart_email(
+            to_email=email,
+            subject=f"Starting soon: {schedule_title}",
+            html_body=html_body,
+            text_body=text_body,
+            headers=_standard_headers(f"schedule-reminder-{email}"),
+        )
+    except Exception:
+        logger.exception("Failed to send schedule reminder email to %s", email)
+
+
 async def send_bulk_email(
     email: str,
     name: str | None = None,
@@ -523,16 +577,15 @@ async def send_bulk_email(
         logger.exception("Failed to send bulk email to %s", email)
 
 
-async def send_weekly_summaries() -> None:
-    """Not restored yet.
+async def send_weekly_summaries() -> dict[str, int]:
+    """Email a weekly learning summary to every eligible user.
 
-    The original lived in a separate ``weekly_summary_email_service`` module with its
-    own repository dependencies and has not been migrated. It raises rather than
-    returning quietly so that the ``notifications.weekly_summary`` beat task fails
-    visibly instead of reporting success every week while sending nothing.
+    Kept here because the ``notifications.weekly_summary`` beat task imports it from this
+    module. The aggregation lives in the progress domain, which owns the study-time,
+    streak and session data it reads.
     """
-    raise NotImplementedError(
-        "send_weekly_summaries has not been migrated from "
-        "services/weekly_summary_email_service; the notifications.weekly_summary "
-        "beat task cannot deliver until it is restored"
+    from src.domains.progress.services.weekly_summary import (
+        send_weekly_summaries as _send_weekly_summaries,
     )
+
+    return await _send_weekly_summaries()

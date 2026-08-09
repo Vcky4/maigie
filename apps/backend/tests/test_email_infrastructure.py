@@ -253,10 +253,25 @@ async def test_subscription_email_names_the_tier(transport, tier, expected):
     assert transport["smtp"][0]["subject"] == f"Your {expected} subscription is active"
 
 
-async def test_weekly_summaries_fails_loudly_rather_than_reporting_success():
-    """The beat task must not report success while sending nothing."""
-    with pytest.raises(NotImplementedError):
-        await em.send_weekly_summaries()
+async def test_weekly_summaries_delegates_to_the_progress_implementation(monkeypatch):
+    """The beat task imports this from the email module, but progress owns the data.
+
+    This was a ``NotImplementedError`` while the aggregation was unmigrated.
+    """
+    called: list[bool] = []
+
+    async def fake_send():
+        called.append(True)
+        return {"considered": 0, "sent": 0, "skipped": 0, "failed": 0}
+
+    monkeypatch.setattr(
+        "src.domains.progress.services.weekly_summary.send_weekly_summaries", fake_send
+    )
+
+    result = await em.send_weekly_summaries()
+
+    assert called == [True]
+    assert result["sent"] == 0
 
 
 # ---------------------------------------------------------------------------

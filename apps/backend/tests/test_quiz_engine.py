@@ -628,3 +628,42 @@ class TestExamConditionDisclosure:
         questions = [_question("q1", key="alpha", explanation="alpha wins")]
         wire = _wire("IN_PROGRESS", questions, [_answer("q1")])
         assert wire["q1"]["correctAnswer"] == "alpha"
+
+
+def test_topic_id_survives_the_repository_field_mapping():
+    """`topicId` must reach the column, or per-topic mastery loses its attribution.
+
+    An audit found all existing QuizSession rows with `topicId` NULL. That turned out to
+    be legitimate — a quiz spanning every topic is stored with no single topic — but the
+    mapping is a dict lookup that silently drops unknown keys, so a rename or a typo in
+    `_map_quiz_session` would discard the value with no error anywhere. Per-topic mastery
+    and therefore readiness both depend on it.
+    """
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    mapped = repo._map_quiz_session(
+        {
+            "userId": "u-1",
+            "prepId": "p-1",
+            "mode": "PRACTICE",
+            "topicId": "topic-1",
+            "status": "GENERATING",
+            "totalQuestions": 5,
+        }
+    )
+
+    assert mapped["topic_id"] == "topic-1"
+    assert mapped["user_id"] == "u-1"
+    assert mapped["prep_id"] == "p-1"
+
+
+def test_a_quiz_across_all_topics_maps_a_null_topic_id():
+    """`topic_id=None` is the legitimate 'all topics' case, not a missing value."""
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    mapped = repo._map_quiz_session(
+        {"userId": "u-1", "prepId": "p-1", "mode": "PRACTICE", "topicId": None}
+    )
+
+    assert "topic_id" in mapped
+    assert mapped["topic_id"] is None

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -307,8 +307,6 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
             next_prep = result.first()
 
         if next_prep:
-            from datetime import datetime, timezone
-
             exam_date = next_prep[2]
             if exam_date:
                 # Ensure timezone-aware for comparison
