@@ -108,7 +108,7 @@ async def _second_user(client: AsyncClient) -> dict:
     password = "StrongPassword123!"
 
     signup = await client.post(
-        "/api/v1/auth/register",
+        "/api/v1/auth/signup",
         json={"email": email, "password": password, "name": "Other Learner"},
     )
     if signup.status_code not in (200, 201):

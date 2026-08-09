@@ -828,6 +828,9 @@ class QuizQuestionPresentation(CamelModel):
     # Safe to show before answering: metadata about the question, not about its
     # answer. `None` for questions banked before difficulty was recorded.
     difficulty: str | None = None
+    # Hints the learner has taken on this question in this session, so a resumed
+    # session does not offer a fresh hint they have effectively already had.
+    hints_used: int = 0
     # Disclosed with the answer key, not before. A tip written about a specific
     # question can hint at its answer, so it sits on the key's side of the
     # boundary rather than being treated as neutral metadata.
@@ -922,6 +925,28 @@ class PrepQuestionFlagResponse(CamelModel):
     is_flagged: bool
     note: str | None = None
     created_at: datetime
+
+
+class QuizHintResponse(CamelModel):
+    """A hint the learner asked for.
+
+    Deliberately weaker than `explanation`. `nudge` points at the concept or method;
+    `eliminatedOption` removes one wrong multiple-choice option and is `null` when
+    eliminating would leave no real choice.
+
+    `hintAvailable` is `false` when there is genuinely nothing to offer — better to
+    say so than to return a hint-shaped object containing no hint.
+
+    Taking a hint is recorded but is **not** a penalty. It marks the question as
+    sitting at the edge of what the learner can currently do.
+    """
+
+    question_id: str
+    level: int
+    nudge: str | None = None
+    eliminated_option: str | None = None
+    hint_count: int
+    hint_available: bool
 
 
 class AnswerResultResponse(CamelModel):

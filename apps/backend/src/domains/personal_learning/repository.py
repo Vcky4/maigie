@@ -38,6 +38,7 @@ from .db_models import (
     Notification,
     PrepMaterial,
     PrepTopic,
+    PracticeObservation,
     PrepQuestion,
     PrepQuestionFlag,
     PrepReadinessSnapshot,
@@ -1621,6 +1622,48 @@ class PersonalLearningRepository:
             )
             return list((await s.execute(stmt)).scalars().all())
 
+    async def record_practice_observation(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> PracticeObservation:
+        """Append one observation. Never updated after it is written."""
+        async with self._use_session(session) as s:
+            observation = PracticeObservation(**self._map_practice_observation(data))
+            s.add(observation)
+            await s.flush()
+            await s.refresh(observation)
+            return observation
+
+    async def find_session_question_link(
+        self, *, quiz_session_id: str, prep_question_id: str, session: AsyncSession | None = None
+    ) -> QuizSessionQuestion | None:
+        """The link recording that a session asked a question, and its hint count."""
+        async with self._use_session(session) as s:
+            stmt = select(QuizSessionQuestion).where(
+                QuizSessionQuestion.quiz_session_id == quiz_session_id,
+                QuizSessionQuestion.prep_question_id == prep_question_id,
+            )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def increment_session_question_hints(
+        self, *, quiz_session_id: str, prep_question_id: str, session: AsyncSession | None = None
+    ) -> int:
+        """Count one hint taken, returning the new total.
+
+        Incremented in SQL and returned by the same statement, so two concurrent
+        hint requests cannot both read the same starting value.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                update(QuizSessionQuestion)
+                .where(
+                    QuizSessionQuestion.quiz_session_id == quiz_session_id,
+                    QuizSessionQuestion.prep_question_id == prep_question_id,
+                )
+                .values(hint_count=QuizSessionQuestion.hint_count + 1)
+                .returning(QuizSessionQuestion.hint_count)
+            )
+            return (await s.execute(stmt)).scalar_one()
+
     async def upsert_readiness_snapshot(
         self,
         *,
@@ -1899,17 +1942,17 @@ class PersonalLearningRepository:
 
     async def list_quiz_questions(
         self, quiz_id: str, *, session: AsyncSession | None = None
-    ) -> list[tuple[PrepQuestion, int]]:
-        """A session's questions with their position in that session.
+    ) -> list[tuple[PrepQuestion, QuizSessionQuestion]]:
+        """A session's questions paired with the link that placed them there.
 
-        Returns ``(question, orderIndex)`` pairs rather than bare questions,
-        because order is now a property of the session that asked the question,
-        not of the question itself — the same banked question can appear at a
-        different position in a later session.
+        Returns ``(question, link)`` rather than bare questions, because everything
+        session-specific lives on the link: the position, and how many hints were
+        taken. The same banked question can appear at a different position, with a
+        different hint count, in a later session.
         """
         async with self._use_session(session) as s:
             stmt = (
-                select(PrepQuestion, QuizSessionQuestion.order_index)
+                select(PrepQuestion, QuizSessionQuestion)
                 .join(
                     QuizSessionQuestion,
                     QuizSessionQuestion.prep_question_id == PrepQuestion.id,
@@ -2001,6 +2044,24 @@ class PersonalLearningRepository:
             "source": "source",
             "sourceYear": "source_year",
             "examTip": "exam_tip",
+            "hintNudge": "hint_nudge",
+        }
+        return {field_map[k]: v for k, v in data.items() if k in field_map}
+
+    @staticmethod
+    def _map_practice_observation(data: dict[str, Any]) -> dict[str, Any]:
+        field_map = {
+            "userId": "user_id",
+            "prepId": "prep_id",
+            "prepTopicId": "prep_topic_id",
+            "prepQuestionId": "prep_question_id",
+            "quizSessionId": "quiz_session_id",
+            "isCorrect": "is_correct",
+            "responseMs": "response_ms",
+            "hintUsed": "hint_used",
+            "hintCount": "hint_count",
+            "difficulty": "difficulty",
+            "observedAt": "observed_at",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
 

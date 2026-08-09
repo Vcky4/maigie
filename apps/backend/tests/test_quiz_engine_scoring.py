@@ -55,6 +55,9 @@ class FakeRepo:
         self.answers: list[SimpleNamespace] = []
         self.session_updates: list[tuple[str, dict]] = []
         self.attempts: list[tuple[str, bool]] = []
+        self.observations: list[dict] = []
+        # (quizSessionId, prepQuestionId) -> link
+        self.links_by_key: dict[tuple[str, str], SimpleNamespace] = {}
 
     # --- seeding -------------------------------------------------------
 
@@ -90,6 +93,12 @@ class FakeRepo:
             times_correct=0,
         )
         self.links.add((quiz_id, question_id))
+        self.links_by_key[(quiz_id, question_id)] = SimpleNamespace(
+            quiz_session_id=quiz_id,
+            prep_question_id=question_id,
+            order_index=0,
+            hint_count=0,
+        )
         return self.questions[question_id]
 
     def bank_question_without_asking(self, question_id: str, *, key="right"):
@@ -123,6 +132,20 @@ class FakeRepo:
         if question is not None:
             question.times_answered += 1
             question.times_correct += 1 if correct else 0
+
+    async def find_session_question_link(self, *, quiz_session_id: str, prep_question_id: str):
+        return self.links_by_key.get((quiz_session_id, prep_question_id))
+
+    async def increment_session_question_hints(
+        self, *, quiz_session_id: str, prep_question_id: str
+    ):
+        link = self.links_by_key[(quiz_session_id, prep_question_id)]
+        link.hint_count += 1
+        return link.hint_count
+
+    async def record_practice_observation(self, data: dict):
+        self.observations.append(dict(data))
+        return SimpleNamespace(**data)
 
     async def find_quiz_answer(self, quiz_id: str, question_id: str):
         for answer in self.answers:
@@ -682,3 +705,252 @@ class TestQuestionStatistics:
             )
 
         assert repo.attempts == []
+
+
+# ---------------------------------------------------------------------------
+# TestHintRequests
+# ---------------------------------------------------------------------------
+
+
+class TestHintRequests:
+    """Hints are pulled by the learner, counted, and never a penalty."""
+
+    async def test_level_one_returns_the_nudge(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        question = repo.add_question("q1", "quiz-1", key="right")
+        question.hint_nudge = "Think about the assumption."
+
+        result = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=1
+        )
+
+        assert result["nudge"] == "Think about the assumption."
+        assert result["eliminatedOption"] is None
+        assert result["hintAvailable"] is True
+
+    async def test_level_two_also_eliminates_a_wrong_option(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        result = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=2
+        )
+
+        assert result["eliminatedOption"] in {"wrong a", "wrong b"}
+        assert result["eliminatedOption"] != "right"
+
+    async def test_each_request_is_counted(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1")
+
+        first = await quiz_engine.request_hint(user_id=OWNER, quiz_id="quiz-1", question_id="q1")
+        second = await quiz_engine.request_hint(user_id=OWNER, quiz_id="quiz-1", question_id="q1")
+
+        assert (first["hintCount"], second["hintCount"]) == (1, 2)
+
+    async def test_level_is_clamped_rather_than_rejected(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1")
+
+        low = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=-5
+        )
+        high = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=99
+        )
+
+        assert low["level"] == quiz_engine.HINT_LEVEL_NUDGE
+        assert high["level"] == quiz_engine.MAX_HINT_LEVEL
+
+    async def test_reports_honestly_when_there_is_no_hint_to_give(self, repo):
+        """Better than a hint-shaped object containing no hint."""
+        repo.add_session("quiz-1", OWNER)
+        question = repo.add_question("q1", "quiz-1")
+        question.hint_nudge = None
+        question.options = ["right", "wrong"]  # too few to eliminate from
+
+        result = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=2
+        )
+
+        assert result["hintAvailable"] is False
+        assert result["nudge"] is None
+        assert result["eliminatedOption"] is None
+
+    async def test_a_hint_after_answering_is_refused(self, repo):
+        """The key is already disclosed, and allowing it would let hint counts be
+        run up after the fact, corrupting the signal rather than recording it."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        with pytest.raises(MaigieError) as exc:
+            await quiz_engine.request_hint(user_id=OWNER, quiz_id="quiz-1", question_id="q1")
+
+        assert exc.value.code == "QUESTION_ALREADY_ANSWERED"
+
+    async def test_hints_are_refused_on_a_completed_session(self, repo):
+        repo.add_session("quiz-1", OWNER, status="COMPLETED")
+        repo.add_question("q1", "quiz-1")
+
+        with pytest.raises(MaigieError) as exc:
+            await quiz_engine.request_hint(user_id=OWNER, quiz_id="quiz-1", question_id="q1")
+
+        assert exc.value.code == "QUIZ_NOT_IN_PROGRESS"
+
+    async def test_another_learners_session_is_not_found(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1")
+
+        with pytest.raises(NotFoundError):
+            await quiz_engine.request_hint(user_id=INTRUDER, quiz_id="quiz-1", question_id="q1")
+
+    async def test_a_question_from_another_session_is_not_hintable(self, repo):
+        """Hints are scoped exactly as answering is — otherwise the hint endpoint
+        becomes a way to read another session's question."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1")
+        repo.add_session("quiz-2", INTRUDER)
+
+        with pytest.raises(NotFoundError):
+            await quiz_engine.request_hint(user_id=INTRUDER, quiz_id="quiz-2", question_id="q1")
+
+
+# ---------------------------------------------------------------------------
+# TestPracticeObservations
+# ---------------------------------------------------------------------------
+
+
+class TestPracticeObservations:
+    """Phase A: keep the evidence, not just the verdict."""
+
+    async def test_an_answer_produces_an_observation(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right", topic_id="topic-7")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER,
+            quiz_id="quiz-1",
+            data={"question_id": "q1", "user_answer": "right", "time_taken_seconds": 12},
+        )
+
+        assert len(repo.observations) == 1
+        observation = repo.observations[0]
+        assert observation["userId"] == OWNER
+        assert observation["prepId"] == "prep-1"
+        assert observation["prepTopicId"] == "topic-7"
+        assert observation["prepQuestionId"] == "q1"
+        assert observation["quizSessionId"] == "quiz-1"
+        assert observation["isCorrect"] is True
+        assert observation["responseMs"] == 12_000
+
+    async def test_an_incorrect_answer_is_observed_too(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "wrong a"}
+        )
+
+        assert repo.observations[0]["isCorrect"] is False
+
+    async def test_missing_timing_is_null_not_zero(self, repo):
+        """Null must stay distinguishable from "answered instantly"."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert repo.observations[0]["responseMs"] is None
+
+    async def test_hints_taken_are_carried_into_the_observation(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        await quiz_engine.request_hint(user_id=OWNER, quiz_id="quiz-1", question_id="q1")
+        await quiz_engine.request_hint(user_id=OWNER, quiz_id="quiz-1", question_id="q1")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        observation = repo.observations[0]
+        assert observation["hintUsed"] is True
+        assert observation["hintCount"] == 2
+
+    async def test_no_hints_records_hint_used_false(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert repo.observations[0]["hintUsed"] is False
+        assert repo.observations[0]["hintCount"] == 0
+
+    async def test_difficulty_is_copied_at_answer_time(self, repo):
+        """Copied, not joined: difficulty may be recalibrated later."""
+        repo.add_session("quiz-1", OWNER)
+        question = repo.add_question("q1", "quiz-1", key="right")
+        question.difficulty = "HARD"
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert repo.observations[0]["difficulty"] == "HARD"
+
+    async def test_a_replayed_answer_does_not_observe_twice(self, repo):
+        """The same reason the score does not move: it is one attempt, not two."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        payload = {"question_id": "q1", "user_answer": "right"}
+        await quiz_engine.submit_answer(user_id=OWNER, quiz_id="quiz-1", data=payload)
+        await quiz_engine.submit_answer(user_id=OWNER, quiz_id="quiz-1", data=payload)
+
+        assert len(repo.observations) == 1
+
+    async def test_a_rejected_answer_produces_no_observation(self, repo):
+        repo.add_session("quiz-1", OWNER, status="COMPLETED")
+        repo.add_question("q1", "quiz-1")
+
+        with pytest.raises(MaigieError):
+            await quiz_engine.submit_answer(
+                user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+            )
+
+        assert repo.observations == []
+
+    async def test_an_unattributed_question_still_produces_an_observation(self, repo):
+        """Losing topic attribution should not lose the evidence entirely."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right", topic_id=None)
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert len(repo.observations) == 1
+        assert repo.observations[0]["prepTopicId"] is None
+
+    async def test_a_failed_observation_does_not_fail_the_answer(self, repo, monkeypatch):
+        """The observation is valuable; the learner's answer is more valuable."""
+
+        async def _boom(data):
+            raise RuntimeError("observation store unavailable")
+
+        monkeypatch.setattr(repo, "record_practice_observation", _boom)
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+
+        result = await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert result["isCorrect"] is True
+        assert len(repo.answers) == 1

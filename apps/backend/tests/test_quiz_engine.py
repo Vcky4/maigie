@@ -23,6 +23,7 @@ from src.domains.personal_learning import models
 from src.domains.personal_learning.services.quiz_engine import (
     _build_quiz_response,
     _check_answer_correctness,
+    _eliminable_option,
     _resolve_topic_id,
     _suggest_next_step,
     _usable_question,
@@ -77,14 +78,22 @@ def _answer(question_id: str, *, correct: bool = True):
     )
 
 
-def _wire(status: str, questions, answers):
+def _link(order_index: int, *, hints_used: int = 0):
+    """The session-to-question link: position and hints taken live here."""
+    return SimpleNamespace(order_index=order_index, hint_count=hints_used)
+
+
+def _wire(status: str, questions, answers, hints: dict[str, int] | None = None):
     """Build the response and push it through the real model, as the route does.
 
-    Questions are paired with their position in the session, because order now
-    belongs to the session that asked the question rather than to the banked
-    question itself.
+    Questions are paired with their session link, because everything
+    session-specific — position, hints taken — belongs to the link rather than to
+    the banked question.
     """
-    ordered = [(question, index) for index, question in enumerate(questions)]
+    ordered = [
+        (question, _link(index, hints_used=hints.get(question.id, 0) if hints else 0))
+        for index, question in enumerate(questions)
+    ]
     built = _build_quiz_response(_session(status), ordered, answers)
     dumped = models.QuizSessionResponse.model_validate(built).model_dump(by_alias=True)
     return {item["id"]: item for item in dumped["questions"]}
@@ -469,3 +478,110 @@ class TestExamTipDisclosure:
     def test_exam_tip_is_revealed_on_a_completed_session(self):
         wire = _wire("COMPLETED", [self._question_with_metadata()], [])
         assert wire["q1"]["examTip"] == "TIP_CANARY"
+
+
+# ---------------------------------------------------------------------------
+# TestHintValidation
+# ---------------------------------------------------------------------------
+
+
+class TestHintValidation:
+    """A hint that contains the answer is the answer key with a different label."""
+
+    def test_a_good_hint_is_kept(self):
+        result = _usable_question({**BASE_CANDIDATE, "hint": "Think about what is assumed."})
+        assert result["hint_nudge"] == "Think about what is assumed."
+
+    def test_a_hint_containing_the_answer_is_discarded(self):
+        """Asking a model not to reveal the answer is not the same as it obeying."""
+        result = _usable_question(
+            {**BASE_CANDIDATE, "hint": "Remember that it means no effect at all."}
+        )
+        assert result["hint_nudge"] is None
+
+    def test_the_answer_check_is_case_insensitive(self):
+        result = _usable_question({**BASE_CANDIDATE, "hint": "It is about NO EFFECT."})
+        assert result["hint_nudge"] is None
+
+    def test_a_hint_is_trimmed(self):
+        result = _usable_question({**BASE_CANDIDATE, "hint": "  Consider the assumption.  "})
+        assert result["hint_nudge"] == "Consider the assumption."
+
+    def test_a_hint_is_capped(self):
+        """A long hint is an explanation wearing a different hat."""
+        result = _usable_question({**BASE_CANDIDATE, "hint": "y" * 2000})
+        assert len(result["hint_nudge"]) == 300
+
+    def test_a_blank_hint_becomes_none(self):
+        assert _usable_question({**BASE_CANDIDATE, "hint": "   "})["hint_nudge"] is None
+
+    def test_a_missing_hint_is_none(self):
+        """No hint is an acceptable state, not an error."""
+        assert _usable_question(BASE_CANDIDATE)["hint_nudge"] is None
+
+    def test_a_question_without_a_usable_hint_is_still_accepted(self):
+        """A missing hint must not cost us the question."""
+        result = _usable_question({**BASE_CANDIDATE, "hint": "It means no effect"})
+        assert result is not None
+        assert result["hint_nudge"] is None
+
+
+# ---------------------------------------------------------------------------
+# TestEliminableOption
+# ---------------------------------------------------------------------------
+
+
+class TestEliminableOption:
+    """Level-2 hints remove one wrong option, deterministically."""
+
+    def _q(self, options, answer):
+        return SimpleNamespace(options=options, correct_answer=answer)
+
+    def test_removes_a_wrong_option(self):
+        removed = _eliminable_option(self._q(["right", "wrong a", "wrong b", "wrong c"], "right"))
+        assert removed in {"wrong a", "wrong b", "wrong c"}
+
+    def test_never_removes_the_correct_option(self):
+        for _ in range(10):
+            removed = _eliminable_option(
+                self._q(["right", "wrong a", "wrong b", "wrong c"], "right")
+            )
+            assert removed != "right"
+
+    def test_is_deterministic(self):
+        """Otherwise repeated taps eliminate everything and reveal the answer."""
+        question = self._q(["right", "wrong a", "wrong b", "wrong c"], "right")
+        results = {_eliminable_option(question) for _ in range(10)}
+        assert len(results) == 1
+
+    def test_declines_when_only_two_options_remain(self):
+        """Eliminating one of two leaves no choice at all."""
+        assert _eliminable_option(self._q(["right", "wrong"], "right")) is None
+
+    def test_declines_for_short_answer_questions(self):
+        assert _eliminable_option(self._q(None, "42")) is None
+
+    def test_matches_the_answer_case_insensitively(self):
+        removed = _eliminable_option(self._q(["Right", "wrong a", "wrong b"], "right"))
+        assert removed != "Right"
+
+
+# ---------------------------------------------------------------------------
+# TestHintStateOnRead
+# ---------------------------------------------------------------------------
+
+
+class TestHintStateOnRead:
+    def test_hints_taken_are_reported(self):
+        """A resumed session should not offer a hint the learner already took."""
+        wire = _wire("IN_PROGRESS", [_question("q1")], [], hints={"q1": 2})
+        assert wire["q1"]["hintsUsed"] == 2
+
+    def test_no_hints_reports_zero(self):
+        wire = _wire("IN_PROGRESS", [_question("q1")], [])
+        assert wire["q1"]["hintsUsed"] == 0
+
+    def test_hint_count_is_per_question(self):
+        wire = _wire("IN_PROGRESS", [_question("q1"), _question("q2")], [], hints={"q1": 1})
+        assert wire["q1"]["hintsUsed"] == 1
+        assert wire["q2"]["hintsUsed"] == 0

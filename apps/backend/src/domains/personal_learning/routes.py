@@ -608,6 +608,34 @@ async def submit_answer(quiz_id: str, body: models.AnswerSubmitRequest, current_
     )
 
 
+@router.post(
+    "/quizzes/{quiz_id}/questions/{question_id}/hint",
+    response_model=models.QuizHintResponse,
+)
+async def request_quiz_hint(
+    quiz_id: str,
+    question_id: str,
+    current_user: CurrentUser,
+    level: int = Query(1, ge=1, le=2),
+):
+    """Ask for a hint on a question.
+
+    Pulled by the learner, never pushed. Level 1 points at the concept; level 2 also
+    eliminates one wrong multiple-choice option.
+
+    The hint never contains the correct answer — generated hints that do are
+    discarded at creation rather than stored. Only available before the question has
+    been answered: afterwards the key has already been disclosed, and allowing it
+    would let hint counts be run up after the fact.
+    """
+    return await quiz_engine.request_hint(
+        user_id=current_user.id,
+        quiz_id=quiz_id,
+        question_id=question_id,
+        level=level,
+    )
+
+
 @router.post("/quizzes/{quiz_id}/complete", response_model=models.QuizSummaryResponse)
 async def complete_quiz(
     quiz_id: str,

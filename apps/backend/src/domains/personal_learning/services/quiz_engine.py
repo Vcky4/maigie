@@ -32,6 +32,15 @@ QUESTION_SOURCE_PAST_PAPER = "PAST_PAPER"
 # An exam tip is capped rather than trusted to be "one sentence".
 _MAX_EXAM_TIP_CHARS = 500
 
+# A hint is capped for the same reason, and more tightly: a long hint is an
+# explanation wearing a different hat.
+_MAX_HINT_CHARS = 300
+
+# Hint levels a learner can ask for, in order.
+HINT_LEVEL_NUDGE = 1
+HINT_LEVEL_NARROW = 2
+MAX_HINT_LEVEL = HINT_LEVEL_NARROW
+
 # A topic at or below this score is reported as a weak area on completion.
 _WEAK_AREA_THRESHOLD = 70
 
@@ -155,7 +164,9 @@ async def start_quiz(
         f"- 'correctAnswer': the correct option (must match one of the options exactly)\n"
         f"- 'explanation': brief explanation of why the answer is correct\n"
         f"- 'difficulty': one of EASY, MEDIUM, HARD\n"
-        f"- 'examTip': one sentence on how to approach this kind of question\n\n"
+        f"- 'examTip': one sentence on how to approach this kind of question\n"
+        f"- 'hint': one sentence pointing at the concept or method needed, which "
+        f"must NOT reveal, restate or paraphrase the correct answer\n\n"
         f"Return ONLY the JSON array."
     )
 
@@ -219,6 +230,7 @@ async def start_quiz(
                 "explanation": normalized["explanation"],
                 "difficulty": normalized["difficulty"],
                 "examTip": normalized["exam_tip"],
+                "hintNudge": normalized["hint_nudge"],
                 # Set here, not taken from the model. A generator asked to report
                 # its own provenance is not a source of truth about it, and
                 # `sourceYear` stays null because a generated question has no year.
@@ -327,6 +339,8 @@ def _usable_question(candidate: Any) -> dict[str, Any] | None:
     exam_tip = candidate.get("examTip")
     exam_tip = str(exam_tip).strip()[:_MAX_EXAM_TIP_CHARS] or None if exam_tip else None
 
+    hint = _usable_hint(candidate.get("hint"), correct_answer=correct_answer)
+
     return {
         "question_text": question_text,
         "question_type": question_type,
@@ -335,7 +349,34 @@ def _usable_question(candidate: Any) -> dict[str, Any] | None:
         "explanation": str(explanation).strip() or None if explanation is not None else None,
         "difficulty": difficulty,
         "exam_tip": exam_tip,
+        "hint_nudge": hint,
     }
+
+
+def _usable_hint(raw: Any, *, correct_answer: str) -> str | None:
+    """Normalize a hint, or drop it if it gives the answer away.
+
+    A hint that contains the correct answer is not a hint, it is the answer key
+    with a different label — and it would defeat withholding the key at all. Asking
+    the model not to do it is not the same as it not doing it, so this checks.
+
+    Dropped rather than repaired: no hint is a perfectly acceptable state, and
+    editing a model's hint to remove the answer risks leaving a sentence that still
+    implies it.
+    """
+    if not raw:
+        return None
+
+    hint = str(raw).strip()[:_MAX_HINT_CHARS].strip()
+    if not hint:
+        return None
+
+    answer = correct_answer.strip().lower()
+    if answer and answer in hint.lower():
+        logger.warning("Discarded a generated hint containing the correct answer")
+        return None
+
+    return hint
 
 
 def _resolve_topic_id(candidate: Any, target_topics: list[Any]) -> str | None:
@@ -465,6 +506,18 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     # ever asked it. Incremented in SQL so concurrent answers cannot lose a count.
     await repo.record_question_attempt(question_id, correct=is_correct)
 
+    # Phase A of the learning-intelligence design: keep the evidence, not just the
+    # verdict. Nothing consumes this yet — the reasoning layer is Phase B — but
+    # without it a conclusion about a learner can never be revisited, because the
+    # observations behind it were never kept.
+    await _record_observation(
+        user_id=user_id,
+        quiz=quiz,
+        question=question,
+        is_correct=is_correct,
+        time_taken=time_taken,
+    )
+
     # Update topic mastery — fire-and-forget to avoid blocking the response.
     # Any failure is logged; user experience is not affected.
     if question.prep_topic_id:
@@ -479,6 +532,152 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         "explanation": question.explanation,
         "alreadyAnswered": False,
     }
+
+
+async def _record_observation(
+    *,
+    user_id: str,
+    quiz: Any,
+    question: Any,
+    is_correct: bool,
+    time_taken: Any,
+) -> None:
+    """Append what this answer revealed. Failure must not fail the answer.
+
+    An observation is valuable but it is not the learner's score. If writing it
+    fails, the answer has still been recorded and the session continues; losing one
+    row of evidence is a far smaller harm than rejecting a submitted answer.
+    """
+    try:
+        hint_count = 0
+        link = await repo.find_session_question_link(
+            quiz_session_id=quiz.id, prep_question_id=question.id
+        )
+        if link is not None:
+            hint_count = link.hint_count or 0
+
+        response_ms: int | None = None
+        if time_taken is not None:
+            try:
+                response_ms = max(0, int(time_taken) * 1000)
+            except (TypeError, ValueError):
+                response_ms = None
+
+        await repo.record_practice_observation(
+            {
+                "userId": user_id,
+                "prepId": getattr(question, "prep_id", None) or quiz.prep_id,
+                "prepTopicId": question.prep_topic_id,
+                "prepQuestionId": question.id,
+                "quizSessionId": quiz.id,
+                "isCorrect": is_correct,
+                "responseMs": response_ms,
+                "hintUsed": hint_count > 0,
+                "hintCount": hint_count,
+                # Copied now, because difficulty may be recalibrated later and this
+                # observation should record what was true at the time.
+                "difficulty": getattr(question, "difficulty", None),
+                "observedAt": datetime.now(timezone.utc),
+            }
+        )
+    except Exception:
+        logger.exception(
+            "Failed to record practice observation",
+            extra={"quiz_id": quiz.id, "question_id": question.id},
+        )
+
+
+async def request_hint(
+    *, user_id: str, quiz_id: str, question_id: str, level: int = HINT_LEVEL_NUDGE
+) -> dict[str, Any]:
+    """Give the learner a hint, because they asked for one.
+
+    Hints are pulled, never pushed:
+
+        An answer given too quickly prevents learning.
+        A hint at the right moment creates breakthrough.
+        -- content/intelligence/ch22-the-nature-of-intelligence.mdx
+
+    Two levels. `NUDGE` points at the concept. `NARROW` additionally eliminates one
+    wrong multiple-choice option — still a real choice, and computed
+    deterministically so asking twice gives the same answer rather than gradually
+    eliminating everything.
+
+    Taking a hint is recorded, and it is **not** a penalty. It marks the question as
+    sitting at the edge of what the learner can currently do, which is the most
+    useful thing practice can tell us and where the next question should aim.
+    """
+    quiz = await repo.get_quiz_session(quiz_id, user_id)
+    if not quiz:
+        raise NotFoundError("QuizSession", quiz_id)
+
+    if quiz.status != "IN_PROGRESS":
+        raise MaigieError(
+            "Hints are only available while a practice session is in progress.",
+            status_code=409,
+            code="QUIZ_NOT_IN_PROGRESS",
+        )
+
+    # Scoped through the session link, exactly as answering is.
+    question = await repo.find_quiz_question(question_id, quiz_id)
+    if not question:
+        raise NotFoundError("PrepQuestion", question_id)
+
+    # A hint after answering is pointless: the key has already been disclosed. More
+    # importantly, allowing it would let hint counts be run up after the fact,
+    # corrupting the signal rather than recording it.
+    existing = await repo.find_quiz_answer(quiz_id, question_id)
+    if existing:
+        raise MaigieError(
+            "This question has already been answered.",
+            status_code=409,
+            code="QUESTION_ALREADY_ANSWERED",
+        )
+
+    requested = max(HINT_LEVEL_NUDGE, min(int(level), MAX_HINT_LEVEL))
+
+    nudge = getattr(question, "hint_nudge", None)
+    eliminated: str | None = None
+    if requested >= HINT_LEVEL_NARROW:
+        eliminated = _eliminable_option(question)
+
+    # Counted once per request, in SQL, so concurrent requests cannot both read the
+    # same starting value.
+    hint_count = await repo.increment_session_question_hints(
+        quiz_session_id=quiz_id, prep_question_id=question_id
+    )
+
+    return {
+        "questionId": question_id,
+        "level": requested,
+        "nudge": nudge,
+        "eliminatedOption": eliminated,
+        "hintCount": hint_count,
+        # Honest about having nothing useful, rather than returning a hint-shaped
+        # object with no hint in it.
+        "hintAvailable": bool(nudge) or eliminated is not None,
+    }
+
+
+def _eliminable_option(question: Any) -> str | None:
+    """One wrong multiple-choice option, chosen deterministically.
+
+    Deterministic so that repeated requests eliminate the *same* option rather than
+    working through them all — otherwise level 2 becomes "show me the answer" after
+    enough taps.
+
+    Returns `None` when eliminating would leave no real choice, which is the case
+    for short answers and for two-option questions.
+    """
+    options = question.options if isinstance(question.options, list) else None
+    if not options or len(options) <= 2:
+        return None
+
+    answer = (question.correct_answer or "").strip().lower()
+    for option in options:
+        if str(option).strip().lower() != answer:
+            return str(option)
+    return None
 
 
 async def _update_topic_mastery_safe(topic_id: str) -> None:
@@ -630,9 +829,9 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
     # Index answers by question_id for O(1) lookup
     answer_map = {a.question_id: a for a in answers}
     session_completed = quiz.status == "COMPLETED"
-    # `questions` is a list of (question, orderIndex) pairs: order belongs to the
-    # session that asked the question, not to the banked question.
-    ordered = [(q, i) for q, i in questions]
+    # `questions` is a list of (question, link) pairs. Everything session-specific
+    # — position, hints taken — belongs to the link, not to the banked question.
+    ordered = list(questions)
 
     return {
         "id": quiz.id,
@@ -651,16 +850,22 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
             _question_dict(
                 question,
                 answer_map.get(question.id),
-                order_index=order_index,
+                order_index=link.order_index,
+                hints_used=getattr(link, "hint_count", 0) or 0,
                 reveal_answers=session_completed or question.id in answer_map,
             )
-            for question, order_index in ordered
+            for question, link in ordered
         ],
     }
 
 
 def _question_dict(
-    question: Any, answer: Any | None, *, order_index: int, reveal_answers: bool
+    question: Any,
+    answer: Any | None,
+    *,
+    order_index: int,
+    hints_used: int,
+    reveal_answers: bool,
 ) -> dict[str, Any]:
     """Serialize a question with the learner's answer attached, if they have one.
 
@@ -677,6 +882,9 @@ def _question_dict(
         "prep_topic_id": question.prep_topic_id,
         # Shown from the start: difficulty describes the question, not the answer.
         "difficulty": getattr(question, "difficulty", None),
+        # So a resumed session can show what the learner already took, rather than
+        # silently offering a fresh hint they have effectively already had.
+        "hints_used": hints_used,
         "correct_answer": question.correct_answer if reveal_answers else None,
         "explanation": question.explanation if reveal_answers else None,
         # Withheld with the key: a tip about this question can hint at its answer.

@@ -5726,6 +5726,57 @@
         "title": "QuizCompleteRequest",
         "type": "object"
       },
+      "QuizHintResponse": {
+        "description": "A hint the learner asked for.\n\nDeliberately weaker than `explanation`. `nudge` points at the concept or method;\n`eliminatedOption` removes one wrong multiple-choice option and is `null` when\neliminating would leave no real choice.\n\n`hintAvailable` is `false` when there is genuinely nothing to offer — better to\nsay so than to return a hint-shaped object containing no hint.\n\nTaking a hint is recorded but is **not** a penalty. It marks the question as\nsitting at the edge of what the learner can currently do.",
+        "properties": {
+          "eliminatedOption": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eliminatedoption"
+          },
+          "hintAvailable": {
+            "title": "Hintavailable",
+            "type": "boolean"
+          },
+          "hintCount": {
+            "title": "Hintcount",
+            "type": "integer"
+          },
+          "level": {
+            "title": "Level",
+            "type": "integer"
+          },
+          "nudge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nudge"
+          },
+          "questionId": {
+            "title": "Questionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "questionId",
+          "level",
+          "hintCount",
+          "hintAvailable"
+        ],
+        "title": "QuizHintResponse",
+        "type": "object"
+      },
       "QuizQuestionPresentation": {
         "description": "A question as delivered to the learner.\n\n`correctAnswer` and `explanation` are populated **as soon as this question\nhas been answered**, so the learner gets the explanation while they practise\nand keeps it if they navigate back or resume the session. They are withheld\nfor questions not yet attempted (Decision C). A completed session reveals\nevery question, including any left unanswered.\n\nThat makes both fields nullable on the wire even though `correctAnswer` is a\nNOT NULL column: the nullability describes what has been disclosed so far,\nnot what is stored.",
         "properties": {
@@ -5784,6 +5835,11 @@
               }
             ],
             "title": "Explanation"
+          },
+          "hintsUsed": {
+            "default": 0,
+            "title": "Hintsused",
+            "type": "integer"
           },
           "id": {
             "title": "Id",
@@ -14630,6 +14686,76 @@
           }
         ],
         "summary": "Complete Quiz",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/quizzes/{quiz_id}/questions/{question_id}/hint": {
+      "post": {
+        "description": "Ask for a hint on a question.\n\nPulled by the learner, never pushed. Level 1 points at the concept; level 2 also\neliminates one wrong multiple-choice option.\n\nThe hint never contains the correct answer — generated hints that do are\ndiscarded at creation rather than stored. Only available before the question has\nbeen answered: afterwards the key has already been disclosed, and allowing it\nwould let hint counts be run up after the fact.",
+        "operationId": "request_quiz_hint_api_v1_learning_quizzes__quiz_id__questions__question_id__hint_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "quiz_id",
+            "required": true,
+            "schema": {
+              "title": "Quiz Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "question_id",
+            "required": true,
+            "schema": {
+              "title": "Question Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 2,
+              "minimum": 1,
+              "title": "Level",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuizHintResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Request Quiz Hint",
         "tags": [
           "personal-learning",
           "personal-learning"

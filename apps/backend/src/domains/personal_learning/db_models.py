@@ -641,6 +641,11 @@ class PrepQuestion(Base, TimestampMixin):
     # Advice for tackling this kind of question. Disclosed with the answer key, not
     # before: a tip written about a specific question can hint at its answer.
     exam_tip: Mapped[Optional[str]] = mapped_column("examTip", Text, nullable=True)
+    # Points at the approach without giving the answer away. Deliberately weaker
+    # than `explanation`: a hint that paraphrases the explanation is an answer key
+    # with a different label. Validated on the way in — a hint containing the
+    # correct answer is rejected rather than stored.
+    hint_nudge: Mapped[Optional[str]] = mapped_column("hintNudge", Text, nullable=True)
 
     # Lifetime statistics for this question, across every session that used it.
     # Only expressible now that a question outlives a session.
@@ -655,6 +660,91 @@ class PrepQuestion(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<PrepQuestion id={self.id} type={self.question_type}>"
+
+
+# ---------------------------------------------------------------------------
+# PracticeObservation
+# ---------------------------------------------------------------------------
+
+
+class PracticeObservation(Base, TimestampMixin):
+    """One thing practice revealed about a learner. Append-only.
+
+    Separate from ``QuizAnswer`` because that table cascades from ``QuizSession``:
+    deleting a practice session would erase the evidence, which would make it
+    impossible to revisit earlier observations in light of new ones. Here the
+    session and question references are ``SET NULL``, so the evidence outlives
+    them.
+
+    Still cascades from ``User`` and ``ExamPrep`` — deleting an account or a
+    preparation is a request to forget, and memory has to be forgettable.
+
+    Never updated. A conclusion about a learner should change because new
+    observations arrived, not because an old one was rewritten.
+    """
+
+    __tablename__ = "PracticeObservation"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    prep_id: Mapped[str] = mapped_column(
+        "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
+    )
+    prep_topic_id: Mapped[Optional[str]] = mapped_column(
+        "prepTopicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True
+    )
+    prep_question_id: Mapped[Optional[str]] = mapped_column(
+        "prepQuestionId",
+        String,
+        ForeignKey("PrepQuestion.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quiz_session_id: Mapped[Optional[str]] = mapped_column(
+        "quizSessionId",
+        String,
+        ForeignKey("QuizSession.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    is_correct: Mapped[bool] = mapped_column("isCorrect", Boolean, nullable=False)
+    # Null when the client did not report it — distinct from "answered instantly".
+    # A fluency signal only. Never a score, and never surfaced as a judgement.
+    response_ms: Mapped[Optional[int]] = mapped_column("responseMs", Integer, nullable=True)
+    hint_used: Mapped[bool] = mapped_column(
+        "hintUsed", Boolean, default=False, server_default="false"
+    )
+    hint_count: Mapped[int] = mapped_column("hintCount", Integer, default=0, server_default="0")
+    # Copied, not joined: a question's difficulty may be recalibrated later, and an
+    # observation records what was true when it happened.
+    difficulty: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        "observedAt", DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "PracticeObservation_userId_prepTopicId_observedAt_idx",
+            "userId",
+            "prepTopicId",
+            "observedAt",
+        ),
+        Index(
+            "PracticeObservation_userId_prepId_observedAt_idx",
+            "userId",
+            "prepId",
+            "observedAt",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<PracticeObservation user={self.user_id} topic={self.prep_topic_id} "
+            f"correct={self.is_correct} hints={self.hint_count}>"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +857,9 @@ class QuizSessionQuestion(Base, TimestampMixin):
         "prepQuestionId", String, ForeignKey("PrepQuestion.id", ondelete="CASCADE"), index=True
     )
     order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)
+    # Hints taken for this question in this session. On the link rather than the
+    # question, because meeting the same banked question again later may need none.
+    hint_count: Mapped[int] = mapped_column("hintCount", Integer, default=0, server_default="0")
 
     __table_args__ = (
         # A session asks a given question at most once.

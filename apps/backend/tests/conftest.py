@@ -121,8 +121,11 @@ async def auth_headers(client: AsyncClient):
     email = f"test_{uuid.uuid4()}@example.com"
     password = "StrongPassword123!"
 
+    # The route is `/signup`. This previously posted to `/auth/register`, which
+    # does not exist, so it 404'd and the skip below silently disabled every
+    # database-backed test in the suite rather than reporting a broken fixture.
     signup = await client.post(
-        "/api/v1/auth/register",
+        "/api/v1/auth/signup",
         json={"email": email, "password": password, "name": "Test User"},
     )
     if signup.status_code not in (200, 201):
