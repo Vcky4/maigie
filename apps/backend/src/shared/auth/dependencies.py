@@ -248,14 +248,41 @@ async def require_space_membership(
     current_user: CurrentUser,
     space_id: str | None = Query(None, alias="spaceId"),
 ) -> User:
-    """Require membership in a Learning Space (if space_id is provided).
+    """Require membership of a Learning Space when ``spaceId`` is supplied.
 
-    If no space_id is given, passes through (personal context).
+    With no ``spaceId`` this is a personal-context request and passes through.
+
+    This previously carried a ``TODO`` and returned unconditionally, so a dependency
+    named ``require_space_membership`` enforced nothing. It was exported from
+    ``shared.auth`` alongside the working guards, which made it look ready to use: any
+    endpoint that adopted it would have been silently unprotected. Nothing had adopted
+    it yet, so no endpoint was exposed, but the trap is worth removing rather than
+    documenting. ``SpaceMember`` has existed in SQLAlchemy for some time.
     """
-    if space_id:
-        # TODO: Migrate CircleMember lookup to SQLAlchemy
-        # For now, skip membership check (will be implemented when learning_spaces domain migrates)
-        pass
+    if not space_id:
+        return current_user
+
+    from src.domains.learning_spaces.db_models import SpaceMember
+
+    factory = get_session_factory()
+    async with factory() as session:
+        membership = (
+            await session.execute(
+                select(SpaceMember.id).where(
+                    SpaceMember.space_id == space_id,
+                    SpaceMember.user_id == current_user.id,
+                )
+            )
+        ).first()
+
+    if membership is None:
+        # 404 rather than 403: whether a given space exists is not something a
+        # non-member should be able to probe.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "SPACE_NOT_FOUND", "message": "Space not found"},
+        )
+
     return current_user
 
 

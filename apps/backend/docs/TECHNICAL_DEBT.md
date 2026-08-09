@@ -16,6 +16,10 @@ Headline numbers, start of the pass to now:
 | Broken Celery tasks | 3 | 0 |
 | Applied migration | 012 | 013 |
 
+Scope note: sections 1–11 cover `apps/backend`, which is where the pass concentrated.
+Section 12 records what a first look outside it found, and that ground is not yet fully
+covered.
+
 ---
 
 ## 1. The finding that reframed the rest
@@ -407,7 +411,73 @@ in full.
 
 ---
 
-## 11. Still open, in priority order
+## 11. An authorization trap, now closed
+
+`shared/auth/dependencies.require_space_membership` carried a `TODO` and returned the user
+unconditionally. A dependency whose name promises enforcement enforced nothing.
+
+It was **not a live bypass**: nothing had adopted it, so no endpoint was exposed. But it was
+exported from `shared.auth` beside the working guards, which made it look ready to use, and
+`SpaceMember` has existed in SQLAlchemy for some time — the only thing standing between this
+and a real hole was that nobody had reached for it yet.
+
+Now implemented, with one deliberate choice: a non-member gets **404, not 403**. Whether a
+given space exists is not something a non-member should be able to probe by comparing status
+codes. `tests/test_space_membership_guard.py` covers all four outcomes including that one.
+
+A sweep for similar shortcuts (`skip check`, `for now`, `always allow`, `bypass`) turned up 18
+other hits, all documented simplifications in business logic rather than auth. None grant
+access.
+
+---
+
+## 12. Outside the backend
+
+These were found by looking beyond `apps/backend`, which earlier passes had not done.
+
+### The frontend has no typecheck, lint or test gate
+
+`maigie-client` has three workflows: `api-types-check.yml`, `cloudflare-pages.yml` and
+`cloudflare-pages-admin.yml`. The first typechecks **only `libs/types`**. The other two run
+`nx build`, and a Vite/esbuild build strips types without checking them.
+
+So a build can go green while `tsc --noEmit` fails, which is exactly the situation:
+
+- **22 `tsc` errors in `apps/web` are unguarded.** They break down as 10 `TS2339`
+  (property missing, mostly mock types that have drifted from the components reading them),
+  6 `TS2345` (a `string` passed where a literal union is required), 2 `TS2300`
+  (duplicate `HomeResponse` identifier in `useOnboarding.ts`), and one each of `TS1501`
+  (a regex flag needing an `es2018` target), `TS18047` (possibly-null), `TS7016` (no
+  declarations for `three`), and `TS2786` (`Outlet` not usable as a JSX component).
+- **14 client test files never run in CI.**
+- There is no lint step, and `package.json` has no `lint`, `test` or `typecheck` script.
+
+The fix is the same shape as the backend's: clear the 22 errors, then add the gate. Adding
+the gate first would land a knowingly red pipeline, which is why it was not done here.
+
+`maigie-public` has no workflows at all.
+
+### The misplaced-workflow pattern was duplicated
+
+`maigie-client/.github/ISSUE_TEMPLATE/workflows/backend-ci.yml` — a **backend** workflow, in
+the **frontend** repo, in a path GitHub never reads. The same dead file was removed from
+`maigie` earlier in this pass. Deleted.
+
+### Frontend cleanup already has its own plan
+
+`maigie-client/docs/WEB_FRONTEND_CLEANUP_PLAN.md` is a tiered plan that is partly executed,
+so it should be the source of truth rather than duplicated here. Its own "Still outstanding"
+table lists six items: `ReviewsPage`/`features/reviews` (API-wired with no replacement, still
+in the sidebar), `features/resource-bank`, the now-unreachable Goals CRUD cluster (held for
+in-flight work), 11 parked Tier 1.5 files awaiting the credits/earn decision, and an audit of
+the partially-used service layer (`coursesApi`, `notesApi`, `examPrepApi` and others).
+
+There are **33 mock files across 15 features**. Per that plan the mocks are the intended
+target state for now, not debt to delete, so they are counted here as scope rather than rot.
+
+---
+
+## 13. Still open, in priority order
 
 1. **Approve or reject migration `014`** (§8) — destroys 15 unreachable rows.
 2. **Decide on Paystack and referral rewards** (§5) — 31 call sites, deliberately not attempted
@@ -422,6 +492,9 @@ in full.
    started, and `apps/web/src/features/exam-prep/services/examPrepApi.ts` (449 lines) is dead,
    held alive only by type-only imports of `QuizMode` and `QuizQuestion` in two mock files.
    Moving those two types into the mocks unblocks its deletion.
+8. **Clear the 22 `apps/web` type errors, then gate the frontend** (§12) — currently no
+   typecheck, lint or test runs in client CI, and a passing build proves nothing about types.
+9. **The six items in the frontend cleanup plan** (§12) — that document owns them.
 
 ## Not addressed, deliberately
 
