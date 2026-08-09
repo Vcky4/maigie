@@ -237,12 +237,6 @@ class Settings(BaseSettings):
     BLOG_DEFAULT_AUTHOR_NAME: str = "Maigie Team"
     BLOG_DEFAULT_AUTHOR_ROLE: str = "Learning Science"
 
-    # --- Pinecone (Vector Database for RAG) ---
-    PINECONE_API_KEY: str | None = None
-    PINECONE_INDEX_NAME: str = "maigie"
-    PINECONE_CLOUD: str = "aws"
-    PINECONE_REGION: str = "us-east-1"
-
     # --- ElevenLabs (Smart AI Tutor, Exam Prep voice, Conversational AI agent) ---
     ELEVENLABS_API_KEY: str | None = None
     ELEVENLABS_VOICE_ID: str = "56AoDkrOh6qfVPDXZ7Pt"  # Default voice

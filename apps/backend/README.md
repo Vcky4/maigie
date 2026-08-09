@@ -27,7 +27,7 @@ src/
 │   ├── billing/              # Payments, subscriptions, credits
 │   └── admin/                # Platform administration
 ├── workers/                  # Celery background tasks
-└── integrations/             # External service adapters (ElevenLabs, Pinecone, etc.)
+└── integrations/             # External service adapters (ElevenLabs, etc.)
 ```
 
 ## Quick Start

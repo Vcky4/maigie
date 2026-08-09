@@ -212,7 +212,7 @@ apps/backend/src/
     ├── elevenlabs/                    # Voice synthesis
     │   ├── __init__.py
     │   └── client.py
-    ├── pinecone/                      # Vector database (RAG)
+    │                                  # (no vector database yet — see rag_service)
     │   ├── __init__.py
     │   └── client.py
     ├── firebase/                      # Push notifications (FCM)
