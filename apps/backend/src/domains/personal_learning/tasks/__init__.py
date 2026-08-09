@@ -13,14 +13,14 @@ from celery.schedules import crontab
 
 # Import all task modules so that @celery_app.task registrations execute at import time.
 from . import (  # noqa: F401
+    behaviour,
     daily_plan,
     engagement,
-    behaviour,
-    recommendations,
-    reflections,
+    notifications,
     preparation,
     readiness_snapshots,
-    notifications,
+    recommendations,
+    reflections,
 )
 
 

@@ -14,29 +14,22 @@ See LICENSE file in the repository root for details.
 
 import logging
 from datetime import datetime
-
 from typing import Any
 
 import stripe
-
 from sqlalchemy import select
 
+from src.config import Settings, get_settings
+from src.domains.billing.repository import billing_repo
 from src.domains.identity.db_models import User
 from src.domains.identity.repository import IdentityRepository
-from src.domains.billing.repository import billing_repo
 from src.shared.database import get_session_factory
+from src.shared.exceptions import DeprecatedPlanError
+from src.shared.infrastructure.email import send_subscription_success_email
 
-from ..config import Settings, get_settings
-from ..schemas.subscription import (
-    PlanCatalogEntry,
-    PlanCatalogProductId,
-    PlanCatalogResponse,
-    PlanCatalogScope,
-)
-from ..services.credit_service import reset_credits_for_period_start
-from ..services.email import send_subscription_success_email
-from ..services.referral_service import track_referral_subscription
-from ..utils.exceptions import DeprecatedPlanError
+from ..models import PlanCatalogResponse, PlanItem
+from ..services.credit_consumption_service import reset_credits_for_period_start
+from ..services.referral_rewards_service import track_referral_subscription
 
 logger = logging.getLogger(__name__)
 
@@ -112,59 +105,57 @@ def get_active_plan_catalog() -> PlanCatalogResponse:
     stays consistent with the marketing copy in Requirement 1.3.
     """
     cfg = get_settings()
-    products = [
-        PlanCatalogEntry(
-            productId=PlanCatalogProductId.FREE,
-            displayName="Free",
-            scope=PlanCatalogScope.PERSONAL,
-            priceCents=0,
-            interval="NONE",
+    plans = [
+        PlanItem(
+            id="free",
+            name="Free",
+            scope="personal",
+            price_cents=0,
+            interval="none",
             description="Free personal tier with limited AI access.",
         ),
-        PlanCatalogEntry(
-            productId=PlanCatalogProductId.PLUS_MONTHLY,
-            displayName="Maigie Plus (Monthly)",
-            scope=PlanCatalogScope.PERSONAL,
-            priceCents=cfg.PRICE_CENTS_PLUS_MONTHLY,
-            interval="MONTH",
-            trialDays=cfg.TRIAL_DAYS_MAIGIE_PLUS,
+        PlanItem(
+            id="plus_monthly",
+            name="Maigie Plus (Monthly)",
+            scope="personal",
+            price_cents=cfg.PRICE_CENTS_PLUS_MONTHLY,
+            interval="month",
+            trial_days=cfg.TRIAL_DAYS_MAIGIE_PLUS,
             description=(
-                "Unlimited AI, advanced models, and larger uploads in your " "personal workspace."
+                "Unlimited AI, advanced models, and larger uploads in your personal workspace."
             ),
         ),
-        PlanCatalogEntry(
-            productId=PlanCatalogProductId.PLUS_YEARLY,
-            displayName="Maigie Plus (Yearly)",
-            scope=PlanCatalogScope.PERSONAL,
-            priceCents=cfg.PRICE_CENTS_PLUS_YEARLY,
-            interval="YEAR",
-            trialDays=cfg.TRIAL_DAYS_MAIGIE_PLUS,
-            description=("Unlimited AI, advanced models, and larger uploads, billed " "yearly."),
+        PlanItem(
+            id="plus_yearly",
+            name="Maigie Plus (Yearly)",
+            scope="personal",
+            price_cents=cfg.PRICE_CENTS_PLUS_YEARLY,
+            interval="year",
+            trial_days=cfg.TRIAL_DAYS_MAIGIE_PLUS,
+            description="Unlimited AI, advanced models, and larger uploads, billed yearly.",
         ),
-        PlanCatalogEntry(
-            productId=PlanCatalogProductId.CIRCLE_PLAN_MONTHLY,
-            displayName="Circle Plan",
-            scope=PlanCatalogScope.CIRCLE,
-            priceCents=cfg.PRICE_CENTS_CIRCLE_PLAN_MONTHLY,
-            interval="MONTH",
-            trialDays=cfg.TRIAL_DAYS_CIRCLE_PLAN,
-            description=(
-                "Per-Circle plan with 4 included Plus seats and premium " "Circle features."
-            ),
+        PlanItem(
+            id="circle_plan_monthly",
+            name="Circle Plan",
+            scope="circle",
+            price_cents=cfg.PRICE_CENTS_CIRCLE_PLAN_MONTHLY,
+            interval="month",
+            trial_days=cfg.TRIAL_DAYS_CIRCLE_PLAN,
+            description="Per-Circle plan with 4 included Plus seats and premium Circle features.",
         ),
-        PlanCatalogEntry(
-            productId=PlanCatalogProductId.PLUS_SEAT_ADD_ON_MONTHLY,
-            displayName="Plus Seat Add-on",
-            scope=PlanCatalogScope.ADD_ON,
-            priceCents=cfg.PRICE_CENTS_PLUS_SEAT_ADD_ON_MONTHLY,
-            interval="MONTH",
+        PlanItem(
+            id="plus_seat_add_on_monthly",
+            name="Plus Seat Add-on",
+            scope="add_on",
+            price_cents=cfg.PRICE_CENTS_PLUS_SEAT_ADD_ON_MONTHLY,
+            interval="month",
             description=(
                 "Adds one Plus seat to a Circle. Owners and admins can "
                 "assign and reassign seats freely."
             ),
         ),
     ]
-    return PlanCatalogResponse(products=products)
+    return PlanCatalogResponse(plans=plans)
 
 
 def assert_plan_id_is_active(plan_id: str) -> None:

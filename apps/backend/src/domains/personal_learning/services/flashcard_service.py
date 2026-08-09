@@ -6,7 +6,7 @@ spaced repetition scheduling.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
@@ -21,7 +21,7 @@ async def create_flashcard(*, user_id: str, data: dict[str, Any]) -> Any:
 
     Req 5.1: Initialize with interval=1, repetition=0, ease_factor=2.5.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     flashcard_data = {
         "userId": user_id,
         "front": data["front"],
@@ -54,8 +54,8 @@ async def generate_from_note(*, user_id: str, note_id: str) -> list[Any]:
     FREE: up to 5 basic Q&A cards.
     PLUS: up to 10 cards with varied types (cloze, multi-choice, image prompts).
     """
-    from .llm_resilient import generate_content_json
     from . import feature_tier_service, trial_service
+    from .llm_resilient import generate_content_json
 
     note = await repo.find_note(note_id, user_id)
     if not note or not note.content:
@@ -116,10 +116,12 @@ async def generate_from_topic(*, user_id: str, topic_id: str) -> list[Any]:
 
     Req 5.3: Generate flashcards based on topic content and materials.
     """
-    from .llm_resilient import generate_content_json
     from sqlalchemy import select as sa_select
+
     from src.domains.knowledge.db_models import Topic
     from src.shared.database import get_session_factory
+
+    from .llm_resilient import generate_content_json
 
     factory = get_session_factory()
     async with factory() as session:
@@ -177,7 +179,7 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
     if not card:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     new_ease = card.ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
     new_ease = max(new_ease, 1.3)  # Minimum ease factor
 

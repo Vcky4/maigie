@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import delete, select, update
 
+from src.domains.intelligence.db_models import ChatMessage, ChatSession
 from src.shared.database import get_session_factory
-from src.domains.intelligence.db_models import ChatSession, ChatMessage
 
 
 async def merge_generic_sessions(user_id: str, db: Any = None):

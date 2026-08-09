@@ -7,7 +7,7 @@ generates day-by-day study plans.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.shared.exceptions import NotFoundError
@@ -261,8 +261,9 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
 
     Req 4.3: Create topic records with titles, descriptions, and estimated study time.
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
     import json
+
+    from src.domains.intelligence.reasoning.llm import generate_content
 
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
@@ -359,10 +360,11 @@ async def mark_overdue_preparations_completed() -> int:
     Called by Celery beat daily. Returns count of updated preparations.
     """
     from sqlalchemy import select as sa_select
+
     from src.domains.personal_learning.db_models import ExamPrep
     from src.shared.database import get_session_factory
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     factory = get_session_factory()
 
     async with factory() as session:

@@ -31,8 +31,8 @@ def notification_delivery():
 
 
 async def _deliver_notifications_async():
-    from src.shared.database.session import ensure_db
     from src.domains.personal_learning.services import notification_service
+    from src.shared.database.session import ensure_db
 
     await ensure_db()
     logger.info("Notification delivery task started")

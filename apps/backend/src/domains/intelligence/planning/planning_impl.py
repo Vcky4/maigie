@@ -18,10 +18,10 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from src.domains.knowledge.repository import knowledge_repo
-from src.domains.progress.repository import progress_repo
 from src.domains.identity.repository import IdentityRepository
 from src.domains.intelligence.action.action_service import action_service
+from src.domains.knowledge.repository import knowledge_repo
+from src.domains.progress.repository import progress_repo
 
 logger = logging.getLogger(__name__)
 

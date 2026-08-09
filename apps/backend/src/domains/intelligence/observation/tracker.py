@@ -57,6 +57,20 @@ async def on_study_session_completed(data: dict) -> None:
     # Future: update learning patterns, adjust recommendations
 
 
-async def record_activity(user_id: str, **kwargs) -> None:
-    """Record user activity (streak tracking, lastSeenAt)."""
-    pass  # TODO: migrate implementation from services/activity_tracker
+async def record_activity(user_id: str, **_kwargs) -> None:
+    """Record meaningful learner activity, updating the study streak.
+
+    This was a ``pass``, so the chat path in ``websocket_handler`` recorded nothing and
+    sending a message never counted towards a streak, while the analytics path called a
+    working implementation directly. There is no second implementation to write: it
+    already exists in ``progress.services.activity_tracker``, which owns the streak
+    tables, so this delegates rather than duplicating the rules.
+
+    Imported lazily to keep the intelligence domain from importing progress at module
+    load; this module is imported for its event listeners at startup.
+    """
+    from src.domains.progress.services.activity_tracker import (
+        record_activity as record_progress_activity,
+    )
+
+    await record_progress_activity(user_id)

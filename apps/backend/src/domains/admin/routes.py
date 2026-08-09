@@ -10,11 +10,11 @@ Mounted at: /api/v1/admin
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
+from sqlalchemy import select
 
 from src.shared.auth import StaffUser, SuperAdminUser
 from src.shared.database import check_db_health, get_session_factory
 from src.shared.infrastructure import cache
-from sqlalchemy import select
 
 from . import models
 
@@ -58,11 +58,12 @@ async def admin_health(admin_user: StaffUser):
 @router.get("/stats", response_model=models.AdminStatsResponse)
 async def admin_stats(admin_user: StaffUser):
     """Platform statistics overview."""
-    from sqlalchemy import select, func
+    from sqlalchemy import func, select
+
     from src.domains.identity.db_models import User
+    from src.domains.intelligence.db_models import ChatMessage
     from src.domains.knowledge.db_models import Course
     from src.domains.learning_spaces.db_models import Space
-    from src.domains.intelligence.db_models import ChatMessage
 
     factory = get_session_factory()
     async with factory() as session:

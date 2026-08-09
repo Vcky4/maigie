@@ -6,7 +6,8 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
+
 from src.domains.identity.repository import identity_repo
 from src.domains.intelligence.repository import intelligence_repo
 from src.domains.learning_spaces.models import (
@@ -20,8 +21,8 @@ from src.domains.learning_spaces.models import (
     SpaceUpdate,
     TransferOwnershipRequest,
 )
-from src.shared.infrastructure.email import send_space_invite_email
 from src.shared.database import get_session_factory
+from src.shared.infrastructure.email import send_space_invite_email
 
 from ..db_models import SpaceInvite, SpaceMember, SpaceSeatAddon
 from ..repository import space_repo
@@ -873,8 +874,9 @@ async def list_space_courses(db: Any, space_id: str, user_id: str, page: int = 1
 
 async def award_contribution_points(db: Any, space_id: str, user_id: str, points: int):
     """Award contribution points to a space member."""
-    from ..db_models import SpaceMemberStat
     from sqlalchemy import update as sa_update
+
+    from ..db_models import SpaceMemberStat
 
     factory = get_session_factory()
     async with factory() as session:
@@ -905,7 +907,9 @@ async def import_to_space(db: Any, space_id: str, user_id: str, data: ImportRequ
     """Import items (notes, courses, resources, goals) into a space."""
     await _verify_membership(db, space_id, user_id)
 
-    from sqlalchemy import update as sa_update, text
+    from sqlalchemy import text
+    from sqlalchemy import update as sa_update
+
     from src.domains.knowledge.db_models import Course, Resource
     from src.domains.progress.db_models import Goal
 
@@ -997,6 +1001,7 @@ async def export_from_space(
         )
 
     from sqlalchemy import text
+
     from src.domains.knowledge.db_models import Course
     from src.domains.progress.db_models import Goal
 

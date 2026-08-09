@@ -5,7 +5,7 @@ import os
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
@@ -18,7 +18,6 @@ from src.domains.personal_learning.services.home_service import (
     _check_re_engagement,
     _compute_next_action,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fake dataclasses to mimic domain models
@@ -63,7 +62,7 @@ class TestBuildGreeting:
 
     def test_morning_greeting(self):
         """Hour 8 → starts with 'Good morning'."""
-        fake_now = datetime(2024, 6, 15, 8, 0, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2024, 6, 15, 8, 0, 0, tzinfo=UTC)
         with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -72,7 +71,7 @@ class TestBuildGreeting:
 
     def test_afternoon_greeting(self):
         """Hour 14 → starts with 'Good afternoon'."""
-        fake_now = datetime(2024, 6, 15, 14, 0, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2024, 6, 15, 14, 0, 0, tzinfo=UTC)
         with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -81,7 +80,7 @@ class TestBuildGreeting:
 
     def test_evening_greeting(self):
         """Hour 19 → starts with 'Good evening'."""
-        fake_now = datetime(2024, 6, 15, 19, 0, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2024, 6, 15, 19, 0, 0, tzinfo=UTC)
         with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -90,7 +89,7 @@ class TestBuildGreeting:
 
     def test_night_greeting(self):
         """Hour 23 → starts with 'Hello'."""
-        fake_now = datetime(2024, 6, 15, 23, 0, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2024, 6, 15, 23, 0, 0, tzinfo=UTC)
         with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -99,7 +98,7 @@ class TestBuildGreeting:
 
     def test_streak_milestone_mention(self):
         """maturity_days=14 (multiple of 7) → mentions 14 days."""
-        fake_now = datetime(2024, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2024, 6, 15, 10, 0, 0, tzinfo=UTC)
         with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -108,7 +107,7 @@ class TestBuildGreeting:
 
     def test_consistency_mention(self):
         """consistency >= 80 → mentions consistency."""
-        fake_now = datetime(2024, 6, 15, 10, 0, 0, tzinfo=timezone.utc)
+        fake_now = datetime(2024, 6, 15, 10, 0, 0, tzinfo=UTC)
         with patch("src.domains.personal_learning.services.home_service.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
@@ -171,7 +170,7 @@ class TestBuildDueReviews:
 
     def test_urgency_increases_with_overdue(self):
         """More overdue = higher urgency value."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Card 1: due 1 hour ago (urgency 1)
         card_recent = FakeFlashcard(
             id="recent", front="Recent", next_review_at=now - timedelta(hours=1)
@@ -183,7 +182,7 @@ class TestBuildDueReviews:
 
     def test_review_item_structure(self):
         """Each item has id, type, title, dueAt, urgency."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         card = FakeFlashcard(id="c1", front="Hello world", next_review_at=now)
         result = _build_due_reviews([card])
         assert len(result) == 1
@@ -260,13 +259,13 @@ class TestCheckReengagement:
 
     def test_recent_activity_returns_none(self):
         """updated_at = yesterday → None (not away long enough)."""
-        profile = FakeProfile(updated_at=datetime.now(timezone.utc) - timedelta(days=1))
+        profile = FakeProfile(updated_at=datetime.now(UTC) - timedelta(days=1))
         result = _check_re_engagement(profile)
         assert result is None
 
     def test_away_8_days_returns_message(self):
         """updated_at = 8 days ago → returns re-engagement dict."""
-        profile = FakeProfile(updated_at=datetime.now(timezone.utc) - timedelta(days=8))
+        profile = FakeProfile(updated_at=datetime.now(UTC) - timedelta(days=8))
         result = _check_re_engagement(profile)
         assert result is not None
         assert "message" in result
@@ -275,7 +274,7 @@ class TestCheckReengagement:
 
     def test_away_exactly_7_days_returns_none(self):
         """Boundary: exactly 7 days → None (must be > 7)."""
-        profile = FakeProfile(updated_at=datetime.now(timezone.utc) - timedelta(days=7))
+        profile = FakeProfile(updated_at=datetime.now(UTC) - timedelta(days=7))
         result = _check_re_engagement(profile)
         assert result is None
 

@@ -4,13 +4,17 @@ Service for Note management.
 
 from typing import Any
 
-from sqlalchemy import select, update, delete, func, or_
+from sqlalchemy import delete, func, or_, select, update
 
-from src.shared.database import get_session_factory
-from src.domains.personal_learning.db_models import Note, NoteTag, NoteAttachment
-from src.domains.personal_learning.repository import personal_learning_repo
 from src.domains.learning_spaces.db_models import SpaceMember
-from src.models.notes import NoteAttachmentCreate, NoteCreate, NoteUpdate
+from src.domains.personal_learning.db_models import Note, NoteAttachment, NoteTag
+from src.domains.personal_learning.models import (
+    NoteAttachmentCreate,
+    NoteCreate,
+    NoteUpdate,
+)
+from src.domains.personal_learning.repository import personal_learning_repo
+from src.shared.database import get_session_factory
 
 
 async def latest_note_for_topic(

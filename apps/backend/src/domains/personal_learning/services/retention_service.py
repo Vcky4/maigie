@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -189,7 +189,7 @@ async def generate_winback_offer(user_id: str) -> WinbackOffer | None:
     if not churn_date:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     days_since_churn = (now - churn_date).days
 
     if days_since_churn > WINBACK_WINDOW_DAYS:
@@ -219,6 +219,7 @@ async def record_intervention_outcome(intervention_id: str, outcome: str) -> Non
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import RetentionIntervention
 
         stmt = select(RetentionIntervention).where(RetentionIntervention.id == intervention_id)
@@ -226,7 +227,7 @@ async def record_intervention_outcome(intervention_id: str, outcome: str) -> Non
         record = result.scalar_one_or_none()
         if record:
             record.outcome = outcome
-            record.outcome_at = datetime.now(timezone.utc)
+            record.outcome_at = datetime.now(UTC)
             await session.commit()
 
 
@@ -245,9 +246,10 @@ async def _calc_login_decline(user_id: str) -> float:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import ActivityFeedEntry
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_start = now - timedelta(days=14)
         previous_start = now - timedelta(days=28)
 
@@ -285,9 +287,10 @@ async def _calc_feature_decline(user_id: str) -> float:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import GeneratedDocument, QuizSession
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_start = now - timedelta(days=14)
         previous_start = now - timedelta(days=28)
 
@@ -356,6 +359,7 @@ async def _calc_inactivity_signal(user_id: str) -> float:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import ActivityFeedEntry
 
         stmt = select(func.max(ActivityFeedEntry.occurred_at)).where(
@@ -367,7 +371,7 @@ async def _calc_inactivity_signal(user_id: str) -> float:
     if not last_activity:
         return 0.8
 
-    days_inactive = (datetime.now(timezone.utc) - last_activity).days
+    days_inactive = (datetime.now(UTC) - last_activity).days
 
     if days_inactive <= 2:
         return 0.0
@@ -386,9 +390,10 @@ async def _intervention_recently_delivered(user_id: str) -> bool:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import RetentionIntervention
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=INTERVENTION_COOLDOWN_DAYS)
+        cutoff = datetime.now(UTC) - timedelta(days=INTERVENTION_COOLDOWN_DAYS)
         stmt = (
             select(RetentionIntervention.id)
             .where(RetentionIntervention.user_id == user_id)
@@ -458,7 +463,7 @@ async def _record_intervention(
             user_id=user_id,
             churn_risk_score=churn_risk_score,
             intervention_type=intervention_type,
-            delivered_at=datetime.now(timezone.utc),
+            delivered_at=datetime.now(UTC),
         )
         session.add(record)
         await session.commit()
@@ -471,6 +476,7 @@ async def _get_approximate_churn_date(user_id: str) -> datetime | None:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.identity.db_models import User
 
         stmt = select(User.tier, User.updated_at).where(User.id == user_id)

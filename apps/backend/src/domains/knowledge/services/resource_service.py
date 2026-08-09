@@ -3,11 +3,10 @@ Resource management — create, list, interact, delete, recommend.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.domains.identity.db_models import User
-
 from src.shared.exceptions import NotFoundError
 
 from ..events import emit_resource_added
@@ -109,7 +108,7 @@ async def record_interaction(*, user_id: str, resource_id: str, interaction_type
     update_data: dict[str, Any] = {}
     if interaction_type == "RESOURCE_CLICK":
         update_data["clickCount"] = {"increment": 1}
-        update_data["lastAccessedAt"] = datetime.now(timezone.utc)
+        update_data["lastAccessedAt"] = datetime.now(UTC)
     elif interaction_type == "RESOURCE_BOOKMARK":
         update_data["bookmarkCount"] = {"increment": 1}
 

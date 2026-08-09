@@ -9,19 +9,19 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.shared.database import get_session_factory
-from src.domains.identity.db_models import User
 from src.domains.billing.db_models import (
+    AdRewardClaim,
     CreditPack,
     CreditPurchaseTransaction,
     ReferralReward,
     ReferralRewardClaim,
-    AdRewardClaim,
 )
-from src.domains.learning_spaces.db_models import SpaceSubscription, SpaceSeatAddon
+from src.domains.identity.db_models import User
+from src.domains.learning_spaces.db_models import SpaceSeatAddon, SpaceSubscription
+from src.shared.database import get_session_factory
 
 logger = logging.getLogger(__name__)
 

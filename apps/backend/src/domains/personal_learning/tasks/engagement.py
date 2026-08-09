@@ -38,8 +38,8 @@ async def _check_engagement_async():
     from src.shared.database.session import ensure_db
 
     await ensure_db()
-    from src.domains.personal_learning.services import notification_service
     from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.domains.personal_learning.services import notification_service
 
     logger.info("Engagement check task started")
 

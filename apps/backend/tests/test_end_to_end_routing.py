@@ -22,7 +22,6 @@ from src.services.llm.feature_flags import FeatureFlagService  # noqa: E402
 from src.services.llm.router import LLMRouter  # noqa: E402
 from src.services.llm_registry import LlmTask  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Mock adapters
 # ---------------------------------------------------------------------------

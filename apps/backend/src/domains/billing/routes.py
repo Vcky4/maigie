@@ -10,9 +10,9 @@ Mounted at: /api/v1/billing
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from src.domains.identity.db_models import User
 
 from src.config import Settings, get_settings
+from src.domains.identity.db_models import User
 from src.shared.auth import CurrentUser, StaffUser
 from src.shared.exceptions import NotFoundError, ValidationError
 
@@ -213,8 +213,8 @@ async def get_credit_packs(current_user: CurrentUser):
 @router.post("/credit-packs/purchase", response_model=models.PurchaseSessionResponse)
 async def purchase_credit_pack(body: models.PurchaseInitiateRequest, current_user: CurrentUser):
     """Initiate a credit pack purchase."""
-    from src.shared.infrastructure.redis import cache
     from src.shared.infrastructure.rate_limit import enforce_rate_limit
+    from src.shared.infrastructure.redis import cache
 
     await enforce_rate_limit(
         user_id=current_user.id,

@@ -11,12 +11,11 @@ Column names use camelCase to match the existing schema exactly.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey, Index
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
-
 
 # ---------------------------------------------------------------------------
 # Goal
@@ -33,17 +32,17 @@ class Goal(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    target_date: Mapped[Optional[datetime]] = mapped_column(
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_date: Mapped[datetime | None] = mapped_column(
         "targetDate", DateTime(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(String, default="ACTIVE", server_default="ACTIVE")
     progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
     # Optional links
-    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
 
     # Relationships
     schedules: Mapped[list["ScheduleBlock"]] = relationship(
@@ -74,28 +73,28 @@ class ScheduleBlock(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     start_at: Mapped[datetime] = mapped_column("startAt", DateTime(timezone=True), nullable=False)
     end_at: Mapped[datetime] = mapped_column("endAt", DateTime(timezone=True), nullable=False)
-    recurring_rule: Mapped[Optional[str]] = mapped_column("recurringRule", String, nullable=True)
+    recurring_rule: Mapped[str | None] = mapped_column("recurringRule", String, nullable=True)
 
     # Google Calendar sync
-    google_calendar_event_id: Mapped[Optional[str]] = mapped_column(
+    google_calendar_event_id: Mapped[str | None] = mapped_column(
         "googleCalendarEventId", String, nullable=True
     )
-    google_calendar_synced_at: Mapped[Optional[datetime]] = mapped_column(
+    google_calendar_synced_at: Mapped[datetime | None] = mapped_column(
         "googleCalendarSyncedAt", DateTime(timezone=True), nullable=True
     )
 
     # Optional links
-    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    goal_id: Mapped[Optional[str]] = mapped_column(
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    goal_id: Mapped[str | None] = mapped_column(
         "goalId", String, ForeignKey("Goal.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     # Spaced repetition link
-    review_item_id: Mapped[Optional[str]] = mapped_column(
+    review_item_id: Mapped[str | None] = mapped_column(
         "reviewItemId",
         String,
         ForeignKey("ReviewItem.id", ondelete="SET NULL"),
@@ -104,7 +103,7 @@ class ScheduleBlock(Base, TimestampMixin):
     )
 
     # Exam prep link
-    exam_prep_id: Mapped[Optional[str]] = mapped_column(
+    exam_prep_id: Mapped[str | None] = mapped_column(
         "examPrepId", String, nullable=True, index=True
     )
 
@@ -158,7 +157,7 @@ class ReviewItem(Base, TimestampMixin):
         "lastQuality", Integer, default=-1, server_default="-1"
     )
     lapse_count: Mapped[int] = mapped_column("lapseCount", Integer, default=0, server_default="0")
-    last_reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
         "lastReviewedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -190,15 +189,15 @@ class ScheduleBehaviourLog(Base):
     )
     behaviour_type: Mapped[str] = mapped_column("behaviourType", String, nullable=False)
     entity_type: Mapped[str] = mapped_column("entityType", String, nullable=False)
-    entity_id: Mapped[Optional[str]] = mapped_column("entityId", String, nullable=True)
+    entity_id: Mapped[str | None] = mapped_column("entityId", String, nullable=True)
 
-    scheduled_at: Mapped[Optional[datetime]] = mapped_column(
+    scheduled_at: Mapped[datetime | None] = mapped_column(
         "scheduledAt", DateTime(timezone=True), nullable=True
     )
-    actual_at: Mapped[Optional[datetime]] = mapped_column(
+    actual_at: Mapped[datetime | None] = mapped_column(
         "actualAt", DateTime(timezone=True), nullable=True
     )
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -230,16 +229,16 @@ class StudySession(Base, TimestampMixin):
     start_time: Mapped[datetime] = mapped_column(
         "startTime", DateTime(timezone=True), nullable=False
     )
-    end_time: Mapped[Optional[datetime]] = mapped_column(
+    end_time: Mapped[datetime | None] = mapped_column(
         "endTime", DateTime(timezone=True), nullable=True
     )
     duration: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
     # Context
-    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     __table_args__ = (
         Index("StudySession_userId_startTime_idx", "userId", "startTime"),
@@ -271,7 +270,7 @@ class UserStreak(Base, TimestampMixin):
     longest_streak: Mapped[int] = mapped_column(
         "longestStreak", Integer, default=0, server_default="0"
     )
-    last_study_date: Mapped[Optional[datetime]] = mapped_column(
+    last_study_date: Mapped[datetime | None] = mapped_column(
         "lastStudyDate", DateTime(timezone=True), nullable=True
     )
 
@@ -296,9 +295,9 @@ class Achievement(Base):
 
     achievement_type: Mapped[str] = mapped_column("achievementType", String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    icon: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    icon: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     unlocked_at: Mapped[datetime] = mapped_column(
         "unlockedAt",

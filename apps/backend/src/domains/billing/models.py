@@ -9,7 +9,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # ===========================================================================
 # Plans
 # ===========================================================================
@@ -32,9 +31,12 @@ class PlanItem(BaseModel):
     description: str
     price_cents: int
     currency: str = "usd"
-    interval: str  # "month" | "year" | "one_time"
+    interval: str  # "none" | "month" | "year" | "one_time"
     trial_days: int = 0
     features: list[str] = []
+    # Whether the plan applies to one person, to a whole space, or tops up an
+    # existing space plan. Clients need this to group the catalog for display.
+    scope: Literal["personal", "circle", "add_on"] = "personal"
 
 
 class PlanCatalogResponse(BaseModel):

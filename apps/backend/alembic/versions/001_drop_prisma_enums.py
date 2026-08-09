@@ -8,8 +8,9 @@ Revises:
 Create Date: 2026-07-16
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers
 revision = "001_drop_prisma_enums"

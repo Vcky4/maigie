@@ -11,21 +11,26 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime
-
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from jose import JWTError, jwt
-from sqlalchemy import select, update as sa_update, func
+from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 
 from src.config import settings
 from src.core.cache import cache
 from src.core.celery_app import celery_app
+from src.domains.billing.services.cost_calculator import calculate_ai_cost, calculate_revenue
+from src.domains.billing.services.credit_consumption_service import (
+    PURCHASE_DEEP_LINK,
+    check_credit_availability,
+    consume_credits,
+    get_credit_usage,
+)
 from src.domains.identity.db_models import ModelPreference
 from src.domains.identity.repository import IdentityRepository
-from src.domains.intelligence.db_models import ChatSession, ChatMessage
-from src.domains.intelligence.repository import intelligence_repo
-from src.shared.database import get_session_factory
+from src.domains.intelligence.conversation import note_service
 from src.domains.intelligence.conversation.chat_greeting import (
     _build_greeting_components,
     _build_greeting_context,
@@ -41,18 +46,11 @@ from src.domains.intelligence.conversation.chat_helpers import (
     _serialize_reply_preview,
     _strip_maigie_mention,
 )
-from src.domains.intelligence.conversation import note_service
 from src.domains.intelligence.conversation.component_response import (
     format_action_component_response,
     format_list_component_response,
 )
-from src.domains.billing.services.cost_calculator import calculate_ai_cost, calculate_revenue
-from src.domains.billing.services.credit_service import (
-    PURCHASE_DEEP_LINK,
-    check_credit_availability,
-    consume_credits,
-    get_credit_usage,
-)
+from src.domains.intelligence.db_models import ChatMessage, ChatSession
 from src.domains.intelligence.reasoning.llm.adapter_registry import (
     get_feature_flag_service,
     get_llm_router,
@@ -62,11 +60,13 @@ from src.domains.intelligence.reasoning.llm.feature_flags import (
     PERSONAL_SCOPE,
     circle_scope,
 )
-from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
 from src.domains.intelligence.reasoning.llm.llm_service import llm_service
+from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
 from src.domains.intelligence.reasoning.rag_service import rag_service
+from src.domains.intelligence.repository import intelligence_repo
+from src.shared.database import get_session_factory
+from src.shared.exceptions import SubscriptionLimitError
 from src.shared.infrastructure.socket_manager import manager
-from src.utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -947,8 +947,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         if context.get("reviewItemId"):
                             review_id = context["reviewItemId"]
                             # Use raw SQLAlchemy for review item with nested includes
-                            from src.domains.progress.db_models import ReviewItem
                             from src.domains.personal_learning.db_models import Note as NoteModel
+                            from src.domains.progress.db_models import ReviewItem
 
                             factory = get_session_factory()
                             async with factory() as sa_session:
@@ -961,9 +961,9 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 # Eagerly load related topic/module/course
                                 if review:
                                     from src.domains.knowledge.db_models import (
-                                        Topic,
-                                        Module,
                                         Course,
+                                        Module,
+                                        Topic,
                                     )
 
                                     topic_stmt = (
@@ -1025,8 +1025,8 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                         # Fetch note details if noteId is provided
                         elif context.get("noteId"):
                             note_id = context["noteId"]
+                            from src.domains.knowledge.db_models import Course, Module, Topic
                             from src.domains.personal_learning.db_models import Note as NoteModel
-                            from src.domains.knowledge.db_models import Topic, Module, Course
 
                             factory = get_session_factory()
                             note = None
@@ -1067,7 +1067,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                                 print(
                                     f"⚠️ Note with ID {note_id} not found, checking if it's a topicId..."
                                 )
-                                from src.domains.knowledge.db_models import Topic, Module, Course
+                                from src.domains.knowledge.db_models import Course, Module, Topic
 
                                 factory = get_session_factory()
                                 async with factory() as sa_session:
@@ -1164,7 +1164,7 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                             topic_id = context["topicId"]
                             # Always preserve topicId in enriched_context (it should already be there from copy(), but ensure it)
                             enriched_context["topicId"] = topic_id
-                            from src.domains.knowledge.db_models import Topic, Module, Course
+                            from src.domains.knowledge.db_models import Course, Module, Topic
                             from src.domains.personal_learning.db_models import Note as NoteModel
 
                             factory = get_session_factory()
@@ -2084,14 +2084,14 @@ def register_chat_websocket_routes(router: APIRouter, db: Any):
                 continue  # Skip to next message
 
         except WebSocketDisconnect:
-            manager.disconnect(connection_id)
+            await manager.disconnect(connection_id)
         except Exception as e:
             print(f"WS Error: {e}")
             try:
                 await websocket.close()
             except Exception:
                 pass
-            manager.disconnect(connection_id)
+            await manager.disconnect(connection_id)
             raise
 
     return get_current_user_ws

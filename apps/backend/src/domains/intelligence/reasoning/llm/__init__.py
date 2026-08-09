@@ -8,9 +8,10 @@ without knowing about provider specifics.
 import logging
 from typing import Any
 
-from .gemini_sdk import new_gemini_client, types as gemini_types
+from .errors import GeminiError, LLMError, LLMProviderError, LLMUnavailableError
+from .gemini_sdk import new_gemini_client
+from .gemini_sdk import types as gemini_types
 from .registry import LlmTask, default_model_for, gemini_api_key
-from .errors import LLMError, LLMProviderError, LLMUnavailableError, GeminiError
 
 logger = logging.getLogger(__name__)
 

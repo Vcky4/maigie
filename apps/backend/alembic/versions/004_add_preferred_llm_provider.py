@@ -5,8 +5,9 @@ Revises: 003
 Create Date: 2026-07-21
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "004_add_preferred_llm_provider"
 down_revision = "003_add_personal_learning_models"

@@ -7,6 +7,7 @@ trial summaries for those users.
 
 import asyncio
 import logging
+from datetime import UTC
 
 from src.workers.celery_app import celery_app
 
@@ -42,11 +43,12 @@ async def _run_trial_expiry() -> dict:
     from datetime import datetime, timezone
 
     from sqlalchemy import select
+
     from src.domains.personal_learning.db_models import LearningProfile
     from src.domains.personal_learning.services import trial_service
     from src.shared.database.session import get_session
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     total_expired = 0
 
     # Find profiles with expired trials (trial_ends_at < now AND last_trial_ended_at is NULL)

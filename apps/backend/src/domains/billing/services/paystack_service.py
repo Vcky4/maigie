@@ -13,16 +13,24 @@ from typing import Any
 
 import httpx
 
+from src.config import get_settings
 from src.domains.identity.db_models import User
+from src.shared.exceptions import DeprecatedPlanError
+from src.shared.infrastructure.email import send_subscription_success_email
+from src.shared.infrastructure.unmigrated import PrismaClientRemoved
 
-from ..config import get_settings
-from ..core.database import db
-from ..services.credit_service import reset_credits_for_period_start
-from ..services.email import send_subscription_success_email
-from ..services.referral_service import track_referral_subscription
-from ..utils.exceptions import DeprecatedPlanError
+from ..services.credit_consumption_service import reset_credits_for_period_start
+from ..services.referral_rewards_service import track_referral_subscription
 
 logger = logging.getLogger(__name__)
+
+# This module was written against the Prisma client and has not been ported to
+# SQLAlchemy: it calls db_client.user.find_unique/update and reads camelCase
+# attributes such as user.paystackSubscriptionCode. Paystack subscriptions are
+# therefore not functional. The sentinel makes each affected path fail with an
+# explanatory error rather than an undefined-name error.
+db = PrismaClientRemoved("billing.services.paystack_service")
+
 PAYSTACK_BASE = "https://api.paystack.co"
 # Active plan identifiers accepted at the checkout surface. Deprecated
 # ``study_circle_*`` and ``squad_*`` ids are rejected on creation per

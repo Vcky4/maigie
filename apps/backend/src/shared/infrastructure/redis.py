@@ -12,7 +12,8 @@ from typing import Any
 
 import redis.asyncio as redis
 from redis.exceptions import ConnectionError as RedisConnectionError
-from redis.exceptions import RedisError, TimeoutError as RedisTimeoutError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from src.config import Settings, get_settings
 

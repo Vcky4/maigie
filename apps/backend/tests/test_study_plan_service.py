@@ -4,7 +4,7 @@ import os
 
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -13,12 +13,11 @@ from src.domains.personal_learning.services.study_plan_service import (
     _distribute_items,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-START = datetime(2025, 6, 1, 8, 0, 0, tzinfo=timezone.utc)
+START = datetime(2025, 6, 1, 8, 0, 0, tzinfo=UTC)
 
 
 def _make_topics(n: int, minutes: int = 30) -> list[dict]:
@@ -173,7 +172,7 @@ class TestAddReviewItems:
         for review in reviews:
             assert review["scheduledDate"] <= plan_end
 
-    def test_review_type_is_REVIEW(self):
+    def test_review_type_is_review(self):
         """All review items have type = 'REVIEW'."""
         topics = _make_topics(6, minutes=30)
         plan_items = _distribute_items(

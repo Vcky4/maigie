@@ -11,12 +11,12 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 
+from src.config import get_settings
+from src.domains.intelligence.action.skills.handlers import handle_create_schedule
+from src.domains.intelligence.reasoning.llm import new_gemini_client
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
 from src.shared.database import get_session_factory
-from src.config import get_settings
-from src.domains.intelligence.reasoning.llm import new_gemini_client
-from src.domains.intelligence.action.skills.handlers import handle_create_schedule
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,9 @@ async def regenerate_user_schedule(user_id: str) -> None:
         past_window = now - timedelta(days=30)
 
         # 1. Delete future AI-generated blocks (those without a Google Calendar link)
-        from sqlalchemy import select, delete as sa_delete
+        from sqlalchemy import delete as sa_delete
+        from sqlalchemy import select
+
         from src.domains.progress.db_models import ScheduleBlock
 
         factory = get_session_factory()

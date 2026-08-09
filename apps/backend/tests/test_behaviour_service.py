@@ -5,7 +5,7 @@ import os
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -15,7 +15,6 @@ from src.domains.personal_learning.services.behaviour_service import (
     _compute_preferred_times,
     _compute_risk_factors,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: minimal session dataclass that mimics StudySession attributes
@@ -30,7 +29,7 @@ class FakeSession:
 
 
 def _utc(year=2025, month=1, day=15, hour=10, minute=0):
-    return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+    return datetime(year, month, day, hour, minute, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -86,14 +85,14 @@ class TestComputeConsistencyScore:
         assert _compute_consistency_score([]) == 0.0
 
     def test_single_session_today(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sessions = [FakeSession(start_time=now, duration=30.0)]
         score = _compute_consistency_score(sessions)
         # 1 day out of 1 day = 100
         assert score == 100.0
 
     def test_sessions_every_day_for_30_days(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sessions = [
             FakeSession(start_time=now - timedelta(days=i), duration=30.0) for i in range(30)
         ]
@@ -101,7 +100,7 @@ class TestComputeConsistencyScore:
         assert score == 100.0
 
     def test_sessions_every_other_day(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sessions = [
             FakeSession(start_time=now - timedelta(days=i), duration=30.0)
             for i in range(0, 30, 2)  # 15 sessions over 30 days
@@ -110,7 +109,7 @@ class TestComputeConsistencyScore:
         assert 45.0 <= score <= 55.0  # ~50%
 
     def test_old_sessions_excluded(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # All sessions are older than 30 days
         sessions = [
             FakeSession(start_time=now - timedelta(days=40 + i), duration=30.0) for i in range(10)
@@ -119,7 +118,7 @@ class TestComputeConsistencyScore:
         assert score == 0.0
 
     def test_score_capped_at_100(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Multiple sessions on same day don't push above 100
         sessions = [
             FakeSession(start_time=now, duration=30.0),
@@ -136,7 +135,7 @@ class TestComputeConsistencyScore:
 
 class TestComputeDropoutRisk:
     def test_fewer_than_3_sessions(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sessions = [
             FakeSession(start_time=now - timedelta(days=1), duration=30.0),
             FakeSession(start_time=now, duration=30.0),
@@ -144,7 +143,7 @@ class TestComputeDropoutRisk:
         assert _compute_dropout_risk(sessions) == 0.0
 
     def test_no_risk_consistent_sessions(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         sessions = [
             FakeSession(start_time=now - timedelta(days=i), duration=30.0) for i in range(5)
         ]
@@ -153,7 +152,7 @@ class TestComputeDropoutRisk:
         assert risk <= 0.2
 
     def test_declining_durations_increase_risk(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Durations go from 60 to 10 minutes
         sessions = [
             FakeSession(start_time=now - timedelta(days=4), duration=60.0),
@@ -166,7 +165,7 @@ class TestComputeDropoutRisk:
         assert risk >= 0.4  # Duration declining detected
 
     def test_growing_gaps_increase_risk(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Gaps grow: 1h, 2h, 12h, 24h, 72h
         sessions = [
             FakeSession(start_time=now - timedelta(hours=109), duration=30.0),
@@ -181,7 +180,7 @@ class TestComputeDropoutRisk:
         assert risk >= 0.4
 
     def test_no_recent_session_adds_risk(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # All sessions are 5+ days ago
         sessions = [
             FakeSession(start_time=now - timedelta(days=7), duration=30.0),
@@ -192,7 +191,7 @@ class TestComputeDropoutRisk:
         assert risk >= 0.2  # At least the "no sessions in 3 days" factor
 
     def test_risk_capped_at_1(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Extreme case: declining duration, growing gaps, no recent session
         sessions = [
             FakeSession(start_time=now - timedelta(days=30), duration=120.0),

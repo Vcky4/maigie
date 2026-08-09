@@ -5,13 +5,13 @@ Used by both the API route and the AI tool handler.
 
 from typing import Any
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import delete, select, update
 
-from src.shared.database import get_session_factory
 from src.domains.knowledge.db_models import Course, Module, Topic
-from src.domains.progress.db_models import Goal, ScheduleBlock
 from src.domains.personal_learning.db_models import Note
-from src.utils.exceptions import ForbiddenError, ResourceNotFoundError
+from src.domains.progress.db_models import Goal, ScheduleBlock
+from src.shared.database import get_session_factory
+from src.shared.exceptions import ForbiddenError, NotFoundError
 
 
 async def delete_course_cascade(db: Any, course_id: str, user_id: str) -> None:
@@ -29,7 +29,7 @@ async def delete_course_cascade(db: Any, course_id: str, user_id: str) -> None:
         course = result.scalar_one_or_none()
 
     if not course:
-        raise ResourceNotFoundError("Course", course_id)
+        raise NotFoundError("Course", course_id)
     if course.user_id != user_id:
         raise ForbiddenError("You don't have permission to delete this course")
 

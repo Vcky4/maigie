@@ -8,7 +8,7 @@ to create the emotional center of the product. A Home, not a dashboard.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
@@ -102,7 +102,7 @@ def _build_greeting(profile: Any | None, behaviour: dict | None) -> str:
     Req 1.1: Greeting based on time of day, learner name, and current context
     (streak milestone, recent achievement, or encouragement).
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     hour = now.hour
 
     if 5 <= hour < 12:
@@ -150,7 +150,7 @@ async def _compute_todays_focus(
     # Priority 2: Today's study plan items
     active_plans = await repo.list_active_plans(user_id)
     if active_plans:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         for plan in active_plans:
             if plan.items:
                 todays_items = [
@@ -203,7 +203,7 @@ def _build_due_reviews(due_flashcards: list) -> list[dict[str, Any]]:
     for card in due_flashcards[:10]:
         overdue_hours = 0
         if card.next_review_at:
-            delta = datetime.now(timezone.utc) - card.next_review_at
+            delta = datetime.now(UTC) - card.next_review_at
             overdue_hours = int(delta.total_seconds() / 3600)
         deck = getattr(card, "deck", None)
         reviews.append(
@@ -231,7 +231,7 @@ async def _get_schedule_blocks(user_id: str) -> list[dict[str, Any]]:
 
     Req 1.5: Upcoming schedule blocks for the current day.
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     plans = await repo.list_active_plans(user_id)
 
     blocks = []
@@ -357,7 +357,7 @@ def _check_re_engagement(profile: Any | None) -> dict[str, Any] | None:
     # If the profile hasn't been updated in > 7 days, the learner may be away.
     last_active = getattr(profile, "updated_at", None)
     if last_active:
-        days_away = (datetime.now(timezone.utc) - last_active).days
+        days_away = (datetime.now(UTC) - last_active).days
         if days_away > 7:
             return {
                 "message": "Welcome back! Pick up where you left off — no pressure.",

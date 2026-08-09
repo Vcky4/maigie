@@ -10,7 +10,7 @@ Not without work. But without the overhead."
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
@@ -69,7 +69,7 @@ async def _gather_learner_state(user_id: str) -> dict[str, Any]:
     # Today's plan items (in-memory filtering, no extra query)
     todays_items = []
     if plans:
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(UTC).date()
         for plan in plans:
             if plan.items:
                 for item in plan.items:

@@ -7,13 +7,13 @@ Encapsulates all queries for Course, Module, Topic, Resource.
 import logging
 from typing import Any
 
-from sqlalchemy import select, update, delete, func, and_
+from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.shared.database import get_session_factory
 
-from .db_models import Course, Module, Topic, Resource, CourseOutlineSatisfaction
+from .db_models import Course, CourseOutlineSatisfaction, Module, Resource, Topic
 
 logger = logging.getLogger(__name__)
 

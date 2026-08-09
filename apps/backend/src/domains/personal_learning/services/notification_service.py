@@ -6,7 +6,7 @@ Respects quiet hours, daily limits, and priority deduplication.
 """
 
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import UTC, datetime, time, timedelta, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
@@ -119,7 +119,7 @@ async def deliver_pending() -> int:
     for notification in pending:
         # Check quiet hours for queued notifications
         profile = await repo.get_profile_by_user(notification.user_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if profile and _is_during_quiet_hours(
             now, profile.quiet_hours_start, profile.quiet_hours_end
@@ -144,7 +144,7 @@ def _compute_optimal_time(profile: Any | None) -> datetime:
     Compute optimal delivery time based on learner's behaviour profile.
     Default: deliver now if no profile data available.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if not profile or not profile.preferred_study_times:
         return now

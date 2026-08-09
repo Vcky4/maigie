@@ -21,6 +21,7 @@ def reset_credit_periods_task():
         from datetime import UTC, datetime
 
         from sqlalchemy import select, update
+
         from src.domains.identity.db_models import User
         from src.shared.database import get_session_factory
 
@@ -63,6 +64,7 @@ def check_expired_trials_task():
         from datetime import UTC, datetime
 
         from sqlalchemy import select, update
+
         from src.domains.identity.db_models import User
         from src.shared.database import get_session_factory
 
@@ -107,6 +109,7 @@ def process_account_deletions_task():
         from datetime import UTC, datetime
 
         from sqlalchemy import select, update
+
         from src.domains.identity.db_models import User
         from src.shared.database import get_session_factory
 

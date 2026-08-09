@@ -9,12 +9,11 @@ SpaceSubscription, SpaceSeatAddon, AiUsageRecord.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey, Index
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
-
 
 # ---------------------------------------------------------------------------
 # Space
@@ -28,27 +27,27 @@ class Space(Base, TimestampMixin):
         String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    avatar_url: Mapped[Optional[str]] = mapped_column("avatarUrl", String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column("avatarUrl", String, nullable=True)
     created_by_id: Mapped[str] = mapped_column("createdById", String, index=True)
     max_members: Mapped[int] = mapped_column("maxMembers", Integer, default=5, server_default="5")
     max_groups: Mapped[int] = mapped_column("maxGroups", Integer, default=5, server_default="5")
 
     # Credits
     credits: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-    credits_limit: Mapped[Optional[int]] = mapped_column("creditsLimit", Integer, nullable=True)
+    credits_limit: Mapped[int | None] = mapped_column("creditsLimit", Integer, nullable=True)
 
     # Visibility & branding
     visibility: Mapped[str] = mapped_column(String, default="PRIVATE", server_default="PRIVATE")
-    category: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    banner_url: Mapped[Optional[str]] = mapped_column("bannerUrl", String, nullable=True)
-    theme_json: Mapped[Optional[dict]] = mapped_column("themeJson", JSON, nullable=True)
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
+    banner_url: Mapped[str | None] = mapped_column("bannerUrl", String, nullable=True)
+    theme_json: Mapped[dict | None] = mapped_column("themeJson", JSON, nullable=True)
 
     # Plan & seat
     space_plan_active: Mapped[bool] = mapped_column(
         "spacePlanActive", Boolean, default=False, server_default="false"
     )
-    space_plan_current_period_end: Mapped[Optional[datetime]] = mapped_column(
+    space_plan_current_period_end: Mapped[datetime | None] = mapped_column(
         "spacePlanCurrentPeriodEnd", DateTime(timezone=True), nullable=True
     )
     seat_pool_size: Mapped[int] = mapped_column(
@@ -66,9 +65,7 @@ class Space(Base, TimestampMixin):
     join_policy: Mapped[str] = mapped_column(
         "joinPolicy", String, default="AUTO_JOIN", server_default="AUTO_JOIN"
     )
-    migration_marker: Mapped[Optional[str]] = mapped_column(
-        "migrationMarker", String, nullable=True
-    )
+    migration_marker: Mapped[str | None] = mapped_column("migrationMarker", String, nullable=True)
 
     # Relationships
     members: Mapped[list["SpaceMember"]] = relationship(
@@ -141,11 +138,11 @@ class SpaceChatGroup(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
 
-    chat_session_id: Mapped[Optional[str]] = mapped_column(
+    chat_session_id: Mapped[str | None] = mapped_column(
         "chatSessionId", String, unique=True, nullable=True
     )
     visibility: Mapped[str] = mapped_column(String, default="PUBLIC", server_default="PUBLIC")
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Relationships
     space: Mapped["Space"] = relationship("Space", back_populates="chat_groups")
@@ -195,9 +192,7 @@ class SpaceInvite(Base):
     )
     inviter_id: Mapped[str] = mapped_column("inviterId", String, nullable=False)
     invitee_email: Mapped[str] = mapped_column("inviteeEmail", String, nullable=False, index=True)
-    invitee_id: Mapped[Optional[str]] = mapped_column(
-        "inviteeId", String, nullable=True, index=True
-    )
+    invitee_id: Mapped[str | None] = mapped_column("inviteeId", String, nullable=True, index=True)
     status: Mapped[str] = mapped_column(String, default="PENDING", server_default="PENDING")
     role: Mapped[str] = mapped_column(String, default="MEMBER", server_default="MEMBER")
     seat_tier: Mapped[str] = mapped_column(
@@ -270,7 +265,7 @@ class SpaceSession(Base, TimestampMixin):
     )
 
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     scheduled_at: Mapped[datetime] = mapped_column(
         "scheduledAt", DateTime(timezone=True), nullable=False, index=True
     )
@@ -280,11 +275,11 @@ class SpaceSession(Base, TimestampMixin):
     )
 
     # Links
-    chat_group_id: Mapped[Optional[str]] = mapped_column(
+    chat_group_id: Mapped[str | None] = mapped_column(
         "chatGroupId", String, nullable=True, index=True
     )
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    goal_id: Mapped[Optional[str]] = mapped_column("goalId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    goal_id: Mapped[str | None] = mapped_column("goalId", String, nullable=True, index=True)
     created_by_id: Mapped[str] = mapped_column(
         "createdById", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
@@ -313,7 +308,7 @@ class SpaceJoinRequest(Base):
         DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
-    decided_at: Mapped[Optional[datetime]] = mapped_column(
+    decided_at: Mapped[datetime | None] = mapped_column(
         "decidedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -345,7 +340,7 @@ class SpaceSubscription(Base, TimestampMixin):
     current_period_end: Mapped[datetime] = mapped_column(
         "currentPeriodEnd", DateTime(timezone=True), nullable=False, index=True
     )
-    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
         "trialEndsAt", DateTime(timezone=True), nullable=True
     )
     cancel_at_period_end: Mapped[bool] = mapped_column(
@@ -378,7 +373,7 @@ class SpaceSeatAddon(Base):
     current_period_end: Mapped[datetime] = mapped_column(
         "currentPeriodEnd", DateTime(timezone=True), nullable=False
     )
-    assigned_to_user_id: Mapped[Optional[str]] = mapped_column(
+    assigned_to_user_id: Mapped[str | None] = mapped_column(
         "assignedToUserId", String, nullable=True, index=True
     )
     purchased_by_user_id: Mapped[str] = mapped_column(
@@ -389,10 +384,10 @@ class SpaceSeatAddon(Base):
         DateTime(timezone=True),
         default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
-    canceled_at: Mapped[Optional[datetime]] = mapped_column(
+    canceled_at: Mapped[datetime | None] = mapped_column(
         "canceledAt", DateTime(timezone=True), nullable=True
     )
-    assigned_at: Mapped[Optional[datetime]] = mapped_column(
+    assigned_at: Mapped[datetime | None] = mapped_column(
         "assignedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -417,10 +412,10 @@ class AiUsageRecord(Base):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE")
     )
     usage_scope: Mapped[str] = mapped_column("usageScope", String, nullable=False)
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True)
-    provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    model: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    feature: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String, nullable=True)
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    feature: Mapped[str | None] = mapped_column(String, nullable=True)
     input_tokens: Mapped[int] = mapped_column("inputTokens", Integer, default=0, server_default="0")
     output_tokens: Mapped[int] = mapped_column(
         "outputTokens", Integer, default=0, server_default="0"

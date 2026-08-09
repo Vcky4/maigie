@@ -11,12 +11,11 @@ Maps to existing PostgreSQL tables created by Prisma.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey, Index
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
-
 
 # ---------------------------------------------------------------------------
 # ReferralReward
@@ -40,10 +39,10 @@ class ReferralReward(Base, TimestampMixin):
     is_claimed: Mapped[bool] = mapped_column(
         "isClaimed", Boolean, default=False, server_default="false", index=True
     )
-    claimed_at: Mapped[Optional[datetime]] = mapped_column(
+    claimed_at: Mapped[datetime | None] = mapped_column(
         "claimedAt", DateTime(timezone=True), nullable=True
     )
-    claim_date: Mapped[Optional[datetime]] = mapped_column(
+    claim_date: Mapped[datetime | None] = mapped_column(
         "claimDate", DateTime(timezone=True), nullable=True
     )
 
@@ -105,7 +104,7 @@ class AdRewardClaim(Base):
     )
     ad_type: Mapped[str] = mapped_column("adType", String, nullable=False)
     credits: Mapped[int] = mapped_column(Integer, nullable=False)
-    ad_unit_id: Mapped[Optional[str]] = mapped_column("adUnitId", String, nullable=True)
+    ad_unit_id: Mapped[str | None] = mapped_column("adUnitId", String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
@@ -170,12 +169,12 @@ class CreditPurchaseTransaction(Base):
         "providerReference", String, unique=True, nullable=False
     )
 
-    session_id: Mapped[Optional[str]] = mapped_column("sessionId", String, nullable=True)
-    session_expires_at: Mapped[Optional[datetime]] = mapped_column(
+    session_id: Mapped[str | None] = mapped_column("sessionId", String, nullable=True)
+    session_expires_at: Mapped[datetime | None] = mapped_column(
         "sessionExpiresAt", DateTime(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(String, default="pending", server_default="pending")
-    completed_at: Mapped[Optional[datetime]] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -215,21 +214,17 @@ class ResourceBankItem(Base, TimestampMixin):
         "uploaderId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     type: Mapped[str] = mapped_column(String, default="OTHER", server_default="OTHER")
     university_name: Mapped[str] = mapped_column(
         "universityName", String, nullable=False, index=True
     )
-    course_name: Mapped[Optional[str]] = mapped_column("courseName", String, nullable=True)
-    course_code: Mapped[Optional[str]] = mapped_column(
-        "courseCode", String, nullable=True, index=True
-    )
+    course_name: Mapped[str | None] = mapped_column("courseName", String, nullable=True)
+    course_code: Mapped[str | None] = mapped_column("courseCode", String, nullable=True, index=True)
     status: Mapped[str] = mapped_column(
         String, default="PENDING_REVIEW", server_default="PENDING_REVIEW", index=True
     )
-    moderation_notes: Mapped[Optional[str]] = mapped_column(
-        "moderationNotes", String, nullable=True
-    )
+    moderation_notes: Mapped[str | None] = mapped_column("moderationNotes", String, nullable=True)
     download_count: Mapped[int] = mapped_column(
         "downloadCount", Integer, default=0, server_default="0"
     )
@@ -261,9 +256,9 @@ class ResourceBankFile(Base):
     )
     filename: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=False)
-    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    mime_type: Mapped[Optional[str]] = mapped_column("mimeType", String, nullable=True)
-    extracted_text: Mapped[Optional[str]] = mapped_column("extractedText", Text, nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column("mimeType", String, nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column("extractedText", Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
@@ -292,7 +287,7 @@ class ResourceBankReport(Base, TimestampMixin):
         "reporterId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     reason: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(
         String, default="REPORT_PENDING", server_default="REPORT_PENDING", index=True
     )
@@ -331,10 +326,10 @@ class ResourceUploadReward(Base, TimestampMixin):
     is_claimed: Mapped[bool] = mapped_column(
         "isClaimed", Boolean, default=False, server_default="false", index=True
     )
-    claimed_at: Mapped[Optional[datetime]] = mapped_column(
+    claimed_at: Mapped[datetime | None] = mapped_column(
         "claimedAt", DateTime(timezone=True), nullable=True
     )
-    claim_date: Mapped[Optional[datetime]] = mapped_column(
+    claim_date: Mapped[datetime | None] = mapped_column(
         "claimDate", DateTime(timezone=True), nullable=True
     )
 

@@ -5,7 +5,7 @@ Presents one continuous learning journey rather than separate products.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
@@ -27,7 +27,7 @@ async def record(
     Called by services and event handlers when significant actions occur.
     Context dict indicates source: {"source": "personal"|"collaborative", ...}
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     entry = await repo.create_feed_entry(
         {
             "userId": user_id,
@@ -69,14 +69,15 @@ async def _compute_current_streak(user_id: str) -> int:
 
     Counts backwards from today: how many consecutive days have at least one activity.
     """
-    from src.shared.database.session import get_session_factory
+    from sqlalchemy import Date, cast, func, select
+
     from src.domains.personal_learning.db_models import ActivityFeedEntry
-    from sqlalchemy import select, func, cast, Date
+    from src.shared.database.session import get_session_factory
 
     factory = get_session_factory()
     async with factory() as session:
         # Get distinct activity dates in the last 30 days, ordered desc
-        thirty_days_ago = datetime.now(timezone.utc) - __import__("datetime").timedelta(days=30)
+        thirty_days_ago = datetime.now(UTC) - __import__("datetime").timedelta(days=30)
         stmt = (
             select(func.distinct(cast(ActivityFeedEntry.occurred_at, Date)))
             .where(ActivityFeedEntry.user_id == user_id)
@@ -90,7 +91,7 @@ async def _compute_current_streak(user_id: str) -> int:
         return 0
 
     # Count consecutive days from today backwards
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(UTC).date()
     streak = 0
 
     for i, d in enumerate(dates):

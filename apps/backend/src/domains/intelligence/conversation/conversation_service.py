@@ -8,13 +8,13 @@ Messages flow through the reasoning layer for AI responses.
 import logging
 from typing import Any
 
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.domains.intelligence.db_models import ChatMessage, ChatSession
+from src.domains.intelligence.repository import intelligence_repo
 from src.shared.database import get_session_factory
 from src.shared.exceptions import NotFoundError
-from src.domains.intelligence.db_models import ChatSession, ChatMessage
-from src.domains.intelligence.repository import intelligence_repo
 
 logger = logging.getLogger(__name__)
 

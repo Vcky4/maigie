@@ -10,7 +10,7 @@ The learner simply learns."
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from ..repository import personal_learning_repo as repo
@@ -88,7 +88,7 @@ async def _create_preparation(user_id: str, purpose: str, subjects: list[str], g
     prep_type = type_map.get(purpose, "PROJECT")
 
     # Default deadline: 30 days from now (can be adjusted later)
-    default_deadline = datetime.now(timezone.utc) + timedelta(days=30)
+    default_deadline = datetime.now(UTC) + timedelta(days=30)
 
     subject_title = subjects[0] if subjects else "My Learning"
     description = goals if goals else f"Preparation for {', '.join(subjects)}"
@@ -123,9 +123,11 @@ async def _extract_topics(user_id: str, prep_id: str, subjects: list[str], goals
 
 async def _generate_initial_flashcards(user_id: str, subjects: list[str]) -> list[Any]:
     """Generate starter flashcards for the learner's subjects."""
-    from src.domains.intelligence.reasoning.llm import generate_content
-    from . import flashcard_service
     import json
+
+    from src.domains.intelligence.reasoning.llm import generate_content
+
+    from . import flashcard_service
 
     if not subjects:
         return []
@@ -175,9 +177,7 @@ async def _create_study_plan(user_id: str, prep: Any, topics: list[Any], goals: 
         return None
 
     try:
-        deadline = (
-            prep.exam_date if prep.exam_date else (datetime.now(timezone.utc) + timedelta(days=30))
-        )
+        deadline = prep.exam_date if prep.exam_date else (datetime.now(UTC) + timedelta(days=30))
         plan = await study_plan_service.generate_plan(
             user_id=user_id,
             data={

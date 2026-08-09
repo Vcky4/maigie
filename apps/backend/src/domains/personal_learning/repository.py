@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -36,12 +36,12 @@ from .db_models import (
     NoteHistory,
     NoteTag,
     Notification,
-    PrepMaterial,
-    PrepTopic,
     PracticeObservation,
+    PrepMaterial,
     PrepQuestion,
     PrepQuestionFlag,
     PrepReadinessSnapshot,
+    PrepTopic,
     QuizAnswer,
     QuizSession,
     QuizSessionQuestion,
@@ -658,7 +658,7 @@ class PersonalLearningRepository:
         self, user_id: str, *, limit: int | None = None, session: AsyncSession | None = None
     ) -> list[Flashcard]:
         async with self._use_session(session) as s:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             stmt = (
                 select(Flashcard)
                 .options(selectinload(Flashcard.deck))
@@ -677,7 +677,7 @@ class PersonalLearningRepository:
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> dict[str, Any]:
         async with self._use_session(session) as s:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             today = now.date()
             week_start_date = today - timedelta(days=today.weekday())
 
@@ -940,7 +940,7 @@ class PersonalLearningRepository:
             stmt = (
                 update(SavedResource)
                 .where(SavedResource.id == resource_id)
-                .values(last_accessed_at=datetime.now(timezone.utc))
+                .values(last_accessed_at=datetime.now(UTC))
             )
             await s.execute(stmt)
 
@@ -1095,7 +1095,7 @@ class PersonalLearningRepository:
                     Notification.id == notification_id,
                     Notification.user_id == user_id,
                 )
-                .values(status="READ", read_at=datetime.now(timezone.utc))
+                .values(status="READ", read_at=datetime.now(UTC))
             )
             await s.execute(stmt)
 
@@ -1109,7 +1109,7 @@ class PersonalLearningRepository:
                     Notification.id == notification_id,
                     Notification.user_id == user_id,
                 )
-                .values(status="DISMISSED", dismissed_at=datetime.now(timezone.utc))
+                .values(status="DISMISSED", dismissed_at=datetime.now(UTC))
             )
             await s.execute(stmt)
 
@@ -1117,7 +1117,7 @@ class PersonalLearningRepository:
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> int:
         async with self._use_session(session) as s:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
             stmt = (
@@ -1136,7 +1136,7 @@ class PersonalLearningRepository:
         self, *, session: AsyncSession | None = None
     ) -> list[Notification]:
         async with self._use_session(session) as s:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             stmt = (
                 select(Notification)
                 .where(
@@ -2400,7 +2400,7 @@ class PersonalLearningRepository:
                     DiscoveryRecommendation.id == rec_id,
                     DiscoveryRecommendation.user_id == user_id,
                 )
-                .values(status="FOLLOWED", followed_at=datetime.now(timezone.utc))
+                .values(status="FOLLOWED", followed_at=datetime.now(UTC))
             )
             await s.execute(stmt)
 
@@ -2414,7 +2414,7 @@ class PersonalLearningRepository:
                     DiscoveryRecommendation.id == rec_id,
                     DiscoveryRecommendation.user_id == user_id,
                 )
-                .values(status="DISMISSED", dismissed_at=datetime.now(timezone.utc))
+                .values(status="DISMISSED", dismissed_at=datetime.now(UTC))
             )
             await s.execute(stmt)
 
@@ -2422,7 +2422,7 @@ class PersonalLearningRepository:
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> None:
         async with self._use_session(session) as s:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            cutoff = datetime.now(UTC) - timedelta(days=7)
             stmt = delete(DiscoveryRecommendation).where(
                 DiscoveryRecommendation.user_id == user_id,
                 DiscoveryRecommendation.status == "ACTIVE",

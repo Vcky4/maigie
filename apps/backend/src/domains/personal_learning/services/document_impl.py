@@ -1174,8 +1174,8 @@ async def create_from_prompt(
     FREE: PDF only, academic style only.
     PLUS: PDF/DOCX/PPTX, all styles (academic, report, minimal).
     """
-    from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.intelligence.reasoning.llm import generate_content
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
     from src.domains.personal_learning.services import feature_tier_service, trial_service
 
     # --- Commercial gate: check format access ---
@@ -1286,8 +1286,8 @@ async def create_from_prompt(
 
 async def get_document(*, user_id: str, doc_id: str):
     """Fetch a generated document by id."""
-    from src.shared.exceptions import NotFoundError
     from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.shared.exceptions import NotFoundError
 
     doc = await repo.find_document(doc_id, user_id)
     if not doc:
@@ -1299,8 +1299,8 @@ async def publish_document(*, user_id: str, doc_id: str):
     """Mark a document as public and return a share id."""
     import uuid as _uuid
 
-    from src.shared.exceptions import NotFoundError
     from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.shared.exceptions import NotFoundError
 
     doc = await repo.find_document(doc_id, user_id)
     if not doc:

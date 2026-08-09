@@ -26,8 +26,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 from sqlalchemy import select
 
-from src.shared.database import get_session_factory
 from src.domains.identity.db_models import User
+from src.shared.database import get_session_factory
 
 from .jwt import decode_access_token
 
@@ -65,6 +65,7 @@ async def _update_last_seen(user_id: str, platform: str) -> None:
     _last_seen_cache[user_id] = now
     try:
         from datetime import UTC, datetime
+
         from sqlalchemy import update
 
         factory = get_session_factory()

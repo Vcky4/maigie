@@ -22,8 +22,9 @@ Revises: 002_rename_circle_to_space
 Create Date: 2026-07-17
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers
 revision = "003_add_personal_learning_models"

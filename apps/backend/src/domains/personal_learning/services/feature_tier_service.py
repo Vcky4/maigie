@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any, Literal
 
 from src.shared.database.session import get_session_factory
@@ -184,6 +184,7 @@ async def get_effective_tier(user_id: str) -> tuple[Literal["free", "plus"], boo
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.identity.db_models import User
 
         stmt = select(User.tier).where(User.id == user_id)
@@ -199,7 +200,7 @@ async def get_effective_tier(user_id: str) -> tuple[Literal["free", "plus"], boo
     # Check for active trial
     profile = await repo.get_profile_by_user(user_id)
     if profile and profile.trial_ends_at:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if now < profile.trial_ends_at:
             days_remaining = (profile.trial_ends_at - now).days
             return "plus", True, max(0, days_remaining)
@@ -373,7 +374,7 @@ async def _trial_available(user_id: str) -> bool:
     if not profile:
         return True  # New user can trial
     if profile.last_trial_ended_at:
-        days_since = (datetime.now(timezone.utc) - profile.last_trial_ended_at).days
+        days_since = (datetime.now(UTC) - profile.last_trial_ended_at).days
         return days_since >= 180
     if profile.trial_started_at:
         return False  # Currently on trial or just finished

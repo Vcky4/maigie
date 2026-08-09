@@ -27,7 +27,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
 
-
 # ---------------------------------------------------------------------------
 # Note
 # ---------------------------------------------------------------------------
@@ -44,22 +43,22 @@ class Note(Base, TimestampMixin):
     )
 
     title: Mapped[str] = mapped_column(String, nullable=False)
-    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    summary: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    course_id: Mapped[Optional[str]] = mapped_column(
+    course_id: Mapped[str | None] = mapped_column(
         "courseId", String, ForeignKey("Course.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    topic_id: Mapped[Optional[str]] = mapped_column(
+    topic_id: Mapped[str | None] = mapped_column(
         "topicId", String, ForeignKey("Topic.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
 
-    last_edited_by_id: Mapped[Optional[str]] = mapped_column(
+    last_edited_by_id: Mapped[str | None] = mapped_column(
         "lastEditedById", String, ForeignKey("User.id", ondelete="SET NULL"), nullable=True
     )
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    voice_recording_url: Mapped[Optional[str]] = mapped_column(
+    voice_recording_url: Mapped[str | None] = mapped_column(
         "voiceRecordingUrl", String, nullable=True
     )
 
@@ -119,7 +118,7 @@ class NoteAttachment(Base):
     )
     filename: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=False)
-    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -151,7 +150,7 @@ class NoteHistory(Base):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
-    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -194,10 +193,10 @@ class ExamPrep(Base, TimestampMixin):
     # rather than stored, so there is one definition of what each pace means.
     pace: Mapped[str | None] = mapped_column(String, nullable=True)
     exam_date: Mapped[datetime] = mapped_column("examDate", DateTime(timezone=True), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
 
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
 
     __table_args__ = (
         Index("ExamPrep_userId_examDate_idx", "userId", "examDate"),
@@ -237,7 +236,7 @@ class GeneratedDocument(Base, TimestampMixin):
     is_public: Mapped[bool] = mapped_column(
         "isPublic", Boolean, default=False, server_default="false"
     )
-    share_id: Mapped[Optional[str]] = mapped_column("shareId", String, unique=True, nullable=True)
+    share_id: Mapped[str | None] = mapped_column("shareId", String, unique=True, nullable=True)
 
     def __repr__(self) -> str:
         return f"<GeneratedDocument id={self.id} title={self.title}>"
@@ -258,10 +257,10 @@ class FlashcardDeck(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    prep_id: Mapped[Optional[str]] = mapped_column(
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    prep_id: Mapped[str | None] = mapped_column(
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True
     )
 
@@ -288,7 +287,7 @@ class Flashcard(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
-    deck_id: Mapped[Optional[str]] = mapped_column(
+    deck_id: Mapped[str | None] = mapped_column(
         "deckId",
         String,
         ForeignKey("FlashcardDeck.id", ondelete="SET NULL"),
@@ -305,15 +304,15 @@ class Flashcard(Base, TimestampMixin):
     next_review_at: Mapped[datetime] = mapped_column(
         "nextReviewAt", DateTime(timezone=True), nullable=False
     )
-    last_reviewed_at: Mapped[Optional[datetime]] = mapped_column(
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
         "lastReviewedAt", DateTime(timezone=True), nullable=True
     )
     last_quality: Mapped[int] = mapped_column("lastQuality", Integer, default=-1)
     lapse_count: Mapped[int] = mapped_column("lapseCount", Integer, default=0)
 
     # Source tracking
-    source_type: Mapped[Optional[str]] = mapped_column("sourceType", String, nullable=True)
-    source_id: Mapped[Optional[str]] = mapped_column("sourceId", String, nullable=True)
+    source_type: Mapped[str | None] = mapped_column("sourceType", String, nullable=True)
+    source_id: Mapped[str | None] = mapped_column("sourceId", String, nullable=True)
 
     # Relationships
     deck: Mapped[Optional["FlashcardDeck"]] = relationship(
@@ -344,11 +343,11 @@ class SavedResource(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    url: Mapped[str | None] = mapped_column(String, nullable=True)
     source_type: Mapped[str] = mapped_column("sourceType", String, nullable=False)
-    source_id: Mapped[Optional[str]] = mapped_column("sourceId", String, nullable=True)
-    tags: Mapped[Optional[dict]] = mapped_column("tags", JSON, nullable=True)
-    last_accessed_at: Mapped[Optional[datetime]] = mapped_column(
+    source_id: Mapped[str | None] = mapped_column("sourceId", String, nullable=True)
+    tags: Mapped[dict | None] = mapped_column("tags", JSON, nullable=True)
+    last_accessed_at: Mapped[datetime | None] = mapped_column(
         "lastAccessedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -372,81 +371,79 @@ class LearningProfile(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), unique=True, index=True
     )
-    purpose: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    subjects: Mapped[Optional[dict]] = mapped_column("subjects", JSON, nullable=True)
-    goals_text: Mapped[Optional[str]] = mapped_column("goalsText", Text, nullable=True)
-    preferred_explanation_style: Mapped[Optional[str]] = mapped_column(
+    purpose: Mapped[str | None] = mapped_column(String, nullable=True)
+    subjects: Mapped[dict | None] = mapped_column("subjects", JSON, nullable=True)
+    goals_text: Mapped[str | None] = mapped_column("goalsText", Text, nullable=True)
+    preferred_explanation_style: Mapped[str | None] = mapped_column(
         "preferredExplanationStyle", String, nullable=True
     )
-    proficiency_map: Mapped[Optional[dict]] = mapped_column("proficiencyMap", JSON, nullable=True)
-    onboarding_completed_at: Mapped[Optional[datetime]] = mapped_column(
+    proficiency_map: Mapped[dict | None] = mapped_column("proficiencyMap", JSON, nullable=True)
+    onboarding_completed_at: Mapped[datetime | None] = mapped_column(
         "onboardingCompletedAt", DateTime(timezone=True), nullable=True
     )
     maturity_days: Mapped[int] = mapped_column("maturityDays", Integer, default=0)
-    quiet_hours_start: Mapped[Optional[str]] = mapped_column(
-        "quietHoursStart", String, nullable=True
-    )
-    quiet_hours_end: Mapped[Optional[str]] = mapped_column("quietHoursEnd", String, nullable=True)
+    quiet_hours_start: Mapped[str | None] = mapped_column("quietHoursStart", String, nullable=True)
+    quiet_hours_end: Mapped[str | None] = mapped_column("quietHoursEnd", String, nullable=True)
     max_daily_notifications: Mapped[int] = mapped_column(
         "maxDailyNotifications", Integer, default=5
     )
 
     # Behaviour cache (updated by background task)
-    preferred_study_times: Mapped[Optional[dict]] = mapped_column(
+    preferred_study_times: Mapped[dict | None] = mapped_column(
         "preferredStudyTimes", JSON, nullable=True
     )
-    avg_session_minutes: Mapped[Optional[float]] = mapped_column(
+    avg_session_minutes: Mapped[float | None] = mapped_column(
         "avgSessionMinutes", Float, nullable=True
     )
-    consistency_score: Mapped[Optional[float]] = mapped_column(
+    consistency_score: Mapped[float | None] = mapped_column(
         "consistencyScore", Float, nullable=True
     )
-    best_day_of_week: Mapped[Optional[str]] = mapped_column("bestDayOfWeek", String, nullable=True)
-    dropout_risk: Mapped[Optional[float]] = mapped_column("dropoutRisk", Float, nullable=True)
+    best_day_of_week: Mapped[str | None] = mapped_column("bestDayOfWeek", String, nullable=True)
+    dropout_risk: Mapped[float | None] = mapped_column("dropoutRisk", Float, nullable=True)
 
     # LLM provider preference (gemini, openai, anthropic; null = system default)
-    preferred_llm_provider: Mapped[Optional[str]] = mapped_column(
+    preferred_llm_provider: Mapped[str | None] = mapped_column(
         "preferredLlmProvider", String, nullable=True
     )
 
     # --- Commercial: Trial tracking ---
-    trial_started_at: Mapped[Optional[datetime]] = mapped_column(
+    trial_started_at: Mapped[datetime | None] = mapped_column(
         "trialStartedAt", DateTime(timezone=True), nullable=True
     )
-    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(
+    trial_ends_at: Mapped[datetime | None] = mapped_column(
         "trialEndsAt", DateTime(timezone=True), nullable=True
     )
-    last_trial_ended_at: Mapped[Optional[datetime]] = mapped_column(
+    last_trial_ended_at: Mapped[datetime | None] = mapped_column(
         "lastTrialEndedAt", DateTime(timezone=True), nullable=True
     )
 
     # --- Commercial: Conversion trigger tracking ---
-    last_trigger_shown_at: Mapped[Optional[datetime]] = mapped_column(
+    last_trigger_shown_at: Mapped[datetime | None] = mapped_column(
         "lastTriggerShownAt", DateTime(timezone=True), nullable=True
     )
     trigger_dismissal_count: Mapped[int] = mapped_column(
         "triggerDismissalCount", Integer, default=0, server_default="0"
     )
-    last_trigger_dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+    last_trigger_dismissed_at: Mapped[datetime | None] = mapped_column(
         "lastTriggerDismissedAt", DateTime(timezone=True), nullable=True
     )
 
     # --- Commercial: Educator transition tracking ---
-    educator_readiness_met_at: Mapped[Optional[datetime]] = mapped_column(
+    educator_readiness_met_at: Mapped[datetime | None] = mapped_column(
         "educatorReadinessMetAt", DateTime(timezone=True), nullable=True
     )
-    educator_suggestion_shown_at: Mapped[Optional[datetime]] = mapped_column(
+    educator_suggestion_shown_at: Mapped[datetime | None] = mapped_column(
         "educatorSuggestionShownAt", DateTime(timezone=True), nullable=True
     )
-    space_trial_started_at: Mapped[Optional[datetime]] = mapped_column(
+    space_trial_started_at: Mapped[datetime | None] = mapped_column(
         "spaceTrialStartedAt", DateTime(timezone=True), nullable=True
     )
 
     # --- Commercial: Value tracking ---
-    last_value_summary_at: Mapped[Optional[datetime]] = mapped_column(
+    last_value_summary_at: Mapped[datetime | None] = mapped_column(
         "lastValueSummaryAt", DateTime(timezone=True), nullable=True
     )
-    plus_features_used_this_period: Mapped[Optional[dict]] = mapped_column(
+    plus_features_used_this_period: Mapped[dict | None] = mapped_column(
         "plusFeaturesUsedThisPeriod", JSON, nullable=True
     )
 
@@ -474,17 +471,17 @@ class Notification(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     priority: Mapped[int] = mapped_column(Integer, default=5)
-    action_data: Mapped[Optional[dict]] = mapped_column("actionData", JSON, nullable=True)
+    action_data: Mapped[dict | None] = mapped_column("actionData", JSON, nullable=True)
     scheduled_at: Mapped[datetime] = mapped_column(
         "scheduledAt", DateTime(timezone=True), nullable=False
     )
-    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+    delivered_at: Mapped[datetime | None] = mapped_column(
         "deliveredAt", DateTime(timezone=True), nullable=True
     )
-    read_at: Mapped[Optional[datetime]] = mapped_column(
+    read_at: Mapped[datetime | None] = mapped_column(
         "readAt", DateTime(timezone=True), nullable=True
     )
-    dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+    dismissed_at: Mapped[datetime | None] = mapped_column(
         "dismissedAt", DateTime(timezone=True), nullable=True
     )
     status: Mapped[str] = mapped_column(String, default="PENDING")
@@ -513,7 +510,7 @@ class PrepTopic(Base, TimestampMixin):
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     estimated_minutes: Mapped[int] = mapped_column("estimatedMinutes", Integer, default=30)
     order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)
     mastery_score: Mapped[float] = mapped_column("masteryScore", Float, default=0.0)
@@ -541,11 +538,11 @@ class PrepMaterial(Base, TimestampMixin):
     )
     filename: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=False)
-    file_type: Mapped[Optional[str]] = mapped_column("fileType", String, nullable=True)
-    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    extracted_text: Mapped[Optional[str]] = mapped_column("extractedText", Text, nullable=True)
+    file_type: Mapped[str | None] = mapped_column("fileType", String, nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column("extractedText", Text, nullable=True)
     category: Mapped[str] = mapped_column(String, default="OTHER")
-    label: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
 
     def __repr__(self) -> str:
         return f"<PrepMaterial id={self.id} filename={self.filename}>"
@@ -569,17 +566,13 @@ class QuizSession(Base, TimestampMixin):
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
     )
     mode: Mapped[str] = mapped_column(String, nullable=False)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="IN_PROGRESS")
     total_questions: Mapped[int] = mapped_column("totalQuestions", Integer, default=0)
     correct_count: Mapped[int] = mapped_column("correctCount", Integer, default=0)
-    score_percentage: Mapped[Optional[float]] = mapped_column(
-        "scorePercentage", Float, nullable=True
-    )
-    duration_seconds: Mapped[Optional[int]] = mapped_column(
-        "durationSeconds", Integer, nullable=True
-    )
-    completed_at: Mapped[Optional[datetime]] = mapped_column(
+    score_percentage: Mapped[float | None] = mapped_column("scorePercentage", Float, nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column("durationSeconds", Integer, nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -619,33 +612,33 @@ class PrepQuestion(Base, TimestampMixin):
     prep_id: Mapped[str] = mapped_column(
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
     )
-    prep_topic_id: Mapped[Optional[str]] = mapped_column(
+    prep_topic_id: Mapped[str | None] = mapped_column(
         "prepTopicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True
     )
     question_text: Mapped[str] = mapped_column("questionText", Text, nullable=False)
     question_type: Mapped[str] = mapped_column("questionType", String, default="MULTIPLE_CHOICE")
     # A JSON array of answer strings. The original `dict` annotation never matched
     # what the generator writes.
-    options: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    options: Mapped[list | None] = mapped_column(JSON, nullable=True)
     correct_answer: Mapped[str] = mapped_column("correctAnswer", String, nullable=False)
-    explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # EASY | MEDIUM | HARD. Nullable: questions banked before this existed have no
     # difficulty, and inferring one would invent data.
-    difficulty: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String, nullable=True)
     # AI_GENERATED | PAST_PAPER. Set by the server, never reported by the
     # generator: provenance a producer can self-declare is not provenance.
-    source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    source: Mapped[str | None] = mapped_column(String, nullable=True)
     # Only meaningful for past papers.
-    source_year: Mapped[Optional[int]] = mapped_column("sourceYear", Integer, nullable=True)
+    source_year: Mapped[int | None] = mapped_column("sourceYear", Integer, nullable=True)
     # Advice for tackling this kind of question. Disclosed with the answer key, not
     # before: a tip written about a specific question can hint at its answer.
-    exam_tip: Mapped[Optional[str]] = mapped_column("examTip", Text, nullable=True)
+    exam_tip: Mapped[str | None] = mapped_column("examTip", Text, nullable=True)
     # Points at the approach without giving the answer away. Deliberately weaker
     # than `explanation`: a hint that paraphrases the explanation is an answer key
     # with a different label. Validated on the way in — a hint containing the
     # correct answer is rejected rather than stored.
-    hint_nudge: Mapped[Optional[str]] = mapped_column("hintNudge", Text, nullable=True)
+    hint_nudge: Mapped[str | None] = mapped_column("hintNudge", Text, nullable=True)
 
     # Lifetime statistics for this question, across every session that used it.
     # Only expressible now that a question outlives a session.
@@ -694,16 +687,16 @@ class PracticeObservation(Base, TimestampMixin):
     prep_id: Mapped[str] = mapped_column(
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
     )
-    prep_topic_id: Mapped[Optional[str]] = mapped_column(
+    prep_topic_id: Mapped[str | None] = mapped_column(
         "prepTopicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True
     )
-    prep_question_id: Mapped[Optional[str]] = mapped_column(
+    prep_question_id: Mapped[str | None] = mapped_column(
         "prepQuestionId",
         String,
         ForeignKey("PrepQuestion.id", ondelete="SET NULL"),
         nullable=True,
     )
-    quiz_session_id: Mapped[Optional[str]] = mapped_column(
+    quiz_session_id: Mapped[str | None] = mapped_column(
         "quizSessionId",
         String,
         ForeignKey("QuizSession.id", ondelete="SET NULL"),
@@ -713,14 +706,14 @@ class PracticeObservation(Base, TimestampMixin):
     is_correct: Mapped[bool] = mapped_column("isCorrect", Boolean, nullable=False)
     # Null when the client did not report it — distinct from "answered instantly".
     # A fluency signal only. Never a score, and never surfaced as a judgement.
-    response_ms: Mapped[Optional[int]] = mapped_column("responseMs", Integer, nullable=True)
+    response_ms: Mapped[int | None] = mapped_column("responseMs", Integer, nullable=True)
     hint_used: Mapped[bool] = mapped_column(
         "hintUsed", Boolean, default=False, server_default="false"
     )
     hint_count: Mapped[int] = mapped_column("hintCount", Integer, default=0, server_default="0")
     # Copied, not joined: a question's difficulty may be recalibrated later, and an
     # observation records what was true when it happened.
-    difficulty: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    difficulty: Mapped[str | None] = mapped_column(String, nullable=True)
     observed_at: Mapped[datetime] = mapped_column(
         "observedAt", DateTime(timezone=True), nullable=False
     )
@@ -777,7 +770,7 @@ class PrepReadinessSnapshot(Base, TimestampMixin):
 
     progress_percent: Mapped[float] = mapped_column("progressPercent", Float, nullable=False)
     # Null when there are no topics to average — not measured, rather than zero.
-    average_mastery_percent: Mapped[Optional[float]] = mapped_column(
+    average_mastery_percent: Mapped[float | None] = mapped_column(
         "averageMasteryPercent", Float, nullable=True
     )
     topics_total: Mapped[int] = mapped_column("topicsTotal", Integer, default=0)
@@ -786,9 +779,7 @@ class PrepReadinessSnapshot(Base, TimestampMixin):
     topics_assessed: Mapped[int] = mapped_column("topicsAssessed", Integer, default=0)
     questions_answered: Mapped[int] = mapped_column("questionsAnswered", Integer, default=0)
     # Null until at least one question has been answered.
-    accuracy_percent: Mapped[Optional[float]] = mapped_column(
-        "accuracyPercent", Float, nullable=True
-    )
+    accuracy_percent: Mapped[float | None] = mapped_column("accuracyPercent", Float, nullable=True)
     quizzes_taken: Mapped[int] = mapped_column("quizzesTaken", Integer, default=0)
 
     __table_args__ = (
@@ -825,7 +816,7 @@ class PrepQuestionFlag(Base, TimestampMixin):
     )
     # Optional: the act of flagging is the signal, and requiring a reason would
     # suppress it.
-    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (UniqueConstraint("userId", "prepQuestionId", name="PrepQuestionFlag_unique"),)
 
@@ -895,7 +886,7 @@ class QuizAnswer(Base, TimestampMixin):
     )
     user_answer: Mapped[str] = mapped_column("userAnswer", String, nullable=False)
     is_correct: Mapped[bool] = mapped_column("isCorrect", Boolean, default=False)
-    time_taken_seconds: Mapped[Optional[int]] = mapped_column(
+    time_taken_seconds: Mapped[int | None] = mapped_column(
         "timeTakenSeconds", Integer, nullable=True
     )
 
@@ -921,9 +912,9 @@ class StudyPlan(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    goal_description: Mapped[Optional[str]] = mapped_column("goalDescription", Text, nullable=True)
+    goal_description: Mapped[str | None] = mapped_column("goalDescription", Text, nullable=True)
     deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    prep_id: Mapped[Optional[str]] = mapped_column(
+    prep_id: Mapped[str | None] = mapped_column(
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String, default="ACTIVE")
@@ -959,16 +950,16 @@ class StudyPlanItem(Base, TimestampMixin):
         "planId", String, ForeignKey("StudyPlan.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     scheduled_date: Mapped[datetime] = mapped_column(
         "scheduledDate", DateTime(timezone=True), nullable=False
     )
     estimated_minutes: Mapped[int] = mapped_column("estimatedMinutes", Integer, default=30)
     item_type: Mapped[str] = mapped_column("itemType", String, default="STUDY")
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True)
-    prep_topic_id: Mapped[Optional[str]] = mapped_column("prepTopicId", String, nullable=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True)
+    prep_topic_id: Mapped[str | None] = mapped_column("prepTopicId", String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="PENDING")
-    completed_at: Mapped[Optional[datetime]] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -1003,12 +994,12 @@ class Reflection(Base, TimestampMixin):
         "periodEnd", DateTime(timezone=True), nullable=False
     )
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    activities_layer: Mapped[Optional[dict]] = mapped_column("activitiesLayer", JSON, nullable=True)
-    progress_layer: Mapped[Optional[dict]] = mapped_column("progressLayer", JSON, nullable=True)
-    achievements_layer: Mapped[Optional[dict]] = mapped_column(
+    activities_layer: Mapped[dict | None] = mapped_column("activitiesLayer", JSON, nullable=True)
+    progress_layer: Mapped[dict | None] = mapped_column("progressLayer", JSON, nullable=True)
+    achievements_layer: Mapped[dict | None] = mapped_column(
         "achievementsLayer", JSON, nullable=True
     )
-    recommendations: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    recommendations: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (
         Index("Reflection_userId_type_idx", "userId", "type"),
@@ -1039,10 +1030,10 @@ class DiscoveryRecommendation(Base, TimestampMixin):
     reason: Mapped[str] = mapped_column(String, nullable=False)
     relevance_score: Mapped[float] = mapped_column("relevanceScore", Float, default=0.0)
     status: Mapped[str] = mapped_column(String, default="ACTIVE")
-    dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+    dismissed_at: Mapped[datetime | None] = mapped_column(
         "dismissedAt", DateTime(timezone=True), nullable=True
     )
-    followed_at: Mapped[Optional[datetime]] = mapped_column(
+    followed_at: Mapped[datetime | None] = mapped_column(
         "followedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -1068,8 +1059,8 @@ class ActivityFeedEntry(Base):
     )
     activity_type: Mapped[str] = mapped_column("activityType", String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
         "occurredAt", DateTime(timezone=True), nullable=False
     )
@@ -1096,10 +1087,10 @@ class ConversionTriggerLog(Base):
     )
     trigger_id: Mapped[str] = mapped_column("triggerId", String, nullable=False)
     shown_at: Mapped[datetime] = mapped_column("shownAt", DateTime(timezone=True), nullable=False)
-    dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+    dismissed_at: Mapped[datetime | None] = mapped_column(
         "dismissedAt", DateTime(timezone=True), nullable=True
     )
-    converted_at: Mapped[Optional[datetime]] = mapped_column(
+    converted_at: Mapped[datetime | None] = mapped_column(
         "convertedAt", DateTime(timezone=True), nullable=True
     )
     capability_highlighted: Mapped[str] = mapped_column(
@@ -1130,11 +1121,11 @@ class LearningMilestone(Base):
     achieved_at: Mapped[datetime] = mapped_column(
         "achievedAt", DateTime(timezone=True), nullable=False
     )
-    shared_at: Mapped[Optional[datetime]] = mapped_column(
+    shared_at: Mapped[datetime | None] = mapped_column(
         "sharedAt", DateTime(timezone=True), nullable=True
     )
-    share_card_url: Mapped[Optional[str]] = mapped_column("shareCardUrl", String, nullable=True)
-    referral_link: Mapped[Optional[str]] = mapped_column("referralLink", String, nullable=True)
+    share_card_url: Mapped[str | None] = mapped_column("shareCardUrl", String, nullable=True)
+    referral_link: Mapped[str | None] = mapped_column("referralLink", String, nullable=True)
 
     __table_args__ = (
         Index(
@@ -1168,8 +1159,8 @@ class RetentionIntervention(Base):
     delivered_at: Mapped[datetime] = mapped_column(
         "deliveredAt", DateTime(timezone=True), nullable=False
     )
-    outcome: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    outcome_at: Mapped[Optional[datetime]] = mapped_column(
+    outcome: Mapped[str | None] = mapped_column(String, nullable=True)
+    outcome_at: Mapped[datetime | None] = mapped_column(
         "outcomeAt", DateTime(timezone=True), nullable=True
     )
 
@@ -1202,7 +1193,7 @@ class ValueSummaryRecord(Base):
         "periodEnd", DateTime(timezone=True), nullable=False
     )
     summary_data: Mapped[dict] = mapped_column("summaryData", JSON, nullable=False)
-    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+    delivered_at: Mapped[datetime | None] = mapped_column(
         "deliveredAt", DateTime(timezone=True), nullable=True
     )
     delivery_method: Mapped[str] = mapped_column("deliveryMethod", String, default="notification")

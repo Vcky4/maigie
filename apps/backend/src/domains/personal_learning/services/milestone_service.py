@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -140,7 +140,7 @@ async def check_milestones(user_id: str, action_context: dict[str, Any]) -> list
         List of newly achieved milestones (empty if none).
     """
     newly_achieved: list[Milestone] = []
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Get already-achieved milestones for this user
     existing = await _get_existing_milestones(user_id)
@@ -180,6 +180,7 @@ async def get_achieved_milestones(user_id: str) -> list[Milestone]:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import LearningMilestone
 
         stmt = (
@@ -226,6 +227,7 @@ async def generate_share_card(user_id: str, milestone_id: str) -> ShareCard:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import LearningMilestone
 
         stmt = (
@@ -236,7 +238,7 @@ async def generate_share_card(user_id: str, milestone_id: str) -> ShareCard:
         result = await session.execute(stmt)
         record = result.scalar_one_or_none()
         if record:
-            record.shared_at = datetime.now(timezone.utc)
+            record.shared_at = datetime.now(UTC)
             await session.commit()
 
     # In a real implementation, this would generate an image and upload to storage.
@@ -272,6 +274,7 @@ async def process_referral_completion(referrer_id: str, referred_id: str) -> Ref
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select, update
+
         from src.domains.identity.db_models import User
 
         stmt = (
@@ -335,6 +338,7 @@ async def _get_existing_milestones(user_id: str) -> set[str]:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import LearningMilestone
 
         stmt = select(LearningMilestone.milestone_id).where(LearningMilestone.user_id == user_id)

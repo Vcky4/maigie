@@ -20,10 +20,16 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from src.domains.identity.db_models import User
-
-from ..core.database import db
+from src.shared.infrastructure.unmigrated import PrismaClientRemoved
 
 logger = logging.getLogger(__name__)
+
+# This module was written against the Prisma client and has not been ported to
+# SQLAlchemy: it calls db_client.user.find_unique/update and reads camelCase
+# attributes such as user.referralCode. Referral rewards are therefore not
+# functional. The sentinel makes each affected path fail with an explanatory
+# error rather than an undefined-name error.
+db = PrismaClientRemoved("billing.services.referral_rewards_service")
 
 # Referral reward amounts (in tokens)
 REFERRAL_REWARDS = {

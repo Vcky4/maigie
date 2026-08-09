@@ -14,8 +14,9 @@ Revises: 004_add_preferred_llm_provider
 Create Date: 2026-07-22
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers
 revision = "005_add_commercial_models"

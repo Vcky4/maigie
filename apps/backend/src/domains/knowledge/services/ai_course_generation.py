@@ -1,7 +1,7 @@
 import logging
 
-from src.domains.knowledge.repository import knowledge_repo
 from src.core.websocket import manager
+from src.domains.knowledge.repository import knowledge_repo
 
 logger = logging.getLogger(__name__)
 

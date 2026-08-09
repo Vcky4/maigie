@@ -13,11 +13,11 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from src.domains.intelligence.action.action_service import action_service
 from src.domains.intelligence.repository import intelligence_repo
 from src.domains.knowledge.repository import knowledge_repo
 from src.domains.progress.repository import progress_repo
 from src.shared.database import get_session_factory
-from src.domains.intelligence.action.action_service import action_service
 
 logger = logging.getLogger(__name__)
 
@@ -1136,8 +1136,8 @@ async def handle_email_user(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle email_user tool call. Sends an email to the user."""
-    from src.shared.infrastructure import email
     from src.domains.identity.repository import IdentityRepository
+    from src.shared.infrastructure import email
 
     subject = args.get("subject")
     content = args.get("content")

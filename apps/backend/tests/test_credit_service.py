@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_get_credit_limits_known_tiers() -> None:
-    from src.services.credit_service import get_credit_limits
+    from src.domains.billing.services.credit_consumption_service import get_credit_limits
 
     free = await get_credit_limits("FREE")
     assert free["hard_cap"] == 15000
@@ -18,7 +18,10 @@ async def test_get_credit_limits_known_tiers() -> None:
 
 
 def test_apply_token_multiplier() -> None:
-    from src.services.credit_service import TOKEN_MULTIPLIER, apply_token_multiplier
+    from src.domains.billing.services.credit_consumption_service import (
+        TOKEN_MULTIPLIER,
+        apply_token_multiplier,
+    )
 
     assert TOKEN_MULTIPLIER == 0.2
     assert apply_token_multiplier(0) == 0
@@ -26,7 +29,7 @@ def test_apply_token_multiplier() -> None:
 
 
 def test_credit_costs_keys() -> None:
-    from src.services.credit_service import CREDIT_COSTS
+    from src.domains.billing.services.credit_consumption_service import CREDIT_COSTS
 
     assert "chat_message" in CREDIT_COSTS
     assert CREDIT_COSTS["ai_course_generation"] > 0

@@ -7,6 +7,7 @@ Delivers learning-framed value communication before renewal.
 
 import asyncio
 import logging
+from datetime import UTC
 
 from src.workers.celery_app import celery_app
 
@@ -42,11 +43,12 @@ async def _run_value_summary_generation() -> dict:
     from datetime import datetime, timedelta, timezone
 
     from sqlalchemy import select
+
     from src.domains.identity.db_models import User
     from src.domains.personal_learning.services import value_summary_service
     from src.shared.database.session import get_session
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     target_end = now + timedelta(days=3)
 
     total_generated = 0

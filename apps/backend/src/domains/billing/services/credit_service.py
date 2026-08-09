@@ -6,11 +6,10 @@ admin adjustments, and ad rewards.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.domains.identity.db_models import User
-
 from src.shared.events import emit
 from src.shared.exceptions import NotFoundError, ValidationError
 
@@ -76,7 +75,7 @@ async def admin_adjust_balance(
 
 async def get_ad_stats(user_id: str) -> dict[str, Any]:
     """Get ad watch statistics for a user."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     ads_today = await billing_repo.count_ads_today(user_id, today_start)
@@ -95,7 +94,7 @@ async def claim_ad_reward(
     *, user_id: str, ad_type: str, ad_unit_id: str | None = None
 ) -> dict[str, Any]:
     """Claim credits for watching a rewarded ad."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
     ads_today = await billing_repo.count_ads_today(user_id, today_start)

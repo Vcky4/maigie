@@ -7,7 +7,7 @@ All domain models inherit from Base. This provides:
 - Table naming convention
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import DateTime, String, func
@@ -26,14 +26,14 @@ class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
     updated_at: Mapped[datetime] = mapped_column(
         "updatedAt",
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
 

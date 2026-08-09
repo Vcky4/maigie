@@ -263,8 +263,8 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
     generated = []
 
     try:
-        from src.domains.progress.repository import progress_repo
         from src.domains.knowledge.repository import KnowledgeRepository
+        from src.domains.progress.repository import progress_repo
 
         knowledge_repo = KnowledgeRepository()
 

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helper: minimal card dataclass that mimics Flashcard SM-2 attributes
 # ---------------------------------------------------------------------------

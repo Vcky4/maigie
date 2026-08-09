@@ -1,32 +1,25 @@
-"""Stub — implementation pending migration from services/socket_manager."""
+"""Websocket connection registry.
 
-from typing import Any
+This module used to define a second ``ConnectionManager`` whose methods were stubs: it
+built a ``_connections`` dict, never added anything to it, and had ``send_json``,
+``send_to_user`` and ``disconnect`` as ``pass``. Every message the chat handler sent was
+discarded, and ``disconnect(connection_id)`` would have raised ``TypeError`` because the
+stub required a second argument the caller does not pass.
 
-from fastapi import WebSocket
+A working manager already exists in ``src.core.websocket``, with connection tracking,
+per-user fan-out, channel subscriptions, heartbeats and stale-connection cleanup. The
+course-generation service was already using it. So the fix is not to write a second
+implementation but to stop having one: this module re-exports the same instance.
 
+Sharing the instance is the part that matters. Two managers mean two registries, so a
+connection accepted through one is invisible to the other, which is precisely why chat
+messages went nowhere while course progress updates arrived.
 
-class ConnectionManager:
-    """WebSocket connection manager."""
+Single-process only: the registry is in memory, so with more than one worker a message
+reaches only the worker holding that user's socket. Fanning out across workers needs a
+shared broker and is not addressed here.
+"""
 
-    def __init__(self):
-        self._connections: dict[str, list[WebSocket]] = {}
+from src.core.websocket import ConnectionManager, manager
 
-    async def connect(self, websocket: WebSocket, user_id: str) -> str:
-        """Accept a WebSocket connection and return a connection ID."""
-        await websocket.accept()
-        return f"{user_id}_conn"  # TODO: migrate implementation
-
-    async def disconnect(self, connection_id: str, user_id: str) -> None:
-        """Disconnect a WebSocket connection."""
-        pass  # TODO: migrate implementation
-
-    async def send_json(self, data: dict[str, Any], user_id: str) -> None:
-        """Send JSON data to all connections for a user."""
-        pass  # TODO: migrate implementation
-
-    async def send_to_user(self, user_id: str, data: dict[str, Any]) -> None:
-        """Send data to a specific user."""
-        pass  # TODO: migrate implementation
-
-
-manager = ConnectionManager()
+__all__ = ["ConnectionManager", "manager"]

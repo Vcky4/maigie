@@ -17,27 +17,25 @@ See LICENSE file in the repository root for details.
 import logging
 import math
 from datetime import UTC, datetime, timedelta
-
 from typing import Any
 
 import httpx
 import stripe
 
-from src.domains.identity.db_models import User
-from src.domains.identity.repository import IdentityRepository
-from src.domains.billing.repository import billing_repo
-
 from src.config import get_settings
-from src.shared.database import get_session_factory
 from src.domains.admin.services.audit_service import log_admin_action
+from src.domains.billing.repository import billing_repo
 from src.domains.billing.services.credit_purchase_notifications import (
     CREDIT_PURCHASE_NOTIFICATION_TITLE,
     CreditPurchaseNotificationData,
     format_push_notification_body,
     format_push_notification_payload,
 )
+from src.domains.identity.db_models import User
+from src.domains.identity.repository import IdentityRepository
+from src.shared.database import get_session_factory
+from src.shared.exceptions import NotFoundError, ValidationError
 from src.shared.infrastructure.push_notifications import send_push_notification
-from src.utils.exceptions import ResourceNotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +138,7 @@ async def initiate_purchase(
         Dict with sessionUrl, sessionId, and expiresAt.
 
     Raises:
-        ResourceNotFoundError: If pack_id doesn't exist or is inactive.
+        NotFoundError: If pack_id doesn't exist or is inactive.
         ValueError: If payment provider is not configured.
     """
     settings = get_settings()
@@ -148,7 +146,7 @@ async def initiate_purchase(
     # Validate the credit pack exists and is active
     pack = await billing_repo.find_pack(pack_id)
     if not pack:
-        raise ResourceNotFoundError("CreditPack", pack_id)
+        raise NotFoundError("CreditPack", pack_id)
 
     # Determine payment provider and currency
     payment_provider = getattr(user, "payment_provider", None) or "stripe"
@@ -451,7 +449,7 @@ async def admin_adjust_balance(
         The updated User model.
 
     Raises:
-        ResourceNotFoundError: If target user doesn't exist.
+        NotFoundError: If target user doesn't exist.
         ValidationError: If adjustment would result in negative balance.
     """
     identity_repo = IdentityRepository()
@@ -459,7 +457,7 @@ async def admin_adjust_balance(
     # Validate target user exists
     target_user = await identity_repo.find_by_id(target_user_id)
     if not target_user:
-        raise ResourceNotFoundError("User", target_user_id)
+        raise NotFoundError("User", target_user_id)
 
     # Validate adjustment won't result in negative balance
     current_balance = target_user.purchased_credits_balance or 0

@@ -7,11 +7,10 @@ from typing import Any
 import pytest
 
 from src.services.llm.feature_flags import (
+    TIER_TO_ALLOWLIST_KEY,
     FeatureFlagService,
     FeatureFlagStore,
-    TIER_TO_ALLOWLIST_KEY,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers / Fixtures

@@ -7,8 +7,8 @@ import pytest
 # Ensure conftest autouse DB fixture does not require DATABASE_URL for this module.
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
-from src.services.cost_calculator import calculate_ai_cost
-from src.services.llm_registry import LlmTask, default_model_for
+from src.domains.billing.services.cost_calculator import calculate_ai_cost
+from src.domains.intelligence.reasoning.llm.registry import LlmTask, default_model_for
 
 
 @pytest.mark.parametrize(

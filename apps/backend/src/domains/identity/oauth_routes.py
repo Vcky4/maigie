@@ -20,8 +20,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 
-
-from src.config import get_settings, Settings
+from src.config import Settings, get_settings
 from src.shared.auth import create_access_token, create_refresh_token
 from src.shared.auth.oauth_providers import GoogleIdTokenVerifier, OAuthProviderFactory
 

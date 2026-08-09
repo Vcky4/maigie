@@ -12,8 +12,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from src.domains.identity.db_models import User
 
+from src.domains.identity.db_models import User
 from src.shared.auth import CurrentUser
 
 from . import services

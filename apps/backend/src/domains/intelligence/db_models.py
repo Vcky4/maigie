@@ -17,18 +17,17 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Float,
+    ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
-    ForeignKey,
-    Index,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.shared.database.base import Base, TimestampMixin
-
 
 # ---------------------------------------------------------------------------
 # ChatSession
@@ -45,7 +44,7 @@ class ChatSession(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
 
-    title: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         "isActive", Boolean, default=True, server_default="true"
     )
@@ -57,13 +56,13 @@ class ChatSession(Base, TimestampMixin):
     )
 
     # Context links
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
-    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    exam_prep_id: Mapped[Optional[str]] = mapped_column(
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    exam_prep_id: Mapped[str | None] = mapped_column(
         "examPrepId", String, nullable=True, index=True
     )
-    note_id: Mapped[Optional[str]] = mapped_column("noteId", String, nullable=True, index=True)
+    note_id: Mapped[str | None] = mapped_column("noteId", String, nullable=True, index=True)
 
     # Relationships
     messages: Mapped[list["ChatMessage"]] = relationship(
@@ -103,12 +102,12 @@ class ChatMessage(Base):
     )
 
     # Review threading
-    review_item_id: Mapped[Optional[str]] = mapped_column(
+    review_item_id: Mapped[str | None] = mapped_column(
         "reviewItemId", String, nullable=True, index=True
     )
 
     # Reply threading
-    reply_to_message_id: Mapped[Optional[str]] = mapped_column(
+    reply_to_message_id: Mapped[str | None] = mapped_column(
         "replyToMessageId",
         String,
         ForeignKey("ChatMessage.id", ondelete="SET NULL"),
@@ -118,24 +117,24 @@ class ChatMessage(Base):
 
     role: Mapped[str] = mapped_column(String, nullable=False)  # USER, ASSISTANT, SYSTEM
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    suggestion_text: Mapped[Optional[str]] = mapped_column("suggestionText", String, nullable=True)
+    suggestion_text: Mapped[str | None] = mapped_column("suggestionText", String, nullable=True)
 
     # Voice/media
-    audio_url: Mapped[Optional[str]] = mapped_column("audioUrl", String, nullable=True)
-    image_url: Mapped[Optional[str]] = mapped_column("imageUrl", String, nullable=True)
-    image_urls: Mapped[Optional[list]] = mapped_column("imageUrls", ARRAY(String), nullable=True)
-    duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    audio_url: Mapped[str | None] = mapped_column("audioUrl", String, nullable=True)
+    image_url: Mapped[str | None] = mapped_column("imageUrl", String, nullable=True)
+    image_urls: Mapped[list | None] = mapped_column("imageUrls", ARRAY(String), nullable=True)
+    duration: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Component data
-    component_data: Mapped[Optional[dict]] = mapped_column("componentData", JSON, nullable=True)
+    component_data: Mapped[dict | None] = mapped_column("componentData", JSON, nullable=True)
 
     # Token/cost tracking
     token_count: Mapped[int] = mapped_column("tokenCount", Integer, default=0, server_default="0")
-    input_tokens: Mapped[Optional[int]] = mapped_column("inputTokens", Integer, nullable=True)
-    output_tokens: Mapped[Optional[int]] = mapped_column("outputTokens", Integer, nullable=True)
-    model_name: Mapped[Optional[str]] = mapped_column("modelName", String, nullable=True)
-    cost_usd: Mapped[Optional[float]] = mapped_column("costUsd", Float, nullable=True)
-    revenue_usd: Mapped[Optional[float]] = mapped_column("revenueUsd", Float, nullable=True)
+    input_tokens: Mapped[int | None] = mapped_column("inputTokens", Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column("outputTokens", Integer, nullable=True)
+    model_name: Mapped[str | None] = mapped_column("modelName", String, nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column("costUsd", Float, nullable=True)
+    revenue_usd: Mapped[float | None] = mapped_column("revenueUsd", Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -176,7 +175,7 @@ class AIActionLog(Base):
     action_type: Mapped[str] = mapped_column("actionType", String, nullable=False)
     action_data: Mapped[dict] = mapped_column("actionData", JSON, nullable=False)
     status: Mapped[str] = mapped_column(String, default="PENDING", server_default="PENDING")
-    error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -237,9 +236,9 @@ class UserInteractionMemory(Base):
 
     interaction_type: Mapped[str] = mapped_column("interactionType", String, nullable=False)
     entity_type: Mapped[str] = mapped_column("entityType", String, nullable=False)
-    entity_id: Mapped[Optional[str]] = mapped_column("entityId", String, nullable=True)
+    entity_id: Mapped[str | None] = mapped_column("entityId", String, nullable=True)
 
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     importance: Mapped[float] = mapped_column(Float, default=0.5, server_default="0.5")
 
     created_at: Mapped[datetime] = mapped_column(
@@ -306,11 +305,9 @@ class ConversationSummary(Base):
     )
 
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    key_topics: Mapped[Optional[list]] = mapped_column("keyTopics", ARRAY(String), nullable=True)
-    actions_taken: Mapped[Optional[list]] = mapped_column(
-        "actionsTaken", ARRAY(String), nullable=True
-    )
-    emotional_tone: Mapped[Optional[str]] = mapped_column("emotionalTone", String, nullable=True)
+    key_topics: Mapped[list | None] = mapped_column("keyTopics", ARRAY(String), nullable=True)
+    actions_taken: Mapped[list | None] = mapped_column("actionsTaken", ARRAY(String), nullable=True)
+    emotional_tone: Mapped[str | None] = mapped_column("emotionalTone", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
@@ -346,14 +343,14 @@ class AIAgentTask(Base, TimestampMixin):
     priority: Mapped[int] = mapped_column(Integer, default=5, server_default="5")
     title: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    action_data: Mapped[Optional[dict]] = mapped_column("actionData", JSON, nullable=True)
+    action_data: Mapped[dict | None] = mapped_column("actionData", JSON, nullable=True)
     scheduled_at: Mapped[datetime] = mapped_column(
         "scheduledAt", DateTime(timezone=True), nullable=False
     )
-    sent_at: Mapped[Optional[datetime]] = mapped_column(
+    sent_at: Mapped[datetime | None] = mapped_column(
         "sentAt", DateTime(timezone=True), nullable=True
     )
-    dismissed_at: Mapped[Optional[datetime]] = mapped_column(
+    dismissed_at: Mapped[datetime | None] = mapped_column(
         "dismissedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -382,7 +379,7 @@ class LearningInsight(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.7, server_default="0.7")
     data_points: Mapped[int] = mapped_column("dataPoints", Integer, default=1, server_default="1")
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     is_active: Mapped[bool] = mapped_column(
         "isActive", Boolean, default=True, server_default="true"
@@ -411,11 +408,11 @@ class UserUpload(Base):
 
     url: Mapped[str] = mapped_column(String, nullable=False)
     filename: Mapped[str] = mapped_column(String, nullable=False)
-    mime_type: Mapped[Optional[str]] = mapped_column("mimeType", String, nullable=True)
-    size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    extracted_text: Mapped[Optional[str]] = mapped_column("extractedText", Text, nullable=True)
-    embedding_id: Mapped[Optional[str]] = mapped_column("embeddingId", String, nullable=True)
-    chat_message_id: Mapped[Optional[str]] = mapped_column("chatMessageId", String, nullable=True)
+    mime_type: Mapped[str | None] = mapped_column("mimeType", String, nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column("extractedText", Text, nullable=True)
+    embedding_id: Mapped[str | None] = mapped_column("embeddingId", String, nullable=True)
+    chat_message_id: Mapped[str | None] = mapped_column("chatMessageId", String, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",

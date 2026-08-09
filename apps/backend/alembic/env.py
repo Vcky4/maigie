@@ -11,10 +11,11 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from alembic import context
 
 # Add project root to path so we can import our models
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,19 +25,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.shared.database.base import Base
-
 # Import all domain models so Alembic can see them for autogenerate
 from src.domains.identity.db_models import (  # noqa: F401
-    User,
-    UserPreferences,
+    DeviceToken,
+    LimitReachedEmailLog,
+    ModelPreference,
     OAuthClient,
     OAuthCode,
     OAuthToken,
-    DeviceToken,
-    ModelPreference,
-    LimitReachedEmailLog,
+    User,
+    UserPreferences,
 )
+from src.shared.database.base import Base
 
 # Alembic Config object
 config = context.config

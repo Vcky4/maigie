@@ -12,9 +12,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from src.shared.database import get_session_factory
 from src.domains.intelligence.db_models import ChatMessage
 from src.domains.learning_spaces.db_models import SpaceChatGroup
+from src.shared.database import get_session_factory
 
 logger = logging.getLogger(__name__)
 

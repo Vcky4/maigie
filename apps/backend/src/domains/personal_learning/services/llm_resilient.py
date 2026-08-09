@@ -112,6 +112,7 @@ async def _call_gemini(prompt: str, *, max_tokens: int, temperature: float) -> s
 async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> str:
     """Call OpenAI directly."""
     import openai
+
     from src.config import get_settings
 
     settings = get_settings()
@@ -134,6 +135,7 @@ async def _call_openai(prompt: str, *, max_tokens: int, temperature: float) -> s
 async def _call_anthropic(prompt: str, *, max_tokens: int, temperature: float) -> str:
     """Call Anthropic directly."""
     import anthropic
+
     from src.config import get_settings
 
     settings = get_settings()
@@ -278,8 +280,8 @@ async def generate_content(
                 logger.info(f"LLM [{provider}] succeeded: response_length={len(result)}")
                 return result
 
-            except asyncio.TimeoutError:
-                last_error = asyncio.TimeoutError(
+            except TimeoutError:
+                last_error = TimeoutError(
                     f"[{provider}] timed out after {timeout_s}s (attempt {attempt + 1})"
                 )
                 logger.warning(

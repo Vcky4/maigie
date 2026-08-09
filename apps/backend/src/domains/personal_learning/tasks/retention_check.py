@@ -38,11 +38,12 @@ async def _run_retention_check() -> dict:
 
     await ensure_db()
     """Core async logic for retention check."""
+    from sqlalchemy import select
+
+    from src.domains.identity.db_models import User
     from src.domains.personal_learning.repository import PersonalLearningRepository
     from src.domains.personal_learning.services import retention_service
     from src.shared.database.session import get_session
-    from sqlalchemy import select
-    from src.domains.identity.db_models import User
 
     total_checked = 0
     interventions_triggered = 0

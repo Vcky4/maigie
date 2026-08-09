@@ -28,8 +28,9 @@ Revises: 001_drop_prisma_enums
 Create Date: 2026-07-16
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "002_rename_circle_to_space"
 down_revision = "001_drop_prisma_enums"

@@ -7,7 +7,7 @@ learners see how far they've come and identify areas to improve.
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.exceptions import NotFoundError
@@ -30,9 +30,10 @@ async def generate_reflection(*, user_id: str, type: str) -> Any:
     PLUS: Deep analysis with cross-topic patterns and specific actionable recommendations.
     """
     from src.domains.intelligence.reasoning.llm import generate_content
+
     from . import feature_tier_service, trial_service
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Determine period
     if type == "weekly":

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -146,7 +146,7 @@ async def evaluate_educator_readiness(user_id: str) -> EducatorReadiness:
 
     # Record readiness if newly met
     if is_ready and not profile.educator_readiness_met_at:
-        await repo.update_profile(user_id, {"educatorReadinessMetAt": datetime.now(timezone.utc)})
+        await repo.update_profile(user_id, {"educatorReadinessMetAt": datetime.now(UTC)})
 
     message = None
     if is_ready:
@@ -190,7 +190,7 @@ async def get_transition_suggestion(user_id: str) -> TransitionSuggestion | None
         return None
 
     # Check suggestion cooldown
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if profile.educator_suggestion_shown_at:
         days_since = (now - profile.educator_suggestion_shown_at).days
         if days_since < SUGGESTION_COOLDOWN_DAYS:
@@ -242,7 +242,7 @@ async def start_space_trial(user_id: str) -> SpaceTrialStatus:
         raise ValueError("You've already used your Learning Space trial.")
 
     # Start the trial
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await repo.update_profile(user_id, {"spaceTrialStartedAt": now})
 
     # Track funnel event
@@ -278,6 +278,7 @@ async def _get_average_quiz_score(user_id: str) -> float | None:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import QuizSession
 
         stmt = (
@@ -296,6 +297,7 @@ async def _get_plan_completion_rate(user_id: str) -> float | None:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import StudyPlan
 
         stmt = (

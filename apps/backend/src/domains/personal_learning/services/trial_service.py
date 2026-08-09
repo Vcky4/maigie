@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -80,6 +80,7 @@ async def start_trial(user_id: str) -> TrialStatus:
     - User is already a PLUS subscriber
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+
     from . import feature_tier_service
 
     repo = PersonalLearningRepository()
@@ -94,7 +95,7 @@ async def start_trial(user_id: str) -> TrialStatus:
     if not profile:
         raise ValueError("Learning profile not found. Complete onboarding first.")
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Check active trial
     if profile.trial_ends_at and now < profile.trial_ends_at:
@@ -143,7 +144,7 @@ async def get_trial_status(user_id: str) -> TrialStatus | None:
     if not profile:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Active trial
     if profile.trial_ends_at and now < profile.trial_ends_at:
@@ -186,15 +187,16 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
     - Active prep with deadline → suggest adaptive study plan for it
     - Recent activity → suggest deep reflection on those patterns
     """
-    from src.domains.personal_learning.repository import PersonalLearningRepository
+    from sqlalchemy import func, select
+
     from src.domains.personal_learning.db_models import (
-        QuizSession,
-        PrepTopic,
-        Note,
         ExamPrep,
+        Note,
+        PrepTopic,
+        QuizSession,
         StudyPlan,
     )
-    from sqlalchemy import select, func
+    from src.domains.personal_learning.repository import PersonalLearningRepository
 
     repo = PersonalLearningRepository()
     profile = await repo.get_profile_by_user(user_id)
@@ -311,8 +313,8 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
             if exam_date:
                 # Ensure timezone-aware for comparison
                 if exam_date.tzinfo is None:
-                    exam_date = exam_date.replace(tzinfo=timezone.utc)
-                days_until = (exam_date - datetime.now(timezone.utc)).days
+                    exam_date = exam_date.replace(tzinfo=UTC)
+                days_until = (exam_date - datetime.now(UTC)).days
             else:
                 days_until = None
             suggestions.append(
@@ -334,9 +336,10 @@ async def get_showcase_suggestions(user_id: str) -> list[ShowcaseSuggestion]:
         async with factory() as session:
             # Count recent activities
             from datetime import timedelta
+
             from src.domains.personal_learning.db_models import ActivityFeedEntry
 
-            week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+            week_ago = datetime.now(UTC) - timedelta(days=7)
             stmt = (
                 select(func.count())
                 .select_from(ActivityFeedEntry)
@@ -399,6 +402,7 @@ async def generate_trial_summary(user_id: str) -> TrialSummary:
     and what the user would lose by not upgrading.
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+
     from . import feature_tier_service
 
     repo = PersonalLearningRepository()
@@ -446,7 +450,7 @@ async def expire_trial(user_id: str) -> None:
     from src.domains.personal_learning.repository import PersonalLearningRepository
 
     repo = PersonalLearningRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     update_data = {
         "lastTrialEndedAt": now,

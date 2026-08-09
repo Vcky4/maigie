@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -92,7 +92,7 @@ async def generate_monthly_summary(user_id: str) -> ValueSummary:
     from src.domains.personal_learning.repository import PersonalLearningRepository
 
     repo = PersonalLearningRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     period_start = now - timedelta(days=30)
 
     # Gather metrics
@@ -213,6 +213,7 @@ async def get_underutilised_features(user_id: str) -> list[FeatureSuggestion]:
     Returns suggestions for features aligned with the user's goals.
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+
     from . import feature_tier_service
 
     repo = PersonalLearningRepository()
@@ -335,6 +336,7 @@ async def _count_flashcard_reviews(user_id: str, since: datetime) -> int:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import Flashcard
 
         stmt = (
@@ -353,6 +355,7 @@ async def _get_quiz_stats(user_id: str, since: datetime) -> tuple[int, float | N
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import QuizSession
 
         # Count
@@ -376,6 +379,7 @@ async def _count_plan_items_completed(user_id: str, since: datetime) -> int:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import StudyPlanItem
 
         stmt = (
@@ -395,6 +399,7 @@ async def _count_preps_completed(user_id: str, since: datetime) -> int:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import func, select
+
         from src.domains.personal_learning.db_models import ExamPrep
 
         stmt = (
@@ -413,6 +418,7 @@ async def _get_days_until_renewal(user_id: str) -> int | None:
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.identity.db_models import User
 
         stmt = select(User.credits_period_end).where(User.id == user_id)
@@ -422,7 +428,7 @@ async def _get_days_until_renewal(user_id: str) -> int | None:
     if not period_end:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     days = (period_end - now).days
     return max(0, days)
 

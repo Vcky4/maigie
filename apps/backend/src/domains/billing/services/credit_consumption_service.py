@@ -21,15 +21,14 @@ from typing import Any, Literal
 
 from sqlalchemy import select
 
-from src.domains.identity.db_models import User, LimitReachedEmailLog
+from src.config import Settings, get_settings
+from src.domains.billing.services.referral_service import get_daily_limit_increase
+from src.domains.identity.db_models import LimitReachedEmailLog, User
 from src.domains.identity.repository import IdentityRepository
 from src.domains.learning_spaces.repository import space_repo
 from src.shared.database import get_session_factory
-
-from src.config import Settings, get_settings
+from src.shared.exceptions import SubscriptionLimitError
 from src.shared.infrastructure.email import send_limit_reached_email
-from src.domains.billing.services.referral_service import get_daily_limit_increase
-from src.utils.exceptions import SubscriptionLimitError
 
 logger = logging.getLogger(__name__)
 
@@ -515,6 +514,7 @@ async def consume_credits(
 
         # Increment space credits using raw SQLAlchemy
         from sqlalchemy import update as sa_update
+
         from src.domains.learning_spaces.db_models import Space
 
         factory = get_session_factory()

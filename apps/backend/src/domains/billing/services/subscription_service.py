@@ -9,7 +9,6 @@ import logging
 from typing import Any
 
 from src.domains.identity.db_models import User
-
 from src.shared.events import emit
 
 from ..repository import billing_repo
@@ -34,6 +33,8 @@ async def create_checkout_session(
     """Create a Stripe checkout session for a subscription."""
     from src.domains.billing.services.stripe_service import (
         create_checkout_session as _stripe_checkout,
+    )
+    from src.domains.billing.services.stripe_service import (
         get_price_id_and_trial_days,
     )
 

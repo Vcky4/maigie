@@ -9,7 +9,7 @@ os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
 @pytest.mark.asyncio
 async def test_handle_tool_call_unknown_tool_returns_error():
-    from src.services.skills.handlers import handle_tool_call
+    from src.domains.intelligence.action.skills.handlers import handle_tool_call
 
     out = await handle_tool_call("not_a_real_tool_xyz", {}, "user-id-placeholder")
     assert "error" in out
@@ -18,7 +18,7 @@ async def test_handle_tool_call_unknown_tool_returns_error():
 
 @pytest.mark.asyncio
 async def test_handle_tool_call_empty_name():
-    from src.services.skills.handlers import handle_tool_call
+    from src.domains.intelligence.action.skills.handlers import handle_tool_call
 
     out = await handle_tool_call("", {}, "user-id-placeholder")
     assert "error" in out

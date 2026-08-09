@@ -7,7 +7,7 @@ TOPIC_FOCUS (single topic), and QUICK_REVIEW.
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.shared.exceptions import MaigieError, NotFoundError
@@ -78,8 +78,8 @@ async def start_quiz(
     Req 4.6: WEAK_AREAS — topics with mastery < 70
     Req 4.7: TOPIC_FOCUS — single specified topic
     """
-    from .llm_resilient import generate_content_json
     from . import feature_tier_service
+    from .llm_resilient import generate_content_json
 
     # --- Commercial gate: check mode access ---
     if mode in ("PAST_PAPER_SIM", "ADAPTIVE"):
@@ -770,7 +770,7 @@ async def _record_observation(
                 # Copied now, because difficulty may be recalibrated later and this
                 # observation should record what was true at the time.
                 "difficulty": getattr(question, "difficulty", None),
-                "observedAt": datetime.now(timezone.utc),
+                "observedAt": datetime.now(UTC),
             }
         )
     except Exception:
@@ -932,7 +932,7 @@ async def complete_quiz(
             "suggestedNextStep": _suggest_next_step(weak_areas),
         }
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     total = quiz.total_questions or 0
     # Derived from persisted answers, then clamped to the questions actually
     # asked. The denominator is no longer forced to 1 for a question-less
@@ -946,7 +946,7 @@ async def complete_quiz(
     if duration_seconds is None and quiz.created_at:
         started_at = quiz.created_at
         if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
+            started_at = started_at.replace(tzinfo=UTC)
         duration_seconds = int((now - started_at).total_seconds())
 
     # Update quiz session. `correctCount` is written from the recomputed value so
@@ -1144,6 +1144,7 @@ async def _update_topic_mastery(topic_id: str, *, user_id: str) -> None:
 async def _compute_topic_breakdown(quiz_id: str, answers: list[Any]) -> list[dict]:
     """Compute per-topic score breakdown."""
     from sqlalchemy import select as sa_select
+
     from src.domains.personal_learning.db_models import (
         PrepQuestion,
         PrepTopic,

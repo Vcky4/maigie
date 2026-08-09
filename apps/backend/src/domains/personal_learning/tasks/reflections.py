@@ -39,8 +39,8 @@ async def _generate_reflections_async():
     from src.shared.database.session import ensure_db
 
     await ensure_db()
-    from src.domains.personal_learning.services import reflection_service
     from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.domains.personal_learning.services import reflection_service
 
     logger.info("Weekly reflections task started")
 

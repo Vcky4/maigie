@@ -1,7 +1,7 @@
 """Unit tests for cost_tracker module (no database). Run with: SKIP_DB_FIXTURE=1 pytest tests/test_cost_tracker.py"""
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +10,6 @@ import pytest
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
 from src.services.llm.cost_tracker import PROVIDER_PRICING, CostRecord, CostTracker
-
 
 # --- Fixtures ---
 
@@ -256,8 +255,8 @@ class TestAggregate:
             }
         ]
 
-        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        end = datetime(2025, 1, 31, tzinfo=timezone.utc)
+        start = datetime(2025, 1, 1, tzinfo=UTC)
+        end = datetime(2025, 1, 31, tzinfo=UTC)
 
         result = await tracker.aggregate(start=start, end=end)
 

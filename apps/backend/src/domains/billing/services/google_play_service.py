@@ -10,17 +10,16 @@ This service handles:
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-from src.domains.identity.repository import IdentityRepository
+from src.config import get_settings
 from src.domains.billing.repository import billing_repo
+from src.domains.identity.repository import IdentityRepository
 from src.shared.database import get_session_factory
-
-from ..config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -116,8 +115,8 @@ async def verify_subscription(
 
     # Check expiry
     expiry_time_millis = int(result.get("expiryTimeMillis", 0))
-    expiry_dt = datetime.fromtimestamp(expiry_time_millis / 1000, tz=timezone.utc)
-    now = datetime.now(timezone.utc)
+    expiry_dt = datetime.fromtimestamp(expiry_time_millis / 1000, tz=UTC)
+    now = datetime.now(UTC)
 
     if expiry_dt < now:
         raise ValueError("Subscription has expired")
@@ -151,7 +150,7 @@ async def verify_subscription(
 
     # Update user in database
     start_time_millis = int(result.get("startTimeMillis", 0))
-    start_dt = datetime.fromtimestamp(start_time_millis / 1000, tz=timezone.utc)
+    start_dt = datetime.fromtimestamp(start_time_millis / 1000, tz=UTC)
 
     identity_repo = IdentityRepository()
     await identity_repo.update(
@@ -268,6 +267,7 @@ async def verify_product_purchase(
     identity_repo = IdentityRepository()
     factory = get_session_factory()
     from sqlalchemy import select as sa_select
+
     from src.domains.identity.db_models import User as UserModel
 
     async with factory() as session:
@@ -292,7 +292,7 @@ async def verify_product_purchase(
             "paymentProvider": "google_play",
             "providerReference": purchase_token,
             "status": "completed",
-            "completedAt": datetime.now(timezone.utc),
+            "completedAt": datetime.now(UTC),
         }
     )
 

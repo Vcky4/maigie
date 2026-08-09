@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.database.session import get_session_factory
@@ -124,6 +124,7 @@ async def evaluate_triggers(
     Called after significant learning actions (quiz complete, note create, etc.)
     """
     from src.domains.personal_learning.repository import PersonalLearningRepository
+
     from . import feature_tier_service
 
     repo = PersonalLearningRepository()
@@ -138,7 +139,7 @@ async def evaluate_triggers(
     if not profile:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Check maturity gate (no triggers in first 3 days)
     if (profile.maturity_days or 0) < MIN_MATURITY_DAYS:
@@ -199,7 +200,7 @@ async def record_dismissal(user_id: str, trigger_id: str) -> None:
     from src.domains.personal_learning.repository import PersonalLearningRepository
 
     repo = PersonalLearningRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Update profile
     profile = await repo.get_profile_by_user(user_id)
@@ -224,12 +225,13 @@ async def record_conversion(user_id: str) -> None:
     from src.domains.personal_learning.repository import PersonalLearningRepository
 
     repo = PersonalLearningRepository()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Find the most recent trigger and mark it converted
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select, update
+
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 
         stmt = (
@@ -279,7 +281,7 @@ async def _gather_user_state(
     docs_this_week = 0
     try:
         docs_this_week = await repo.count_documents_since(
-            user_id, datetime.now(timezone.utc) - timedelta(days=7)
+            user_id, datetime.now(UTC) - timedelta(days=7)
         )
     except (AttributeError, Exception):
         pass
@@ -371,6 +373,7 @@ async def _get_recently_dismissed_triggers(user_id: str, now: datetime) -> set[s
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 
         stmt = (
@@ -388,6 +391,7 @@ async def _mark_trigger_dismissed(user_id: str, trigger_id: str, now: datetime) 
     factory = get_session_factory()
     async with factory() as session:
         from sqlalchemy import select
+
         from src.domains.personal_learning.db_models import ConversionTriggerLog
 
         stmt = (

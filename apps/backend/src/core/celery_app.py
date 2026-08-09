@@ -121,11 +121,11 @@ celery_app = create_celery_app()
 # New domain-scoped task modules in src/workers/.
 try:
     from src.workers import (
+        billing_tasks,  # noqa: F401
         intelligence_tasks,  # noqa: F401
         notification_tasks,  # noqa: F401
-        progress_tasks,  # noqa: F401
-        billing_tasks,  # noqa: F401
         personal_learning_tasks,  # noqa: F401
+        progress_tasks,  # noqa: F401
     )
 except Exception as e:
     # Avoid crashing the app if optional modules are unavailable at import time,

@@ -172,6 +172,7 @@ async def get_recommendations(current_user: CurrentUser, limit: int = Query(5, g
 async def get_model_preferences(current_user: CurrentUser):
     """Get user's AI model preferences."""
     from sqlalchemy import select
+
     from src.domains.identity.db_models import ModelPreference
     from src.shared.database import get_session_factory
 
@@ -192,7 +193,9 @@ async def get_model_preferences(current_user: CurrentUser):
 @router.put("/models/preferences", response_model=models.ModelPreferenceResponse)
 async def update_model_preference(body: models.ModelPreferenceUpdate, current_user: CurrentUser):
     """Update preferred AI model for a capability."""
-    from sqlalchemy import select, update as sa_update
+    from sqlalchemy import select
+    from sqlalchemy import update as sa_update
+
     from src.domains.identity.db_models import ModelPreference
     from src.shared.database import get_session_factory
 

@@ -6,7 +6,7 @@ interleaves spaced repetition reviews, and adapts when learners fall behind.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.exceptions import NotFoundError
@@ -48,11 +48,11 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     elif isinstance(deadline_raw, str) and deadline_raw.strip():
         deadline = datetime.fromisoformat(deadline_raw.replace("Z", "+00:00"))
     else:
-        deadline = datetime.now(timezone.utc).replace(hour=23, minute=59) + timedelta(days=30)
+        deadline = datetime.now(UTC).replace(hour=23, minute=59) + timedelta(days=30)
 
     # Ensure timezone-aware for consistent math downstream
     if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=timezone.utc)
+        deadline = deadline.replace(tzinfo=UTC)
 
     # Get behaviour profile for sustainable scheduling
     profile = await repo.get_profile_by_user(user_id)
@@ -99,7 +99,7 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
         topics_to_plan = await _generate_topics_from_goal(title, goal_description, user_id=user_id)
 
     # Calculate available days
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     days_available = max(1, (deadline - now).days)
 
     # Distribute items across days
@@ -169,7 +169,7 @@ async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
     if not plan:
         raise NotFoundError("StudyPlan", plan_id)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     await repo.update_plan_item(
         item_id,
         {
@@ -182,6 +182,7 @@ async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
     new_completed = (plan.completed_items or 0) + 1
 
     from sqlalchemy import update as sa_update
+
     from src.domains.personal_learning.db_models import StudyPlan
     from src.shared.database import get_session_factory
 
@@ -237,7 +238,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     if not plan:
         return
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     deadline = plan.deadline
     days_remaining = max(1, (deadline - now).days)
 

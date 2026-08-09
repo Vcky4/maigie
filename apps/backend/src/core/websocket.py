@@ -190,6 +190,17 @@ class ConnectionManager:
         for connection_id in connection_ids:
             await self.send_personal_message(connection_id, message)
 
+    async def send_json(self, data: dict[str, Any], user_id: str):
+        """Send a message to every connection for a user, payload first.
+
+        This is ``send_to_user`` with the arguments reversed. The chat websocket handler
+        is written against this order at roughly twenty call sites, so the alias lives
+        here rather than the handler being rewritten. Keeping both on the one manager
+        matters more than the naming: a second manager instance would hold a separate
+        connection registry, and messages sent through it would reach nobody.
+        """
+        await self.send_to_user(user_id, data)
+
     async def broadcast(self, message: dict[str, Any], exclude: set[str] | None = None):
         """
         Broadcast a message to all active connections.

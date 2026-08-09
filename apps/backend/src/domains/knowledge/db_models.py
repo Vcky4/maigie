@@ -7,7 +7,7 @@ Course, Module, Topic, Resource, Embedding, CourseOutlineSatisfaction, UserTopic
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, ForeignKey, Index
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,9 +24,9 @@ class Course(Base, TimestampMixin):
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     difficulty: Mapped[str] = mapped_column(String, default="BEGINNER", server_default="BEGINNER")
-    target_date: Mapped[Optional[datetime]] = mapped_column(
+    target_date: Mapped[datetime | None] = mapped_column(
         "targetDate", DateTime(timezone=True), nullable=True
     )
     is_ai_generated: Mapped[bool] = mapped_column(
@@ -34,7 +34,7 @@ class Course(Base, TimestampMixin):
     )
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
 
     # Relationships
     modules: Mapped[list["Module"]] = relationship(
@@ -55,7 +55,7 @@ class Module(Base, TimestampMixin):
         "courseId", String, ForeignKey("Course.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     order: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
@@ -79,10 +79,10 @@ class Topic(Base, TimestampMixin):
         "moduleId", String, ForeignKey("Module.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
-    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     order: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    estimated_hours: Mapped[Optional[float]] = mapped_column("estimatedHours", Float, nullable=True)
+    estimated_hours: Mapped[float | None] = mapped_column("estimatedHours", Float, nullable=True)
 
     # Relationships
     module: Mapped["Module"] = relationship("Module", back_populates="topics")
@@ -106,7 +106,7 @@ class UserTopicProgress(Base, TimestampMixin):
         "topicId", String, ForeignKey("Topic.id", ondelete="CASCADE"), index=True
     )
     completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    completed_at: Mapped[Optional[datetime]] = mapped_column(
+    completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )
     minutes_spent: Mapped[float] = mapped_column(
@@ -129,29 +129,29 @@ class Resource(Base, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
     url: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
     type: Mapped[str] = mapped_column(String, default="OTHER", server_default="OTHER")
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
     is_recommended: Mapped[bool] = mapped_column(
         "isRecommended", Boolean, default=False, server_default="false"
     )
-    recommendation_score: Mapped[Optional[float]] = mapped_column(
+    recommendation_score: Mapped[float | None] = mapped_column(
         "recommendationScore", Float, nullable=True
     )
-    recommendation_source: Mapped[Optional[str]] = mapped_column(
+    recommendation_source: Mapped[str | None] = mapped_column(
         "recommendationSource", String, nullable=True
     )
-    recommendation_reason: Mapped[Optional[str]] = mapped_column(
+    recommendation_reason: Mapped[str | None] = mapped_column(
         "recommendationReason", String, nullable=True
     )
-    course_id: Mapped[Optional[str]] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[Optional[str]] = mapped_column("topicId", String, nullable=True, index=True)
-    space_id: Mapped[Optional[str]] = mapped_column("spaceId", String, nullable=True, index=True)
+    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
+    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
+    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
     click_count: Mapped[int] = mapped_column("clickCount", Integer, default=0, server_default="0")
     bookmark_count: Mapped[int] = mapped_column(
         "bookmarkCount", Integer, default=0, server_default="0"
     )
-    last_accessed_at: Mapped[Optional[datetime]] = mapped_column(
+    last_accessed_at: Mapped[datetime | None] = mapped_column(
         "lastAccessedAt", DateTime(timezone=True), nullable=True
     )
 
@@ -171,7 +171,7 @@ class CourseOutlineSatisfaction(Base):
         "courseId", String, ForeignKey("Course.id", ondelete="CASCADE"), index=True
     )
     kind: Mapped[str] = mapped_column(String, nullable=False)
-    feedback: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    feedback: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         "createdAt",
         DateTime(timezone=True),
@@ -188,12 +188,10 @@ class Embedding(Base, TimestampMixin):
     object_type: Mapped[str] = mapped_column("objectType", String, nullable=False)
     object_id: Mapped[str] = mapped_column("objectId", String, nullable=False)
     vector: Mapped[dict] = mapped_column(JSON, nullable=False)
-    content: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    metadata_json: Mapped[Optional[dict]] = mapped_column("metadata", JSON, nullable=True)
-    resource_id: Mapped[Optional[str]] = mapped_column(
-        "resourceId", String, nullable=True, index=True
-    )
-    resource_bank_item_id: Mapped[Optional[str]] = mapped_column(
+    content: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    resource_id: Mapped[str | None] = mapped_column("resourceId", String, nullable=True, index=True)
+    resource_bank_item_id: Mapped[str | None] = mapped_column(
         "resourceBankItemId", String, nullable=True, index=True
     )
 

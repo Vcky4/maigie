@@ -8,7 +8,7 @@ Feeds insights into Home_Service, StudyPlan_Service, and Proactive_Intelligence.
 
 import logging
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
@@ -160,7 +160,7 @@ def _compute_consistency_score(sessions: list[Any]) -> float:
         return 0.0
 
     # Get unique study dates in the last 30 days
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     thirty_days_ago = now - timedelta(days=30)
 
     study_dates = set()
@@ -228,7 +228,7 @@ def _compute_dropout_risk(sessions: list[Any]) -> float:
         risk += 0.4
 
     # Also check if no sessions in last 3 days
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     last_session = sorted_sessions[-1]
     days_since_last = (now - last_session.start_time).days
     if days_since_last >= 3:

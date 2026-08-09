@@ -35,6 +35,7 @@ def check_streaks_task():
         from datetime import UTC, datetime, timedelta
 
         from sqlalchemy import select, update
+
         from src.domains.progress.db_models import UserStreak
         from src.shared.database import get_session_factory
 
@@ -77,6 +78,7 @@ def daily_credit_reset_task():
 
     async def _reset():
         from sqlalchemy import text
+
         from src.shared.database import get_session_factory
 
         factory = get_session_factory()
