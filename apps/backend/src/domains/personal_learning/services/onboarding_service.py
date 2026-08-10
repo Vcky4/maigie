@@ -1,12 +1,13 @@
 """
-Onboarding service — captures learner purpose and builds initial learning profile.
+Onboarding service — captures learner purpose and builds initial
+learning profile.
 
 Handles purpose-first onboarding: "What brings you to Maigie today?"
 Creates and progressively refines the LearningProfile.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from src.domains.identity.repository import IdentityRepository
@@ -22,7 +23,8 @@ async def set_purpose(*, user_id: str, purpose: str) -> Any:
     Set the learner's purpose and create their initial LearningProfile.
 
     Purpose options: exam_prep, skill_building, course_completion,
-    professional_certification, teaching, community, general_learning
+    professional_certification, teaching, community,
+    general_learning
 
     Req 14.1: Store purpose and create initial Learning_Profile
     """
@@ -62,7 +64,11 @@ async def set_exam_details(
     if not profile:
         # Create profile if it doesn't exist yet
         profile = await repo.create_profile(
-            {"userId": user_id, "purpose": "exam_prep", "onboardingState": "purpose_set"}
+            {
+                "userId": user_id,
+                "purpose": "exam_prep",
+                "onboardingState": "purpose_set",
+            }
         )
 
     update_data: dict[str, Any] = {
@@ -81,8 +87,6 @@ async def set_exam_details(
 
     # Trigger background content generation
     try:
-        from . import auto_setup_service
-
         # Run in background (fire-and-forget for now, should be Celery task)
         import asyncio
 
@@ -119,7 +123,11 @@ async def set_skill_details(
     if not profile:
         # Create profile if it doesn't exist yet
         profile = await repo.create_profile(
-            {"userId": user_id, "purpose": "skill_building", "onboardingState": "purpose_set"}
+            {
+                "userId": user_id,
+                "purpose": "skill_building",
+                "onboardingState": "purpose_set",
+            }
         )
 
     update_data: dict[str, Any] = {
@@ -186,7 +194,8 @@ async def _generate_onboarding_content(
 
     except Exception as e:
         logger.error(f"Content generation failed for user {user_id}: {e}")
-        # Don't update state on failure - keeps user in details_set state
+        # Don't update state on failure - keeps user in details_set
+        # state
 
 
 async def get_onboarding_status(*, user_id: str) -> dict[str, Any]:
@@ -239,7 +248,10 @@ async def get_onboarding_status(*, user_id: str) -> dict[str, Any]:
 
 
 async def set_subjects(
-    *, user_id: str, subjects: list[str] | None = None, goals: str | None = None
+    *,
+    user_id: str,
+    subjects: list[str] | None = None,
+    goals: str | None = None,
 ) -> Any:
     """
     Set initial subjects and/or goals for the learner.
@@ -253,7 +265,8 @@ async def set_subjects(
     The learner provides intent — the system prepares everything.
 
     Req 14.2: When subjects provided, create study plan seeds.
-              When goals provided without subjects, create topic interests.
+              When goals provided without subjects, create topic
+              interests.
     """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
@@ -269,9 +282,10 @@ async def set_subjects(
     if update_data:
         profile = await repo.update_profile(user_id, update_data)
 
-    # Trigger auto-setup: create preparation, topics, flashcards, study plan
-    # This runs inline so the learner sees "setting up" in the next Home request
-    # and the content is ready by the time they check again
+    # Trigger auto-setup: create preparation, topics, flashcards,
+    # study plan. This runs inline so the learner sees "setting up"
+    # in the next Home request and content is ready by the time they
+    # check again
     try:
         from . import auto_setup_service
 
@@ -289,7 +303,10 @@ async def get_profile(*, user_id: str) -> Any:
 
 
 async def complete_onboarding(*, user_id: str) -> None:
-    """Complete identity onboarding and record when the learning profile was completed."""
+    """
+    Complete identity onboarding and record when the learning
+    profile was completed.
+    """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
         raise NotFoundError("Learning profile", user_id)
@@ -305,7 +322,10 @@ async def complete_onboarding(*, user_id: str) -> None:
 
 
 async def set_preferred_llm_provider(*, user_id: str, provider: str) -> Any:
-    """Persist the provider used by resilient personal-learning LLM calls."""
+    """
+    Persist the provider used by resilient personal-learning
+    LLM calls.
+    """
     profile = await repo.get_profile_by_user(user_id)
     if not profile:
         raise NotFoundError("Learning profile", user_id)
@@ -318,7 +338,8 @@ async def update_maturity(*, user_id: str) -> None:
     Increment the profile's maturity_days counter.
     Called by the daily background task.
 
-    Req 14.4: Progressive refinement — maturity increases over time.
+    Req 14.4: Progressive refinement — maturity increases over
+    time.
     """
     profile = await repo.get_profile_by_user(user_id)
     if profile:
@@ -346,11 +367,13 @@ async def is_onboarding(*, user_id: str) -> bool:
     if (profile.maturity_days or 0) > 7:
         return False
 
-    # Activity-based exit: purpose set + at least one content item created
+    # Activity-based exit: purpose set + at least one content item
+    # created
     if not profile.purpose:
         return True  # Haven't even set purpose yet
 
-    # Check if user has created any content (notes, flashcards, or preparations)
+    # Check if user has created any content (notes, flashcards, or
+    # preparations)
     from ..repository import personal_learning_repo
 
     # Quick check: any flashcards?

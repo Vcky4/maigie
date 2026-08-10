@@ -1,0 +1,30 @@
+[flake8]
+# Flake8 configuration for Maigie backend
+# This project uses flake8 and black for linting/formatting
+
+max-line-length = 100
+extend-ignore = E501, E203, W503, F401, F841
+
+# E501: Line too long (handled by Black)
+# E203: Whitespace before ':' (Black compatibility)
+# W503: Line break before binary operator (outdated PEP 8)
+# F401: Module imported but unused (acceptable in some cases)
+# F841: Local variable assigned but never used (acceptable in some cases)
+
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    .pytest_cache,
+    .ruff_cache,
+    alembic/versions/__pycache__,
+    build,
+    dist,
+    *.egg-info
+
+# Per-file ignores
+per-file-ignores =
+    # Test files set env vars before imports
+    tests/**:E402
+    # Alembic env setup before imports
+    alembic/env.py:E402

@@ -19,14 +19,29 @@ depends_on = None
 
 def upgrade() -> None:
     # Add new columns to LearningProfile for onboarding state machine
-    op.add_column("LearningProfile", sa.Column("onboardingState", sa.String(), nullable=True))
-    op.add_column("LearningProfile", sa.Column("examName", sa.String(), nullable=True))
-    op.add_column("LearningProfile", sa.Column("examDate", sa.Date(), nullable=True))
-    op.add_column("LearningProfile", sa.Column("skillName", sa.String(), nullable=True))
-    op.add_column("LearningProfile", sa.Column("currentLevel", sa.String(), nullable=True))
+    op.add_column(
+        "LearningProfile",
+        sa.Column("onboardingState", sa.String(), nullable=True),
+    )
+    op.add_column(
+        "LearningProfile",
+        sa.Column("examName", sa.String(), nullable=True),
+    )
+    op.add_column(
+        "LearningProfile",
+        sa.Column("examDate", sa.Date(), nullable=True),
+    )
+    op.add_column(
+        "LearningProfile",
+        sa.Column("skillName", sa.String(), nullable=True),
+    )
+    op.add_column(
+        "LearningProfile",
+        sa.Column("currentLevel", sa.String(), nullable=True),
+    )
 
-    # Backfill existing profiles to 'completed' state if they have onboarding_completed_at
-    # Otherwise set to 'not_started'
+    # Backfill existing profiles to 'completed' state if they have
+    # onboarding_completed_at. Otherwise set to 'not_started'
     op.execute(
         """
         UPDATE "LearningProfile"

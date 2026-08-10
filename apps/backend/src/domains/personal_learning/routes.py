@@ -71,13 +71,20 @@ async def get_learn_dashboard(
 # ===========================================================================
 
 
-@router.post("/onboarding/purpose", response_model=models.LearningProfileResponse, status_code=201)
+@router.post(
+    "/onboarding/purpose",
+    response_model=models.LearningProfileResponse,
+    status_code=201,
+)
 async def set_purpose(body: models.PurposeSetRequest, current_user: CurrentUser):
     """Set the learner's purpose. First step of onboarding."""
     return await onboarding_service.set_purpose(user_id=current_user.id, purpose=body.purpose)
 
 
-@router.post("/onboarding/exam-details", response_model=models.LearningProfileResponse)
+@router.post(
+    "/onboarding/exam-details",
+    response_model=models.LearningProfileResponse,
+)
 async def set_exam_details(body: models.ExamDetailsRequest, current_user: CurrentUser):
     """Set exam preparation details. For EXAM_PREP purpose learners."""
     return await onboarding_service.set_exam_details(
@@ -89,7 +96,10 @@ async def set_exam_details(body: models.ExamDetailsRequest, current_user: Curren
     )
 
 
-@router.post("/onboarding/skill-details", response_model=models.LearningProfileResponse)
+@router.post(
+    "/onboarding/skill-details",
+    response_model=models.LearningProfileResponse,
+)
 async def set_skill_details(body: models.SkillDetailsRequest, current_user: CurrentUser):
     """Set skill building details. For SKILL_BUILDING purpose learners."""
     return await onboarding_service.set_skill_details(
@@ -101,19 +111,25 @@ async def set_skill_details(body: models.SkillDetailsRequest, current_user: Curr
     )
 
 
-@router.get("/onboarding/status", response_model=models.OnboardingStatusResponse)
+@router.get(
+    "/onboarding/status",
+    response_model=models.OnboardingStatusResponse,
+)
 async def get_onboarding_status(current_user: CurrentUser):
     """Get current onboarding status for progress polling."""
     return await onboarding_service.get_onboarding_status(user_id=current_user.id)
 
 
-@router.post("/onboarding/subjects", response_model=models.LearningProfileResponse)
+@router.post(
+    "/onboarding/subjects",
+    response_model=models.LearningProfileResponse,
+)
 async def set_subjects(body: models.SubjectsSetRequest, current_user: CurrentUser):
     """
     Set initial subjects and/or goals.
 
-    DEPRECATED: Use /onboarding/exam-details or /onboarding/skill-details instead.
-    Kept for backward compatibility.
+    DEPRECATED: Use /onboarding/exam-details or /onboarding/skill-details
+    instead. Kept for backward compatibility.
     """
     return await onboarding_service.set_subjects(
         user_id=current_user.id, subjects=body.subjects, goals=body.goals
@@ -132,12 +148,16 @@ async def get_profile(current_user: CurrentUser):
     profile = await onboarding_service.get_profile(user_id=current_user.id)
     if not profile:
         raise HTTPException(
-            status_code=404, detail="Learning profile not found. Complete onboarding first."
+            status_code=404,
+            detail="Learning profile not found. Complete onboarding first.",
         )
     return profile
 
 
-@router.put("/profile/llm-provider", response_model=models.LearningProfileResponse)
+@router.put(
+    "/profile/llm-provider",
+    response_model=models.LearningProfileResponse,
+)
 async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: CurrentUser):
     """Set the provider used for the learner's personal-learning AI calls."""
     return await onboarding_service.set_preferred_llm_provider(
