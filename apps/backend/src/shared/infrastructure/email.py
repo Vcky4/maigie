@@ -20,9 +20,11 @@ replaced with silent no-op stubs. Deliberate changes made during the restore:
 
 import asyncio
 import logging
+import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import unescape
 from pathlib import Path
 
 import httpx
@@ -320,6 +322,96 @@ async def _send_multipart_email(
         "No usable outbound email provider for this strategy "
         f"(chain={chain!s}, SMTP_HOST={'set' if settings.SMTP_HOST else 'unset'}, "
         f"RESEND_API_KEY={'set' if settings.RESEND_API_KEY else 'unset'})"
+    )
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_BLOCK_BREAK_RE = re.compile(r"(?i)</(?:p|div|h[1-6]|li|tr|table|ul|ol)>|<br\s*/?>")
+
+
+def html_to_text(html: str) -> str:
+    """Best-effort plaintext part for a message that only exists as HTML."""
+    text = _HTML_BLOCK_BREAK_RE.sub("\n", html)
+    text = _HTML_TAG_RE.sub("", text)
+    text = unescape(text)
+    return "\n".join(line for line in (raw.strip() for raw in text.splitlines()) if line)
+
+
+async def send_transactional_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: str | None = None,
+    ref_id: str | None = None,
+) -> None:
+    """Send a caller-composed message through the configured provider chain.
+
+    Entry point for senders that build their own HTML rather than using a Jinja
+    template in this package (auth OTP, welcome, password reset). Using it means
+    those messages get the same SMTP -> Resend fallback as everything else, instead
+    of dying with the first provider.
+
+    Skips quietly when no provider is configured; raises when every configured
+    provider fails, so the caller can decide whether that is fatal.
+    """
+    if not _email_transport_configured():
+        logger.warning(
+            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
+            "Skipping email to %s: %s",
+            to_email,
+            subject,
+        )
+        return
+
+    await _send_multipart_email(
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        text_body=text_body or html_to_text(html_body),
+        headers=_standard_headers(ref_id or f"transactional-{to_email}"),
+    )
+
+
+async def send_templated_email(
+    template_base: str,
+    to_email: str,
+    subject: str,
+    fallback_text: str,
+    ref_id: str | None = None,
+    **template_data: object,
+) -> None:
+    """Render ``<template_base>.html`` / ``.txt`` and send it through the provider chain.
+
+    ``app_name`` and ``logo_url`` are filled in for every template, since the shared
+    layout in ``base.html`` reads both. Callers may override either.
+
+    Skips quietly when no provider is configured; raises when every configured
+    provider fails, so the caller can decide whether that is fatal.
+    """
+    if not _email_transport_configured():
+        logger.warning(
+            "Outbound email not configured (SMTP_HOST or RESEND_API_KEY). "
+            "Skipping email to %s: %s",
+            to_email,
+            subject,
+        )
+        return
+
+    data: dict[str, object] = {
+        "app_name": APP_NAME,
+        "logo_url": settings.EMAIL_LOGO_URL or "",
+        # bulk_email renders the subject as its own <title>; harmless elsewhere.
+        "subject": subject,
+        **template_data,
+    }
+    html_body, text_body = _render(template_base, fallback_text, **data)
+
+    await _send_multipart_email(
+        to_email=to_email,
+        subject=subject,
+        html_body=html_body,
+        text_body=text_body,
+        headers=_standard_headers(ref_id or f"{template_base}-{to_email}"),
     )
 
 

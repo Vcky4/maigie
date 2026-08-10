@@ -179,17 +179,27 @@ def test_missing_plaintext_template_falls_back_without_raising():
         logo_url="",
     )
     assert html
-    # space_invite.txt exists, so the fallback is not used; assert the mechanism
-    # instead against a template that has no .txt sibling.
-    html2, text2 = em._render(
-        "reset_password",
-        "the fallback text",
-        name="Ada",
-        otp="123456",
-        app_name="Maigie",
-        logo_url="",
+    assert text != "the fallback text"  # space_invite.txt exists
+
+
+def test_html_only_template_uses_the_fallback_text(monkeypatch):
+    """A template with no .txt sibling still yields a plaintext part.
+
+    Every shipped template currently has one, so the loader is swapped for an
+    in-memory one rather than pinning the test to whichever template happens to
+    be missing its text version.
+    """
+    from jinja2 import DictLoader, Environment, select_autoescape
+
+    html_only = Environment(
+        loader=DictLoader({"html_only.html": "<p>{{ name }}</p>"}),
+        autoescape=select_autoescape(enabled_extensions=("html", "xml")),
     )
-    assert text2 == "the fallback text"
+    monkeypatch.setattr(em, "jinja_env", html_only)
+
+    html, text = em._render("html_only", "the fallback text", name="Ada")
+    assert html == "<p>Ada</p>"
+    assert text == "the fallback text"
 
 
 # ---------------------------------------------------------------------------

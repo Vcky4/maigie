@@ -1,116 +1,110 @@
 """
-Email sending service — transactional emails via SMTP (Brevo).
+Email sending service — auth transactional emails (OTP, welcome, password reset).
 
-Sends OTP verification, welcome, and password reset emails.
-Gracefully skips when SMTP is not configured (local dev).
+Bodies come from the Jinja templates in ``src/templates/email`` (``verification``,
+``welcome``, ``reset_password``), which all extend the shared ``base.html`` layout.
+This module used to build its own inline HTML and ignore those templates, so auth
+mail looked nothing like the rest of the product's email.
+
+Delivery goes through ``shared.infrastructure.email``, which walks the providers in
+``EMAIL_OUTBOUND_STRATEGY`` order (SMTP, then the Resend HTTP API by default). Sending
+directly over SMTP, as this module also used to do, meant a rejection — bad Brevo or
+Gmail credentials, or a monthly quota — dropped the OTP even with a working Resend key.
+
+Gracefully skips when no provider is configured (local dev).
 """
 
 import logging
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+
+from src.config import get_settings
+from src.shared.infrastructure.email import send_templated_email
 
 logger = logging.getLogger(__name__)
 
+# Kept in step with the OTP lifetime set in domains/identity/services.py.
+OTP_EXPIRY_MINUTES = 15
 
-async def _send_smtp_email(to_email: str, subject: str, html_body: str) -> None:
-    """Send an email via SMTP. Skips gracefully if SMTP not configured."""
-    from src.config import get_settings
 
+def _login_url() -> str:
     settings = get_settings()
-
-    if not settings.SMTP_HOST or not settings.SMTP_USER:
-        logger.warning(f"SMTP not configured — skipping email to {to_email}: {subject}")
-        return
-
-    try:
-        import aiosmtplib
-
-        msg = MIMEMultipart("alternative")
-        msg["From"] = (
-            f"{settings.EMAILS_FROM_NAME or 'Maigie'} "
-            f"<{settings.EMAILS_FROM_EMAIL or settings.SMTP_USER}>"
-        )
-        msg["To"] = to_email
-        msg["Subject"] = subject
-        msg.attach(MIMEText(html_body, "html"))
-
-        await aiosmtplib.send(
-            msg,
-            hostname=settings.SMTP_HOST,
-            port=settings.SMTP_PORT or 587,
-            username=settings.SMTP_USER,
-            password=settings.SMTP_PASSWORD or "",
-            start_tls=True,
-        )
-        logger.info(f"Email sent to {to_email}: {subject}")
-    except ImportError:
-        logger.warning("aiosmtplib not installed — skipping email send")
-    except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}")
-        raise
+    base = settings.FRONTEND_BASE_URL or settings.FRONTEND_URL or "http://localhost:4200"
+    return f"{base.rstrip('/')}/login"
 
 
-async def send_verification_email(email: str, otp_code: str) -> None:
-    """Send OTP verification email."""
-    subject = "Verify your Maigie account"
-    html = f"""
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Verify your email</h2>
-        <p>Your verification code is:</p>
-        <h1 style="letter-spacing: 8px; font-size: 36px; text-align: center;
-                   background: #f5f5f5; padding: 20px; border-radius: 8px;">{otp_code}</h1>
-        <p>This code expires in 15 minutes.</p>
-        <p style="color: #666; font-size: 12px;">If you didn't create a Maigie account, you can safely ignore this email.</p>
-    </div>
-    """
-    await _send_smtp_email(email, subject, html)
+async def send_verification_email(email: str, otp_code: str, name: str | None = None) -> None:
+    """Send the signup OTP."""
+    await send_templated_email(
+        "verification",
+        to_email=email,
+        subject=f"Your Maigie verification code is {otp_code}",
+        fallback_text=(
+            f"Your Maigie verification code is {otp_code}. "
+            f"It expires in {OTP_EXPIRY_MINUTES} minutes.\n"
+            "If you didn't create a Maigie account, you can ignore this email."
+        ),
+        ref_id=f"verify-{email}",
+        name=name,
+        code=otp_code,
+        expires_minutes=OTP_EXPIRY_MINUTES,
+    )
 
 
 async def send_welcome_email(email: str, name: str | None = None) -> None:
-    """Send welcome email after verification."""
-    greeting = f"Hi {name}" if name else "Welcome"
-    subject = "Welcome to Maigie!"
-    html = f"""
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>{greeting}, welcome to Maigie! 🎉</h2>
-        <p>Your account is now active. You're ready to start your learning journey.</p>
-        <p>Here's what you can do next:</p>
-        <ul>
-            <li>Set your learning purpose</li>
-            <li>Create your first study notes</li>
-            <li>Start preparing for an exam</li>
-        </ul>
-        <p>Happy learning!</p>
-    </div>
-    """
-    await _send_smtp_email(email, subject, html)
+    """Send the welcome email after verification."""
+    await send_templated_email(
+        "welcome",
+        to_email=email,
+        subject="Welcome to Maigie",
+        fallback_text=f"Your Maigie account is verified. Open Maigie: {_login_url()}",
+        ref_id=f"welcome-{email}",
+        name=name,
+        login_url=_login_url(),
+    )
 
 
 async def send_password_reset_email(email: str, otp_code: str, name: str | None = None) -> None:
-    """Send password reset OTP email."""
-    greeting = f"Hi {name}" if name else "Hello"
-    subject = "Reset your Maigie password"
-    html = f"""
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>{greeting},</h2>
-        <p>You requested a password reset. Your code is:</p>
-        <h1 style="letter-spacing: 8px; font-size: 36px; text-align: center;
-                   background: #f5f5f5; padding: 20px; border-radius: 8px;">{otp_code}</h1>
-        <p>This code expires in 15 minutes.</p>
-        <p style="color: #666; font-size: 12px;">If you didn't request this, you can safely ignore this email.</p>
-    </div>
-    """
-    await _send_smtp_email(email, subject, html)
+    """Send the password reset OTP."""
+    await send_templated_email(
+        "reset_password",
+        to_email=email,
+        subject="Reset your Maigie password",
+        fallback_text=(
+            f"Your Maigie password reset code is {otp_code}. "
+            f"It expires in {OTP_EXPIRY_MINUTES} minutes.\n"
+            "If you didn't request this, you can ignore this email."
+        ),
+        ref_id=f"password-reset-{email}",
+        name=name,
+        code=otp_code,
+        expires_minutes=OTP_EXPIRY_MINUTES,
+    )
 
 
 async def send_template_email(to_email: str, template: str, context: dict) -> None:
-    """Send a templated email (generic). Falls back to plain text."""
+    """Send a generic notification.
+
+    ``template`` names the caller's notification type, not a file in the template
+    folder: the worker that calls this passes values like ``"streak_reminder"``.
+    The body is rendered through ``bulk_email``, which wraps caller-supplied text
+    in the shared layout.
+    """
     subject = context.get("subject", "Notification from Maigie")
     body = context.get("body", "You have a new notification from Maigie.")
-    html = f"""
-    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>{subject}</h2>
-        <p>{body}</p>
-    </div>
-    """
-    await _send_smtp_email(to_email, subject, html)
+
+    await send_templated_email(
+        "bulk_email",
+        to_email=to_email,
+        subject=subject,
+        fallback_text=body,
+        ref_id=f"{template}-{to_email}",
+        name=context.get("name"),
+        content=body,
+    )
+
+
+__all__ = [
+    "send_verification_email",
+    "send_welcome_email",
+    "send_password_reset_email",
+    "send_template_email",
+]
