@@ -740,6 +740,66 @@ class TestHintRequests:
         assert result["eliminatedOption"] is None
         assert result["hintAvailable"] is True
 
+    async def test_a_question_with_no_nudge_still_gets_a_hint_at_level_one(self, repo):
+        """Found when the hint button was first wired to the UI.
+
+        A level-1 request on a question with no nudge returned
+        `hintAvailable: false` **and still counted the request** — telling the
+        learner nothing could be offered while level 2 would have offered
+        something, and charging them a hint to find out. Every question generated
+        before `hintNudge` existed is in this position: measured at 32 of 118.
+
+        Eliminating an option is a stronger hint than a nudge, so it is not the
+        first choice. It is simply better than nothing, and still not the answer.
+        """
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        repo.questions["q1"].hint_nudge = None
+
+        result = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=1
+        )
+
+        assert result["hintAvailable"] is True
+        assert result["eliminatedOption"] is not None
+        assert result["eliminatedOption"] != "right"
+
+    async def test_a_question_with_nothing_to_offer_says_so(self, repo):
+        """`hintAvailable: false` has to remain reachable, or it means nothing.
+
+        Two options and no nudge: eliminating one would leave no choice at all, so
+        there is genuinely nothing to give.
+        """
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        repo.questions["q1"].hint_nudge = None
+        repo.questions["q1"].options = ["right", "wrong a"]
+
+        result = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=1
+        )
+
+        assert result["hintAvailable"] is False
+        assert result["nudge"] is None
+        assert result["eliminatedOption"] is None
+
+    async def test_a_nudge_is_still_preferred_at_level_one(self, repo):
+        """The fallback must not have replaced the nudge when one exists.
+
+        Level 1 stays the weaker hint where it can: a nudge points at the concept,
+        while eliminating an option narrows the choice for the learner.
+        """
+        repo.add_session("quiz-1", OWNER)
+        question = repo.add_question("q1", "quiz-1", key="right")
+        question.hint_nudge = "Think about the assumption."
+
+        result = await quiz_engine.request_hint(
+            user_id=OWNER, quiz_id="quiz-1", question_id="q1", level=1
+        )
+
+        assert result["nudge"] == "Think about the assumption."
+        assert result["eliminatedOption"] is None
+
     async def test_level_two_also_eliminates_a_wrong_option(self, repo):
         repo.add_session("quiz-1", OWNER)
         repo.add_question("q1", "quiz-1", key="right")

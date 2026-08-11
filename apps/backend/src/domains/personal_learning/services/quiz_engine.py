@@ -1023,6 +1023,17 @@ async def request_hint(
     eliminated: str | None = None
     if requested >= HINT_LEVEL_NARROW:
         eliminated = _eliminable_option(question)
+    elif not nudge:
+        # A level-1 request on a question with no nudge used to return
+        # `hintAvailable: false` and still count the request — telling the learner
+        # nothing could be offered while level 2 would have offered something, and
+        # charging them a hint to find out. Questions generated before `hintNudge`
+        # existed are all in this position.
+        #
+        # Eliminating an option is a stronger hint than a nudge, so this is not the
+        # first choice; it is simply better than nothing, and it is still not the
+        # answer.
+        eliminated = _eliminable_option(question)
 
     # Counted once per request, in SQL, so concurrent requests cannot both read the
     # same starting value.
