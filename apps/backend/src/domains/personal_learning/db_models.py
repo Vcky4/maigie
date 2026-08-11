@@ -585,7 +585,9 @@ class QuizSession(Base, TimestampMixin):
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="CASCADE"), index=True
     )
     mode: Mapped[str] = mapped_column(String, nullable=False)
-    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True)
+    topic_id: Mapped[str | None] = mapped_column(
+        "topicId", String, ForeignKey("PrepTopic.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(String, default="IN_PROGRESS")
     total_questions: Mapped[int] = mapped_column("totalQuestions", Integer, default=0)
     correct_count: Mapped[int] = mapped_column("correctCount", Integer, default=0)

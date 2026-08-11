@@ -393,11 +393,14 @@ async def test_past_paper_sim_requires_upgrade(client: AsyncClient, auth_headers
         assert response.status_code == 403, response.text
         body = response.json()
 
+        # The response is nested under 'detail' for 403 errors
+        detail = body.get("detail", {})
+
         # Verify upgrade details are included in response
-        assert body.get("upgradeRequired") or body.get("upgrade_required")
-        assert "PAST_PAPER_SIM" in (body.get("reason") or "")
-        assert body.get("capability") == "quiz_modes"
-        assert body.get("upgradeUrl") or body.get("upgrade_url")
+        assert detail.get("upgradeRequired") or detail.get("upgrade_required")
+        assert "PAST_PAPER_SIM" in (detail.get("reason") or "")
+        assert detail.get("capability") == "quiz_modes"
+        assert detail.get("upgradeUrl") or detail.get("upgrade_url")
 
         # Verify the check was called with correct parameters
         mock_check.assert_called_once()
