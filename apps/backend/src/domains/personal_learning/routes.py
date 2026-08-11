@@ -349,12 +349,19 @@ async def list_preparations(
     pageSize: int = Query(20, ge=1, le=100),
     status: models.PreparationStatus | None = Query(None),
     search: str | None = Query(None, max_length=200),
+    sortBy: str | None = Query(None, regex="^(date|readiness)$"),
 ):
-    """List preparations, ordered by target date, using the canonical envelope."""
+    """List preparations with optional sorting.
+
+    sortBy:
+    - None or "date": ordered by target date ascending (default)
+    - "readiness": ordered by average topic mastery descending
+    """
     items, total = await exam_prep_service.search_preparations(
         user_id=current_user.id,
         status=status,
         search=search,
+        sort_by=sortBy,
         page=page,
         page_size=pageSize,
     )

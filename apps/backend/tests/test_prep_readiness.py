@@ -147,12 +147,64 @@ class TestAccuracyAndReadiness:
     def test_accuracy_ratio(self):
         assert _progress(questions_answered=4, questions_correct=3).accuracy_percent == 75.0
 
+    def test_accuracy_clamped_at_one_hundred(self):
+        """Handles potential data inconsistency gracefully."""
+        progress = _progress(questions_answered=10, questions_correct=11)
+        assert progress.accuracy_percent == 100.0
+
     def test_practice_not_ready_without_topics(self):
         """Quiz generation needs topics, so the UI must route to extraction first."""
         assert _progress().practice_ready is False
 
     def test_practice_ready_with_topics(self):
         assert _progress(topics_total=1).practice_ready is True
+
+
+# ---------------------------------------------------------------------------
+# TestProgressEdgeCases
+# ---------------------------------------------------------------------------
+
+
+class TestProgressEdgeCases:
+    """Additional edge cases for robustness."""
+
+    def test_all_topics_at_max_mastery(self):
+        """Every topic mastered to 100."""
+        progress = _progress(topics_total=5, topics_strong=5, mastery_sum=500.0)
+        assert progress.progress_percent == 100.0
+        assert progress.average_mastery_percent == 100.0
+
+    def test_mixed_mastery_scores(self):
+        """Topics at different mastery levels."""
+        # 3 topics: 100, 75, 50 = avg 75
+        progress = _progress(topics_total=3, topics_strong=1, mastery_sum=225.0)
+        assert progress.progress_percent == 33.3  # 1/3 strong
+        assert progress.average_mastery_percent == 75.0
+
+    def test_mastery_values_clamped_to_valid_range(self):
+        """Prevents impossible percentages from data issues."""
+        progress = _progress(topics_total=1, mastery_sum=150.0)
+        assert progress.average_mastery_percent == 100.0
+
+    def test_zero_topics_does_not_crash(self):
+        """Empty preparation state is valid."""
+        progress = _progress()
+        assert progress.topics_total == 0
+        assert progress.progress_percent == 0.0
+        assert progress.average_mastery_percent is None
+        assert progress.accuracy_percent is None
+        assert progress.practice_ready is False
+
+    def test_assessed_topics_independent_of_mastery(self):
+        """A topic can be assessed (has answers) even with zero mastery."""
+        progress = _progress(
+            topics_total=5,
+            topics_assessed=3,
+            questions_answered=10,
+            questions_correct=0,
+        )
+        assert progress.topics_assessed == 3
+        assert progress.accuracy_percent == 0.0
 
 
 # ---------------------------------------------------------------------------

@@ -363,15 +363,20 @@ class PersonalLearningRepository:
         *,
         status: str | None = None,
         search: str | None = None,
+        sort_by: str | None = None,
         skip: int = 0,
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[ExamPrep], int]:
-        """Filtered, paginated preparations ordered by target date.
+        """Filtered, paginated preparations with optional sorting.
 
         Returns ``(items, total)`` where ``total`` counts every match, not just
         the returned page. Separate from ``list_dashboard_exam_preps``, which
         the Learn dashboard depends on filtering to non-completed rows.
+
+        Sorting:
+        - `None` or `"date"`: ordered by target date ascending (default)
+        - `"readiness"`: ordered by average topic mastery descending, nulls last
         """
         async with self._use_session(session) as s:
             filters = [ExamPrep.user_id == user_id]
@@ -385,13 +390,37 @@ class PersonalLearningRepository:
                 await s.execute(select(func.count()).select_from(ExamPrep).where(*filters))
             ).scalar_one() or 0
 
-            stmt = (
-                select(ExamPrep)
-                .where(*filters)
-                .order_by(ExamPrep.exam_date.asc())
-                .offset(skip)
-                .limit(take)
-            )
+            # Build order clause based on sort parameter
+            if sort_by == "readiness":
+                # Calculate average mastery as a subquery for sorting
+                # Average of all topics' mastery scores, descending (higher = more ready)
+                # Preparations with no topics appear last (nulls_last)
+                mastery_subq = (
+                    select(
+                        PrepTopic.prep_id,
+                        func.avg(PrepTopic.mastery_score).label("avg_mastery"),
+                    )
+                    .where(PrepTopic.prep_id == ExamPrep.id)
+                    .group_by(PrepTopic.prep_id)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    select(ExamPrep)
+                    .where(*filters)
+                    .order_by(mastery_subq.desc().nulls_last(), ExamPrep.exam_date.asc())
+                    .offset(skip)
+                    .limit(take)
+                )
+            else:
+                # Default: order by target date
+                stmt = (
+                    select(ExamPrep)
+                    .where(*filters)
+                    .order_by(ExamPrep.exam_date.asc())
+                    .offset(skip)
+                    .limit(take)
+                )
+
             items = list((await s.execute(stmt)).scalars().all())
             return items, total
 

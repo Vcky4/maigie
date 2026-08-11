@@ -359,3 +359,49 @@ async def test_unusable_generation_fails_rather_than_returning_an_empty_quiz(
 async def test_unauthenticated_requests_are_refused(client: AsyncClient):
     response = await client.get(f"{QUIZ_PATH}/some-quiz-id")
     assert response.status_code in (401, 403)
+
+
+async def test_past_paper_sim_requires_upgrade(client: AsyncClient, auth_headers):
+    """PAST_PAPER_SIM mode is gated behind PLUS tier and returns 403 with upgrade details."""
+    prep_id = await _create_preparation(client, auth_headers)
+    await _seed_topic(prep_id)
+
+    # Mock the capability check to deny access (simulating free tier user)
+    with patch(
+        "src.domains.personal_learning.services.feature_tier_service.check_capability",
+        new_callable=AsyncMock,
+    ) as mock_check:
+        mock_check.return_value = type(
+            "CapabilityCheckResult",
+            (),
+            {
+                "allowed": False,
+                "reason": "PAST_PAPER_SIM mode requires PLUS subscription",
+                "capability": "quiz_modes",
+                "upgrade_url": "/upgrade",
+                "trial_available": True,
+                "upgrade_value": "PAST_PAPER_SIM",
+            },
+        )()
+
+        response = await client.post(
+            f"{PREP_PATH}/{prep_id}/quizzes",
+            json={"mode": "PAST_PAPER_SIM", "questionCount": 5},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 403, response.text
+        body = response.json()
+
+        # Verify upgrade details are included in response
+        assert body.get("upgradeRequired") or body.get("upgrade_required")
+        assert "PAST_PAPER_SIM" in (body.get("reason") or "")
+        assert body.get("capability") == "quiz_modes"
+        assert body.get("upgradeUrl") or body.get("upgrade_url")
+
+        # Verify the check was called with correct parameters
+        mock_check.assert_called_once()
+        call_kwargs = mock_check.call_args.kwargs
+        assert call_kwargs.get("requested_value") == "PAST_PAPER_SIM"
+
+    await client.delete(f"{PREP_PATH}/{prep_id}", headers=auth_headers)

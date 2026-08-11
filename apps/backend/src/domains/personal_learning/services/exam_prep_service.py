@@ -73,14 +73,19 @@ async def search_preparations(
     user_id: str,
     status: str | None = None,
     search: str | None = None,
+    sort_by: str | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Any], int]:
-    """Filtered, paginated preparations ordered by target date."""
+    """Filtered, paginated preparations with optional sorting.
+
+    sort_by: None/"date" for target date, "readiness" for average mastery
+    """
     return await repo.search_exam_preps(
         user_id,
         status=status,
         search=search,
+        sort_by=sort_by,
         skip=(page - 1) * page_size,
         take=page_size,
     )

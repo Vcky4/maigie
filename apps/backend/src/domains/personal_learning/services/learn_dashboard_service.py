@@ -238,7 +238,7 @@ async def get_dashboard(
     flashcard_stats: dict[str, Any] = {}
     overdue_cards = 0
     paths: list[models.LearnPathSummary] = []
-    plan_total = 0
+    paths_total = 0  # Both study plans and preparations
 
     source_sections: dict[str, set[models.LearnDashboardSection]] = {
         "courses": {"courses", "stats", "tools"},
@@ -264,7 +264,7 @@ async def get_dashboard(
     if not isinstance(results[4], BaseException):
         flashcard_stats, overdue_cards = results[4]
     if not isinstance(results[5], BaseException):
-        paths, plan_total = results[5]
+        paths, paths_total = results[5]
 
     due_cards = max(0, int(flashcard_stats.get("dueToday", 0)))
     total_cards = max(0, int(flashcard_stats.get("total", 0)))
@@ -289,7 +289,7 @@ async def get_dashboard(
         models.LearnToolSummary(type="flashcard", count=total_cards),
         models.LearnToolSummary(type="saved_resource", count=max(0, resource_total)),
         models.LearnToolSummary(type="document", count=max(0, document_total)),
-        models.LearnToolSummary(type="study_plan", count=max(0, plan_total)),
+        models.LearnToolSummary(type="study_plan", count=max(0, paths_total)),
     ]
     recent_items = _merge_recent_items(notes, resources, documents, recent_limit)
     section_order = [
