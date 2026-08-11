@@ -851,6 +851,88 @@ async def unflag_question(*, user_id: str, prep_id: str, question_id: str) -> No
 _EXAM_MILESTONE_KIND = "EXAM"
 _STUDY_MILESTONE_KIND = "STUDY"
 
+# A plan replaced by a newer one for the same preparation. Its pending items are no
+# longer what to do next, but the ones the learner completed are real work on real
+# dates, so they stay on the timeline.
+SUPERSEDED_PLAN_STATUS = "SUPERSEDED"
+
+
+async def generate_preparation_plan(*, user_id: str, prep_id: str) -> Any:
+    """Generate the study plan a preparation's timeline is derived from.
+
+    Two preconditions, both refusals rather than degraded output. `check_prep_timeline`
+    measured how common each is: of 23 live preparations, 12 have no topics and 12
+    have a target date in the past.
+
+    - **No topics.** `generate_plan` falls through to `_generate_topics_from_goal`,
+      which asks a model to invent items from the title. That produces a plausible
+      schedule for a subject the learner never described, so the plan and their
+      material are about different things. Extraction is one action away.
+    - **Target date in the past.** `days_available` is `max(1, (deadline - now).days)`,
+      so every topic is scheduled today no matter how many hours it adds up to. The
+      settings tab can move the date; a plan nobody can follow cannot be fixed later.
+
+    Regenerating supersedes the previous plan instead of adding to it. The timeline
+    merges items across plans, so without this a second generation would list every
+    topic twice on overlapping days — a duplicated to-do list rather than history.
+    """
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    exam_date = prep.exam_date
+    if exam_date is not None:
+        if exam_date.tzinfo is None:
+            exam_date = exam_date.replace(tzinfo=UTC)
+        if exam_date < datetime.now(UTC):
+            raise MaigieError(
+                "This preparation's target date has passed. Move it to a future date "
+                "in settings, then generate a plan.",
+                status_code=409,
+                code="PREP_TARGET_DATE_PASSED",
+            )
+
+    topics = await repo.list_prep_topics(prep_id)
+    if not topics:
+        raise MaigieError(
+            "Add topics first — a plan schedules the topics you are preparing, and "
+            "this preparation has none yet.",
+            status_code=409,
+            code="PREP_TOPICS_REQUIRED",
+        )
+    if all(topic.status == "MASTERED" for topic in topics):
+        # Not a gap. There is nothing left to schedule, which is the good outcome.
+        raise MaigieError(
+            "Every topic here is already mastered, so there is nothing left to "
+            "schedule. Practise to keep it, or mark the preparation complete.",
+            status_code=409,
+            code="PREP_ALL_TOPICS_MASTERED",
+        )
+
+    from . import study_plan_service
+
+    # Supersede before creating, so a failure part-way leaves the old plan in place
+    # rather than leaving the preparation with none.
+    existing = await repo.list_prep_study_plans(prep_id, user_id)
+
+    plan = await study_plan_service.generate_plan(
+        user_id=user_id,
+        data={
+            "title": f"Study Plan — {prep.subject}",
+            "deadline": prep.exam_date,
+            "prepId": prep_id,
+        },
+    )
+
+    for previous in existing:
+        if previous.id != plan.id and previous.status not in (
+            "COMPLETED",
+            SUPERSEDED_PLAN_STATUS,
+        ):
+            await repo.update_plan_status(previous.id, SUPERSEDED_PLAN_STATUS)
+
+    return plan
+
 
 async def get_timeline(*, user_id: str, prep_id: str) -> dict[str, Any]:
     """A preparation's timeline, derived from its linked study plan.
@@ -872,7 +954,13 @@ async def get_timeline(*, user_id: str, prep_id: str) -> dict[str, Any]:
 
     milestones: list[dict[str, Any]] = []
     for plan in plans:
+        superseded = plan.status == SUPERSEDED_PLAN_STATUS
         for item in plan.items or []:
+            # A superseded plan contributes only what was completed. Its pending
+            # items were replaced, and listing them alongside the current plan's
+            # would schedule the same topic twice on overlapping days.
+            if superseded and item.status != "COMPLETED":
+                continue
             milestones.append(
                 {
                     "id": item.id,
@@ -888,6 +976,14 @@ async def get_timeline(*, user_id: str, prep_id: str) -> dict[str, Any]:
                     "completedAt": item.completed_at,
                 }
             )
+
+    # Whether there is still a plan to follow, which is what the client offers
+    # generation on. A plan that was superseded and had nothing completed leaves
+    # no trace, and reporting `True` for it would be the "planned and empty" misread
+    # this flag exists to prevent.
+    has_current_plan = any(plan.status != SUPERSEDED_PLAN_STATUS for plan in plans) or bool(
+        milestones
+    )
 
     milestones.sort(key=lambda milestone: milestone["scheduledFor"])
 
@@ -913,6 +1009,6 @@ async def get_timeline(*, user_id: str, prep_id: str) -> dict[str, Any]:
         # False when no plan has been generated yet. The client uses this to offer
         # plan generation instead of rendering a timeline containing only the exam,
         # which would read as though the work had been planned and found to be empty.
-        "hasStudyPlan": bool(plans),
+        "hasStudyPlan": has_current_plan,
         "milestones": milestones,
     }

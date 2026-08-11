@@ -15353,7 +15353,7 @@
     },
     "/api/v1/learning/preparations/{prep_id}/study-plan": {
       "post": {
-        "description": "Generate a study plan for a preparation.",
+        "description": "Generate a study plan for a preparation.\n\nDelegates the preconditions to the service, which refuses rather than producing\na plan that cannot be followed — see `generate_preparation_plan`.",
         "operationId": "generate_prep_study_plan_api_v1_learning_preparations__prep_id__study_plan_post",
         "parameters": [
           {

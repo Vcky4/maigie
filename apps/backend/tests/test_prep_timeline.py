@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.domains.personal_learning.services import exam_prep_service
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import MaigieError, NotFoundError
 
 OWNER = "user-owner"
 INTRUDER = "user-intruder"
@@ -37,9 +37,17 @@ class FakeRepo:
             status="IN_PROGRESS",
         )
 
-    def add_plan(self, prep_id: str, user_id: str, plan_id: str, items: list[SimpleNamespace]):
+    def add_plan(
+        self,
+        prep_id: str,
+        user_id: str,
+        plan_id: str,
+        items: list[SimpleNamespace],
+        *,
+        status: str = "ACTIVE",
+    ):
         self.plans.setdefault((prep_id, user_id), []).append(
-            SimpleNamespace(id=plan_id, items=items)
+            SimpleNamespace(id=plan_id, items=items, status=status)
         )
 
     async def find_exam_prep(self, prep_id: str, user_id: str):
@@ -147,16 +155,70 @@ class TestDerivedTimeline:
         assert timeline["hasStudyPlan"] is True
         assert len(timeline["milestones"]) == 1
 
-    async def test_items_from_multiple_plans_are_merged(self, repo):
-        """Regenerating a plan should not hide the earlier one's items."""
+    async def test_items_from_multiple_live_plans_are_merged(self, repo):
+        """Two plans that are both current both contribute."""
         repo.add_prep("prep-1", OWNER)
-        repo.add_plan("prep-1", OWNER, "plan-1", [_item("old", days=1)])
-        repo.add_plan("prep-1", OWNER, "plan-2", [_item("new", days=2)])
+        repo.add_plan("prep-1", OWNER, "plan-1", [_item("first", days=1)])
+        repo.add_plan("prep-1", OWNER, "plan-2", [_item("second", days=2)])
 
         timeline = await exam_prep_service.get_timeline(user_id=OWNER, prep_id="prep-1")
 
         ids = [m["id"] for m in timeline["milestones"] if m["kind"] == "STUDY"]
-        assert ids == ["old", "new"]
+        assert ids == ["first", "second"]
+
+    async def test_a_superseded_plans_pending_items_are_dropped(self, repo):
+        """Regenerating replaces the schedule rather than doubling it.
+
+        This was the original behaviour and it was wrong: every plan contributed its
+        items regardless of status, so a second generation listed each topic twice on
+        overlapping days. Described as "not hiding history", it was in fact two
+        competing answers to what to do tomorrow.
+        """
+        repo.add_prep("prep-1", OWNER)
+        repo.add_plan(
+            "prep-1",
+            OWNER,
+            "plan-old",
+            [_item("stale", days=1), _item("already-done", days=2, status="COMPLETED")],
+            status="SUPERSEDED",
+        )
+        repo.add_plan("prep-1", OWNER, "plan-new", [_item("current", days=3)])
+
+        timeline = await exam_prep_service.get_timeline(user_id=OWNER, prep_id="prep-1")
+
+        ids = [m["id"] for m in timeline["milestones"] if m["kind"] == "STUDY"]
+        # The completed item stays: it is work the learner actually did on that date.
+        # The pending one goes: the new plan has replaced it.
+        assert ids == ["already-done", "current"]
+
+    async def test_a_superseded_plan_with_nothing_completed_leaves_no_trace(self, repo):
+        """And then `hasStudyPlan` must be false again.
+
+        Otherwise the client suppresses its generate offer and shows a timeline
+        holding only the exam — the planned-and-empty misread the flag exists for.
+        """
+        repo.add_prep("prep-1", OWNER)
+        repo.add_plan("prep-1", OWNER, "plan-old", [_item("stale", days=1)], status="SUPERSEDED")
+
+        timeline = await exam_prep_service.get_timeline(user_id=OWNER, prep_id="prep-1")
+
+        assert timeline["hasStudyPlan"] is False
+        assert [m["kind"] for m in timeline["milestones"]] == ["EXAM"]
+
+    async def test_a_superseded_plan_with_completed_work_still_counts(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        repo.add_plan(
+            "prep-1",
+            OWNER,
+            "plan-old",
+            [_item("done", days=1, status="COMPLETED")],
+            status="SUPERSEDED",
+        )
+
+        timeline = await exam_prep_service.get_timeline(user_id=OWNER, prep_id="prep-1")
+
+        assert timeline["hasStudyPlan"] is True
+        assert [m["id"] for m in timeline["milestones"] if m["kind"] == "STUDY"] == ["done"]
 
     async def test_item_status_is_carried_through(self, repo):
         repo.add_prep("prep-1", OWNER)
@@ -174,6 +236,140 @@ class TestDerivedTimeline:
         timeline = await exam_prep_service.get_timeline(user_id=OWNER, prep_id="prep-1")
 
         assert len(timeline["milestones"]) == 1
+
+
+class TestPlanGenerationPreconditions:
+    """The timeline is empty until a plan exists, so generation is the real feature.
+
+    `scripts/check_prep_timeline.py` measured both refusals against live data: of 23
+    preparations, 12 have no topics and 12 have a target date in the past. Neither
+    was previously refused — the first invented a schedule from the title, the second
+    scheduled everything today.
+    """
+
+    @pytest.fixture
+    def plan_repo(self, repo, monkeypatch):
+        repo.topics: dict[str, list[SimpleNamespace]] = {}
+        repo.status_writes: list[tuple[str, str]] = []
+        generated: list[dict] = []
+
+        async def list_prep_topics(prep_id: str):
+            return repo.topics.get(prep_id, [])
+
+        async def update_plan_status(plan_id: str, status: str):
+            repo.status_writes.append((plan_id, status))
+
+        async def generate_plan(*, user_id: str, data: dict):
+            generated.append(data)
+            plan = SimpleNamespace(id=f"plan-{len(generated)}", items=[], status="ACTIVE")
+            repo.plans.setdefault((data["prepId"], user_id), []).append(plan)
+            return plan
+
+        repo.list_prep_topics = list_prep_topics
+        repo.update_plan_status = update_plan_status
+        monkeypatch.setattr(
+            "src.domains.personal_learning.services.study_plan_service.generate_plan",
+            generate_plan,
+        )
+        repo.generated = generated
+        return repo
+
+    async def test_a_preparation_with_topics_generates(self, plan_repo):
+        plan_repo.add_prep("prep-1", OWNER)
+        plan_repo.topics["prep-1"] = [SimpleNamespace(id="t-1", status="IN_PROGRESS")]
+
+        plan = await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert plan.id == "plan-1"
+        # The deadline is the preparation's own target date, not a 30-day default.
+        assert plan_repo.generated[-1]["deadline"] == EXAM_DATE
+        assert plan_repo.generated[-1]["prepId"] == "prep-1"
+
+    async def test_no_topics_is_refused_rather_than_invented(self, plan_repo):
+        plan_repo.add_prep("prep-1", OWNER)
+
+        with pytest.raises(MaigieError) as excinfo:
+            await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert excinfo.value.code == "PREP_TOPICS_REQUIRED"
+        assert excinfo.value.status_code == 409
+        assert plan_repo.generated == []
+
+    async def test_a_past_target_date_is_refused(self, plan_repo):
+        plan_repo.add_prep("prep-1", OWNER, exam_date=NOW - timedelta(days=3))
+        plan_repo.topics["prep-1"] = [SimpleNamespace(id="t-1", status="IN_PROGRESS")]
+
+        with pytest.raises(MaigieError) as excinfo:
+            await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert excinfo.value.code == "PREP_TARGET_DATE_PASSED"
+        assert plan_repo.generated == []
+
+    async def test_a_naive_target_date_is_still_compared(self, plan_repo):
+        """The column is timezone-aware in the model and naive in some rows.
+
+        Comparing a naive datetime to an aware one raises `TypeError`, which would be
+        a 500 on the generate button rather than the refusal it should be.
+        """
+        plan_repo.add_prep("prep-1", OWNER, exam_date=datetime(2020, 1, 1))
+        plan_repo.topics["prep-1"] = [SimpleNamespace(id="t-1", status="IN_PROGRESS")]
+
+        with pytest.raises(MaigieError) as excinfo:
+            await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert excinfo.value.code == "PREP_TARGET_DATE_PASSED"
+
+    async def test_everything_mastered_is_its_own_message(self, plan_repo):
+        """Not a gap to fill. There is nothing left to schedule."""
+        plan_repo.add_prep("prep-1", OWNER)
+        plan_repo.topics["prep-1"] = [
+            SimpleNamespace(id="t-1", status="MASTERED"),
+            SimpleNamespace(id="t-2", status="MASTERED"),
+        ]
+
+        with pytest.raises(MaigieError) as excinfo:
+            await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert excinfo.value.code == "PREP_ALL_TOPICS_MASTERED"
+
+    async def test_one_unmastered_topic_is_enough(self, plan_repo):
+        plan_repo.add_prep("prep-1", OWNER)
+        plan_repo.topics["prep-1"] = [
+            SimpleNamespace(id="t-1", status="MASTERED"),
+            SimpleNamespace(id="t-2", status="IN_PROGRESS"),
+        ]
+
+        await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert len(plan_repo.generated) == 1
+
+    async def test_regenerating_supersedes_the_previous_plan(self, plan_repo):
+        plan_repo.add_prep("prep-1", OWNER)
+        plan_repo.topics["prep-1"] = [SimpleNamespace(id="t-1", status="IN_PROGRESS")]
+
+        await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+        await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        # Only the first, and never the one just created.
+        assert plan_repo.status_writes == [("plan-1", "SUPERSEDED")]
+
+    async def test_a_completed_plan_is_not_superseded(self, plan_repo):
+        """Completing a plan is an outcome. Superseding it would rewrite that."""
+        plan_repo.add_prep("prep-1", OWNER)
+        plan_repo.topics["prep-1"] = [SimpleNamespace(id="t-1", status="IN_PROGRESS")]
+        plan_repo.add_plan("prep-1", OWNER, "plan-finished", [], status="COMPLETED")
+
+        await exam_prep_service.generate_preparation_plan(user_id=OWNER, prep_id="prep-1")
+
+        assert plan_repo.status_writes == []
+
+    async def test_another_learners_preparation_cannot_be_planned(self, plan_repo):
+        plan_repo.add_prep("prep-1", OWNER)
+        plan_repo.topics["prep-1"] = [SimpleNamespace(id="t-1", status="IN_PROGRESS")]
+
+        with pytest.raises(NotFoundError):
+            await exam_prep_service.generate_preparation_plan(user_id=INTRUDER, prep_id="prep-1")
+        assert plan_repo.generated == []
 
 
 class TestTimelineOwnership:

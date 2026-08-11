@@ -335,6 +335,9 @@ class FakeRepo:
         self.created_topics: list[dict] = []
         self.materials: list[SimpleNamespace] = []
         self.updated: list[tuple[str, dict]] = []
+        self.topic_updates: list[tuple[str, dict]] = []
+        self.deleted_preps: list[str] = []
+        self.deleted_topics: list[str] = []
 
     def add_prep(self, prep_id: str, user_id: str, **overrides):
         defaults = {
@@ -421,6 +424,49 @@ class FakeRepo:
         self.updated.append((prep_id, data))
         return self.preps.get((prep_id, OWNER))
 
+    async def delete_exam_prep(self, prep_id: str):
+        self.deleted_preps.append(prep_id)
+        for key in [key for key in self.preps if key[0] == prep_id]:
+            del self.preps[key]
+
+    async def list_exam_preps(self, user_id: str, **kwargs):
+        return [prep for (_, owner), prep in self.preps.items() if owner == user_id]
+
+    async def find_prep_topic(self, topic_id: str, prep_id: str):
+        for topic in self.topics.get(prep_id, []):
+            if topic.id == topic_id:
+                return topic
+        return None
+
+    async def update_prep_topic(self, topic_id: str, data: dict):
+        self.topic_updates.append((topic_id, data))
+        for topics in self.topics.values():
+            for topic in topics:
+                if topic.id != topic_id:
+                    continue
+                # Mirror the write back onto the row, so a test can tell the
+                # difference between "recorded the payload" and "returned the
+                # updated topic" — the route serialises whatever comes back.
+                attr_for = {
+                    "title": "title",
+                    "description": "description",
+                    "category": "category",
+                    "estimatedMinutes": "estimated_minutes",
+                    "orderIndex": "order_index",
+                    "masteryScore": "mastery_score",
+                    "targetMastery": "target_mastery",
+                    "status": "status",
+                }
+                for wire, value in data.items():
+                    setattr(topic, attr_for[wire], value)
+                return topic
+        return None
+
+    async def delete_prep_topic(self, topic_id: str):
+        self.deleted_topics.append(topic_id)
+        for prep_id, topics in self.topics.items():
+            self.topics[prep_id] = [topic for topic in topics if topic.id != topic_id]
+
 
 @pytest.fixture
 def repo(monkeypatch):
@@ -490,6 +536,253 @@ class TestPreparationDetail:
             await exam_prep_service.get_preparation_detail(
                 user_id="user-intruder", prep_id="prep-1"
             )
+
+
+class TestPreparationUpdate:
+    """`PATCH /preparations/{id}` had no caller until the settings tab existed.
+
+    The mapping from request field to column is the part that silently does nothing
+    if it is wrong: a missing entry means the field is accepted and dropped, which is
+    exactly the `type` defect Phase 1 was written to fix.
+    """
+
+    @pytest.mark.asyncio
+    async def test_every_editable_field_reaches_the_repository(self, repo):
+        repo.add_prep("prep-1", OWNER)
+
+        await exam_prep_service.update_preparation(
+            user_id=OWNER,
+            prep_id="prep-1",
+            data={
+                "subject": "Renamed",
+                "description": "New scope",
+                "prep_type": "CERTIFICATION",
+                "confidence": "CONFIDENT",
+                "pace": "INTENSIVE",
+                "target_readiness": 90,
+                "target_date": "2026-12-01",
+            },
+        )
+
+        _, written = repo.updated[-1]
+        assert written["subject"] == "Renamed"
+        assert written["description"] == "New scope"
+        assert written["type"] == "CERTIFICATION"
+        assert written["confidence"] == "CONFIDENT"
+        assert written["pace"] == "INTENSIVE"
+        assert written["targetReadiness"] == 90
+        assert written["examDate"].year == 2026
+
+    @pytest.mark.asyncio
+    async def test_a_null_clears_rather_than_being_ignored(self, repo):
+        """Clearing has to be expressible.
+
+        A target the learner has removed must become `None`, not stay at its old
+        value — otherwise the chart keeps drawing a goal they deleted.
+        """
+        repo.add_prep("prep-1", OWNER, target_readiness=85)
+
+        await exam_prep_service.update_preparation(
+            user_id=OWNER,
+            prep_id="prep-1",
+            data={"target_readiness": None, "description": None},
+        )
+
+        _, written = repo.updated[-1]
+        assert written["targetReadiness"] is None
+        assert written["description"] is None
+
+    @pytest.mark.asyncio
+    async def test_untouched_fields_are_not_rewritten(self, repo):
+        """A partial update must stay partial.
+
+        The route uses `exclude_unset`, so a field the learner did not touch must not
+        appear here at all — writing it back with whatever the form was holding is
+        how a concurrent change gets clobbered.
+        """
+        repo.add_prep("prep-1", OWNER)
+
+        await exam_prep_service.update_preparation(
+            user_id=OWNER, prep_id="prep-1", data={"subject": "Only this"}
+        )
+
+        _, written = repo.updated[-1]
+        assert set(written) == {"subject"}
+
+    @pytest.mark.asyncio
+    async def test_an_empty_update_writes_nothing(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        await exam_prep_service.update_preparation(user_id=OWNER, prep_id="prep-1", data={})
+        assert repo.updated == []
+
+    @pytest.mark.asyncio
+    async def test_another_learners_preparation_cannot_be_updated(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        with pytest.raises(Exception):
+            await exam_prep_service.update_preparation(
+                user_id="user-intruder", prep_id="prep-1", data={"subject": "hijacked"}
+            )
+        assert repo.updated == []
+
+
+class TestTopicUpdate:
+    """`PATCH .../topics/{id}`, also uncalled until the topic editor existed."""
+
+    @pytest.mark.asyncio
+    async def test_editable_topic_fields_reach_the_repository(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        repo.topics["prep-1"] = [_topic("t-1", "Original", 40.0)]
+
+        await exam_prep_service.update_topic(
+            user_id=OWNER,
+            prep_id="prep-1",
+            topic_id="t-1",
+            data={
+                "title": "Renamed",
+                "category": "Foundations",
+                "description": "About it",
+                "estimated_minutes": 45,
+                "target_mastery": 90,
+                "order_index": 2,
+            },
+        )
+
+        _, written = repo.topic_updates[-1]
+        assert written["title"] == "Renamed"
+        assert written["category"] == "Foundations"
+        assert written["estimatedMinutes"] == 45
+        assert written["targetMastery"] == 90
+        assert written["orderIndex"] == 2
+
+    @pytest.mark.asyncio
+    async def test_the_response_carries_the_band_so_it_validates(self, repo):
+        """The route declares `PrepTopicResponse`, which requires `band`.
+
+        Returning the bare ORM row would be a 500 on a successful write.
+        """
+        repo.add_prep("prep-1", OWNER)
+        repo.topics["prep-1"] = [_topic("t-1", "Original", 40.0)]
+
+        payload = await exam_prep_service.update_topic(
+            user_id=OWNER, prep_id="prep-1", topic_id="t-1", data={"title": "Renamed"}
+        )
+
+        assert models.PrepTopicResponse.model_validate(payload).band == "focus"
+
+    @pytest.mark.asyncio
+    async def test_an_empty_update_still_returns_a_valid_payload(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        repo.topics["prep-1"] = [_topic("t-1", "Original", 40.0)]
+
+        payload = await exam_prep_service.update_topic(
+            user_id=OWNER, prep_id="prep-1", topic_id="t-1", data={}
+        )
+
+        assert repo.topic_updates == []
+        assert models.PrepTopicResponse.model_validate(payload).title == "Original"
+
+    @pytest.mark.asyncio
+    async def test_mastery_and_status_are_writable_but_the_ui_does_not_send_them(self, repo):
+        """The map accepts both; the settings UI deliberately omits them.
+
+        Kept as a test so the reason survives: readiness is derived from answered
+        questions, and a learner typing their own mastery would make it
+        self-reported. This asserts the boundary is a UI choice, not a silent gap.
+        """
+        repo.add_prep("prep-1", OWNER)
+        repo.topics["prep-1"] = [_topic("t-1", "Original", 40.0)]
+
+        await exam_prep_service.update_topic(
+            user_id=OWNER,
+            prep_id="prep-1",
+            topic_id="t-1",
+            data={"mastery_score": 100.0, "status": "MASTERED"},
+        )
+
+        _, written = repo.topic_updates[-1]
+        assert written == {"masteryScore": 100.0, "status": "MASTERED"}
+
+    @pytest.mark.asyncio
+    async def test_a_topic_from_another_preparation_is_not_found(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        repo.add_prep("prep-2", OWNER)
+        repo.topics["prep-2"] = [_topic("t-elsewhere", "Elsewhere", 40.0)]
+
+        with pytest.raises(MaigieError):
+            await exam_prep_service.update_topic(
+                user_id=OWNER, prep_id="prep-1", topic_id="t-elsewhere", data={"title": "moved"}
+            )
+        assert repo.topic_updates == []
+
+    @pytest.mark.asyncio
+    async def test_deleting_a_topic_reports_whether_there_was_one(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        repo.topics["prep-1"] = [_topic("t-1", "Original", 40.0)]
+
+        assert await exam_prep_service.delete_topic(user_id=OWNER, prep_id="prep-1", topic_id="t-1")
+        assert repo.deleted_topics == ["t-1"]
+        # A second delete is not an error, but it must not claim to have deleted
+        # anything — the route turns the False into a 404.
+        assert not await exam_prep_service.delete_topic(
+            user_id=OWNER, prep_id="prep-1", topic_id="t-1"
+        )
+        assert repo.deleted_topics == ["t-1"]
+
+
+class TestPreparationCompletionAndDeletion:
+    """Completing preserves, deleting removes. The two must not be confusable."""
+
+    @pytest.mark.asyncio
+    async def test_completing_only_changes_status(self, repo, monkeypatch):
+        repo.add_prep("prep-1", OWNER)
+        repo.topics["prep-1"] = [_topic("t-1", "Probability", 92.0)]
+        recorded: list[str] = []
+
+        async def record(**kwargs):
+            recorded.append(kwargs["activity_type"])
+
+        async def check_milestones(user_id, counters):
+            recorded.append(f"milestones:{counters['preps_completed']}")
+
+        monkeypatch.setattr(
+            "src.domains.personal_learning.services.activity_feed_service.record", record
+        )
+        monkeypatch.setattr(
+            "src.domains.personal_learning.services.milestone_service.check_milestones",
+            check_milestones,
+        )
+
+        await exam_prep_service.mark_completed(user_id=OWNER, prep_id="prep-1")
+
+        # The confirm dialog promises the learner nothing is lost. Status is the
+        # only write, and the row is still there to be read afterwards.
+        assert repo.updated == [("prep-1", {"status": "COMPLETED"})]
+        assert repo.deleted_preps == []
+        assert ("prep-1", OWNER) in repo.preps
+        assert repo.topics["prep-1"]
+        assert recorded[0] == "preparation_completed"
+
+    @pytest.mark.asyncio
+    async def test_deleting_removes_the_preparation(self, repo):
+        repo.add_prep("prep-1", OWNER)
+
+        assert await exam_prep_service.delete_preparation(user_id=OWNER, prep_id="prep-1")
+        assert repo.deleted_preps == ["prep-1"]
+        assert ("prep-1", OWNER) not in repo.preps
+
+    @pytest.mark.asyncio
+    async def test_deleting_a_missing_preparation_is_false_not_an_error(self, repo):
+        assert not await exam_prep_service.delete_preparation(user_id=OWNER, prep_id="nope")
+        assert repo.deleted_preps == []
+
+    @pytest.mark.asyncio
+    async def test_another_learner_cannot_delete(self, repo):
+        repo.add_prep("prep-1", OWNER)
+        assert not await exam_prep_service.delete_preparation(
+            user_id="user-intruder", prep_id="prep-1"
+        )
+        assert repo.deleted_preps == []
+        assert ("prep-1", OWNER) in repo.preps
 
 
 class TestTopicListing:

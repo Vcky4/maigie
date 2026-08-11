@@ -550,18 +550,14 @@ async def delete_topic(prep_id: str, topic_id: str, current_user: CurrentUser):
 
 @router.post("/preparations/{prep_id}/study-plan", response_model=models.StudyPlanResponse)
 async def generate_prep_study_plan(prep_id: str, current_user: CurrentUser):
-    """Generate a study plan for a preparation."""
-    prep = await exam_prep_service.get_preparation(user_id=current_user.id, prep_id=prep_id)
+    """Generate a study plan for a preparation.
 
-    plan = await study_plan_service.generate_plan(
-        user_id=current_user.id,
-        data={
-            "title": f"Study Plan — {prep.subject}",
-            "deadline": prep.exam_date,
-            "prepId": prep_id,
-        },
+    Delegates the preconditions to the service, which refuses rather than producing
+    a plan that cannot be followed — see `generate_preparation_plan`.
+    """
+    return await exam_prep_service.generate_preparation_plan(
+        user_id=current_user.id, prep_id=prep_id
     )
-    return plan
 
 
 @router.post("/preparations/{prep_id}/complete", response_model=models.PrepSummaryResponse)
