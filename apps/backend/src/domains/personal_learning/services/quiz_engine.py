@@ -6,6 +6,7 @@ TOPIC_FOCUS (single topic), and QUICK_REVIEW.
 """
 
 import logging
+import random
 import time
 from datetime import UTC, datetime, timezone
 from typing import Any
@@ -279,11 +280,16 @@ async def start_quiz(
 
     # Persist only questions that can actually be scored — see _usable_question.
     # Generation fills whatever the bank could not supply.
+    #
+    # Normalised in full before anything is written, so answer positions can be
+    # balanced across the batch rather than chosen one question at a time. Topic
+    # attribution is resolved in the same pass, since it needs the raw candidate.
     created = reused
     rejected = 0
     unattributed = 0
+    accepted: list[tuple[dict[str, Any], str | None]] = []
     for candidate in questions_data:
-        if created >= count:
+        if reused + len(accepted) >= count:
             break
         normalized = _usable_question(candidate)
         if normalized is None:
@@ -293,7 +299,13 @@ async def start_quiz(
         matched_topic_id = _resolve_topic_id(candidate, target_topics)
         if matched_topic_id is None:
             unattributed += 1
+        accepted.append((normalized, matched_topic_id))
 
+    # Every position gets used in turn, so no session can land its answers on one
+    # letter. Applied to the whole batch, before persisting.
+    balance_answer_positions([normalized for normalized, _ in accepted])
+
+    for normalized, matched_topic_id in accepted:
         # The question is banked against the preparation, then linked to this
         # session at this position. The bank outlives the session, so the question
         # remains browsable and reusable afterwards.
@@ -372,6 +384,101 @@ async def start_quiz(
     )
 
 
+def balanced_positions(
+    total: int, option_count: int, *, rng: random.Random | None = None
+) -> list[int]:
+    """Assign each of `total` questions a target index for its correct option.
+
+    Every block of `option_count` questions gets a shuffled permutation of all the
+    positions, so each position is used exactly once per block. Across a whole
+    number of blocks the distribution is therefore **exactly** even, not merely even
+    on average, and within any block no position repeats.
+
+    That is the difference from shuffling each question independently: independent
+    shuffles are uniform in expectation, but a five-question session can still land
+    four answers on A by chance, which is precisely the experience being fixed. A
+    real exam paper spreads its answers deliberately; so does this.
+
+    A trailing partial block draws from a fresh permutation, so a remainder never
+    repeats a position either.
+    """
+    generator = rng or random
+    positions: list[int] = []
+    while len(positions) < total:
+        block = list(range(option_count))
+        generator.shuffle(block)
+        positions.extend(block)
+    return positions[:total]
+
+
+def _move_correct_option(options: list[str], correct_answer: str, target: int) -> list[str]:
+    """Reorder `options` so `correct_answer` sits at `target`.
+
+    The other options keep their relative order, which matters when a generator has
+    put them in a deliberate sequence (ascending values, chronological events): only
+    the answer moves, so a question does not become incoherent to read.
+
+    Safe because `correctAnswer` is stored as the option **text**, not an index or a
+    letter, so reordering leaves the key pointing at the same string. Nothing
+    downstream reads position — `_check_answer_correctness` resolves letters against
+    the stored order at answer time, and the client derives A/B/C/D from the array.
+    """
+    normalized = [option.strip().lower() for option in options]
+    key = correct_answer.strip().lower()
+    if key not in normalized:
+        # Not answerable; `_usable_question` rejects these, so this is defensive.
+        return list(options)
+
+    current = normalized.index(key)
+    answer = options[current]
+    others = [option for index, option in enumerate(options) if index != current]
+    slot = max(0, min(target, len(options) - 1))
+    return others[:slot] + [answer] + others[slot:]
+
+
+def balance_answer_positions(
+    questions: list[dict[str, Any]], *, rng: random.Random | None = None
+) -> list[dict[str, Any]]:
+    """Spread the correct answer's position evenly across a batch of questions.
+
+    Language models have a strong positional bias and the prompt says nothing about
+    where the correct option should go. Measured across the banked questions before
+    this existed: **A 44%, B 40%, C 15%, D never correct.** A learner guessing A or B
+    scored about 85% while knowing nothing, and D was discardable on sight — so the
+    score measured position rather than knowledge.
+
+    Asking the model to randomise instead would not fix it: the bias *is* the model
+    answering that request, and compliance cannot be verified from the output. Doing
+    it here is verifiable and free.
+
+    Questions are grouped by option count so each group is balanced exactly; a
+    question with three options cannot be given a fourth position, and mixing the
+    counts into one cycle would skew both.
+
+    `TRUE_FALSE` is left alone: the conventional True/False order is worth keeping,
+    and with two options there is nothing to exploit beyond a coin flip.
+    """
+    by_count: dict[int, list[dict[str, Any]]] = {}
+    for question in questions:
+        options = question.get("options")
+        if (
+            question.get("question_type") != "MULTIPLE_CHOICE"
+            or not isinstance(options, list)
+            or len(options) < _MIN_OPTIONS
+        ):
+            continue
+        by_count.setdefault(len(options), []).append(question)
+
+    for option_count, group in by_count.items():
+        targets = balanced_positions(len(group), option_count, rng=rng)
+        for question, target in zip(group, targets):
+            question["options"] = _move_correct_option(
+                question["options"], question["correct_answer"], target
+            )
+
+    return questions
+
+
 def _usable_question(candidate: Any) -> dict[str, Any] | None:
     """Normalize one generated question, or return `None` if it cannot be scored.
 
@@ -406,6 +513,10 @@ def _usable_question(candidate: Any) -> dict[str, Any] | None:
             return None
         if not any(option.lower() == correct_answer.lower() for option in options):
             return None
+        # Answer position is *not* fixed here. It is assigned across the whole batch
+        # by `balance_answer_positions`, because balancing one question at a time can
+        # only be even on average — and a five-question session that lands four
+        # answers on A by chance is the experience this exists to prevent.
 
     explanation = candidate.get("explanation")
 

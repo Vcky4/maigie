@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timezone
 from types import SimpleNamespace
 
 from src.domains.personal_learning import models
+from src.domains.personal_learning.services import quiz_engine
 from src.domains.personal_learning.services.quiz_engine import (
     _build_quiz_response,
     _check_answer_correctness,
@@ -264,7 +265,13 @@ class TestUsableQuestion:
         assert result is not None
         assert result["question_text"] == "What is the null hypothesis?"
         assert result["correct_answer"] == "no effect"
-        assert result["options"] == ["no effect", "a guess", "a p-value", "a sample"]
+        # Membership, not order: option order is deliberately shuffled so the
+        # answer's position is not predictable. Asserting the original order would
+        # be asserting the bias.
+        assert sorted(result["options"]) == sorted(
+            ["no effect", "a guess", "a p-value", "a sample"]
+        )
+        assert result["correct_answer"] in result["options"]
 
     def test_missing_question_text_rejected(self):
         assert (
@@ -319,7 +326,7 @@ class TestUsableQuestion:
     def test_blank_options_are_stripped(self):
         result = _usable_question({**BASE_CANDIDATE, "options": ["no effect", "  ", "a guess", ""]})
         assert result is not None
-        assert result["options"] == ["no effect", "a guess"]
+        assert sorted(result["options"]) == sorted(["no effect", "a guess"])
 
     def test_missing_explanation_is_allowed(self):
         result = _usable_question({k: v for k, v in BASE_CANDIDATE.items() if k != "explanation"})
@@ -330,6 +337,221 @@ class TestUsableQuestion:
         result = _usable_question({k: v for k, v in BASE_CANDIDATE.items() if k != "questionType"})
         assert result is not None
         assert result["question_type"] == "MULTIPLE_CHOICE"
+
+
+# ---------------------------------------------------------------------------
+# TestOptionOrder
+# ---------------------------------------------------------------------------
+
+
+class TestOptionOrder:
+    """The correct answer's position must not be predictable.
+
+    Reported from real use as "seems all answers are option B". Measured across the
+    banked questions: A 44%, B 40%, C 15%, and D never correct — so guessing A or B
+    scored about 85% while knowing nothing, and D could be discarded on sight. The
+    score was measuring position rather than knowledge.
+    """
+
+    OPTIONS = ["right", "wrong a", "wrong b", "wrong c"]
+
+    def _batch(self, size: int, option_count: int = 4) -> list[dict]:
+        options = ["right"] + [f"wrong {index}" for index in range(option_count - 1)]
+        return [
+            {
+                "question_type": "MULTIPLE_CHOICE",
+                "options": list(options),
+                "correct_answer": "right",
+            }
+            for _ in range(size)
+        ]
+
+    def test_reordering_preserves_the_options(self):
+        # The set must be identical: this reorders, it never drops or invents an
+        # option.
+        batch = self._batch(8)
+        expected = sorted(batch[0]["options"])
+        quiz_engine.balance_answer_positions(batch)
+        for question in batch:
+            assert sorted(question["options"]) == expected
+            assert len(question["options"]) == 4
+
+    def test_reordering_cannot_break_the_answer_key(self):
+        """The key is stored as text, so reordering leaves it pointing at the same
+        option. This is the property that makes any of this safe."""
+        batch = self._batch(8)
+        quiz_engine.balance_answer_positions(batch)
+        for question in batch:
+            assert question["correct_answer"] in question["options"]
+
+    def test_the_other_options_keep_their_relative_order(self):
+        """Only the answer moves.
+
+        A generator often puts distractors in a deliberate sequence — ascending
+        values, chronological events — and shuffling all four would make such a
+        question incoherent to read.
+        """
+        batch = self._batch(12)
+        quiz_engine.balance_answer_positions(batch)
+        for question in batch:
+            others = [option for option in question["options"] if option != "right"]
+            assert others == ["wrong 0", "wrong 1", "wrong 2"]
+
+    def test_a_shuffled_question_is_still_answerable(self):
+        """End to end: normalise, then answer with the key. Correct either way."""
+        candidate = {**BASE_CANDIDATE}
+        for _ in range(50):
+            normalized = _usable_question(candidate)
+            assert normalized is not None
+            assert (
+                _check_answer_correctness(
+                    normalized["correct_answer"],
+                    normalized["correct_answer"],
+                    normalized["options"],
+                    question_type="MULTIPLE_CHOICE",
+                )
+                is True
+            )
+
+    def test_answering_by_letter_follows_the_shuffled_order(self):
+        """A letter resolves against the stored order, so the client's A/B/C/D
+        labels stay correct after shuffling."""
+        normalized = _usable_question(BASE_CANDIDATE)
+        assert normalized is not None
+        options = normalized["options"]
+        key_index = options.index(normalized["correct_answer"])
+        key_letter = "ABCD"[key_index]
+
+        assert (
+            _check_answer_correctness(
+                key_letter,
+                normalized["correct_answer"],
+                options,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is True
+        )
+        wrong_letter = next(letter for letter in "ABCD" if letter != key_letter)
+        assert (
+            _check_answer_correctness(
+                wrong_letter,
+                normalized["correct_answer"],
+                options,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is False
+        )
+
+    def test_a_full_batch_is_exactly_even(self):
+        """The point of balancing across the batch rather than per question.
+
+        With a whole number of blocks the distribution is exactly 25% each — not
+        25% on average, which is all independent shuffling can promise.
+        """
+        from collections import Counter
+
+        batch = self._batch(40)
+        quiz_engine.balance_answer_positions(batch)
+        positions = Counter(q["options"].index("right") for q in batch)
+
+        assert dict(positions) == {0: 10, 1: 10, 2: 10, 3: 10}
+
+    def test_every_block_uses_every_position_once(self):
+        """Evenness holds locally, not just in the total.
+
+        A session is four or five questions long, so a batch that is even overall
+        but clustered — AAAA then BBBB — would still be exploitable within a
+        sitting. Each block of four uses each position exactly once.
+        """
+        batch = self._batch(16)
+        quiz_engine.balance_answer_positions(batch)
+        indexes = [q["options"].index("right") for q in batch]
+
+        for start in range(0, 16, 4):
+            assert sorted(indexes[start : start + 4]) == [0, 1, 2, 3]
+
+    def test_a_short_session_cannot_stack_one_letter(self):
+        """Five questions cannot put four answers on the same letter.
+
+        This is the reported experience, and independent shuffling permits it: it is
+        simply unlikely, and unlikely happens.
+        """
+        from collections import Counter
+
+        for _ in range(200):
+            batch = self._batch(5)
+            quiz_engine.balance_answer_positions(batch)
+            positions = Counter(q["options"].index("right") for q in batch)
+            # Four distinct positions across five questions, so the most any letter
+            # can take is two.
+            assert max(positions.values()) <= 2
+            assert len(positions) == 4
+
+    def test_a_remainder_does_not_repeat_a_position(self):
+        batch = self._batch(3)
+        quiz_engine.balance_answer_positions(batch)
+        indexes = [q["options"].index("right") for q in batch]
+        assert len(set(indexes)) == 3
+
+    def test_three_option_questions_are_balanced_separately(self):
+        """A three-option question has no fourth slot, and mixing counts into one
+        cycle would skew both groups."""
+        from collections import Counter
+
+        batch = self._batch(9, option_count=3)
+        quiz_engine.balance_answer_positions(batch)
+        positions = Counter(q["options"].index("right") for q in batch)
+        assert dict(positions) == {0: 3, 1: 3, 2: 3}
+
+    def test_mixed_option_counts_are_each_balanced(self):
+        from collections import Counter
+
+        batch = self._batch(8) + self._batch(6, option_count=3)
+        quiz_engine.balance_answer_positions(batch)
+
+        four = Counter(q["options"].index("right") for q in batch if len(q["options"]) == 4)
+        three = Counter(q["options"].index("right") for q in batch if len(q["options"]) == 3)
+        assert dict(four) == {0: 2, 1: 2, 2: 2, 3: 2}
+        assert dict(three) == {0: 2, 1: 2, 2: 2}
+
+    def test_generation_balances_what_it_persists(self):
+        """The wiring: normalising a batch and balancing it produces even positions.
+
+        Guards against the balancing step being skipped in `start_quiz`, which is
+        the only place questions are created.
+        """
+        from collections import Counter
+
+        candidates = [
+            {
+                **BASE_CANDIDATE,
+                "questionText": f"Question {index}?",
+            }
+            for index in range(12)
+        ]
+        normalized = [_usable_question(candidate) for candidate in candidates]
+        assert all(question is not None for question in normalized)
+        quiz_engine.balance_answer_positions(normalized)
+
+        positions = Counter(
+            question["options"].index(question["correct_answer"]) for question in normalized
+        )
+        assert dict(positions) == {0: 3, 1: 3, 2: 3, 3: 3}
+
+    def test_two_option_questions_are_left_alone_by_type(self):
+        """`TRUE_FALSE` is not shuffled: the convention is a stable True/False
+        order, and with two options there is no position to exploit beyond a coin
+        flip."""
+        result = _usable_question(
+            {
+                **BASE_CANDIDATE,
+                "questionType": "TRUE_FALSE",
+                "options": ["True", "False"],
+                "correctAnswer": "True",
+            }
+        )
+        assert result is not None
+        assert result["options"] == ["True", "False"]
 
 
 # ---------------------------------------------------------------------------
