@@ -366,8 +366,10 @@ async def start_quiz(
     session = await repo.get_quiz_session(quiz_session.id, user_id)
     questions = await repo.list_quiz_questions(quiz_session.id)
     # A new quiz has no answers yet, and being IN_PROGRESS it carries no answer
-    # key either.
-    return _build_quiz_response(session, questions, [])
+    # key either. Topic titles come from the topics already loaded above.
+    return _build_quiz_response(
+        session, questions, [], {topic.id: topic.title for topic in all_topics}
+    )
 
 
 def _usable_question(candidate: Any) -> dict[str, Any] | None:
@@ -999,7 +1001,10 @@ async def get_quiz(*, user_id: str, quiz_id: str) -> Any:
         raise NotFoundError("QuizSession", quiz_id)
     questions = await repo.list_quiz_questions(quiz_id)
     answers = await repo.list_quiz_answers(quiz_id)
-    return _build_quiz_response(quiz, questions, answers)
+    topics = await repo.list_prep_topics(quiz.prep_id)
+    return _build_quiz_response(
+        quiz, questions, answers, {topic.id: topic.title for topic in topics}
+    )
 
 
 async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
@@ -1011,7 +1016,12 @@ async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
     return [_build_quiz_response(q, [], []) for q in quizzes]
 
 
-def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) -> dict[str, Any]:
+def _build_quiz_response(
+    quiz: Any,
+    questions: list[Any],
+    answers: list[Any],
+    topic_titles: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Build the quiz session response including questions and the learner's answers.
 
     The answer key is disclosed **per question, as soon as that question has been
@@ -1035,6 +1045,7 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
     # `questions` is a list of (question, link) pairs. Everything session-specific
     # — position, hints taken — belongs to the link, not to the banked question.
     ordered = list(questions)
+    topic_titles = topic_titles or {}
 
     return {
         "id": quiz.id,
@@ -1055,6 +1066,7 @@ def _build_quiz_response(quiz: Any, questions: list[Any], answers: list[Any]) ->
                 answer_map.get(question.id),
                 order_index=link.order_index,
                 hints_used=getattr(link, "hint_count", 0) or 0,
+                topic_title=topic_titles.get(question.prep_topic_id),
                 reveal_answers=session_completed
                 or (reveal_on_answer and question.id in answer_map),
             )
@@ -1070,6 +1082,7 @@ def _question_dict(
     order_index: int,
     hints_used: int,
     reveal_answers: bool,
+    topic_title: str | None = None,
 ) -> dict[str, Any]:
     """Serialize a question with the learner's answer attached, if they have one.
 
@@ -1084,8 +1097,15 @@ def _question_dict(
         "options": question.options if isinstance(question.options, list) else None,
         "order_index": order_index,
         "prep_topic_id": question.prep_topic_id,
+        # Resolved server-side so a runner can label a question without holding the
+        # preparation's whole topic list.
+        "prep_topic_title": topic_title,
         # Shown from the start: difficulty describes the question, not the answer.
         "difficulty": getattr(question, "difficulty", None),
+        # Provenance, also safe before answering: knowing a question came from a
+        # 2025 paper reveals nothing about which option is correct. Server-set.
+        "source": getattr(question, "source", None),
+        "source_year": getattr(question, "source_year", None),
         # So a resumed session can show what the learner already took, rather than
         # silently offering a fresh hint they have effectively already had.
         "hints_used": hints_used,

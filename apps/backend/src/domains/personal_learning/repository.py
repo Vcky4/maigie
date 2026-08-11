@@ -577,6 +577,7 @@ class PersonalLearningRepository:
             "type": "prep_type",
             "confidence": "confidence",
             "pace": "pace",
+            "targetReadiness": "target_readiness",
             "examDate": "exam_date",
             "description": "description",
             "status": "status",
@@ -1367,6 +1368,109 @@ class PersonalLearningRepository:
 
         return aggregates
 
+    async def list_exam_preps_by_ids(
+        self, prep_ids: list[str], *, session: AsyncSession | None = None
+    ) -> list[ExamPrep]:
+        """Load several preparations in one query, without user scoping.
+
+        For internal batch jobs only — the daily snapshot writer works across every
+        learner by design. Anything serving a request must go through
+        ``find_exam_prep`` or ``search_exam_preps``, which scope by ``user_id``.
+        """
+        if not prep_ids:
+            return []
+        async with self._use_session(session) as s:
+            stmt = select(ExamPrep).where(ExamPrep.id.in_(prep_ids))
+            return list((await s.execute(stmt)).scalars().all())
+
+    async def get_prep_topic_question_counts(
+        self, prep_ids: list[str], *, session: AsyncSession | None = None
+    ) -> dict[str, dict[str, int]]:
+        """Banked and answered question counts per topic.
+
+        Two grouped queries regardless of how many preparations or topics are
+        passed. The workspace shows "43 of 46 questions" per topic, which is not a
+        column on anything and previously would have meant one request per topic
+        against the paginated bank endpoint.
+
+        Keyed by topic id, with ``question_count`` and ``answered_count``. Topics
+        with no banked questions are absent; callers substitute zeroes. Unattributed
+        questions (null ``prepTopicId``) are excluded, because they belong to no
+        topic and adding them anywhere would overstate that topic's coverage.
+
+        ``answered_count`` is distinct by question, so meeting the same banked
+        question again in a later session does not count twice.
+        """
+        if not prep_ids:
+            return {}
+
+        counts: dict[str, dict[str, int]] = {}
+
+        def bucket(topic_id: str) -> dict[str, int]:
+            return counts.setdefault(topic_id, {"question_count": 0, "answered_count": 0})
+
+        async with self._use_session(session) as s:
+            banked = await s.execute(
+                select(PrepQuestion.prep_topic_id, func.count(PrepQuestion.id))
+                .where(
+                    PrepQuestion.prep_id.in_(prep_ids),
+                    PrepQuestion.prep_topic_id.is_not(None),
+                )
+                .group_by(PrepQuestion.prep_topic_id)
+            )
+            for topic_id, total in banked.all():
+                bucket(topic_id)["question_count"] = total or 0
+
+            answered = await s.execute(
+                select(
+                    PrepQuestion.prep_topic_id,
+                    func.count(func.distinct(QuizAnswer.question_id)),
+                )
+                .join(QuizAnswer, QuizAnswer.question_id == PrepQuestion.id)
+                .where(
+                    PrepQuestion.prep_id.in_(prep_ids),
+                    PrepQuestion.prep_topic_id.is_not(None),
+                )
+                .group_by(PrepQuestion.prep_topic_id)
+            )
+            for topic_id, total in answered.all():
+                bucket(topic_id)["answered_count"] = total or 0
+
+        return counts
+
+    async def list_prep_milestone_items(
+        self,
+        prep_ids: list[str],
+        user_id: str,
+        *,
+        take: int = 8,
+        session: AsyncSession | None = None,
+    ) -> list[tuple[StudyPlanItem, str]]:
+        """Study-plan items across several preparations, nearest scheduled date first.
+
+        Returns ``(item, prep_id)``. The dashboard's milestone rail is the same
+        derivation as a single preparation's timeline, flattened, so it does not
+        need one request per preparation.
+
+        Ordering is by scheduled date rather than by status so the rail reads as a
+        calendar. Scoped by ``user_id`` as well as by preparation, so a plan id is
+        never a way into another learner's schedule.
+        """
+        if not prep_ids:
+            return []
+        async with self._use_session(session) as s:
+            stmt = (
+                select(StudyPlanItem, StudyPlan.prep_id)
+                .join(StudyPlan, StudyPlanItem.plan_id == StudyPlan.id)
+                .where(
+                    StudyPlan.prep_id.in_(prep_ids),
+                    StudyPlan.user_id == user_id,
+                )
+                .order_by(StudyPlanItem.scheduled_date.asc())
+                .limit(take)
+            )
+            return [(row[0], row[1]) for row in (await s.execute(stmt)).all()]
+
     async def list_weakest_prep_topics(
         self, prep_ids: list[str], *, take: int = 8, session: AsyncSession | None = None
     ) -> list[PrepTopic]:
@@ -1943,27 +2047,36 @@ class PersonalLearningRepository:
             return answer
 
     async def list_practice_days(
-        self, user_id: str, *, since: datetime, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        prep_id: str | None = None,
+        session: AsyncSession | None = None,
     ) -> list[date]:
         """Distinct UTC dates on which the learner completed a quiz session.
 
         Bounded by ``since`` so the streak calculation reads a fixed window rather
         than the learner's whole history. Grouping in SQL keeps one row per day
         instead of one per session.
+
+        ``prep_id`` narrows the window to one preparation, which is what the
+        workspace shows. Account-wide and per-preparation streaks are deliberately
+        different numbers: practising chemistry does not advance a statistics
+        streak, and a workspace claiming otherwise would be telling the learner
+        they had prepared when they had not.
         """
         async with self._use_session(session) as s:
             day = func.date(QuizSession.completed_at)
-            stmt = (
-                select(day)
-                .where(
-                    QuizSession.user_id == user_id,
-                    QuizSession.status == "COMPLETED",
-                    QuizSession.completed_at.is_not(None),
-                    QuizSession.completed_at >= since,
-                )
-                .group_by(day)
-                .order_by(day.desc())
+            condition = (
+                (QuizSession.user_id == user_id)
+                & (QuizSession.status == "COMPLETED")
+                & QuizSession.completed_at.is_not(None)
+                & (QuizSession.completed_at >= since)
             )
+            if prep_id:
+                condition = condition & (QuizSession.prep_id == prep_id)
+            stmt = select(day).where(condition).group_by(day).order_by(day.desc())
             rows = (await s.execute(stmt)).scalars().all()
             days: list[date] = []
             for row in rows:
@@ -2104,9 +2217,11 @@ class PersonalLearningRepository:
             "prepId": "prep_id",
             "title": "title",
             "description": "description",
+            "category": "category",
             "estimatedMinutes": "estimated_minutes",
             "orderIndex": "order_index",
             "masteryScore": "mastery_score",
+            "targetMastery": "target_mastery",
             "status": "status",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}

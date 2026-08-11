@@ -120,12 +120,31 @@ class NoteImportRequest(CamelModel):
 # PrepMaterialUpdateRequest, and PrepTopicUpdateRequest, further down this file.
 
 
+# Every mode `quiz_engine.start_quiz` branches on. Constrained on the way in so an
+# unknown mode is a 422 rather than silently falling through to the quick-review
+# path — which is how `ADAPTIVE` came to be billed as a Plus feature while behaving
+# exactly like the free one.
+QuizMode = Literal[
+    "FULL_PRACTICE",
+    "QUICK_REVIEW",
+    "WEAK_AREAS",
+    "TOPIC_FOCUS",
+    # Plus-only, gated by `feature_tier_service`.
+    "PAST_PAPER_SIM",
+    "ADAPTIVE",
+]
+
+
 class QuizStartRequest(CamelModel):
-    mode: str = Field(
-        ..., description="FULL_PRACTICE, WEAK_AREAS, TOPIC_FOCUS, PAST_PAPER_SIM, QUICK_REVIEW"
+    mode: QuizMode = Field(
+        ...,
+        description=(
+            "FULL_PRACTICE, QUICK_REVIEW, WEAK_AREAS, TOPIC_FOCUS, and the Plus-only "
+            "PAST_PAPER_SIM and ADAPTIVE."
+        ),
     )
     topic_id: str | None = None
-    question_count: int | None = None
+    question_count: int | None = Field(default=None, ge=1, le=50)
 
 
 class AnswerSubmitRequest(CamelModel):
@@ -501,11 +520,19 @@ PreparationStatus = Literal["SETUP", "IN_PROGRESS", "COMPLETED"]
 PrepMaterialCategory = Literal[
     "TEXTBOOK",
     "NOTES",
+    # Scope, weighting, and learning outcomes. Offered by the create wizard as its
+    # own category, and materially different from a textbook: a syllabus tells
+    # topic extraction what is examinable, not what the answer is.
+    "SYLLABUS",
     "PAST_QUESTION",
     "LINK",
     "SLIDE",
     "OTHER",
 ]
+
+# The three bands of the mastery ladder. Defined here rather than further down
+# because topic responses carry a band.
+MasteryBand = Literal["focus", "review", "strong"]
 
 
 class PrepTopicResponse(CamelModel):
@@ -513,11 +540,35 @@ class PrepTopicResponse(CamelModel):
     prep_id: str
     title: str
     description: str | None = None
+    # A grouping heading. `None` for topics extracted before categories existed;
+    # the client groups those under no heading rather than inventing one.
+    category: str | None = None
     estimated_minutes: int | None = None
     order_index: int
     mastery_score: float | None = None
+    # Mastery this topic is aiming for. `None` means "use the preparation's
+    # target", which is itself allowed to be `None`.
+    target_mastery: float | None = None
+    # Derived from `masteryScore` by the shared ladder, so a surface never has to
+    # re-implement the 70/80 boundaries and risk disagreeing with the dashboard.
+    band: MasteryBand
     status: str
     created_at: datetime
+
+
+class PrepTopicDetail(PrepTopicResponse):
+    """A topic plus its question counts, for the workspace topic list.
+
+    The counts are a separate shape from `PrepTopicResponse` because they are an
+    aggregate over other tables rather than columns on the topic, and the write
+    paths (`PATCH`, extraction) have no business computing them.
+    """
+
+    # Banked questions attributed to this topic.
+    question_count: int
+    # Of those, how many the learner has answered at least once. Distinct by
+    # question, so re-meeting a question in a later session does not inflate it.
+    answered_question_count: int
 
 
 class PrepMaterialResponse(CamelModel):
@@ -537,6 +588,7 @@ class PrepMaterialResponse(CamelModel):
     category: str | None = None
     label: str | None = None
     created_at: datetime
+    updated_at: datetime
 
 
 class PrepMaterialSummary(CamelModel):
@@ -554,6 +606,9 @@ class PrepMaterialSummary(CamelModel):
     # whether topic extraction has anything to work from.
     has_extracted_text: bool
     created_at: datetime
+    # The workspace labels materials by when they last changed ("Updated
+    # yesterday"), which `createdAt` alone cannot express after a relabel.
+    updated_at: datetime
 
 
 class PrepMaterialCreateRequest(CamelModel):
@@ -579,22 +634,86 @@ class PrepTopicUpdateRequest(CamelModel):
     estimated_minutes: int | None = Field(default=None, ge=0, le=600)
     order_index: int | None = Field(default=None, ge=0)
     mastery_score: float | None = Field(default=None, ge=0, le=100)
+    target_mastery: float | None = Field(default=None, ge=0, le=100)
+    category: str | None = Field(default=None, max_length=120)
     status: str | None = None
 
-
-MasteryBand = Literal["focus", "review", "strong"]
 
 PrepareDashboardSection = Literal[
     "summary",
     "preparations",
     "focusTopics",
     "recentSessions",
+    "milestones",
 ]
 
 
 class PrepareDashboardMeta(CamelModel):
     generated_at: datetime
     degraded_sections: list[PrepareDashboardSection]
+
+
+# Why a topic is being recommended. A code rather than only prose, so the client
+# can choose its own wording and so the reason is assertable in a test.
+FocusReason = Literal[
+    "NO_TOPICS",
+    "NEVER_PRACTISED",
+    "LOWEST_MASTERY",
+    "MAINTENANCE",
+]
+
+
+class PrepFocusRecommendation(CamelModel):
+    """What to practise next in one preparation, and why.
+
+    Only the server knows which topic is weakest and what evidence supports that,
+    so this is computed rather than left to the client to guess from a bounded
+    focus-topic list that may not even include this preparation.
+
+    `reason` is a short plain-language sentence for surfaces that want one;
+    `reasonCode` is the machine-readable form. A client is free to render its own
+    copy from the code and ignore the sentence.
+    """
+
+    topic_id: str | None = None
+    topic_title: str | None = None
+    # `None` when there are no topics yet.
+    mastery_percent: float | None = None
+    band: MasteryBand | None = None
+    reason_code: FocusReason
+    reason: str
+    # The mode a launcher should start, chosen to match the reason.
+    recommended_mode: str
+    recommended_question_count: int
+    # Derived from the topic's own estimate, so it is the learner's plan rather
+    # than a made-up duration.
+    estimated_minutes: int
+
+
+class PrepProgressSummary(CamelModel):
+    """Derived progress for one preparation.
+
+    Every field comes from `prep_readiness`, the same helper the dashboard and the
+    Learn surface use, so a workspace header cannot disagree with the card that
+    linked to it.
+    """
+
+    progress_percent: float
+    average_mastery_percent: float | None
+    target_readiness: int | None
+    topics_total: int
+    topics_strong: int
+    topics_review: int
+    topics_focus: int
+    topics_assessed: int
+    questions_answered: int
+    accuracy_percent: float | None
+    quizzes_taken: int
+    practice_minutes: int
+    # Consecutive days of completed practice *in this preparation*. Distinct from
+    # the dashboard's account-wide streak, and `None` when never practised.
+    practice_streak: int | None
+    practice_ready: bool
 
 
 class PrepareSummaryStats(CamelModel):
@@ -644,8 +763,15 @@ class PreparationProgressSummary(CamelModel):
     questions_answered: int
     accuracy_percent: float | None
     quizzes_taken: int
+    practice_minutes: int
+    # The learner's stated goal, or None when they have not set one.
+    target_readiness: int | None = None
     # False until topics exist; practice cannot start before then.
     practice_ready: bool
+    # What to do next in this preparation. `None` only if the recommendation
+    # could not be computed; a preparation with no topics still gets one, telling
+    # the learner to extract topics.
+    next_action: PrepFocusRecommendation | None = None
 
 
 class PrepareFocusTopic(CamelModel):
@@ -655,9 +781,36 @@ class PrepareFocusTopic(CamelModel):
     preparation_id: str
     preparation_subject: str
     title: str
+    # Grouping heading, `None` for topics extracted before categories existed.
+    category: str | None = None
     mastery_percent: float
+    target_mastery: float | None = None
     band: MasteryBand
     order_index: int
+    # Banked questions attributed to this topic, and how many of them the learner
+    # has answered. Both zero for a topic nothing has been generated for yet.
+    question_count: int = 0
+    answered_question_count: int = 0
+
+
+class PrepareMilestone(CamelModel):
+    """A dated commitment across the learner's active preparations.
+
+    The same derivation as a single preparation's timeline — study-plan items plus
+    the target date — flattened across preparations so the dashboard rail does not
+    need one request per preparation.
+    """
+
+    id: str
+    preparation_id: str
+    preparation_subject: str
+    kind: Literal["STUDY", "EXAM"]
+    title: str
+    detail: str | None = None
+    scheduled_for: datetime
+    status: str
+    estimated_minutes: int | None = None
+    prep_topic_id: str | None = None
 
 
 class PrepareSessionSummary(CamelModel):
@@ -681,6 +834,9 @@ class PrepareDashboardResponse(CamelModel):
     preparations_total: int
     focus_topics: list[PrepareFocusTopic]
     recent_sessions: list[PrepareSessionSummary]
+    # Upcoming and just-past commitments across active preparations, nearest
+    # first. Empty when no preparation has a study plan.
+    milestones: list[PrepareMilestone]
 
 
 PreparationConfidence = Literal["STARTING", "DEVELOPING", "CONFIDENT"]
@@ -698,6 +854,10 @@ class PrepReadinessPoint(CamelModel):
     captured_on: date
     progress_percent: float
     average_mastery_percent: float | None = None
+    # Where readiness needed to be on this day to reach the target by the exam.
+    # Captured on the day, so raising a target later does not redraw the past.
+    # `None` when the preparation had no stated target.
+    target_percent: float | None = None
     topics_total: int
     topics_strong: int
     topics_focus: int
@@ -718,6 +878,9 @@ class PrepReadinessTrendResponse(CamelModel):
 
     preparation_id: str
     days: int
+    # The preparation's target as it stands now, for the chart's axis and legend.
+    # Per-point targets are in `points`, because those are historical.
+    target_readiness: int | None = None
     points: list[PrepReadinessPoint]
 
 
@@ -768,6 +931,15 @@ class PrepCreateRequest(CamelModel):
     confidence: PreparationConfidence | None = Field(
         default=None, description="The learner's self-reported starting point."
     )
+    target_readiness: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "Readiness the learner is aiming for by the target date. Optional: "
+            "without it, surfaces show readiness with no target line."
+        ),
+    )
     pace: PreparationPace | None = Field(
         default=None,
         description=(
@@ -789,6 +961,7 @@ class PrepUpdateRequest(CamelModel):
     status: PreparationStatus | None = None
     confidence: PreparationConfidence | None = None
     pace: PreparationPace | None = None
+    target_readiness: int | None = Field(default=None, ge=0, le=100)
 
 
 class PrepSummaryResponse(CamelModel):
@@ -807,8 +980,29 @@ class PrepSummaryResponse(CamelModel):
     # `status` is handled: strict on write, tolerant on read.
     confidence: str | None = None
     pace: str | None = None
+    target_readiness: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PrepDetailResponse(PrepSummaryResponse):
+    """One preparation, with everything its workspace header displays.
+
+    The summary shape carries no progress at all, which left the workspace with
+    nowhere to read readiness, accuracy or practice time from: those aggregates
+    existed only inside the dashboard read model, which is capped and scoped to
+    the active set. Rather than making the client assemble a header from a
+    dashboard it may not appear in, the detail read returns them directly.
+
+    Progress is a nested object rather than flattened onto this model so that
+    "what the learner set up" and "what the learner has achieved" stay visibly
+    separate — the first is written by the client, the second never is.
+    """
+
+    # `None` once the target date has passed.
+    days_until_exam: int | None = None
+    progress: PrepProgressSummary
+    focus: PrepFocusRecommendation | None = None
 
 
 # ===========================================================================
@@ -864,9 +1058,17 @@ class QuizQuestionPresentation(CamelModel):
     options: list[str] | None = None
     order_index: int
     prep_topic_id: str | None = None
+    # The topic's title, so a runner can label a question without holding the
+    # whole topic list and joining on it. `None` for unattributed questions.
+    prep_topic_title: str | None = None
     # Safe to show before answering: metadata about the question, not about its
     # answer. `None` for questions banked before difficulty was recorded.
     difficulty: str | None = None
+    # Provenance, on the same side of the disclosure boundary as difficulty: that a
+    # question came from a 2025 paper says nothing about which option is right.
+    # Server-set, so it can be trusted.
+    source: str | None = None
+    source_year: int | None = None
     # Hints the learner has taken on this question in this session, so a resumed
     # session does not offer a fresh hint they have effectively already had.
     hints_used: int = 0
@@ -924,6 +1126,9 @@ class PrepQuestionBankItem(CamelModel):
     id: str
     prep_id: str
     prep_topic_id: str | None = None
+    # Resolved server-side, so the bank tab can group and label by topic without
+    # fetching the topic list and joining it row by row.
+    prep_topic_title: str | None = None
     question_text: str
     question_type: str
     options: list[str] | None = None

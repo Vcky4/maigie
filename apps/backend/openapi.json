@@ -424,6 +424,47 @@
         "title": "Body_login_form_api_v1_auth_login_post",
         "type": "object"
       },
+      "Body_upload_material_file_api_v1_learning_preparations__prep_id__materials_upload_post": {
+        "properties": {
+          "category": {
+            "default": "OTHER",
+            "enum": [
+              "TEXTBOOK",
+              "NOTES",
+              "SYLLABUS",
+              "PAST_QUESTION",
+              "LINK",
+              "SLIDE",
+              "OTHER"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "file": {
+            "description": "The material file.",
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_material_file_api_v1_learning_preparations__prep_id__materials_upload_post",
+        "type": "object"
+      },
       "CancelDeletionRequest": {
         "description": "Cancel pending account deletion.",
         "properties": {
@@ -1351,6 +1392,51 @@
           "urgency"
         ],
         "title": "DueReviewResponse",
+        "type": "object"
+      },
+      "ExamDetailsRequest": {
+        "properties": {
+          "examDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examdate"
+          },
+          "examName": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Examname",
+            "type": "string"
+          },
+          "goals": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goals"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "examName"
+        ],
+        "title": "ExamDetailsRequest",
         "type": "object"
       },
       "FlashcardCreate": {
@@ -2794,6 +2880,45 @@
             "title": "Createdat",
             "type": "string"
           },
+          "currentLevel": {
+            "anyOf": [
+              {
+                "enum": [
+                  "beginner",
+                  "intermediate",
+                  "advanced"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentlevel"
+          },
+          "examDate": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examdate"
+          },
+          "examName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Examname"
+          },
           "goalsText": {
             "anyOf": [
               {
@@ -2831,6 +2956,18 @@
             ],
             "title": "Onboardingcompletedat"
           },
+          "onboardingState": {
+            "default": "not_started",
+            "enum": [
+              "not_started",
+              "purpose_set",
+              "details_set",
+              "content_ready",
+              "completed"
+            ],
+            "title": "Onboardingstate",
+            "type": "string"
+          },
           "preferredExplanationStyle": {
             "anyOf": [
               {
@@ -2866,6 +3003,8 @@
                   "skill_building",
                   "course_completion",
                   "professional_certification",
+                  "teaching",
+                  "community",
                   "general_learning"
                 ],
                 "type": "string"
@@ -2897,6 +3036,17 @@
               }
             ],
             "title": "Quiethoursstart"
+          },
+          "skillName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skillname"
           },
           "subjects": {
             "anyOf": [
@@ -3729,6 +3879,58 @@
         "title": "OAuthAuthorizeResponse",
         "type": "object"
       },
+      "OnboardingStatusResponse": {
+        "properties": {
+          "estimatedSecondsRemaining": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedsecondsremaining"
+          },
+          "firstPreparation": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firstpreparation"
+          },
+          "progress": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Progress",
+            "type": "object"
+          },
+          "state": {
+            "enum": [
+              "not_started",
+              "purpose_set",
+              "details_set",
+              "content_ready",
+              "completed"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OnboardingStatusResponse",
+        "type": "object"
+      },
       "PaginatedResponse_NoteResponse_": {
         "properties": {
           "items": {
@@ -4134,6 +4336,20 @@
             "title": "Targetdate",
             "type": "string"
           },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Readiness the learner is aiming for by the target date. Optional: without it, surfaces show readiness with no target line.",
+            "title": "Targetreadiness"
+          },
           "type": {
             "description": "What is being prepared for.",
             "enum": [
@@ -4156,6 +4372,230 @@
         "title": "PrepCreateRequest",
         "type": "object"
       },
+      "PrepDetailResponse": {
+        "description": "One preparation, with everything its workspace header displays.\n\nThe summary shape carries no progress at all, which left the workspace with\nnowhere to read readiness, accuracy or practice time from: those aggregates\nexisted only inside the dashboard read model, which is capped and scoped to\nthe active set. Rather than making the client assemble a header from a\ndashboard it may not appear in, the detail read returns them directly.\n\nProgress is a nested object rather than flattened onto this model so that\n\"what the learner set up\" and \"what the learner has achieved\" stay visibly\nseparate — the first is written by the client, the second never is.",
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "daysUntilExam": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Daysuntilexam"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "examDate": {
+            "format": "date-time",
+            "title": "Examdate",
+            "type": "string"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrepFocusRecommendation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "pace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pace"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/PrepProgressSummary"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "EXAM",
+                  "CERTIFICATION",
+                  "INTERVIEW",
+                  "PRESENTATION",
+                  "ASSIGNMENT",
+                  "PROJECT"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "subject",
+          "examDate",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "progress"
+        ],
+        "title": "PrepDetailResponse",
+        "type": "object"
+      },
+      "PrepFocusRecommendation": {
+        "description": "What to practise next in one preparation, and why.\n\nOnly the server knows which topic is weakest and what evidence supports that,\nso this is computed rather than left to the client to guess from a bounded\nfocus-topic list that may not even include this preparation.\n\n`reason` is a short plain-language sentence for surfaces that want one;\n`reasonCode` is the machine-readable form. A client is free to render its own\ncopy from the code and ignore the sentence.",
+        "properties": {
+          "band": {
+            "anyOf": [
+              {
+                "enum": [
+                  "focus",
+                  "review",
+                  "strong"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Band"
+          },
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "masteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masterypercent"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reasonCode": {
+            "enum": [
+              "NO_TOPICS",
+              "NEVER_PRACTISED",
+              "LOWEST_MASTERY",
+              "MAINTENANCE"
+            ],
+            "title": "Reasoncode",
+            "type": "string"
+          },
+          "recommendedMode": {
+            "title": "Recommendedmode",
+            "type": "string"
+          },
+          "recommendedQuestionCount": {
+            "title": "Recommendedquestioncount",
+            "type": "integer"
+          },
+          "topicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicid"
+          },
+          "topicTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topictitle"
+          }
+        },
+        "required": [
+          "reasonCode",
+          "reason",
+          "recommendedMode",
+          "recommendedQuestionCount",
+          "estimatedMinutes"
+        ],
+        "title": "PrepFocusRecommendation",
+        "type": "object"
+      },
       "PrepMaterialCreateRequest": {
         "description": "Replaces the previously untyped `body: dict`.",
         "properties": {
@@ -4164,6 +4604,7 @@
             "enum": [
               "TEXTBOOK",
               "NOTES",
+              "SYLLABUS",
               "PAST_QUESTION",
               "LINK",
               "SLIDE",
@@ -4314,6 +4755,11 @@
             ],
             "title": "Size"
           },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
           "url": {
             "title": "Url",
             "type": "string"
@@ -4324,7 +4770,8 @@
           "prepId",
           "filename",
           "url",
-          "createdAt"
+          "createdAt",
+          "updatedAt"
         ],
         "title": "PrepMaterialResponse",
         "type": "object"
@@ -4397,6 +4844,11 @@
             ],
             "title": "Size"
           },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
           "url": {
             "title": "Url",
             "type": "string"
@@ -4408,7 +4860,8 @@
           "filename",
           "url",
           "hasExtractedText",
-          "createdAt"
+          "createdAt",
+          "updatedAt"
         ],
         "title": "PrepMaterialSummary",
         "type": "object"
@@ -4421,6 +4874,7 @@
                 "enum": [
                   "TEXTBOOK",
                   "NOTES",
+                  "SYLLABUS",
                   "PAST_QUESTION",
                   "LINK",
                   "SLIDE",
@@ -4448,6 +4902,113 @@
           }
         },
         "title": "PrepMaterialUpdateRequest",
+        "type": "object"
+      },
+      "PrepProgressSummary": {
+        "description": "Derived progress for one preparation.\n\nEvery field comes from `prep_readiness`, the same helper the dashboard and the\nLearn surface use, so a workspace header cannot disagree with the card that\nlinked to it.",
+        "properties": {
+          "accuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracypercent"
+          },
+          "averageMasteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averagemasterypercent"
+          },
+          "practiceMinutes": {
+            "title": "Practiceminutes",
+            "type": "integer"
+          },
+          "practiceReady": {
+            "title": "Practiceready",
+            "type": "boolean"
+          },
+          "practiceStreak": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Practicestreak"
+          },
+          "progressPercent": {
+            "title": "Progresspercent",
+            "type": "number"
+          },
+          "questionsAnswered": {
+            "title": "Questionsanswered",
+            "type": "integer"
+          },
+          "quizzesTaken": {
+            "title": "Quizzestaken",
+            "type": "integer"
+          },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
+          },
+          "topicsAssessed": {
+            "title": "Topicsassessed",
+            "type": "integer"
+          },
+          "topicsFocus": {
+            "title": "Topicsfocus",
+            "type": "integer"
+          },
+          "topicsReview": {
+            "title": "Topicsreview",
+            "type": "integer"
+          },
+          "topicsStrong": {
+            "title": "Topicsstrong",
+            "type": "integer"
+          },
+          "topicsTotal": {
+            "title": "Topicstotal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "progressPercent",
+          "averageMasteryPercent",
+          "targetReadiness",
+          "topicsTotal",
+          "topicsStrong",
+          "topicsReview",
+          "topicsFocus",
+          "topicsAssessed",
+          "questionsAnswered",
+          "accuracyPercent",
+          "quizzesTaken",
+          "practiceMinutes",
+          "practiceStreak",
+          "practiceReady"
+        ],
+        "title": "PrepProgressSummary",
         "type": "object"
       },
       "PrepQuestionBankItem": {
@@ -4528,6 +5089,17 @@
               }
             ],
             "title": "Preptopicid"
+          },
+          "prepTopicTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preptopictitle"
           },
           "questionText": {
             "title": "Questiontext",
@@ -4676,6 +5248,17 @@
             "title": "Quizzestaken",
             "type": "integer"
           },
+          "targetPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetpercent"
+          },
           "topicsAssessed": {
             "title": "Topicsassessed",
             "type": "integer"
@@ -4723,6 +5306,17 @@
           "preparationId": {
             "title": "Preparationid",
             "type": "string"
+          },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
           }
         },
         "required": [
@@ -4790,6 +5384,17 @@
           "subject": {
             "title": "Subject",
             "type": "string"
+          },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
           },
           "type": {
             "anyOf": [
@@ -4965,8 +5570,143 @@
         "title": "PrepTimelineResponse",
         "type": "object"
       },
+      "PrepTopicDetail": {
+        "description": "A topic plus its question counts, for the workspace topic list.\n\nThe counts are a separate shape from `PrepTopicResponse` because they are an\naggregate over other tables rather than columns on the topic, and the write\npaths (`PATCH`, extraction) have no business computing them.",
+        "properties": {
+          "answeredQuestionCount": {
+            "title": "Answeredquestioncount",
+            "type": "integer"
+          },
+          "band": {
+            "enum": [
+              "focus",
+              "review",
+              "strong"
+            ],
+            "title": "Band",
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "masteryScore": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masteryscore"
+          },
+          "orderIndex": {
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "prepId": {
+            "title": "Prepid",
+            "type": "string"
+          },
+          "questionCount": {
+            "title": "Questioncount",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "targetMastery": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetmastery"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "prepId",
+          "title",
+          "orderIndex",
+          "band",
+          "status",
+          "createdAt",
+          "questionCount",
+          "answeredQuestionCount"
+        ],
+        "title": "PrepTopicDetail",
+        "type": "object"
+      },
       "PrepTopicResponse": {
         "properties": {
+          "band": {
+            "enum": [
+              "focus",
+              "review",
+              "strong"
+            ],
+            "title": "Band",
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -5021,6 +5761,17 @@
             "title": "Status",
             "type": "string"
           },
+          "targetMastery": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetmastery"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -5031,6 +5782,7 @@
           "prepId",
           "title",
           "orderIndex",
+          "band",
           "status",
           "createdAt"
         ],
@@ -5039,6 +5791,18 @@
       },
       "PrepTopicUpdateRequest": {
         "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
           "description": {
             "anyOf": [
               {
@@ -5098,6 +5862,19 @@
               }
             ],
             "title": "Status"
+          },
+          "targetMastery": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetmastery"
           },
           "title": {
             "anyOf": [
@@ -5202,6 +5979,19 @@
             ],
             "title": "Targetdate"
           },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
+          },
           "type": {
             "anyOf": [
               {
@@ -5281,6 +6071,20 @@
             "title": "Id",
             "type": "string"
           },
+          "nextAction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PrepFocusRecommendation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "practiceMinutes": {
+            "title": "Practiceminutes",
+            "type": "integer"
+          },
           "practiceReady": {
             "title": "Practiceready",
             "type": "boolean"
@@ -5304,6 +6108,17 @@
           "subject": {
             "title": "Subject",
             "type": "string"
+          },
+          "targetReadiness": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetreadiness"
           },
           "topicsAssessed": {
             "title": "Topicsassessed",
@@ -5357,6 +6172,7 @@
           "questionsAnswered",
           "accuracyPercent",
           "quizzesTaken",
+          "practiceMinutes",
           "practiceReady"
         ],
         "title": "PreparationProgressSummary",
@@ -5370,7 +6186,8 @@
                 "summary",
                 "preparations",
                 "focusTopics",
-                "recentSessions"
+                "recentSessions",
+                "milestones"
               ],
               "type": "string"
             },
@@ -5402,6 +6219,13 @@
           "meta": {
             "$ref": "#/components/schemas/PrepareDashboardMeta"
           },
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/PrepareMilestone"
+            },
+            "title": "Milestones",
+            "type": "array"
+          },
           "preparations": {
             "items": {
               "$ref": "#/components/schemas/PreparationProgressSummary"
@@ -5430,7 +6254,8 @@
           "preparations",
           "preparationsTotal",
           "focusTopics",
-          "recentSessions"
+          "recentSessions",
+          "milestones"
         ],
         "title": "PrepareDashboardResponse",
         "type": "object"
@@ -5438,6 +6263,11 @@
       "PrepareFocusTopic": {
         "description": "A topic worth practising next, weakest first.",
         "properties": {
+          "answeredQuestionCount": {
+            "default": 0,
+            "title": "Answeredquestioncount",
+            "type": "integer"
+          },
           "band": {
             "enum": [
               "focus",
@@ -5446,6 +6276,17 @@
             ],
             "title": "Band",
             "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
           },
           "id": {
             "title": "Id",
@@ -5467,6 +6308,22 @@
             "title": "Preparationsubject",
             "type": "string"
           },
+          "questionCount": {
+            "default": 0,
+            "title": "Questioncount",
+            "type": "integer"
+          },
+          "targetMastery": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetmastery"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -5482,6 +6339,88 @@
           "orderIndex"
         ],
         "title": "PrepareFocusTopic",
+        "type": "object"
+      },
+      "PrepareMilestone": {
+        "description": "A dated commitment across the learner's active preparations.\n\nThe same derivation as a single preparation's timeline — study-plan items plus\nthe target date — flattened across preparations so the dashboard rail does not\nneed one request per preparation.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "STUDY",
+              "EXAM"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "prepTopicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preptopicid"
+          },
+          "preparationId": {
+            "title": "Preparationid",
+            "type": "string"
+          },
+          "preparationSubject": {
+            "title": "Preparationsubject",
+            "type": "string"
+          },
+          "scheduledFor": {
+            "format": "date-time",
+            "title": "Scheduledfor",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "preparationId",
+          "preparationSubject",
+          "kind",
+          "title",
+          "scheduledFor",
+          "status"
+        ],
+        "title": "PrepareMilestone",
         "type": "object"
       },
       "PrepareSessionSummary": {
@@ -5714,6 +6653,8 @@
               "skill_building",
               "course_completion",
               "professional_certification",
+              "teaching",
+              "community",
               "general_learning"
             ],
             "title": "Purpose",
@@ -5902,6 +6843,17 @@
             ],
             "title": "Preptopicid"
           },
+          "prepTopicTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preptopictitle"
+          },
           "questionText": {
             "title": "Questiontext",
             "type": "string"
@@ -5909,6 +6861,28 @@
           "questionType": {
             "title": "Questiontype",
             "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "sourceYear": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceyear"
           },
           "timeTakenSeconds": {
             "anyOf": [
@@ -6048,13 +7022,23 @@
       "QuizStartRequest": {
         "properties": {
           "mode": {
-            "description": "FULL_PRACTICE, WEAK_AREAS, TOPIC_FOCUS, PAST_PAPER_SIM, QUICK_REVIEW",
+            "description": "FULL_PRACTICE, QUICK_REVIEW, WEAK_AREAS, TOPIC_FOCUS, and the Plus-only PAST_PAPER_SIM and ADAPTIVE.",
+            "enum": [
+              "FULL_PRACTICE",
+              "QUICK_REVIEW",
+              "WEAK_AREAS",
+              "TOPIC_FOCUS",
+              "PAST_PAPER_SIM",
+              "ADAPTIVE"
+            ],
             "title": "Mode",
             "type": "string"
           },
           "questionCount": {
             "anyOf": [
               {
+                "maximum": 50.0,
+                "minimum": 1.0,
                 "type": "integer"
               },
               {
@@ -7165,6 +8149,55 @@
           "name"
         ],
         "title": "SignupRequest",
+        "type": "object"
+      },
+      "SkillDetailsRequest": {
+        "properties": {
+          "currentLevel": {
+            "anyOf": [
+              {
+                "enum": [
+                  "beginner",
+                  "intermediate",
+                  "advanced"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentlevel"
+          },
+          "goals": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goals"
+          },
+          "skillName": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Skillname",
+            "type": "string"
+          },
+          "subjects": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subjects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "skillName"
+        ],
+        "title": "SkillDetailsRequest",
         "type": "object"
       },
       "SpaceCreate": {
@@ -12953,6 +13986,54 @@
         ]
       }
     },
+    "/api/v1/learning/onboarding/exam-details": {
+      "post": {
+        "description": "Set exam preparation details. For EXAM_PREP purpose learners.",
+        "operationId": "set_exam_details_api_v1_learning_onboarding_exam_details_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamDetailsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Exam Details",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/onboarding/purpose": {
       "post": {
         "description": "Set the learner's purpose. First step of onboarding.",
@@ -13001,9 +14082,85 @@
         ]
       }
     },
+    "/api/v1/learning/onboarding/skill-details": {
+      "post": {
+        "description": "Set skill building details. For SKILL_BUILDING purpose learners.",
+        "operationId": "set_skill_details_api_v1_learning_onboarding_skill_details_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillDetailsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Skill Details",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/onboarding/status": {
+      "get": {
+        "description": "Get current onboarding status for progress polling.",
+        "operationId": "get_onboarding_status_api_v1_learning_onboarding_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Onboarding Status",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/onboarding/subjects": {
       "post": {
-        "description": "Set initial subjects and/or goals.",
+        "description": "Set initial subjects and/or goals.\n\nDEPRECATED: Use /onboarding/exam-details or /onboarding/skill-details\ninstead. Kept for backward compatibility.",
         "operationId": "set_subjects_api_v1_learning_onboarding_subjects_post",
         "requestBody": {
           "content": {
@@ -13051,7 +14208,7 @@
     },
     "/api/v1/learning/preparations": {
       "get": {
-        "description": "List preparations, ordered by target date, using the canonical envelope.",
+        "description": "List preparations with optional sorting.\n\nsortBy:\n- None or \"date\": ordered by target date ascending (default)\n- \"readiness\": ordered by average topic mastery descending",
         "operationId": "list_preparations_api_v1_learning_preparations_get",
         "parameters": [
           {
@@ -13113,6 +14270,26 @@
                 }
               ],
               "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sortBy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "date",
+                    "readiness"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sortby"
             }
           }
         ],
@@ -13238,7 +14415,7 @@
         ]
       },
       "get": {
-        "description": "Get a preparation by ID.",
+        "description": "Get a preparation with its derived progress and next recommended action.\n\nProgress comes from the same `prep_readiness` helper the dashboard and the\nLearn surface use, so a workspace header cannot disagree with the card that\nlinked to it. Previously this returned the bare row, which carried no progress\nat all and left the workspace with nothing to render its header from.",
         "operationId": "get_preparation_api_v1_learning_preparations__prep_id__get",
         "parameters": [
           {
@@ -13256,7 +14433,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PrepSummaryResponse"
+                  "$ref": "#/components/schemas/PrepDetailResponse"
                 }
               }
             },
@@ -13548,6 +14725,65 @@
           }
         ],
         "summary": "Upload Material",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/preparations/{prep_id}/materials/upload": {
+      "post": {
+        "description": "Upload a material file and register it against a preparation.\n\nThe JSON create path requires a `url`, so a learner picking a file from disk had\nnowhere to send it: there was no upload endpoint in the API and no\ndirect-to-storage path on the web client, which made the workspace's file\npicker and the create wizard's drag-and-drop impossible to implement honestly.\n\nText is extracted where the format allows (plain text, markdown, PDFs with a\ntext layer), because extracted text is what topic extraction reads.\n`hasExtractedText` reports whether anything was recovered, so the client can\ntell the learner that a scanned PDF will not produce topics.",
+        "operationId": "upload_material_file_api_v1_learning_preparations__prep_id__materials_upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "prep_id",
+            "required": true,
+            "schema": {
+              "title": "Prep Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_material_file_api_v1_learning_preparations__prep_id__materials_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrepMaterialSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Material File",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -14215,7 +15451,7 @@
     },
     "/api/v1/learning/preparations/{prep_id}/topics": {
       "get": {
-        "description": "List extracted topics for a preparation.",
+        "description": "List a preparation's topics with their band and question counts.\n\nThe counts are included because the alternative is a request per topic against\nthe paginated question bank for a number one grouped query already produces.",
         "operationId": "list_topics_api_v1_learning_preparations__prep_id__topics_get",
         "parameters": [
           {
@@ -14234,7 +15470,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "$ref": "#/components/schemas/PrepTopicResponse"
+                    "$ref": "#/components/schemas/PrepTopicDetail"
                   },
                   "title": "Response List Topics Api V1 Learning Preparations  Prep Id  Topics Get",
                   "type": "array"
@@ -14421,6 +15657,18 @@
               "maximum": 20,
               "minimum": 1,
               "title": "Sessionlimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "milestoneLimit",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Milestonelimit",
               "type": "integer"
             }
           }

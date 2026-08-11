@@ -83,7 +83,13 @@ def _link(order_index: int, *, hints_used: int = 0):
     return SimpleNamespace(order_index=order_index, hint_count=hints_used)
 
 
-def _wire(status: str, questions, answers, hints: dict[str, int] | None = None):
+def _wire(
+    status: str,
+    questions,
+    answers,
+    hints: dict[str, int] | None = None,
+    topic_titles: dict[str, str] | None = None,
+):
     """Build the response and push it through the real model, as the route does.
 
     Questions are paired with their session link, because everything
@@ -94,9 +100,62 @@ def _wire(status: str, questions, answers, hints: dict[str, int] | None = None):
         (question, _link(index, hints_used=hints.get(question.id, 0) if hints else 0))
         for index, question in enumerate(questions)
     ]
-    built = _build_quiz_response(_session(status), ordered, answers)
+    built = _build_quiz_response(_session(status), ordered, answers, topic_titles)
     dumped = models.QuizSessionResponse.model_validate(built).model_dump(by_alias=True)
     return {item["id"]: item for item in dumped["questions"]}
+
+
+# ---------------------------------------------------------------------------
+# TestQuestionProvenanceDisclosure
+# ---------------------------------------------------------------------------
+
+
+class TestQuestionProvenanceDisclosure:
+    """Provenance and topic label are shown from the start; the key still is not.
+
+    The runner badges a question with its topic and, for past papers, its year.
+    Both sit on the same side of the disclosure boundary as difficulty: knowing a
+    question came from a 2025 paper on hypothesis testing says nothing about which
+    option is correct.
+    """
+
+    def _question_with_provenance(self, qid="q1"):
+        question = _question(qid)
+        question.difficulty = "MEDIUM"
+        question.source = "PAST_PAPER"
+        question.source_year = 2025
+        question.exam_tip = "Compare p with alpha first."
+        return question
+
+    def test_provenance_is_visible_before_answering(self):
+        question = self._question_with_provenance()
+        wire = _wire("IN_PROGRESS", [question], [], topic_titles={"topic-1": "Hypothesis testing"})
+        item = wire["q1"]
+        assert item["source"] == "PAST_PAPER"
+        assert item["sourceYear"] == 2025
+        assert item["difficulty"] == "MEDIUM"
+        assert item["prepTopicTitle"] == "Hypothesis testing"
+
+    def test_provenance_does_not_come_with_the_key(self):
+        # The guard that matters: adding these fields must not have widened
+        # disclosure. The exam tip stays with the key, the answer stays hidden.
+        question = self._question_with_provenance()
+        wire = _wire("IN_PROGRESS", [question], [], topic_titles={"topic-1": "Hypothesis testing"})
+        item = wire["q1"]
+        assert item["correctAnswer"] is None
+        assert item["explanation"] is None
+        assert item["examTip"] is None
+
+    def test_an_unattributed_question_has_no_topic_title(self):
+        question = self._question_with_provenance()
+        question.prep_topic_id = None
+        wire = _wire("IN_PROGRESS", [question], [], topic_titles={"topic-1": "Hypothesis testing"})
+        assert wire["q1"]["prepTopicTitle"] is None
+
+    def test_a_missing_title_map_is_not_an_error(self):
+        # `list_prep_quizzes` builds sessions with no questions and no titles.
+        wire = _wire("IN_PROGRESS", [self._question_with_provenance()], [])
+        assert wire["q1"]["prepTopicTitle"] is None
 
 
 # ---------------------------------------------------------------------------

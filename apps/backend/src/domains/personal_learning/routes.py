@@ -8,8 +8,9 @@ Mounted at: /api/v1/learning
 """
 
 import logging
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
 
 from src.shared.auth import CurrentUser, OptionalCurrentUser
 
@@ -319,6 +320,7 @@ async def get_prepare_dashboard(
     preparationLimit: int = Query(6, ge=1, le=12),
     topicLimit: int = Query(8, ge=1, le=20),
     sessionLimit: int = Query(6, ge=1, le=20),
+    milestoneLimit: int = Query(6, ge=1, le=20),
 ):
     """Compose the authenticated learner's bounded Prepare dashboard.
 
@@ -331,6 +333,7 @@ async def get_prepare_dashboard(
         preparation_limit=preparationLimit,
         topic_limit=topicLimit,
         session_limit=sessionLimit,
+        milestone_limit=milestoneLimit,
     )
 
 
@@ -349,7 +352,10 @@ async def list_preparations(
     pageSize: int = Query(20, ge=1, le=100),
     status: models.PreparationStatus | None = Query(None),
     search: str | None = Query(None, max_length=200),
-    sortBy: str | None = Query(None, regex="^(date|readiness)$"),
+    # `pattern`, not the deprecated `regex`: FastAPI dropped `regex` from the
+    # generated schema, so this parameter was missing from the published contract
+    # and therefore from the generated client types.
+    sortBy: Literal["date", "readiness"] | None = Query(None),
 ):
     """List preparations with optional sorting.
 
@@ -375,10 +381,16 @@ async def list_preparations(
     )
 
 
-@router.get("/preparations/{prep_id}", response_model=models.PrepSummaryResponse)
+@router.get("/preparations/{prep_id}", response_model=models.PrepDetailResponse)
 async def get_preparation(prep_id: str, current_user: CurrentUser):
-    """Get a preparation by ID."""
-    return await exam_prep_service.get_preparation(user_id=current_user.id, prep_id=prep_id)
+    """Get a preparation with its derived progress and next recommended action.
+
+    Progress comes from the same `prep_readiness` helper the dashboard and the
+    Learn surface use, so a workspace header cannot disagree with the card that
+    linked to it. Previously this returned the bare row, which carried no progress
+    at all and left the workspace with nothing to render its header from.
+    """
+    return await exam_prep_service.get_preparation_detail(user_id=current_user.id, prep_id=prep_id)
 
 
 @router.patch("/preparations/{prep_id}", response_model=models.PrepSummaryResponse)
@@ -408,6 +420,52 @@ async def upload_material(
     """Register material against a preparation."""
     return await exam_prep_service.upload_material(
         user_id=current_user.id, prep_id=prep_id, data=body.model_dump(by_alias=True)
+    )
+
+
+@router.post(
+    "/preparations/{prep_id}/materials/upload",
+    response_model=models.PrepMaterialSummary,
+    status_code=201,
+)
+async def upload_material_file(
+    prep_id: str,
+    current_user: CurrentUser,
+    file: UploadFile = File(..., description="The material file."),
+    category: models.PrepMaterialCategory = Form("OTHER"),
+    label: str | None = Form(None, max_length=200),
+):
+    """Upload a material file and register it against a preparation.
+
+    The JSON create path requires a `url`, so a learner picking a file from disk had
+    nowhere to send it: there was no upload endpoint in the API and no
+    direct-to-storage path on the web client, which made the workspace's file
+    picker and the create wizard's drag-and-drop impossible to implement honestly.
+
+    Text is extracted where the format allows (plain text, markdown, PDFs with a
+    text layer), because extracted text is what topic extraction reads.
+    `hasExtractedText` reports whether anything was recovered, so the client can
+    tell the learner that a scanned PDF will not produce topics.
+    """
+    material = await exam_prep_service.upload_material_file(
+        user_id=current_user.id,
+        prep_id=prep_id,
+        file=file,
+        category=category,
+        label=label,
+    )
+    return models.PrepMaterialSummary(
+        id=material.id,
+        prep_id=material.prep_id,
+        filename=material.filename,
+        url=material.url,
+        file_type=material.file_type,
+        size=material.size,
+        category=material.category,
+        label=material.label,
+        has_extracted_text=bool(material.extracted_text),
+        created_at=material.created_at,
+        updated_at=material.updated_at,
     )
 
 
@@ -454,9 +512,13 @@ async def extract_topics(prep_id: str, current_user: CurrentUser):
     return await exam_prep_service.extract_topics(user_id=current_user.id, prep_id=prep_id)
 
 
-@router.get("/preparations/{prep_id}/topics", response_model=list[models.PrepTopicResponse])
+@router.get("/preparations/{prep_id}/topics", response_model=list[models.PrepTopicDetail])
 async def list_topics(prep_id: str, current_user: CurrentUser):
-    """List extracted topics for a preparation."""
+    """List a preparation's topics with their band and question counts.
+
+    The counts are included because the alternative is a request per topic against
+    the paginated question bank for a number one grouped query already produces.
+    """
     return await exam_prep_service.list_topics(user_id=current_user.id, prep_id=prep_id)
 
 

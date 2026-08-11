@@ -46,11 +46,30 @@ class FakeRepo:
         self.candidates: list[SimpleNamespace] = []
         self.upserts = 0
 
-    def add_prep(self, prep_id: str, user_id: str):
-        self.preps[(prep_id, user_id)] = SimpleNamespace(id=prep_id, user_id=user_id)
+    def add_prep(
+        self,
+        prep_id: str,
+        user_id: str,
+        *,
+        target_readiness: int | None = None,
+        created_at: datetime | None = None,
+        exam_date: datetime | None = None,
+    ):
+        self.preps[(prep_id, user_id)] = SimpleNamespace(
+            id=prep_id,
+            user_id=user_id,
+            target_readiness=target_readiness,
+            created_at=created_at or datetime(2026, 8, 1, tzinfo=UTC),
+            exam_date=exam_date or datetime(2026, 8, 31, tzinfo=UTC),
+        )
 
     def add_candidate(self, prep_id: str):
         self.candidates.append(SimpleNamespace(id=prep_id))
+
+    async def list_exam_preps_by_ids(self, prep_ids: list[str]):
+        """Batch load, unscoped by user — as the daily writer needs."""
+        wanted = set(prep_ids)
+        return [prep for (prep_id, _), prep in self.preps.items() if prep_id in wanted]
 
     def add_snapshot(self, prep_id: str, captured_on: date, **values):
         self.snapshots[(prep_id, captured_on)] = {
@@ -63,6 +82,7 @@ class FakeRepo:
             "questions_answered": 10,
             "accuracy_percent": 70.0,
             "quizzes_taken": 2,
+            "target_percent": None,
             **values,
         }
 

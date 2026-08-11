@@ -30,8 +30,9 @@ async def _exec(conn, sql: str, *, optional: bool = False):
     Each statement runs in its own savepoint so a failure doesn't
     poison the entire transaction.
     """
-    from sqlalchemy import text
     import uuid
+
+    from sqlalchemy import text
 
     short = sql.strip().split("\n")[0][:80]
     sp_name = f"sp_{uuid.uuid4().hex[:8]}"

@@ -1,7 +1,9 @@
 """List all PostgreSQL enum types in the database."""
 
 import asyncio
+
 from sqlalchemy import text
+
 from src.shared.database.session import connect_db, get_session_factory
 
 

@@ -34,9 +34,21 @@ class FakeRepo:
         self.searches: list[dict] = []
         # (userId, questionId) -> flag
         self.flags: dict[tuple[str, str], SimpleNamespace] = {}
+        # prepId -> topics, so the listing can resolve topic titles.
+        self.topics: dict[str, list[SimpleNamespace]] = {}
 
     def add_prep(self, prep_id: str, user_id: str):
         self.preps[(prep_id, user_id)] = SimpleNamespace(id=prep_id, user_id=user_id)
+
+    def add_topic(self, topic_id: str, prep_id: str, title: str):
+        self.topics.setdefault(prep_id, []).append(
+            SimpleNamespace(id=topic_id, prep_id=prep_id, title=title)
+        )
+
+    async def list_prep_topics(self, prep_id: str):
+        return self.topics.get(prep_id, [])
+
+    # ------------------------------------------------------------------ topics
 
     def add_question(
         self,
@@ -283,6 +295,25 @@ class TestQuestionMetadata:
         assert items[0]["difficulty"] == "HARD"
         assert items[0]["source"] == "PAST_PAPER"
         assert items[0]["sourceYear"] == 2019
+
+    async def test_topic_titles_are_resolved_server_side(self, repo):
+        """The bank tab groups and labels by topic.
+
+        Resolving the title here is one query for the page; the alternative was the
+        client holding the topic list and joining it row by row.
+        """
+        repo.add_prep("prep-1", OWNER)
+        repo.add_topic("topic-1", "prep-1", "Hypothesis testing")
+        repo.add_question("q1", "prep-1", topic_id="topic-1")
+        repo.add_question("q2", "prep-1", topic_id=None)
+
+        items, _ = await exam_prep_service.search_question_bank(user_id=OWNER, prep_id="prep-1")
+        by_id = {item["id"]: item for item in items}
+
+        assert by_id["q1"]["prepTopicTitle"] == "Hypothesis testing"
+        # An unattributed question has no topic, and inventing one would attribute
+        # practice to material it does not belong to.
+        assert by_id["q2"]["prepTopicTitle"] is None
 
     async def test_exam_tip_is_withheld_from_the_bank(self, repo):
         """A tip about a specific question can hint at its answer, so it sits on

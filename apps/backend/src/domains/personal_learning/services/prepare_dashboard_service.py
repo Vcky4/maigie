@@ -22,12 +22,17 @@ from src.shared.exceptions import MaigieError
 
 from .. import models
 from ..repository import personal_learning_repo as repo
-from . import prep_readiness
+from . import prep_focus, prep_readiness
 
 logger = logging.getLogger(__name__)
 
 # Only these are treated as active; completed preparations are history.
 ACTIVE_STATUSES = ("SETUP", "IN_PROGRESS")
+
+# Cap on the topics loaded to compute per-preparation recommendations. Weakest
+# first, so the topic a recommendation would choose is always inside the window
+# even when a preparation has more topics than this.
+_MAX_TOPICS_FOR_RECOMMENDATION = 200
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -63,12 +68,53 @@ async def _load_active_preparations(user_id: str, limit: int) -> tuple[list[Any]
     return combined[:limit], total + setup_total
 
 
+def _recommendation(
+    topics: list[Any], answered_by_topic: dict[str, int]
+) -> models.PrepFocusRecommendation:
+    """Adapt `prep_focus` onto the wire model.
+
+    Kept here rather than in `prep_focus` so that module stays free of response
+    schemas and can be unit-tested without importing them.
+    """
+    focus = prep_focus.recommend(topics, answered_by_topic=answered_by_topic)
+    return models.PrepFocusRecommendation(
+        topic_id=focus.topic_id,
+        topic_title=focus.topic_title,
+        mastery_percent=focus.mastery_percent,
+        band=focus.band,
+        reason_code=focus.reason_code,
+        reason=focus.reason,
+        recommended_mode=focus.recommended_mode,
+        recommended_question_count=focus.recommended_question_count,
+        estimated_minutes=focus.estimated_minutes,
+    )
+
+
+def _milestone_status(item: Any, now: datetime) -> str:
+    """Map a study-plan item onto the three states a timeline rail shows.
+
+    Derived rather than stored: `COMPLETE` is the item's own status, and `TODAY`
+    versus `UPCOMING` is a question about the current date, which a stored value
+    would answer wrongly by tomorrow.
+    """
+    if item.status in ("COMPLETED", "COMPLETE") or item.completed_at is not None:
+        return "COMPLETE"
+    scheduled = _as_utc(item.scheduled_date).date()
+    today = now.date()
+    if scheduled < today:
+        return "OVERDUE"
+    if scheduled == today:
+        return "TODAY"
+    return "UPCOMING"
+
+
 async def get_dashboard(
     *,
     user_id: str,
     preparation_limit: int,
     topic_limit: int,
     session_limit: int,
+    milestone_limit: int = 6,
 ) -> models.PrepareDashboardResponse:
     now = datetime.now(UTC)
 
@@ -123,10 +169,26 @@ async def get_dashboard(
 
     progress_by_prep: dict[str, prep_readiness.PrepProgress] = {}
     focus_topics: list[Any] = []
+    # Every topic of every active preparation, needed to recommend a next action
+    # per preparation. The dashboard's `focusTopics` list cannot serve that: it is
+    # bounded across all preparations, so a preparation may be absent from it
+    # entirely and would otherwise get no recommendation at all.
+    all_topics: list[Any] = []
+    topic_counts: dict[str, dict[str, int]] = {}
+    milestone_rows: list[Any] = []
     if prep_ids:
-        progress_result, topics_result = await asyncio.gather(
+        (
+            progress_result,
+            topics_result,
+            all_topics_result,
+            counts_result,
+            milestones_result,
+        ) = await asyncio.gather(
             prep_readiness.load_for_preparations(prep_ids),
             repo.list_weakest_prep_topics(prep_ids, take=topic_limit),
+            repo.list_weakest_prep_topics(prep_ids, take=_MAX_TOPICS_FOR_RECOMMENDATION),
+            repo.get_prep_topic_question_counts(prep_ids),
+            repo.list_prep_milestone_items(prep_ids, user_id, take=milestone_limit),
             return_exceptions=True,
         )
         if isinstance(progress_result, BaseException):
@@ -139,6 +201,29 @@ async def get_dashboard(
             _log_source_failure(user_id, "focusTopics", topics_result)
         else:
             focus_topics = topics_result
+        if isinstance(all_topics_result, BaseException):
+            # Without topics there is no recommendation, but the cards are still
+            # worth rendering, so this degrades `preparations` rather than failing.
+            degraded.add("preparations")
+            _log_source_failure(user_id, "recommendations", all_topics_result)
+        else:
+            all_topics = all_topics_result
+        if isinstance(counts_result, BaseException):
+            _log_source_failure(user_id, "topicCounts", counts_result)
+        else:
+            topic_counts = counts_result
+        if isinstance(milestones_result, BaseException):
+            degraded.add("milestones")
+            _log_source_failure(user_id, "milestones", milestones_result)
+        else:
+            milestone_rows = milestones_result
+
+    answered_by_topic = {
+        topic_id: counts.get("answered_count", 0) for topic_id, counts in topic_counts.items()
+    }
+    topics_by_prep: dict[str, list[Any]] = {}
+    for topic in all_topics:
+        topics_by_prep.setdefault(topic.prep_id, []).append(topic)
 
     preparation_summaries = [
         models.PreparationProgressSummary(
@@ -151,6 +236,7 @@ async def get_dashboard(
             days_until_exam=_days_until(preparation.exam_date, now),
             progress_percent=progress.progress_percent,
             average_mastery_percent=progress.average_mastery_percent,
+            target_readiness=preparation.target_readiness,
             topics_total=progress.topics_total,
             topics_strong=progress.topics_strong,
             topics_focus=progress.topics_focus,
@@ -158,7 +244,9 @@ async def get_dashboard(
             questions_answered=progress.questions_answered,
             accuracy_percent=progress.accuracy_percent,
             quizzes_taken=progress.quizzes_taken,
+            practice_minutes=progress.practice_minutes,
             practice_ready=progress.practice_ready,
+            next_action=_recommendation(topics_by_prep.get(preparation.id, []), answered_by_topic),
         )
         for preparation in preparations
         if (progress := progress_by_prep.get(preparation.id)) is not None
@@ -181,6 +269,7 @@ async def get_dashboard(
         "preparations",
         "focusTopics",
         "recentSessions",
+        "milestones",
     ]
 
     return models.PrepareDashboardResponse(
@@ -197,11 +286,30 @@ async def get_dashboard(
                 preparation_id=topic.prep_id,
                 preparation_subject=subject_by_id.get(topic.prep_id, ""),
                 title=topic.title,
+                category=topic.category,
                 mastery_percent=round(topic.mastery_score or 0.0, 1),
+                target_mastery=topic.target_mastery,
                 band=prep_readiness.mastery_band(topic.mastery_score),
                 order_index=topic.order_index,
+                question_count=topic_counts.get(topic.id, {}).get("question_count", 0),
+                answered_question_count=topic_counts.get(topic.id, {}).get("answered_count", 0),
             )
             for topic in focus_topics
+        ],
+        milestones=[
+            models.PrepareMilestone(
+                id=item.id,
+                preparation_id=item_prep_id,
+                preparation_subject=subject_by_id.get(item_prep_id, ""),
+                kind="STUDY",
+                title=item.title,
+                detail=item.description,
+                scheduled_for=item.scheduled_date,
+                status=_milestone_status(item, now),
+                estimated_minutes=item.estimated_minutes,
+                prep_topic_id=item.prep_topic_id,
+            )
+            for item, item_prep_id in milestone_rows
         ],
         recent_sessions=[
             models.PrepareSessionSummary(

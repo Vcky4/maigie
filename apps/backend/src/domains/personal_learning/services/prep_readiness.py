@@ -104,6 +104,21 @@ class PrepProgress:
         return _clamp_percent(self.mastery_sum / self.topics_total)
 
     @property
+    def topics_review(self) -> int:
+        """Topics in the middle band, derived so the three bands always sum.
+
+        Not queried separately: `topics_total - strong - focus` is exact, and a
+        third aggregate could drift from the other two if a threshold moved.
+        """
+        return max(0, self.topics_total - self.topics_strong - self.topics_focus)
+
+    @property
+    def practice_minutes(self) -> int:
+        """Tracked practice time. Session durations are nullable, so this is time
+        that was recorded rather than total time spent."""
+        return self.practice_seconds // 60
+
+    @property
     def accuracy_percent(self) -> float | None:
         """`None` until at least one question has been answered."""
         if self.questions_answered <= 0:
@@ -138,6 +153,40 @@ def _build(aggregate: dict[str, Any] | None) -> PrepProgress:
         practice_seconds=int(data.get("practice_seconds", 0) or 0),
         mastery_sum=float(data.get("mastery_sum", 0.0) or 0.0),
     )
+
+
+def target_percent_on(
+    day: date,
+    *,
+    started_on: date,
+    exam_on: date,
+    target_readiness: int | None,
+) -> float | None:
+    """Where readiness needs to be on `day` to hit the target by the exam.
+
+    A straight line from nothing at the preparation's start to the stated target
+    on the target date — the pace line, not a prediction. Its only claim is
+    arithmetic: if you intend to reach 85 by the 5th and you started on the 1st,
+    this is the halfway mark.
+
+    `None` when the learner has stated no target, so a surface draws one line
+    instead of inventing a second. Deliberately not derived from confidence or
+    from other learners: a target is an intention, and guessing one would put a
+    goal on the chart that nobody set.
+    """
+    if target_readiness is None:
+        return None
+    target = _clamp_percent(float(target_readiness))
+
+    span = (exam_on - started_on).days
+    if span <= 0:
+        # The target date is the start date, or has already passed: the whole
+        # target applies now. No division, and no negative slope.
+        return target
+
+    elapsed = (day - started_on).days
+    fraction = max(0.0, min(1.0, elapsed / span))
+    return _clamp_percent(target * fraction)
 
 
 # How far back the practice streak is allowed to look. A streak longer than this
@@ -179,11 +228,19 @@ def practice_streak(practice_days: Sequence[date], *, today: date) -> int | None
     return streak
 
 
-async def load_practice_streak(user_id: str, *, today: date | None = None) -> int | None:
-    """Load the learner's practice streak over the bounded window."""
+async def load_practice_streak(
+    user_id: str, *, prep_id: str | None = None, today: date | None = None
+) -> int | None:
+    """Load the learner's practice streak over the bounded window.
+
+    With `prep_id`, the streak covers only that preparation. The two numbers are
+    deliberately different: practising one subject does not advance another's
+    streak, so a workspace showing the account-wide figure would credit the
+    learner with preparation they have not done.
+    """
     reference = today or datetime.now(UTC).date()
     since = datetime.now(UTC) - timedelta(days=PRACTICE_STREAK_WINDOW_DAYS)
-    days = await repo.list_practice_days(user_id, since=since)
+    days = await repo.list_practice_days(user_id, since=since, prep_id=prep_id)
     return practice_streak(days, today=reference)
 
 

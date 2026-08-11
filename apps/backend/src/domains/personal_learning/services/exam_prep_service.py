@@ -10,7 +10,7 @@ import logging
 from datetime import UTC, datetime, timezone
 from typing import Any
 
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import MaigieError, NotFoundError
 
 from ..repository import personal_learning_repo as repo
 
@@ -39,6 +39,9 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
         # Persisted since migration 007. The wizard collected both and dropped them.
         "confidence": data.get("confidence"),
         "pace": data.get("pace"),
+        # Persisted since migration 016. Optional: without a stated target the
+        # workspace shows readiness with no target line, rather than a guessed one.
+        "targetReadiness": data.get("target_readiness", data.get("targetReadiness")),
     }
     prep = await repo.create_exam_prep(prep_data)
 
@@ -61,6 +64,90 @@ async def get_preparation(*, user_id: str, prep_id: str) -> Any:
     if not prep:
         raise NotFoundError("Preparation", prep_id)
     return prep
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+async def get_preparation_detail(*, user_id: str, prep_id: str) -> dict[str, Any]:
+    """One preparation with the progress and recommendation its workspace shows.
+
+    Everything derived comes from `prep_readiness` and `prep_focus`, the same
+    helpers the dashboard uses, so the workspace header cannot disagree with the
+    card the learner clicked to reach it.
+
+    The three reads run concurrently because none depends on another, and all three
+    are already scoped: progress and topics by `prep_id`, the streak by `user_id`.
+    """
+    import asyncio
+
+    from . import prep_focus, prep_readiness
+
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    progress, topics, streak, topic_counts = await asyncio.gather(
+        prep_readiness.load_for_preparation(prep_id),
+        repo.list_prep_topics(prep_id),
+        prep_readiness.load_practice_streak(user_id, prep_id=prep_id),
+        repo.get_prep_topic_question_counts([prep_id]),
+    )
+
+    answered_by_topic = {
+        topic_id: counts.get("answered_count", 0) for topic_id, counts in topic_counts.items()
+    }
+    focus = prep_focus.recommend(topics, answered_by_topic=answered_by_topic)
+
+    now = datetime.now(UTC)
+    delta = _as_utc(prep.exam_date) - now
+    days_until_exam = delta.days if delta.total_seconds() >= 0 else None
+
+    return {
+        "id": prep.id,
+        "userId": prep.user_id,
+        "subject": prep.subject,
+        # The field name, not the `type` wire alias: `prep_type` declares an
+        # explicit validation alias, so the camel generator does not apply here.
+        "prep_type": prep.prep_type,
+        "examDate": prep.exam_date,
+        "description": prep.description,
+        "status": prep.status,
+        "confidence": prep.confidence,
+        "pace": prep.pace,
+        "targetReadiness": prep.target_readiness,
+        "createdAt": prep.created_at,
+        "updatedAt": prep.updated_at,
+        "daysUntilExam": days_until_exam,
+        "progress": {
+            "progressPercent": progress.progress_percent,
+            "averageMasteryPercent": progress.average_mastery_percent,
+            "targetReadiness": prep.target_readiness,
+            "topicsTotal": progress.topics_total,
+            "topicsStrong": progress.topics_strong,
+            "topicsReview": progress.topics_review,
+            "topicsFocus": progress.topics_focus,
+            "topicsAssessed": progress.topics_assessed,
+            "questionsAnswered": progress.questions_answered,
+            "accuracyPercent": progress.accuracy_percent,
+            "quizzesTaken": progress.quizzes_taken,
+            "practiceMinutes": progress.practice_minutes,
+            "practiceStreak": streak,
+            "practiceReady": progress.practice_ready,
+        },
+        "focus": {
+            "topicId": focus.topic_id,
+            "topicTitle": focus.topic_title,
+            "masteryPercent": focus.mastery_percent,
+            "band": focus.band,
+            "reasonCode": focus.reason_code,
+            "reason": focus.reason,
+            "recommendedMode": focus.recommended_mode,
+            "recommendedQuestionCount": focus.recommended_question_count,
+            "estimatedMinutes": focus.estimated_minutes,
+        },
+    }
 
 
 # `list_preparations` was removed. It fetched every preparation and sorted in
@@ -113,6 +200,8 @@ async def update_preparation(*, user_id: str, prep_id: str, data: dict[str, Any]
     for intent_field in ("confidence", "pace"):
         if intent_field in data:
             mapped[intent_field] = data[intent_field]
+    if "target_readiness" in data:
+        mapped["targetReadiness"] = data["target_readiness"]
     for key in ("target_date", "exam_date"):
         if key in data and data[key] is not None:
             value = data[key]
@@ -164,6 +253,152 @@ async def upload_material(*, user_id: str, prep_id: str, data: dict[str, Any]) -
     return material
 
 
+# Uploads are capped well below what a textbook would be. The cap exists because
+# extraction reads the whole file into memory, and because a 200MB scan is not
+# material a learner is going to revise from.
+MAX_MATERIAL_UPLOAD_BYTES = 25 * 1024 * 1024
+
+# Text is extracted for these, so topic extraction has something to read. Other
+# types are stored and downloadable but contribute nothing to extraction, and
+# `hasExtractedText` says so rather than the client having to guess from the
+# extension.
+_TEXT_EXTENSIONS = (".txt", ".md", ".markdown", ".csv")
+
+
+def _safe_filename(raw: str | None) -> str:
+    """Reduce a client-supplied filename to something safe to use as a path segment.
+
+    Only the basename is kept and the character set is restricted, so a name like
+    `../../other-user/notes.pdf` cannot write outside the preparation's own prefix.
+    """
+    import re
+
+    candidate = (raw or "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    candidate = re.sub(r"[^A-Za-z0-9._-]+", "_", candidate).strip("._")
+    return candidate[:200] or "material"
+
+
+def _extract_upload_text(content: bytes, filename: str, content_type: str | None) -> str | None:
+    """Pull readable text out of an uploaded file, or return None.
+
+    Returning `None` is a normal outcome, not an error: an image or a slide deck is
+    still worth storing. Extraction failure is also `None` rather than an
+    exception, because a file the learner can open is worth keeping even if we
+    cannot read it.
+    """
+    lowered = filename.lower()
+
+    if lowered.endswith(_TEXT_EXTENSIONS) or (content_type or "").startswith("text/"):
+        try:
+            return content.decode("utf-8", errors="replace").strip() or None
+        except Exception:  # noqa: BLE001 - a file we cannot decode is still storable
+            return None
+
+    if lowered.endswith(".pdf") or (content_type or "") == "application/pdf":
+        try:
+            import io
+
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(content))
+            pages = [page.extract_text() or "" for page in reader.pages]
+            text = "\n\n".join(part.strip() for part in pages if part.strip())
+            return text or None
+        except Exception as e:  # noqa: BLE001 - a scanned PDF has no text layer
+            logger.info(
+                "PDF text extraction produced nothing",
+                extra={"filename": filename, "error": type(e).__name__},
+            )
+            return None
+
+    return None
+
+
+async def upload_material_file(
+    *,
+    user_id: str,
+    prep_id: str,
+    file: Any,
+    category: str = "OTHER",
+    label: str | None = None,
+) -> Any:
+    """Store an uploaded file and register it as material.
+
+    The JSON create path requires a `url`, which meant the workspace's file picker
+    and the create wizard's drag-and-drop had nowhere to send a file: there was no
+    upload endpoint anywhere in the API and no direct-to-storage path on the web
+    client. This closes that, using the same `storage_service` the rest of the
+    platform writes through.
+
+    Text is extracted on the way in where the format allows it, because extracted
+    text is what topic extraction reads. A file we cannot read is still stored;
+    `hasExtractedText` reports the difference so the client can tell the learner
+    that a scanned PDF will not produce topics.
+    """
+    from src.shared.infrastructure.storage import StorageError, storage_service
+
+    prep = await repo.find_exam_prep(prep_id, user_id)
+    if not prep:
+        raise NotFoundError("Preparation", prep_id)
+
+    filename = _safe_filename(getattr(file, "filename", None))
+    content = await file.read()
+    size = len(content)
+
+    if size == 0:
+        raise MaigieError(
+            "That file is empty.",
+            status_code=400,
+            code="MATERIAL_FILE_EMPTY",
+        )
+    if size > MAX_MATERIAL_UPLOAD_BYTES:
+        raise MaigieError(
+            f"That file is larger than the {MAX_MATERIAL_UPLOAD_BYTES // (1024 * 1024)}MB limit.",
+            status_code=413,
+            code="MATERIAL_FILE_TOO_LARGE",
+        )
+
+    content_type = getattr(file, "content_type", None)
+
+    try:
+        # Pathed by preparation under the learner's own id, so one learner's
+        # uploads can never collide with or overwrite another's. The filename is
+        # sanitised first, so a crafted name cannot escape that prefix.
+        stored = await storage_service.upload_bytes(
+            content,
+            f"prep-materials/{user_id}/{prep_id}/{filename}",
+            content_type=content_type or "application/octet-stream",
+        )
+    except StorageError as e:
+        logger.warning(
+            "Material upload to storage failed",
+            extra={"prep_id": prep_id, "filename": filename},
+        )
+        raise MaigieError(
+            "We could not store that file. Please try again.",
+            status_code=503,
+            code="MATERIAL_UPLOAD_FAILED",
+        ) from e
+
+    material = await repo.create_prep_material(
+        {
+            "prepId": prep_id,
+            "filename": filename,
+            "url": stored.get("url") or stored.get("path") or "",
+            "fileType": content_type,
+            "size": size,
+            "extractedText": _extract_upload_text(content, filename, content_type),
+            "category": category or "OTHER",
+            "label": label,
+        }
+    )
+
+    if prep.status == "SETUP":
+        await repo.update_exam_prep(prep_id, {"status": "IN_PROGRESS"})
+
+    return material
+
+
 async def list_materials(*, user_id: str, prep_id: str) -> list[dict[str, Any]]:
     """List materials for a preparation.
 
@@ -187,6 +422,7 @@ async def list_materials(*, user_id: str, prep_id: str) -> list[dict[str, Any]]:
             "label": material.label,
             "hasExtractedText": bool(material.extracted_text),
             "createdAt": material.created_at,
+            "updatedAt": material.updated_at,
         }
         for material in materials
     ]
@@ -236,15 +472,18 @@ async def update_topic(*, user_id: str, prep_id: str, topic_id: str, data: dict[
     field_map = {
         "title": "title",
         "description": "description",
+        "category": "category",
         "estimated_minutes": "estimatedMinutes",
         "order_index": "orderIndex",
         "mastery_score": "masteryScore",
+        "target_mastery": "targetMastery",
         "status": "status",
     }
     payload = {field_map[k]: v for k, v in data.items() if k in field_map}
     if not payload:
-        return topic
-    return await repo.update_prep_topic(topic_id, payload)
+        return _topic_payload(topic)
+    updated = await repo.update_prep_topic(topic_id, payload)
+    return _topic_payload(updated or topic)
 
 
 async def delete_topic(*, user_id: str, prep_id: str, topic_id: str) -> bool:
@@ -265,14 +504,21 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
     AI-extract key topics from preparation materials.
 
     Req 4.3: Create topic records with titles, descriptions, and estimated study time.
+
+    Routed through `llm_resilient` rather than calling the provider directly, so
+    extraction gets the learner's configured provider and the per-provider circuit
+    breaker that quiz generation already had.
+
+    A failure raises. It previously returned `[]`, which reached the client as a
+    `200` with an empty array — indistinguishable from "this material has no
+    topics in it", and the caller's next step (start practising) then failed with
+    a different error entirely.
     """
-    import json
-
-    from src.domains.intelligence.reasoning.llm import generate_content
-
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
+
+    from . import llm_resilient
 
     # Gather material text
     materials = await repo.list_prep_materials(prep_id)
@@ -280,6 +526,9 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
         [f"[{m.filename}]: {m.extracted_text or ''}" for m in materials if m.extracted_text]
     )
 
+    # No uploaded text is not a blocker: the subject and description are enough to
+    # get a usable topic list, which is what keeps a preparation created without
+    # files from being permanently unable to practise.
     if not material_text:
         material_text = f"Subject: {prep.subject}\nDescription: {prep.description or ''}"
 
@@ -290,26 +539,49 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
         f"Return a JSON array of topic objects with:\n"
         f"- 'title': short topic name\n"
         f"- 'description': brief description of what to learn\n"
+        f"- 'category': a short grouping heading shared by related topics, e.g. "
+        f"'Foundations', 'Core concepts', 'Applications'. Reuse the same heading "
+        f"across topics that belong together; use at most 5 distinct headings.\n"
         f"- 'estimatedMinutes': estimated study time in minutes (15-120)\n\n"
         f"Generate 5-15 topics covering all important areas.\n"
         f"Return ONLY the JSON array."
     )
 
     try:
-        response = await generate_content(prompt, max_tokens=3000)
-        topics_data = json.loads(response)
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"Failed to extract topics for prep {prep_id}: {e}")
-        return []
+        topics_data = await llm_resilient.generate_content_json(
+            prompt, max_tokens=3000, user_id=user_id
+        )
+    except Exception as e:
+        logger.warning(
+            "Topic extraction failed",
+            extra={"prep_id": prep_id, "error": type(e).__name__},
+        )
+        raise MaigieError(
+            "We could not extract topics from this material. Please try again.",
+            status_code=503,
+            code="PREP_TOPIC_EXTRACTION_FAILED",
+        ) from e
+
+    if not isinstance(topics_data, list):
+        logger.warning(
+            "Topic extraction returned a non-list payload",
+            extra={"prep_id": prep_id, "payload_type": type(topics_data).__name__},
+        )
+        raise MaigieError(
+            "We could not extract topics from this material. Please try again.",
+            status_code=503,
+            code="PREP_TOPIC_EXTRACTION_FAILED",
+        )
 
     created_topics = []
     for idx, topic in enumerate(topics_data):
-        if isinstance(topic, dict) and "title" in topic:
+        if isinstance(topic, dict) and topic.get("title"):
             prep_topic = await repo.create_prep_topic(
                 {
                     "prepId": prep_id,
                     "title": topic["title"],
                     "description": topic.get("description"),
+                    "category": _normalize_category(topic.get("category")),
                     "estimatedMinutes": topic.get("estimatedMinutes", 30),
                     "orderIndex": idx,
                     "status": "NOT_STARTED",
@@ -317,15 +589,80 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
             )
             created_topics.append(prep_topic)
 
-    return created_topics
+    if not created_topics:
+        # A well-formed response containing nothing usable is still a failure, and
+        # saying so is better than an empty `200` the caller has to interpret.
+        raise MaigieError(
+            "We could not extract topics from this material. Please try again.",
+            status_code=503,
+            code="PREP_TOPIC_EXTRACTION_FAILED",
+        )
+
+    return [_topic_payload(topic) for topic in created_topics]
 
 
-async def list_topics(*, user_id: str, prep_id: str) -> list[Any]:
-    """List topics for a preparation."""
+# A heading has to fit in a group label, and an unbounded string from a model does
+# not. Longer values are dropped rather than truncated: half a heading is worse
+# than none, because the client would still render it.
+_MAX_CATEGORY_LENGTH = 60
+
+
+def _normalize_category(value: Any) -> str | None:
+    """Keep a usable grouping heading, or nothing."""
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned or len(cleaned) > _MAX_CATEGORY_LENGTH:
+        return None
+    return cleaned
+
+
+def _topic_payload(topic: Any, counts: dict[str, int] | None = None) -> dict[str, Any]:
+    """Serialise a topic with its band, and its counts when they were loaded.
+
+    The band is resolved here rather than on the client so that every surface uses
+    the same 70/80 boundaries as the dashboard and the readiness helper.
+    """
+    from . import prep_readiness
+
+    payload: dict[str, Any] = {
+        "id": topic.id,
+        "prepId": topic.prep_id,
+        "title": topic.title,
+        "description": topic.description,
+        "category": topic.category,
+        "estimatedMinutes": topic.estimated_minutes,
+        "orderIndex": topic.order_index,
+        "masteryScore": topic.mastery_score,
+        "targetMastery": topic.target_mastery,
+        "band": prep_readiness.mastery_band(topic.mastery_score),
+        "status": topic.status,
+        "createdAt": topic.created_at,
+    }
+    if counts is not None:
+        payload["questionCount"] = counts.get("question_count", 0)
+        payload["answeredQuestionCount"] = counts.get("answered_count", 0)
+    return payload
+
+
+async def list_topics(*, user_id: str, prep_id: str) -> list[dict[str, Any]]:
+    """List topics for a preparation, with each topic's question counts.
+
+    The counts ("43 of 46 answered") are an aggregate over the question bank and
+    answers, not columns on the topic. They are included here because the
+    alternative — the workspace calling the paginated bank endpoint once per topic
+    — is a request per topic for a number the database can produce in one query.
+    """
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
-    return await repo.list_prep_topics(prep_id)
+
+    topics = await repo.list_prep_topics(prep_id)
+    counts = await repo.get_prep_topic_question_counts([prep_id])
+    return [
+        _topic_payload(topic, counts.get(topic.id, {"question_count": 0, "answered_count": 0}))
+        for topic in topics
+    ]
 
 
 async def mark_completed(*, user_id: str, prep_id: str) -> Any:
@@ -426,11 +763,17 @@ async def search_question_bank(
         take=page_size,
     )
 
+    # One query for the whole page's topic titles. The bank tab groups and labels
+    # by topic, and resolving it here is cheaper and less error-prone than a client
+    # holding the topic list and joining row by row.
+    topic_titles = {topic.id: topic.title for topic in await repo.list_prep_topics(prep_id)}
+
     items = [
         {
             "id": question.id,
             "prepId": question.prep_id,
             "prepTopicId": question.prep_topic_id,
+            "prepTopicTitle": topic_titles.get(question.prep_topic_id),
             "questionText": question.question_text,
             "questionType": question.question_type,
             "options": question.options if isinstance(question.options, list) else None,

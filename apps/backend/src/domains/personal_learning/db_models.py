@@ -192,6 +192,10 @@ class ExamPrep(Base, TimestampMixin):
     # implies (sessions per week, weekly minutes) is derived in `prep_intent`
     # rather than stored, so there is one definition of what each pace means.
     pace: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Readiness the learner is aiming for, 0-100. Nullable because a target is an
+    # intention rather than a measurement: it cannot be derived, and defaulting it
+    # would invent a goal. When null, a surface shows readiness without a target.
+    target_readiness: Mapped[int | None] = mapped_column("targetReadiness", Integer, nullable=True)
     exam_date: Mapped[datetime] = mapped_column("examDate", DateTime(timezone=True), nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="SETUP", server_default="SETUP")
@@ -530,9 +534,17 @@ class PrepTopic(Base, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A grouping label ("Foundations", "Statistical inference"). A property of the
+    # topic rather than of its mastery, so it cannot be computed from anything
+    # else. Null for topics extracted before this existed; they render ungrouped.
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
     estimated_minutes: Mapped[int] = mapped_column("estimatedMinutes", Integer, default=30)
     order_index: Mapped[int] = mapped_column("orderIndex", Integer, default=0)
     mastery_score: Mapped[float] = mapped_column("masteryScore", Float, default=0.0)
+    # Mastery this topic is aiming for, 0-100. Falls back to the preparation's
+    # target when null, so per-topic targets are an override rather than a
+    # requirement.
+    target_mastery: Mapped[float | None] = mapped_column("targetMastery", Float, nullable=True)
     status: Mapped[str] = mapped_column(String, default="NOT_STARTED")
 
     __table_args__ = (Index("PrepTopic_prepId_order_idx", "prepId", "orderIndex"),)
@@ -802,6 +814,11 @@ class PrepReadinessSnapshot(Base, TimestampMixin):
     # Null until at least one question has been answered.
     accuracy_percent: Mapped[float | None] = mapped_column("accuracyPercent", Float, nullable=True)
     quizzes_taken: Mapped[int] = mapped_column("quizzesTaken", Integer, default=0)
+    # Where readiness needed to be on this day to reach the target by the exam.
+    # Stored rather than recomputed on read: a learner who raises their target
+    # should not find last month's chart redrawn around the new one. Null when the
+    # preparation has no stated target.
+    target_percent: Mapped[float | None] = mapped_column("targetPercent", Float, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("prepId", "capturedOn", name="PrepReadinessSnapshot_unique"),
