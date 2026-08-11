@@ -39,8 +39,11 @@ FocusReason = Literal[
 # A recommended set is short on purpose: the point is to move one topic, not to
 # fill an evening. Matches the launcher's own default.
 DEFAULT_QUESTION_COUNT = 5
-# Fallback when a topic carries no estimate of its own.
-DEFAULT_ESTIMATED_MINUTES = 15
+# Reading the question, working it out, and reading the explanation. Two minutes a
+# question puts the default set at ten, which is what the mode tiles already say.
+MINUTES_PER_QUESTION = 2
+# Floor, so a very short set never reads as instant.
+DEFAULT_ESTIMATED_MINUTES = 5
 
 
 @dataclass(frozen=True)
@@ -56,13 +59,16 @@ class FocusRecommendation:
     estimated_minutes: int
 
 
-def _estimated_minutes(topic: Any) -> int:
-    minutes = getattr(topic, "estimated_minutes", None)
-    if not minutes or minutes <= 0:
-        return DEFAULT_ESTIMATED_MINUTES
-    # A topic's own estimate is for studying it end to end; a focused practice set
-    # is a slice of that, floored so it never reads as instant.
-    return max(DEFAULT_ESTIMATED_MINUTES, min(int(minutes), 45))
+def _estimated_minutes(question_count: int) -> int:
+    """How long a practice set of this size takes.
+
+    Derived from the number of questions, because that is what determines it. It
+    previously came from the topic's own `estimatedMinutes`, which is the time to
+    *study* the topic end to end — so a five-question set was being advertised as
+    45 minutes. A learner who sets aside 45 minutes for a ten-minute set has been
+    misinformed in the direction that stops them practising at all.
+    """
+    return max(DEFAULT_ESTIMATED_MINUTES, question_count * MINUTES_PER_QUESTION)
 
 
 def recommend(
@@ -96,7 +102,7 @@ def recommend(
             reason="Extract topics from your material to unlock practice.",
             recommended_mode="QUICK_REVIEW",
             recommended_question_count=DEFAULT_QUESTION_COUNT,
-            estimated_minutes=DEFAULT_ESTIMATED_MINUTES,
+            estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
         )
 
     # `{}` is a loaded-and-empty mapping, which is information; `None` means the
@@ -130,7 +136,7 @@ def recommend(
             reason=f"You have not answered any questions on {topic.title} yet.",
             recommended_mode="TOPIC_FOCUS",
             recommended_question_count=DEFAULT_QUESTION_COUNT,
-            estimated_minutes=_estimated_minutes(topic),
+            estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
         )
 
     band = prep_readiness.mastery_band(mastery)
@@ -148,7 +154,7 @@ def recommend(
             reason="Every topic is above target. A short mixed set keeps it there.",
             recommended_mode="QUICK_REVIEW",
             recommended_question_count=DEFAULT_QUESTION_COUNT,
-            estimated_minutes=_estimated_minutes(weakest),
+            estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
         )
 
     return FocusRecommendation(
@@ -163,5 +169,5 @@ def recommend(
         # spends the session where it is worth most.
         recommended_mode="WEAK_AREAS" if band == "focus" else "TOPIC_FOCUS",
         recommended_question_count=DEFAULT_QUESTION_COUNT,
-        estimated_minutes=_estimated_minutes(weakest),
+        estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
     )

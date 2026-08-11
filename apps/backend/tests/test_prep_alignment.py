@@ -253,6 +253,31 @@ class TestFocusRecommendation:
         assert recommendation.reason_code == "MAINTENANCE"
         assert recommendation.recommended_mode == "QUICK_REVIEW"
 
+    def test_the_duration_matches_the_set_size_not_the_topic_estimate(self):
+        """Regression: a five-question set was advertised as 45 minutes.
+
+        The duration came from the topic's `estimatedMinutes`, which is the time to
+        *study* the topic end to end. Someone who sets aside 45 minutes for a
+        ten-minute set has been misinformed in the direction that stops them
+        practising at all.
+        """
+        # A topic with a large study estimate must not inflate the set's duration.
+        topics = [_topic("t-long", "Calculus", 40.0, minutes=120)]
+        recommendation = prep_focus.recommend(topics, answered_by_topic={"t-long": 4})
+
+        assert recommendation.recommended_question_count == 5
+        assert recommendation.estimated_minutes == 10
+
+    def test_the_duration_scales_with_the_question_count(self):
+        assert prep_focus._estimated_minutes(5) == 10
+        assert prep_focus._estimated_minutes(10) == 20
+        # Floored, so a very short set never reads as instant.
+        assert prep_focus._estimated_minutes(1) == 5
+
+    def test_the_no_topics_case_also_reports_a_sane_duration(self):
+        recommendation = prep_focus.recommend([])
+        assert recommendation.estimated_minutes == 10
+
     def test_the_recommendation_validates_against_the_wire_model(self):
         recommendation = prep_focus.recommend([_topic("t", "Topic", 40.0)])
         models.PrepFocusRecommendation(
