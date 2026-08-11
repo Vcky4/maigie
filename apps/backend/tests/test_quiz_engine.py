@@ -435,6 +435,108 @@ class TestCheckAnswerCorrectness:
     def test_short_answer_unrelated_is_incorrect(self):
         assert _check_answer_correctness("chloroplast", "mitochondria", None) is False
 
+    # -- The substring strategy must not reach a choice question ------------
+    #
+    # Reported from real use: a learner answered a multiple-choice question
+    # wrongly and it was recorded as correct. Options routinely extend one
+    # another, and the substring fallback applied to every question type, so
+    # picking a longer option containing the right one passed.
+
+    EXTENDING_OPTIONS = [
+        "It increases",
+        "It increases then decreases",
+        "It decreases",
+        "It stays the same",
+    ]
+
+    def test_a_longer_wrong_option_is_not_correct(self):
+        assert (
+            _check_answer_correctness(
+                "It increases then decreases",
+                "It increases",
+                self.EXTENDING_OPTIONS,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is False
+        )
+
+    def test_a_shorter_wrong_option_is_not_correct(self):
+        assert (
+            _check_answer_correctness(
+                "It increases",
+                "It increases then decreases",
+                self.EXTENDING_OPTIONS,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is False
+        )
+
+    def test_the_right_option_is_still_correct(self):
+        # The guard must not have broken the case it was protecting.
+        assert (
+            _check_answer_correctness(
+                "It increases",
+                "It increases",
+                self.EXTENDING_OPTIONS,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is True
+        )
+
+    def test_letters_still_resolve_for_choice_questions(self):
+        assert (
+            _check_answer_correctness(
+                "B",
+                "It increases then decreases",
+                self.EXTENDING_OPTIONS,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is True
+        )
+
+    def test_true_false_is_a_choice_question(self):
+        assert (
+            _check_answer_correctness(
+                "False", "True", ["True", "False"], question_type="TRUE_FALSE"
+            )
+            is False
+        )
+
+    def test_free_text_keeps_its_tolerance(self):
+        assert (
+            _check_answer_correctness(
+                "the mitochondria produces energy",
+                "mitochondria",
+                None,
+                question_type="SHORT_ANSWER",
+            )
+            is True
+        )
+
+    def test_an_unknown_type_is_treated_as_free_text(self):
+        # `None` means we do not know the answer is drawn from a closed set, and a
+        # typed answer deserves the benefit of the doubt.
+        assert (
+            _check_answer_correctness(
+                "the mitochondria produces energy", "mitochondria", None, question_type=None
+            )
+            is True
+        )
+
+    def test_a_choice_question_whose_key_is_not_an_option_is_never_correct(self):
+        # Phase 4 rejects these at generation, but legacy rows exist. Marking such
+        # an answer correct by substring would credit the learner for a question
+        # that cannot be answered correctly at all.
+        assert (
+            _check_answer_correctness(
+                "It increases",
+                "It increases a lot",
+                self.EXTENDING_OPTIONS,
+                question_type="MULTIPLE_CHOICE",
+            )
+            is False
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestSuggestNextStep

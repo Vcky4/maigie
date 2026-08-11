@@ -502,9 +502,7 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
     question must belong to that session. Both matter, because the response
     discloses the answer key for the question submitted.
     """
-    quiz = await repo.get_quiz_session(quiz_id, user_id)
-    if not quiz:
-        raise NotFoundError("QuizSession", quiz_id)
+    import asyncio
 
     # Accept both snake_case (from model_dump) and camelCase (defensive)
     question_id = data.get("question_id") or data.get("questionId")
@@ -519,6 +517,27 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
             status_code=400,
             code="QUIZ_ANSWER_INVALID",
         )
+
+    # Three independent reads, issued together rather than one after another.
+    # Each round trip to a hosted database costs real time, and the learner is
+    # sitting in front of a "Check answer" button waiting for all of them.
+    #
+    # They are still *validated* in the original order below, so the response for
+    # a bad session, a bad question, or an unauthorised one is unchanged. The
+    # question and answer lookups are already scoped by `quiz_id`, so issuing them
+    # before the ownership check discloses nothing: their results are discarded if
+    # the session check fails.
+    quiz, question, existing, link = await asyncio.gather(
+        repo.get_quiz_session(quiz_id, user_id),
+        repo.find_quiz_question(question_id, quiz_id),
+        repo.find_quiz_answer(quiz_id, question_id),
+        # Only needed for the observation's hint count, but it depends on nothing,
+        # so it rides along here rather than adding a round trip after scoring.
+        repo.find_session_question_link(quiz_session_id=quiz_id, prep_question_id=question_id),
+    )
+
+    if not quiz:
+        raise NotFoundError("QuizSession", quiz_id)
 
     if quiz.status == "COMPLETED":
         raise MaigieError(
@@ -539,17 +558,15 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
             code="QUIZ_GENERATION_FAILED",
         )
 
-    # Scoped to this session. The lookup was previously by question id alone, so
-    # any question id — including one from another learner's session — could be
-    # answered here and its answer key read back out of the response.
-    question = await repo.find_quiz_question(question_id, quiz_id)
+    # Scoped to this session. The lookup is by question id *and* session id, so a
+    # question id from another learner's session cannot be answered here and have
+    # its answer key read back out of the response.
     if not question:
         raise NotFoundError("PrepQuestion", question_id)
 
     # Answering is idempotent. Resubmitting replays the stored result instead of
     # scoring again, so the key disclosed by the first submission cannot be fed
     # back to raise the score, and a client retry is harmless.
-    existing = await repo.find_quiz_answer(quiz_id, question_id)
     if existing:
         return _answer_result(
             question_id=question_id,
@@ -563,6 +580,7 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         user_answer=user_answer,
         correct_answer=question.correct_answer,
         options=question.options,
+        question_type=question.question_type,
     )
 
     # Record the answer (critical — must persist before responding)
@@ -576,34 +594,40 @@ async def submit_answer(*, user_id: str, quiz_id: str, data: dict[str, Any]) -> 
         }
     )
 
-    # Recomputed from persisted answers rather than incremented, so the count
-    # cannot drift from the answers or exceed the number of questions asked.
-    await repo.update_quiz_session(
-        quiz_id, {"correctCount": await repo.count_correct_quiz_answers(quiz_id)}
-    )
-
-    # Lifetime statistics on the banked question, across every session that has
-    # ever asked it. Incremented in SQL so concurrent answers cannot lose a count.
-    await repo.record_question_attempt(question_id, correct=is_correct)
-
-    # Keep the evidence, not just the verdict, so a conclusion about a learner can
-    # be revisited later rather than being a number with no reasoning behind it.
+    # Bookkeeping the answer row implies but does not depend on. None of these
+    # three needs to see the others, so they go together rather than in series —
+    # four sequential round trips became two, which the learner feels directly.
     #
-    # Awaited *before* the mastery recompute below, which reads observations: the
-    # newest answer has to be visible to it, or every estimate lags by one question.
-    await _record_observation(
-        user_id=user_id,
-        quiz=quiz,
-        question=question,
-        is_correct=is_correct,
-        time_taken=time_taken,
+    # They are still awaited, so everything is durable before the response. The
+    # cheaper-looking option, backgrounding them, would report a result the
+    # database had not finished recording.
+    await asyncio.gather(
+        # Recomputed from persisted answers rather than incremented, so the count
+        # cannot drift from the answers or exceed the number of questions asked.
+        repo.sync_quiz_correct_count(quiz_id),
+        # Lifetime statistics on the banked question, across every session that has
+        # ever asked it. Incremented in SQL so concurrent answers cannot lose a count.
+        repo.record_question_attempt(question_id, correct=is_correct),
+        # Keep the evidence, not just the verdict, so a conclusion about a learner
+        # can be revisited later rather than being a number with no reasoning
+        # behind it.
+        _record_observation(
+            user_id=user_id,
+            quiz=quiz,
+            question=question,
+            is_correct=is_correct,
+            time_taken=time_taken,
+            hint_count=(link.hint_count or 0) if link is not None else 0,
+        ),
     )
 
     # Update topic mastery — fire-and-forget to avoid blocking the response.
     # Any failure is logged; user experience is not affected.
+    #
+    # Started *after* the gather above, because the mastery estimate reads
+    # observations: the newest answer has to be visible to it, or every estimate
+    # lags by one question.
     if question.prep_topic_id:
-        import asyncio
-
         asyncio.create_task(_update_topic_mastery_safe(question.prep_topic_id, user_id=user_id))
 
     return _answer_result(
@@ -736,21 +760,20 @@ async def _record_observation(
     question: Any,
     is_correct: bool,
     time_taken: Any,
+    hint_count: int = 0,
 ) -> None:
     """Append what this answer revealed. Failure must not fail the answer.
 
     An observation is valuable but it is not the learner's score. If writing it
     fails, the answer has still been recorded and the session continues; losing one
     row of evidence is a far smaller harm than rejecting a submitted answer.
+
+    `hint_count` is passed in rather than looked up here, so this is a single
+    statement: the caller already reads the session link alongside its other
+    lookups, and a second trip for a number it has in hand is latency the learner
+    waits through.
     """
     try:
-        hint_count = 0
-        link = await repo.find_session_question_link(
-            quiz_session_id=quiz.id, prep_question_id=question.id
-        )
-        if link is not None:
-            hint_count = link.hint_count or 0
-
         response_ms: int | None = None
         if time_taken is not None:
             try:
@@ -1241,10 +1264,17 @@ def _suggest_next_step(weak_areas: list[str]) -> str | None:
     return f"Review these topics: {', '.join(weak_areas[:3])}. Try a Weak Areas quiz to improve."
 
 
+# Question types where the learner picks from a fixed list the server supplied.
+# The answer is closed, so an exact resolution to the correct option is both
+# possible and required — see `_check_answer_correctness`.
+CHOICE_QUESTION_TYPES = ("MULTIPLE_CHOICE", "TRUE_FALSE")
+
+
 def _check_answer_correctness(
     user_answer: str,
     correct_answer: str,
     options: list[str] | dict | None,
+    question_type: str | None = None,
 ) -> bool:
     """Check if a user's answer is correct using multiple matching strategies.
 
@@ -1253,11 +1283,23 @@ def _check_answer_correctness(
     2. Option index match: user sends "A"/"B"/"C"/"D" or "0"/"1"/"2"/"3",
        and correct_answer is the full text of an option (or vice versa)
     3. Prefix match: user sends "A. <text>" or "A) <text>"
-    4. Substring match: correct_answer is contained in user_answer or vice versa
-       (for short answers where the user adds extra context)
+    4. **Free-text only:** substring match, for a short answer where the learner
+       adds extra context around the right answer.
 
-    Returns True if the answer is considered correct by any strategy.
+    **The substring strategy must never apply to a choice question.** It used to
+    apply to every type, which silently marked wrong answers correct: options
+    routinely extend one another, so choosing "It increases then decreases" when
+    the answer is "It increases" passed, because one contains the other. When the
+    learner picked from a list the server supplied, there is no context to be
+    generous about — the answer either resolves to the correct option or it does
+    not, and being generous there does not help a learner, it lies to them about
+    what they know.
+
+    Returns True if the answer is considered correct by an applicable strategy.
     """
+    # A closed answer set means exact resolution. Anything typed is open, so
+    # `None` is treated as free text rather than assumed to be a choice.
+    is_choice = (question_type or "").upper() in CHOICE_QUESTION_TYPES
     # Normalize
     user_norm = user_answer.strip().lower()
     correct_norm = correct_answer.strip().lower()
@@ -1319,9 +1361,9 @@ def _check_answer_correctness(
             if correct_index is not None and user_option_index == correct_index:
                 return True
 
-    # Strategy 3: One contains the other (for short-answer flexibility)
-    # Only apply if both are non-trivial length (avoid "a" matching everything)
-    if len(correct_norm) > 3 and len(user_norm) > 3:
+    # Strategy 3: one contains the other, for a typed answer that wraps the right
+    # answer in extra words. **Free text only** — see the docstring.
+    if not is_choice and len(correct_norm) > 3 and len(user_norm) > 3:
         if correct_norm in user_norm or user_norm in correct_norm:
             return True
 

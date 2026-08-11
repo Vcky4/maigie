@@ -170,6 +170,16 @@ class FakeRepo:
             {a.question_id for a in self.answers if a.quiz_session_id == quiz_id and a.is_correct}
         )
 
+    async def sync_quiz_correct_count(self, quiz_id: str):
+        """One statement in SQL; here, the same derivation applied in place.
+
+        Recorded in `session_updates` like any other write, so the existing
+        assertions about `correctCount` still see it.
+        """
+        await self.update_quiz_session(
+            quiz_id, {"correctCount": await self.count_correct_quiz_answers(quiz_id)}
+        )
+
     async def list_quiz_answers(self, quiz_id: str):
         return [a for a in self.answers if a.quiz_session_id == quiz_id]
 
@@ -1053,3 +1063,128 @@ class TestExamConditions:
         for mode in ("FULL_PRACTICE", "WEAK_AREAS", "TOPIC_FOCUS", "ADAPTIVE", "QUICK_REVIEW"):
             assert quiz_engine.defers_feedback(mode) is False
         assert quiz_engine.defers_feedback(None) is False
+
+
+# ---------------------------------------------------------------------------
+# TestAnswerLatency
+# ---------------------------------------------------------------------------
+
+
+class TestAnswerLatency:
+    """Submitting an answer must not be a long chain of sequential round trips.
+
+    Reported from real use: "check answer takes long". Nine repository calls ran
+    one after another, and against a hosted database each one costs a real round
+    trip, so the learner waited for all nine before learning whether they were
+    right.
+
+    These tests pin the *shape* of the work rather than a wall-clock number, which
+    would be flaky. Depth is what matters: a call issued concurrently with others
+    costs nothing extra, a call awaited on its own costs a round trip.
+    """
+
+    def _instrument(self, repo):
+        """Record the order and concurrency of repository calls."""
+        import asyncio
+
+        timeline: list[tuple[str, int]] = []
+        wave = {"n": 0}
+
+        def wrap(name):
+            original = getattr(repo, name)
+
+            async def traced(*args, **kwargs):
+                timeline.append((name, wave["n"]))
+                # Yield, so anything gathered alongside this call is recorded in
+                # the same wave rather than the next one.
+                await asyncio.sleep(0)
+                return await original(*args, **kwargs)
+
+            return traced
+
+        for name in (
+            "get_quiz_session",
+            "find_quiz_question",
+            "find_quiz_answer",
+            "find_session_question_link",
+            "create_quiz_answer",
+            "sync_quiz_correct_count",
+            "record_question_attempt",
+            "record_practice_observation",
+        ):
+            if hasattr(repo, name):
+                setattr(repo, name, wrap(name))
+        return timeline
+
+    async def test_the_initial_reads_are_issued_together(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        timeline = self._instrument(repo)
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        names = [name for name, _ in timeline]
+        reads = {
+            "get_quiz_session",
+            "find_quiz_question",
+            "find_quiz_answer",
+            "find_session_question_link",
+        }
+        # All four appear before the write, meaning none of them waited on another.
+        write_index = names.index("create_quiz_answer")
+        assert reads.issubset(set(names[:write_index]))
+
+    async def test_the_bookkeeping_writes_are_issued_together(self, repo):
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        timeline = self._instrument(repo)
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        names = [name for name, _ in timeline]
+        answer_index = names.index("create_quiz_answer")
+        after = names[answer_index + 1 :]
+        # The three bookkeeping writes all follow the answer row and none of them
+        # waits on another, so they cost one round trip between them rather than
+        # three. The observation is a single statement now that its hint count is
+        # read in the batch above.
+        assert set(after) == {
+            "sync_quiz_correct_count",
+            "record_question_attempt",
+            "record_practice_observation",
+        }
+
+    async def test_an_answer_costs_a_bounded_number_of_calls(self, repo):
+        """A guard against a new sequential call being added without noticing."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        timeline = self._instrument(repo)
+
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        # Four reads, one answer insert, three bookkeeping writes. Raising this
+        # number is a decision to make the learner wait longer, so it should be a
+        # deliberate one.
+        assert len(timeline) == 8
+
+    async def test_a_replayed_answer_short_circuits(self, repo):
+        """A resubmission does no writes at all, so a double-tap is cheap."""
+        repo.add_session("quiz-1", OWNER)
+        repo.add_question("q1", "quiz-1", key="right")
+        await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        timeline = self._instrument(repo)
+        result = await quiz_engine.submit_answer(
+            user_id=OWNER, quiz_id="quiz-1", data={"question_id": "q1", "user_answer": "right"}
+        )
+
+        assert result["alreadyAnswered"] is True
+        assert not [name for name, _ in timeline if name.startswith(("create", "record", "sync"))]

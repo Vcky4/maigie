@@ -2135,6 +2135,32 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalars().first()
 
+    async def sync_quiz_correct_count(
+        self, quiz_id: str, *, session: AsyncSession | None = None
+    ) -> None:
+        """Set a session's cached ``correctCount`` from its persisted answers.
+
+        One statement, with the count as a subquery. Reading it and then writing it
+        back was two round trips for a value the database can compute in place —
+        which the learner waits through on every answer — and it also left a window
+        in which a concurrent answer could be counted and then overwritten.
+
+        Still derived rather than incremented, so the count cannot drift from the
+        answers or exceed the questions asked.
+        """
+        async with self._use_session(session) as s:
+            correct = (
+                select(func.count(func.distinct(QuizAnswer.question_id)))
+                .where(
+                    QuizAnswer.quiz_session_id == quiz_id,
+                    QuizAnswer.is_correct.is_(True),
+                )
+                .scalar_subquery()
+            )
+            await s.execute(
+                update(QuizSession).where(QuizSession.id == quiz_id).values(correct_count=correct)
+            )
+
     async def count_correct_quiz_answers(
         self, quiz_id: str, *, session: AsyncSession | None = None
     ) -> int:
