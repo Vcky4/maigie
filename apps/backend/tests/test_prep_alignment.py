@@ -265,17 +265,45 @@ class TestFocusRecommendation:
         topics = [_topic("t-long", "Calculus", 40.0, minutes=120)]
         recommendation = prep_focus.recommend(topics, answered_by_topic={"t-long": 4})
 
-        assert recommendation.recommended_question_count == 5
-        assert recommendation.estimated_minutes == 10
+        assert recommendation.estimated_minutes == recommendation.recommended_question_count * 2
 
     def test_the_duration_scales_with_the_question_count(self):
-        assert prep_focus._estimated_minutes(5) == 10
-        assert prep_focus._estimated_minutes(10) == 20
-        # Floored, so a very short set never reads as instant.
-        assert prep_focus._estimated_minutes(1) == 5
+        from src.domains.personal_learning.services import quiz_engine
 
-    def test_the_no_topics_case_also_reports_a_sane_duration(self):
+        assert quiz_engine.estimated_minutes(5) == 10
+        assert quiz_engine.estimated_minutes(12) == 24
+
+    def test_the_recommended_count_is_what_the_session_will_actually_ask(self):
+        """The recommendation and the generator must agree.
+
+        A recommendation promising ten questions for a session that then asks five
+        is worse than no recommendation, so both defer to one rule.
+        """
+        from src.domains.personal_learning.services import quiz_engine
+
+        topics = [_topic(f"t{index}", f"Topic {index}", 30.0) for index in range(8)]
+        recommendation = prep_focus.recommend(
+            topics, answered_by_topic={topic.id: 3 for topic in topics}
+        )
+        # All eight are below 70, so WEAK_AREAS targets all eight.
+        assert recommendation.recommended_mode == "WEAK_AREAS"
+        assert recommendation.recommended_question_count == quiz_engine.default_question_count(
+            "WEAK_AREAS", 8
+        )
+
+    def test_a_single_topic_drill_is_not_two_questions(self):
+        """The general two-per-topic rule gives a one-topic drill two questions.
+
+        That is not a drill, which is why the cap is per mode.
+        """
+        topics = [_topic("t-only", "Calculus", 20.0)]
+        recommendation = prep_focus.recommend(topics, answered_by_topic={"t-only": 0})
+        assert recommendation.recommended_mode == "TOPIC_FOCUS"
+        assert recommendation.recommended_question_count >= 5
+
+    def test_the_no_topics_case_still_reports_a_sane_size(self):
         recommendation = prep_focus.recommend([])
+        assert recommendation.recommended_question_count == 5
         assert recommendation.estimated_minutes == 10
 
     def test_the_recommendation_validates_against_the_wire_model(self):

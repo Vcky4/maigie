@@ -149,8 +149,8 @@ async def start_quiz(
         # QUICK_REVIEW — mix of topics, fewer questions
         target_topics = all_topics[:5]
 
-    # Determine question count
-    count = question_count or min(len(target_topics) * 2, 20)
+    # The learner's choice wins; otherwise the mode and the material decide.
+    count = question_count or default_question_count(mode, len(target_topics))
 
     # PAST_PAPER_SIM is grounded in the learner's *own* uploaded material and is
     # scoped to that learner. Nobody else's documents, and no third-party past
@@ -382,6 +382,53 @@ async def start_quiz(
     return _build_quiz_response(
         session, questions, [], {topic.id: topic.title for topic in all_topics}
     )
+
+
+# Reading the question, working it out, and reading the explanation.
+MINUTES_PER_QUESTION = 2
+# Nothing shorter than this is worth calling a session.
+MIN_QUESTION_COUNT = 5
+# Two questions a topic is the general rule; each mode then caps it, because what
+# makes a session the right length differs by what the session is for.
+QUESTIONS_PER_TOPIC = 2
+_MODE_QUESTION_CAP: dict[str, int] = {
+    # A check-in. Its whole value is being short enough to actually do.
+    "QUICK_REVIEW": 10,
+    # Targeted work on a few topics, so it needs more than a check-in.
+    "WEAK_AREAS": 12,
+    # Depth on a single topic. The general rule would give two questions, which is
+    # not a drill.
+    "TOPIC_FOCUS": 8,
+    # An exam section, and the only mode where length is part of the point.
+    "PAST_PAPER_SIM": 20,
+    # Enough questions to move across the frontier rather than sample one point.
+    "ADAPTIVE": 12,
+    "FULL_PRACTICE": 20,
+}
+_DEFAULT_MODE_CAP = 12
+
+
+def default_question_count(mode: str, target_topic_count: int) -> int:
+    """How many questions a session should ask, absent a learner's choice.
+
+    One rule, in one place, because it is used twice: here when generating, and by
+    `prep_focus` when recommending — and a recommendation that promises a different
+    number from what the session then asks is worse than no recommendation.
+
+    Sized from the material, then capped by mode. `TOPIC_FOCUS` is the reason the
+    cap is per mode rather than global: the general two-per-topic rule gives a
+    single-topic drill two questions, which is not a drill.
+    """
+    cap = _MODE_QUESTION_CAP.get((mode or "").upper(), _DEFAULT_MODE_CAP)
+    from_material = max(0, target_topic_count) * QUESTIONS_PER_TOPIC
+    if from_material <= 0:
+        return MIN_QUESTION_COUNT
+    return max(MIN_QUESTION_COUNT, min(from_material, cap))
+
+
+def estimated_minutes(question_count: int) -> int:
+    """How long a set of this size takes. Shared, so every surface agrees."""
+    return max(MINUTES_PER_QUESTION, question_count * MINUTES_PER_QUESTION)
 
 
 def balanced_positions(

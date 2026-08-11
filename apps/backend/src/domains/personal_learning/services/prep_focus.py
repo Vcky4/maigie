@@ -36,14 +36,8 @@ FocusReason = Literal[
     "MAINTENANCE",
 ]
 
-# A recommended set is short on purpose: the point is to move one topic, not to
-# fill an evening. Matches the launcher's own default.
-DEFAULT_QUESTION_COUNT = 5
-# Reading the question, working it out, and reading the explanation. Two minutes a
-# question puts the default set at ten, which is what the mode tiles already say.
-MINUTES_PER_QUESTION = 2
-# Floor, so a very short set never reads as instant.
-DEFAULT_ESTIMATED_MINUTES = 5
+# Mastery below which a topic is a weak area, matching what `WEAK_AREAS` selects.
+_FOCUS_THRESHOLD = 70.0
 
 
 @dataclass(frozen=True)
@@ -59,16 +53,33 @@ class FocusRecommendation:
     estimated_minutes: int
 
 
-def _estimated_minutes(question_count: int) -> int:
-    """How long a practice set of this size takes.
+def _sizing(mode: str, topics: list[Any]) -> tuple[int, int]:
+    """The question count and duration this recommendation will actually produce.
 
-    Derived from the number of questions, because that is what determines it. It
-    previously came from the topic's own `estimatedMinutes`, which is the time to
-    *study* the topic end to end — so a five-question set was being advertised as
-    45 minutes. A learner who sets aside 45 minutes for a ten-minute set has been
-    misinformed in the direction that stops them practising at all.
+    Deferred to `quiz_engine`, which owns the rule, so the recommendation cannot
+    promise a different number from what the session then asks. Duration follows
+    the count: it previously came from the topic's own `estimatedMinutes`, which is
+    the time to *study* that topic end to end, so a five-question set was
+    advertised as 45 minutes.
+
+    The topic count passed in is the number the *mode* will target, not the number
+    the preparation has — `WEAK_AREAS` sizes from the weak topics, a drill from one.
     """
-    return max(DEFAULT_ESTIMATED_MINUTES, question_count * MINUTES_PER_QUESTION)
+    from . import quiz_engine
+
+    if mode == "TOPIC_FOCUS":
+        target = 1
+    elif mode == "WEAK_AREAS":
+        target = sum(
+            1
+            for topic in topics
+            if (getattr(topic, "mastery_score", 0.0) or 0.0) < _FOCUS_THRESHOLD
+        )
+    else:
+        target = len(topics)
+
+    count = quiz_engine.default_question_count(mode, target)
+    return count, quiz_engine.estimated_minutes(count)
 
 
 def recommend(
@@ -93,6 +104,7 @@ def recommend(
     "your lowest-scoring topic at 0%" — a score the learner never earned.
     """
     if not topics:
+        count, minutes = _sizing("QUICK_REVIEW", [])
         return FocusRecommendation(
             topic_id=None,
             topic_title=None,
@@ -101,8 +113,8 @@ def recommend(
             reason_code="NO_TOPICS",
             reason="Extract topics from your material to unlock practice.",
             recommended_mode="QUICK_REVIEW",
-            recommended_question_count=DEFAULT_QUESTION_COUNT,
-            estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
+            recommended_question_count=count,
+            estimated_minutes=minutes,
         )
 
     # `{}` is a loaded-and-empty mapping, which is information; `None` means the
@@ -127,6 +139,7 @@ def recommend(
 
     if unpractised and counts_known:
         topic = unpractised[0]
+        drill_count, drill_minutes = _sizing("TOPIC_FOCUS", topics)
         return FocusRecommendation(
             topic_id=topic.id,
             topic_title=topic.title,
@@ -135,8 +148,8 @@ def recommend(
             reason_code="NEVER_PRACTISED",
             reason=f"You have not answered any questions on {topic.title} yet.",
             recommended_mode="TOPIC_FOCUS",
-            recommended_question_count=DEFAULT_QUESTION_COUNT,
-            estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
+            recommended_question_count=drill_count,
+            estimated_minutes=drill_minutes,
         )
 
     band = prep_readiness.mastery_band(mastery)
@@ -145,6 +158,7 @@ def recommend(
         # Every topic is at or above the strong boundary. There is no weak area to
         # point at, so the honest recommendation is to keep it that way rather than
         # to manufacture a weakness out of the lowest of several good scores.
+        review_count, review_minutes = _sizing("QUICK_REVIEW", topics)
         return FocusRecommendation(
             topic_id=weakest.id,
             topic_title=weakest.title,
@@ -153,10 +167,15 @@ def recommend(
             reason_code="MAINTENANCE",
             reason="Every topic is above target. A short mixed set keeps it there.",
             recommended_mode="QUICK_REVIEW",
-            recommended_question_count=DEFAULT_QUESTION_COUNT,
-            estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
+            recommended_question_count=review_count,
+            estimated_minutes=review_minutes,
         )
 
+    # WEAK_AREAS rather than TOPIC_FOCUS: below the focus boundary the neighbouring
+    # topics are usually weak too, and a set drawn across them spends the session
+    # where it is worth most.
+    mode = "WEAK_AREAS" if band == "focus" else "TOPIC_FOCUS"
+    count, minutes = _sizing(mode, topics)
     return FocusRecommendation(
         topic_id=weakest.id,
         topic_title=weakest.title,
@@ -164,10 +183,7 @@ def recommend(
         band=band,
         reason_code="LOWEST_MASTERY",
         reason=(f"{weakest.title} is your lowest-scoring topic at {round(mastery)}%."),
-        # WEAK_AREAS rather than TOPIC_FOCUS: below the focus boundary the
-        # neighbouring topics are usually weak too, and a set drawn across them
-        # spends the session where it is worth most.
-        recommended_mode="WEAK_AREAS" if band == "focus" else "TOPIC_FOCUS",
-        recommended_question_count=DEFAULT_QUESTION_COUNT,
-        estimated_minutes=_estimated_minutes(DEFAULT_QUESTION_COUNT),
+        recommended_mode=mode,
+        recommended_question_count=count,
+        estimated_minutes=minutes,
     )

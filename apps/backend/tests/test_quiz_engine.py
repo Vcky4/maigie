@@ -340,6 +340,51 @@ class TestUsableQuestion:
 
 
 # ---------------------------------------------------------------------------
+# TestDefaultQuestionCount
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultQuestionCount:
+    """How long a session is, when the learner has not said.
+
+    Reported as "why are they all 5 questions": the client was sending a hardcoded
+    5 on every request, so the server's own sizing never ran and every mode looked
+    identical regardless of how much material there was.
+    """
+
+    def test_it_scales_with_the_material(self):
+        assert quiz_engine.default_question_count("WEAK_AREAS", 3) == 6
+        assert quiz_engine.default_question_count("WEAK_AREAS", 5) == 10
+
+    def test_each_mode_caps_it_differently(self):
+        # A check-in stays short even with a lot of material; an exam section does
+        # not, because length is part of what makes it an exam section.
+        many = 40
+        assert quiz_engine.default_question_count("QUICK_REVIEW", many) == 10
+        assert quiz_engine.default_question_count("WEAK_AREAS", many) == 12
+        assert quiz_engine.default_question_count("PAST_PAPER_SIM", many) == 20
+
+    def test_a_single_topic_drill_is_not_two_questions(self):
+        """The reason the cap is per mode rather than global."""
+        assert quiz_engine.default_question_count("TOPIC_FOCUS", 1) == 5
+
+    def test_nothing_is_shorter_than_the_floor(self):
+        assert quiz_engine.default_question_count("QUICK_REVIEW", 1) == 5
+        assert quiz_engine.default_question_count("QUICK_REVIEW", 0) == 5
+        assert quiz_engine.default_question_count("QUICK_REVIEW", -3) == 5
+
+    def test_an_unknown_mode_still_gets_a_sane_size(self):
+        assert quiz_engine.default_question_count("SOMETHING_ELSE", 20) == 12
+
+    def test_the_mode_is_matched_case_insensitively(self):
+        assert quiz_engine.default_question_count("past_paper_sim", 40) == 20
+
+    def test_duration_follows_the_count(self):
+        for count in (5, 8, 12, 20):
+            assert quiz_engine.estimated_minutes(count) == count * 2
+
+
+# ---------------------------------------------------------------------------
 # TestOptionOrder
 # ---------------------------------------------------------------------------
 
