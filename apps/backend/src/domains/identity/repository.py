@@ -305,6 +305,8 @@ class IdentityRepository:
             "emailWeeklyTips": "email_weekly_tips",
             "pushScheduleReminder": "push_schedule_reminder",
             "pushStudyTips": "push_study_tips",
+            "timezoneSource": "timezone_source",
+            "timezoneCapturedAt": "timezone_captured_at",
         }
         result = {}
         for key, value in data.items():

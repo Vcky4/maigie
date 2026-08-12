@@ -1058,6 +1058,22 @@
         "title": "DeckResponse",
         "type": "object"
       },
+      "DeviceTimezoneRequest": {
+        "description": "A timezone reported by the learner's device.\n\nAn IANA name (`Europe/London`), not an offset: offsets are ambiguous across\ndaylight saving, so storing one would make a summer reading wrong in winter.\nClients read it from `Intl.DateTimeFormat().resolvedOptions().timeZone`.",
+        "properties": {
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timezone"
+        ],
+        "title": "DeviceTimezoneRequest",
+        "type": "object"
+      },
       "DifficultyLevel": {
         "enum": [
           "BEGINNER",
@@ -4183,7 +4199,7 @@
         "type": "object"
       },
       "PreferencesUpdateRequest": {
-        "description": "Update user preferences (all fields optional).",
+        "description": "Update user preferences (all fields optional).\n\nA `timezone` set through here is recorded as `MANUAL`: it came from the\nlearner, so it outranks anything a device reports later.",
         "properties": {
           "emailMorningSchedule": {
             "anyOf": [
@@ -9021,6 +9037,48 @@
           }
         },
         "title": "SubjectsSetRequest",
+        "type": "object"
+      },
+      "TimezoneResponse": {
+        "description": "The learner's timezone and where it came from.\n\n`source` is `null` when the timezone has never been captured, in which case\n`timezone` is a default rather than an observation and nothing should claim a\nlocal time from it.",
+        "properties": {
+          "capturedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capturedat"
+          },
+          "isKnown": {
+            "default": false,
+            "title": "Isknown",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timezone"
+        ],
+        "title": "TimezoneResponse",
         "type": "object"
       },
       "TodaysFocusResponse": {
@@ -18055,6 +18113,80 @@
           }
         ],
         "summary": "Cancel Deletion",
+        "tags": [
+          "users",
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/me/timezone": {
+      "get": {
+        "description": "The learner's timezone and whether it is known rather than assumed.\n\n`isKnown` is `false` until a timezone has actually been captured. The\n`timezone` field still carries a usable value in that case, but it is a\ndefault, so nothing should tell the learner anything about their local time\nbased on it.",
+        "operationId": "get_timezone_api_v1_users_me_timezone_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimezoneResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Timezone",
+        "tags": [
+          "users",
+          "users"
+        ]
+      },
+      "put": {
+        "description": "Record the timezone reported by this device.\n\nIdempotent, and safe to call on every app load — which is how it gets\npopulated, since nothing has ever asked the learner directly.\n\nA timezone the learner set themselves is **not** overwritten: this returns the\nstored value unchanged in that case rather than reverting a deliberate choice.",
+        "operationId": "record_device_timezone_api_v1_users_me_timezone_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTimezoneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimezoneResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Device Timezone",
         "tags": [
           "users",
           "users"

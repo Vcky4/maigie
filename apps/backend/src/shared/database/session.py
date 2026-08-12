@@ -55,8 +55,19 @@ def _get_async_url(database_url: str) -> str:
 
 
 async def connect_db() -> None:
-    """Create the async engine and session factory. Call on app startup."""
-    await _connect_db(pool_size=20, max_overflow=10)
+    """Create the async engine and session factory. Call on app startup.
+
+    Sizing comes from settings rather than being hardcoded, because the right
+    number depends on how many processes share the database's connection
+    allowance — see `DB_POOL_SIZE` for the arithmetic. It was previously 20+10 per
+    process against a tenant allowance of 15, so one process could claim double the
+    whole budget and two workers could claim four times it.
+    """
+    settings = get_settings()
+    await _connect_db(
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+    )
 
 
 async def connect_db_worker() -> None:
@@ -87,8 +98,14 @@ async def _connect_db(*, pool_size: int, max_overflow: int) -> None:
         echo=settings.DEBUG,
         pool_size=pool_size,
         max_overflow=max_overflow,
+        # Kept deliberately. It costs a `SELECT 1` per checkout — one of the three
+        # round trips measured per repository call — but behind PgBouncer a pooled
+        # connection can be closed server-side between uses, and without the ping
+        # that surfaces as a request-failing error rather than a transparent
+        # reconnect. Removing it is a latency win with an availability cost, so it
+        # wants its own change and its own measurement, not a quiet flip here.
         pool_pre_ping=True,
-        pool_recycle=300,
+        pool_recycle=settings.DB_POOL_RECYCLE_SECONDS,
         # Disable prepared statement caching for pgbouncer compatibility
         connect_args={"prepared_statement_cache_size": 0, "statement_cache_size": 0},
     )

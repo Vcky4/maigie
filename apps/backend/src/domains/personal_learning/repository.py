@@ -1508,6 +1508,39 @@ class PersonalLearningRepository:
             )
             return list((await s.execute(stmt)).scalars().all())
 
+    async def list_quiz_sessions_since(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        session: AsyncSession | None = None,
+    ) -> list[QuizSession]:
+        """Every practice session a learner started within a window.
+
+        For behaviour analysis, which needs a *period* rather than a page: a
+        `take`-limited list cannot tell consistency over 30 days from 30 sessions
+        crammed into one weekend.
+
+        `FAILED` and `GENERATING` are excluded on the same grounds as
+        `list_recent_quiz_sessions` — neither is something the learner did, and
+        counting a generation failure as a study session would inflate both
+        consistency and time-of-day evidence.
+
+        Ordered oldest first, because every consumer walks it chronologically to
+        measure gaps.
+        """
+        async with self._use_session(session) as s:
+            stmt = (
+                select(QuizSession)
+                .where(
+                    QuizSession.user_id == user_id,
+                    QuizSession.status.notin_(("FAILED", "GENERATING")),
+                    QuizSession.created_at >= since,
+                )
+                .order_by(QuizSession.created_at.asc())
+            )
+            return list((await s.execute(stmt)).scalars().all())
+
     async def find_prep_topic(
         self, topic_id: str, prep_id: str, *, session: AsyncSession | None = None
     ) -> PrepTopic | None:

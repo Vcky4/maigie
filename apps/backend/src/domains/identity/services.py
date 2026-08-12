@@ -359,7 +359,110 @@ async def update_preferences(*, user_id: str, data: dict) -> User:
             raise NotFoundError("User", user_id)
         return user
 
+    # A timezone the learner set themselves is an observation, and outranks a
+    # device report. Stamped here rather than in the route so every path that
+    # writes a preference records provenance the same way.
+    if "timezone" in update_data:
+        _validate_iana_timezone(update_data["timezone"])
+        update_data["timezoneSource"] = "MANUAL"
+        update_data["timezoneCapturedAt"] = datetime.now(UTC)
+
     return await identity_repo.upsert_preferences(user_id, update_data)
+
+
+def _validate_iana_timezone(name: str) -> None:
+    """Reject anything that is not a real IANA zone.
+
+    Stored unvalidated, a typo becomes a permanent silent fallback to UTC at every
+    read site, which is indistinguishable from never having been captured. Better
+    to refuse the write.
+    """
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ValidationError(f"'{name}' is not a recognised timezone")
+
+
+async def _read_timezone_state(user_id: str) -> dict | None:
+    """The three timezone columns, read directly.
+
+    Not via `find_by_id(include_preferences=True)`: that flag is accepted and
+    ignored — the query never eager-loads the relationship — so touching
+    `user.preferences` afterwards either lazy-loads on a closed async session or
+    silently yields nothing. Selecting the columns is both correct and cheaper.
+
+    Returns `None` when the learner has no preferences row at all, which is
+    distinct from having one that was never populated.
+    """
+    from sqlalchemy import select
+
+    from src.domains.identity.db_models import UserPreferences
+    from src.shared.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = select(
+            UserPreferences.timezone,
+            UserPreferences.timezone_source,
+            UserPreferences.timezone_captured_at,
+        ).where(UserPreferences.user_id == user_id)
+        result = await session.execute(stmt)
+        row = result.one_or_none()
+
+    if row is None:
+        return None
+    return {"timezone": row[0], "source": row[1], "capturedAt": row[2]}
+
+
+async def record_device_timezone(*, user_id: str, timezone: str) -> dict:
+    """Record a device-reported timezone, without overriding a stated one.
+
+    Called on sign-in and app load, so it fires often and unattended. That is
+    exactly why it must not clobber `MANUAL`: a learner who deliberately set their
+    zone while travelling would otherwise have it silently reverted by their own
+    device on the next page load.
+
+    Returns the resolved state rather than the user, because the caller only needs
+    to know what is now stored and whether it is trustworthy.
+    """
+    _validate_iana_timezone(timezone)
+
+    state = await _read_timezone_state(user_id)
+
+    # The learner's own choice wins. Reported unchanged rather than as an error:
+    # the device did nothing wrong, its report is simply not the better source.
+    if state and state["source"] == "MANUAL":
+        return {**state, "isKnown": True}
+
+    now = datetime.now(UTC)
+    await identity_repo.upsert_preferences(
+        user_id,
+        {
+            "timezone": timezone,
+            "timezoneSource": "DEVICE",
+            "timezoneCapturedAt": now,
+        },
+    )
+    return {
+        "timezone": timezone,
+        "source": "DEVICE",
+        "capturedAt": now,
+        "isKnown": True,
+    }
+
+
+async def get_timezone(*, user_id: str) -> dict:
+    """The learner's timezone and whether it is actually known.
+
+    `isKnown` false means `timezone` is the column default rather than an
+    observation, so nothing should assert a local time from it.
+    """
+    state = await _read_timezone_state(user_id)
+    if state is None:
+        return {"timezone": "UTC", "source": None, "capturedAt": None, "isKnown": False}
+    return {**state, "isKnown": state["source"] in ("DEVICE", "MANUAL")}
 
 
 # ===========================================================================

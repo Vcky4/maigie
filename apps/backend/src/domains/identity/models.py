@@ -211,7 +211,11 @@ class UserResponse(BaseModel):
 
 
 class PreferencesUpdateRequest(BaseModel):
-    """Update user preferences (all fields optional)."""
+    """Update user preferences (all fields optional).
+
+    A `timezone` set through here is recorded as `MANUAL`: it came from the
+    learner, so it outranks anything a device reports later.
+    """
 
     theme: str | None = None
     language: str | None = None
@@ -221,6 +225,31 @@ class PreferencesUpdateRequest(BaseModel):
     emailMorningSchedule: bool | None = None
     emailScheduleReminder: bool | None = None
     emailWeeklyTips: bool | None = None
+
+
+class DeviceTimezoneRequest(BaseModel):
+    """A timezone reported by the learner's device.
+
+    An IANA name (`Europe/London`), not an offset: offsets are ambiguous across
+    daylight saving, so storing one would make a summer reading wrong in winter.
+    Clients read it from `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+    """
+
+    timezone: str = Field(min_length=1, max_length=64)
+
+
+class TimezoneResponse(BaseModel):
+    """The learner's timezone and where it came from.
+
+    `source` is `null` when the timezone has never been captured, in which case
+    `timezone` is a default rather than an observation and nothing should claim a
+    local time from it.
+    """
+
+    timezone: str
+    source: str | None = None
+    capturedAt: datetime | None = None
+    isKnown: bool = False
 
 
 # ===========================================================================

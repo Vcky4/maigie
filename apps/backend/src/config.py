@@ -89,6 +89,28 @@ class Settings(BaseSettings):
     # --- Database ---
     DATABASE_URL: str = ""  # Loaded from .env
 
+    # Connection pool sizing, per API process.
+    #
+    # These must be set against the *tenant's* connection allowance, not against
+    # what one process would like. Supabase session mode allows 15 concurrent
+    # clients, and the arithmetic is multiplicative:
+    #
+    #     (API processes x (DB_POOL_SIZE + DB_MAX_OVERFLOW)) + Celery workers x 2
+    #
+    # The previous values (20 + 10) meant a single API process could claim 30 —
+    # double the entire allowance — and both compose files run `--workers 2`, so
+    # the real ceiling was 60. In practice one local dev server was enough to make
+    # migrations fail with `EMAXCONNSESSION`, which is how this was found.
+    #
+    # At the defaults below, two API workers plus a Celery worker reserve 12 of 15,
+    # leaving room for a migration or a psql session. Raise them only alongside a
+    # raised allowance.
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 1
+    # Recycled well inside PgBouncer's own idle timeout so a checked-out
+    # connection is not one the pooler has already discarded.
+    DB_POOL_RECYCLE_SECONDS: int = 300
+
     # --- Redis Cache ---
     REDIS_URL: str = "redis://localhost:6379/0"
 

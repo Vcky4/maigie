@@ -21,6 +21,7 @@ from .models import (
     AccountDeletionStatusResponse,
     CancelDeletionRequest,
     ChangePasswordRequest,
+    DeviceTimezoneRequest,
     ForgotPasswordRequest,
     LinkReferralRequest,
     LoginRequest,
@@ -30,6 +31,7 @@ from .models import (
     ResendOtpRequest,
     ResetPasswordRequest,
     SignupRequest,
+    TimezoneResponse,
     TokenResponse,
     UserResponse,
     VerifyEmailRequest,
@@ -181,6 +183,31 @@ async def update_preferences(data: PreferencesUpdateRequest, current_user: Curre
     update_data = data.model_dump(exclude_unset=True)
     user = await services.update_preferences(user_id=current_user.id, data=update_data)
     return user
+
+
+@users_router.get("/me/timezone", response_model=TimezoneResponse)
+async def get_timezone(current_user: CurrentUser):
+    """The learner's timezone and whether it is known rather than assumed.
+
+    `isKnown` is `false` until a timezone has actually been captured. The
+    `timezone` field still carries a usable value in that case, but it is a
+    default, so nothing should tell the learner anything about their local time
+    based on it.
+    """
+    return await services.get_timezone(user_id=current_user.id)
+
+
+@users_router.put("/me/timezone", response_model=TimezoneResponse)
+async def record_device_timezone(data: DeviceTimezoneRequest, current_user: CurrentUser):
+    """Record the timezone reported by this device.
+
+    Idempotent, and safe to call on every app load — which is how it gets
+    populated, since nothing has ever asked the learner directly.
+
+    A timezone the learner set themselves is **not** overwritten: this returns the
+    stored value unchanged in that case rather than reverting a deliberate choice.
+    """
+    return await services.record_device_timezone(user_id=current_user.id, timezone=data.timezone)
 
 
 # --- Account Deletion ---

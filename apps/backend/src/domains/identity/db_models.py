@@ -203,7 +203,19 @@ class UserPreferences(Base):
     study_goals: Mapped[dict | None] = mapped_column("studyGoals", JSON, nullable=True)
 
     # Email notification preferences
+    #
+    # `timezone` is NOT NULL with a "UTC" default and predates anything asking for
+    # it, so the value alone cannot distinguish "this learner is in UTC" from "we
+    # never asked". `timezone_source` is what makes that readable: NULL means the
+    # column holds a default rather than an observation. Use
+    # `services.timezone_resolver` rather than reading these three directly.
     timezone: Mapped[str] = mapped_column(String, default="UTC", server_default="UTC")
+    # DEVICE | MANUAL, or NULL for never captured. A learner's stated zone
+    # outranks a device-reported one, which is only expressible with the source.
+    timezone_source: Mapped[str | None] = mapped_column("timezoneSource", String, nullable=True)
+    timezone_captured_at: Mapped[datetime | None] = mapped_column(
+        "timezoneCapturedAt", DateTime(timezone=True), nullable=True
+    )
     email_morning_schedule: Mapped[bool] = mapped_column(
         "emailMorningSchedule", Boolean, default=True, server_default="true"
     )

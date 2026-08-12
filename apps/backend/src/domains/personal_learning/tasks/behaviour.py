@@ -57,7 +57,14 @@ async def _analyze_behaviour_async():
         for profile in profiles:
             user_id = profile.user_id
             try:
-                # Recompute behaviour analytics and persist to profile
+                # Recompute behaviour analytics and persist to profile.
+                #
+                # `analyze_behaviour` loads its own evidence. It used to *require* a
+                # `sessions` argument that this call never passed, so every
+                # iteration raised `TypeError` straight into the `except` below:
+                # the task logged "updated 0/N" and every learner's behaviour
+                # columns stayed NULL for as long as this has existed. The
+                # swallowing `except` is what kept it invisible.
                 await behaviour_service.analyze_behaviour(user_id=user_id)
 
                 # Also increment maturity_days
