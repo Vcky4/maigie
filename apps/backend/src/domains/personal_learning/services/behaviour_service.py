@@ -263,18 +263,25 @@ def _compute_consistency_score(local_times: list[datetime]) -> float:
     distinct days" is a question about their calendar: a session at 23:30 in Lagos
     is the next day in UTC, so counting UTC dates can either merge two of the
     learner's days into one or split one across two.
+
+    Still applies its own window even though the loader already does. Consistency
+    is defined over a period, so a caller handing in older sessions should not get
+    a score that silently describes a different period than the one named.
     """
     if not local_times:
         return 0.0
 
-    study_dates = {t.date() for t in local_times}
-    if not study_dates:
+    cutoff = datetime.now(UTC) - timedelta(days=BEHAVIOUR_WINDOW_DAYS)
+    in_window = [t for t in local_times if t >= cutoff]
+    if not in_window:
         return 0.0
+
+    study_dates = {t.date() for t in in_window}
 
     # Measured from the learner's first session in the window rather than the full
     # window, so someone who joined four days ago is not scored as having missed
     # twenty-six days they could not have practised on.
-    latest = max(local_times).date()
+    latest = max(in_window).date()
     days_in_period = min(BEHAVIOUR_WINDOW_DAYS, (latest - min(study_dates)).days + 1)
     if days_in_period <= 0:
         return 0.0

@@ -17,6 +17,8 @@ import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from src.shared.time import local_hour, resolve_learner_timezone
+
 from ..repository import intelligence_repo
 
 logger = logging.getLogger(__name__)
@@ -275,15 +277,23 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
         sessions = await progress_repo.list_sessions(user_id, since=thirty_days_ago)
 
         if len(sessions) >= 5:
-            # Find optimal study time
+            # Hours only mean something on the learner's own wall clock. This used
+            # to bucket a raw UTC hour and report it back as their study time,
+            # which is wrong for every learner outside UTC — and because the
+            # timezone column defaults to "UTC" and was never prompted for, that
+            # was most of them.
+            learner_timezone = await resolve_learner_timezone(user_id)
+
             hour_counts: dict[int, int] = {}
             total_duration = 0.0
             for s in sessions:
-                hour = s.start_time.hour
+                hour = local_hour(s.start_time, learner_timezone)
                 hour_counts[hour] = hour_counts.get(hour, 0) + 1
                 total_duration += s.duration or 0
 
-            if hour_counts:
+            # No captured timezone, no claim about their day. The duration insight
+            # below is unaffected, being timezone-independent.
+            if hour_counts and learner_timezone.is_known:
                 peak_hour = max(hour_counts, key=hour_counts.get)
                 time_label = (
                     "morning"
@@ -298,7 +308,12 @@ async def generate_learning_insights(user_id: str) -> list[dict]:
                     user_id,
                     "optimal_time",
                     {
-                        "content": f"Most productive study time is in the {time_label} (around {peak_hour}:00). "
+                        # "Most often", not "most productive". This counts when
+                        # sessions happen and knows nothing about how they went —
+                        # no accuracy or outcome term enters it — so calling it
+                        # productivity asserted something never measured.
+                        "content": f"Most study sessions happen in the {time_label} "
+                        f"(around {peak_hour}:00 local time). "
                         f"{len(sessions)} sessions in last 30 days.",
                         "confidence": min(0.5 + len(sessions) * 0.02, 0.95),
                         "dataPoints": len(sessions),
