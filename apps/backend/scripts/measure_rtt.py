@@ -81,8 +81,8 @@ async def measure_round_trips() -> None:
             await conn.fetchval("SELECT 1")
             rtt.append((time.perf_counter() - started) * 1000)
 
-        # An explicit transaction, as `_use_session` opens for every call including
-        # read-only ones: COMMIT is a round trip of its own.
+        # An explicit transaction, as `_use_session` still opens for writes: BEGIN
+        # and COMMIT are round trips of their own.
         txn: list[float] = []
         for _ in range(ROUNDS):
             started = time.perf_counter()
@@ -95,8 +95,10 @@ async def measure_round_trips() -> None:
         print("\nwhere a repository call's time goes:")
         print("  1. pool_pre_ping SELECT 1  (on every connection checkout)")
         print("  2. the query")
-        print("  3. COMMIT                  (even for a read-only SELECT)")
-        print(f"  ~3 x {_median(rtt):.0f} ms")
+        print("  3. COMMIT + pool reset     (writes only — reads now use")
+        print("                              _read_session, which opens no")
+        print("                              transaction at all)")
+        print(f"  a read is ~2 x {_median(rtt):.0f} ms; it was ~5 x before the split")
     finally:
         await conn.close()
 

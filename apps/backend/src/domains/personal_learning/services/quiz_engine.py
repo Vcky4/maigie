@@ -352,7 +352,14 @@ async def start_quiz(
         # quiz. The row is kept as FAILED so the attempt stays visible for
         # support, and the caller is told, rather than being handed a 201 with an
         # empty `questions` array that no client can render.
-        await repo.update_quiz_session(quiz_session.id, {"status": "FAILED", "totalQuestions": 0})
+        # `generationMs` is written on the failure path too. A start that spent 40s
+        # and produced nothing is the most important reading Decision H needs, and
+        # recording it only on success would bias the percentile towards the fast
+        # attempts.
+        await repo.update_quiz_session(
+            quiz_session.id,
+            {"status": "FAILED", "totalQuestions": 0, "generationMs": generation_ms},
+        )
         logger.error(
             "Quiz generation produced no usable questions",
             extra={
@@ -372,7 +379,15 @@ async def start_quiz(
     # makes a usable quiz, so report the real number and give the score an honest
     # denominator.
     await repo.update_quiz_session(
-        quiz_session.id, {"status": "IN_PROGRESS", "totalQuestions": created}
+        quiz_session.id,
+        {
+            "status": "IN_PROGRESS",
+            "totalQuestions": created,
+            # Persisted, not just logged. See migration `018`: the p95 that gates
+            # Decision H was cited three times and never read, because a log field
+            # is not queryable the way every other measurement here was.
+            "generationMs": generation_ms,
+        },
     )
 
     session = await repo.get_quiz_session(quiz_session.id, user_id)

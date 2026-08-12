@@ -1297,62 +1297,75 @@ async def get_capabilities(current_user: CurrentUser):
 # ===========================================================================
 
 
-@router.post("/trial/start", status_code=201)
+async def _trial_status_payload(user_id: str) -> models.TrialStatusResponse:
+    """One shape for the trial, whatever the learner's history.
+
+    These three routes previously returned bare dicts with keys that differed
+    between branches, so nothing was generated into the client's types and the
+    commercial dialog was written against a fixture instead. Composed here so
+    `POST /trial/start` and `GET /trial/status` cannot describe the same trial
+    differently.
+    """
+    from .services import trial_service
+
+    status = await trial_service.get_trial_status(user_id=user_id)
+    suggestions = (
+        await trial_service.get_showcase_suggestions(user_id)
+        if status is not None and status.is_active
+        else []
+    )
+    return models.TrialStatusResponse(
+        is_active=bool(status and status.is_active),
+        expired=bool(status and status.expired),
+        # Never absent. A learner past their cooldown used to get no such key at
+        # all, so the client hid the offer from someone who was eligible.
+        trial_available=status.trial_available if status else True,
+        day_number=status.day_number if status else 0,
+        days_remaining=status.days_remaining if status else 0,
+        total_days=trial_service.TRIAL_DURATION_DAYS,
+        starts_at=status.started_at if status else None,
+        ends_at=status.ends_at if status else None,
+        next_trial_available_at=status.next_trial_available_at if status else None,
+        showcase_suggestions=[
+            models.TrialShowcaseSuggestion(
+                capability_id=suggestion.capability_id,
+                title=suggestion.title,
+                description=suggestion.description,
+                action_url=suggestion.action_url,
+                reason=suggestion.reason,
+            )
+            for suggestion in suggestions
+        ],
+    )
+
+
+@router.post("/trial/start", response_model=models.TrialStatusResponse, status_code=201)
 async def start_trial(current_user: CurrentUser):
-    """Start a 7-day Plus trial."""
+    """Start a 7-day Plus trial.
+
+    Returns the same shape as `GET /trial/status`, so a client can write the
+    response straight into the cache it already reads instead of refetching.
+    """
     from .services import trial_service
 
     try:
-        trial_status = await trial_service.start_trial(user_id=current_user.id)
-        return {
-            "isActive": trial_status.is_active,
-            "dayNumber": trial_status.day_number,
-            "daysRemaining": trial_status.days_remaining,
-            "startsAt": trial_status.started_at.isoformat() if trial_status.started_at else None,
-            "endsAt": trial_status.ends_at.isoformat() if trial_status.ends_at else None,
-        }
+        await trial_service.start_trial(user_id=current_user.id)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # The service's refusals are all things the learner can act on or wait for
+        # — already subscribed, already on a trial, still inside the cooldown — so
+        # the message is theirs to read.
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    return await _trial_status_payload(current_user.id)
 
 
-@router.get("/trial/status")
+@router.get("/trial/status", response_model=models.TrialStatusResponse)
 async def get_trial_status(current_user: CurrentUser):
     """Get current trial status."""
-    from .services import trial_service
-
-    trial_status = await trial_service.get_trial_status(user_id=current_user.id)
-    if not trial_status:
-        return {"isActive": False, "expired": False, "trialAvailable": True}
-    return {
-        "isActive": trial_status.is_active,
-        "dayNumber": trial_status.day_number,
-        "daysRemaining": trial_status.days_remaining,
-        "expired": trial_status.expired,
-        "startsAt": trial_status.started_at.isoformat() if trial_status.started_at else None,
-        "endsAt": trial_status.ends_at.isoformat() if trial_status.ends_at else None,
-        "nextTrialAvailableAt": (
-            trial_status.next_trial_available_at.isoformat()
-            if trial_status.next_trial_available_at
-            else None
-        ),
-        "showcaseSuggestions": (
-            [
-                {
-                    "capabilityId": s.capability_id,
-                    "title": s.title,
-                    "description": s.description,
-                    "actionUrl": s.action_url,
-                    "reason": s.reason,
-                }
-                for s in await trial_service.get_showcase_suggestions(current_user.id)
-            ]
-            if trial_status.is_active
-            else []
-        ),
-    }
+    return await _trial_status_payload(current_user.id)
 
 
-@router.post("/trial/summary")
+@router.post("/trial/summary", response_model=models.TrialSummaryResponse)
 async def get_trial_summary(current_user: CurrentUser):
     """Generate trial summary (available after trial expiry)."""
     from .services import trial_service
@@ -1362,13 +1375,13 @@ async def get_trial_summary(current_user: CurrentUser):
         raise HTTPException(status_code=400, detail="Trial summary available only after trial ends")
 
     summary = await trial_service.generate_trial_summary(user_id=current_user.id)
-    return {
-        "trialDays": summary.trial_days,
-        "plusFeaturesUsed": summary.plus_features_used,
-        "learningOutcomes": summary.learning_outcomes,
-        "whatYouWouldLose": summary.what_you_would_lose,
-        "upgradeUrl": summary.upgrade_url,
-    }
+    return models.TrialSummaryResponse(
+        trial_days=summary.trial_days,
+        plus_features_used=summary.plus_features_used,
+        learning_outcomes=summary.learning_outcomes,
+        what_you_would_lose=summary.what_you_would_lose,
+        upgrade_url=summary.upgrade_url,
+    )
 
 
 # ===========================================================================

@@ -42,6 +42,24 @@ class TrialStatus:
     expired: bool = False
     next_trial_available_at: datetime | None = None  # If cooldown active
 
+    @property
+    def trial_available(self) -> bool:
+        """Whether starting a trial right now would succeed.
+
+        Derived here so it cannot disagree with `start_trial`'s own rules, and so it
+        is answered on every branch. It previously appeared **only** in the route's
+        "no status at all" fallback: a learner whose trial had expired and whose
+        180-day cooldown had since elapsed got a response with no `trialAvailable`
+        key at all. The client read `undefined`, treated it as false, and hid the
+        offer from someone who was eligible — while the paywall that sent them there
+        had just told them a trial existed.
+        """
+        if self.is_active:
+            return False
+        # Inside the cooldown window `next_trial_available_at` is set; once it has
+        # passed, `get_trial_status` leaves it None and the learner is eligible again.
+        return self.next_trial_available_at is None
+
 
 @dataclass
 class ShowcaseSuggestion:

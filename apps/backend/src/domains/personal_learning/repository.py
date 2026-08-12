@@ -93,6 +93,13 @@ class PersonalLearningRepository:
 
         - If session is provided: yield it as-is (caller owns commit/rollback).
         - If session is None: create a new session, auto-commit on success.
+
+        For read-only work prefer `_read_session`, which skips the transaction this
+        one opens and commits. This stays the default because a silent
+        commit-if-needed heuristic is not safe here: much of this repository issues
+        core `update()` / `delete()` statements, which never appear in
+        `session.new`/`dirty`/`deleted`, so "nothing looks dirty, skip the commit"
+        would discard writes.
         """
         if session is not None:
             yield session
@@ -106,6 +113,43 @@ class PersonalLearningRepository:
                     await new_session.rollback()
                     raise
 
+    @asynccontextmanager
+    async def _read_session(
+        self, session: AsyncSession | None
+    ) -> AsyncGenerator[AsyncSession, None]:
+        """A session for reads: no transaction, therefore no COMMIT round trip.
+
+        Measured, not assumed. A round trip to the hosted database costs ~349 ms and
+        one repository call cost ~1830 ms — roughly five round trips for a single
+        `SELECT COUNT(*)`. `_use_session` opens an implicit transaction on first
+        execute, commits it on exit, and the pool then resets the connection with a
+        rollback, so a read paid for a BEGIN, a COMMIT and a reset it had no use for.
+
+        `AUTOCOMMIT` means no implicit transaction is opened at all, so there is
+        nothing to commit and nothing for the pool to unwind.
+
+        **This changes no isolation guarantee that this code relied on.** Every
+        standalone repository call was already its own transaction, so no caller
+        ever got a consistent snapshot across two calls. A single statement under
+        AUTOCOMMIT is still atomic and still sees a consistent snapshot of the rows
+        it reads. What is lost is multi-statement read consistency, which was never
+        available through this path.
+
+        A caller-supplied session is yielded untouched. Inside a `unit_of_work` the
+        caller owns the transaction, reads must see that transaction's uncommitted
+        writes, and switching isolation mid-transaction is an error.
+        """
+        if session is not None:
+            yield session
+            return
+
+        factory = get_session_factory()
+        async with factory() as new_session:
+            # Acquired eagerly so the option is set before the first statement,
+            # which is what prevents the implicit BEGIN.
+            await new_session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+            yield new_session
+
     # -----------------------------------------------------------------------
     # Learn dashboard (bounded read helpers)
     # -----------------------------------------------------------------------
@@ -114,7 +158,7 @@ class PersonalLearningRepository:
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> int:
         """Count cards due before the start of the current UTC day."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             now = datetime.now(UTC)
             start_of_today = now.replace(hour=0, minute=0, second=0, microsecond=0)
             stmt = (
@@ -135,7 +179,7 @@ class PersonalLearningRepository:
         session: AsyncSession | None = None,
     ) -> tuple[list[SavedResource], int]:
         """Return a bounded saved-resource page ordered by last use, then creation."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             condition = SavedResource.user_id == user_id
             total_stmt = select(func.count()).select_from(SavedResource).where(condition)
             total = (await s.execute(total_stmt)).scalar_one() or 0
@@ -155,7 +199,7 @@ class PersonalLearningRepository:
         session: AsyncSession | None = None,
     ) -> tuple[list[StudyPlan], int]:
         """Return bounded active plans and their full active count."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             condition = (StudyPlan.user_id == user_id) & (StudyPlan.status == "ACTIVE")
             total_stmt = select(func.count()).select_from(StudyPlan).where(condition)
             total = (await s.execute(total_stmt)).scalar_one() or 0
@@ -176,7 +220,7 @@ class PersonalLearningRepository:
         Learn dashboard renders both as paths, so it needs a total for each or its
         card count and its total disagree.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             condition = (ExamPrep.user_id == user_id) & (ExamPrep.status != "COMPLETED")
             total_stmt = select(func.count()).select_from(ExamPrep).where(condition)
             total = (await s.execute(total_stmt)).scalar_one() or 0
@@ -190,7 +234,7 @@ class PersonalLearningRepository:
     async def find_note(
         self, note_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> Note | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(Note)
                 .options(
@@ -204,7 +248,7 @@ class PersonalLearningRepository:
 
     async def count_user_notes(self, user_id: str, *, session: AsyncSession | None = None) -> int:
         """Count total notes for a user (excluding archived)."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(func.count())
                 .select_from(Note)
@@ -223,7 +267,7 @@ class PersonalLearningRepository:
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[Note], int]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             conditions = [Note.user_id == user_id]
             conditions.extend(self._build_note_conditions(where))
 
@@ -305,7 +349,7 @@ class PersonalLearningRepository:
     async def find_attachment(
         self, attachment_id: str, note_id: str, *, session: AsyncSession | None = None
     ) -> NoteAttachment | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(NoteAttachment).where(
                 NoteAttachment.id == attachment_id,
                 NoteAttachment.note_id == note_id,
@@ -337,7 +381,7 @@ class PersonalLearningRepository:
     async def find_exam_prep(
         self, prep_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> ExamPrep | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(ExamPrep).where(
                 ExamPrep.id == prep_id,
                 ExamPrep.user_id == user_id,
@@ -348,7 +392,7 @@ class PersonalLearningRepository:
     async def list_exam_preps(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> list[ExamPrep]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(ExamPrep)
                 .where(ExamPrep.user_id == user_id)
@@ -378,7 +422,7 @@ class PersonalLearningRepository:
         - `None` or `"date"`: ordered by target date ascending (default)
         - `"readiness"`: ordered by average topic mastery descending, nulls last
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             filters = [ExamPrep.user_id == user_id]
             if status:
                 filters.append(ExamPrep.status == status)
@@ -461,7 +505,7 @@ class PersonalLearningRepository:
     async def find_document(
         self, doc_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> GeneratedDocument | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(GeneratedDocument).where(
                 GeneratedDocument.id == doc_id,
                 GeneratedDocument.user_id == user_id,
@@ -472,7 +516,7 @@ class PersonalLearningRepository:
     async def find_document_by_share_id(
         self, share_id: str, *, session: AsyncSession | None = None
     ) -> GeneratedDocument | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(GeneratedDocument).where(GeneratedDocument.share_id == share_id)
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
@@ -480,7 +524,7 @@ class PersonalLearningRepository:
     async def list_documents(
         self, user_id: str, *, skip: int = 0, take: int = 20, session: AsyncSession | None = None
     ) -> tuple[list[GeneratedDocument], int]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             count_stmt = (
                 select(func.count())
                 .select_from(GeneratedDocument)
@@ -503,7 +547,7 @@ class PersonalLearningRepository:
         self, user_id: str, since: datetime, *, session: AsyncSession | None = None
     ) -> int:
         """Count documents generated by user since a given datetime."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(func.count())
                 .select_from(GeneratedDocument)
@@ -661,7 +705,7 @@ class PersonalLearningRepository:
     async def get_flashcard(
         self, card_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> Flashcard | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(Flashcard).where(
                 Flashcard.id == card_id,
                 Flashcard.user_id == user_id,
@@ -687,7 +731,7 @@ class PersonalLearningRepository:
     async def list_due_flashcards(
         self, user_id: str, *, limit: int | None = None, session: AsyncSession | None = None
     ) -> list[Flashcard]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             now = datetime.now(UTC)
             stmt = (
                 select(Flashcard)
@@ -706,7 +750,7 @@ class PersonalLearningRepository:
     async def get_flashcard_stats(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> dict[str, Any]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             now = datetime.now(UTC)
             today = now.date()
             week_start_date = today - timedelta(days=today.weekday())
@@ -792,7 +836,7 @@ class PersonalLearningRepository:
     async def list_decks(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> list[FlashcardDeck]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(FlashcardDeck)
                 .where(FlashcardDeck.user_id == user_id)
@@ -809,7 +853,7 @@ class PersonalLearningRepository:
         Counts are aggregated in a single grouped query rather than one query
         per deck. Returns `(deck, card_count, due_count)` tuples.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             now = datetime.now(UTC)
             card_count = func.count(Flashcard.id)
             due_count = func.count(Flashcard.id).filter(Flashcard.next_review_at <= now)
@@ -830,7 +874,7 @@ class PersonalLearningRepository:
     async def list_deck_flashcards(
         self, deck_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> list[Flashcard]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(Flashcard)
                 .where(
@@ -901,7 +945,7 @@ class PersonalLearningRepository:
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[SavedResource], int]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             conditions = [SavedResource.user_id == user_id]
 
             if source_type is not None:
@@ -1007,7 +1051,7 @@ class PersonalLearningRepository:
     async def get_profile_by_user(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> LearningProfile | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(LearningProfile).where(LearningProfile.user_id == user_id)
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
@@ -1103,7 +1147,7 @@ class PersonalLearningRepository:
     async def list_unread(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> list[Notification]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(Notification)
                 .where(
@@ -1146,7 +1190,7 @@ class PersonalLearningRepository:
     async def count_today_delivered(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> int:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             now = datetime.now(UTC)
             start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -1165,7 +1209,7 @@ class PersonalLearningRepository:
     async def list_pending_for_delivery(
         self, *, session: AsyncSession | None = None
     ) -> list[Notification]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             now = datetime.now(UTC)
             stmt = (
                 select(Notification)
@@ -1228,7 +1272,7 @@ class PersonalLearningRepository:
     async def list_prep_topics(
         self, prep_id: str, *, session: AsyncSession | None = None
     ) -> list[PrepTopic]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PrepTopic)
                 .where(PrepTopic.prep_id == prep_id)
@@ -1296,7 +1340,7 @@ class PersonalLearningRepository:
                 },
             )
 
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             topic_rows = await s.execute(
                 select(
                     PrepTopic.prep_id,
@@ -1379,7 +1423,7 @@ class PersonalLearningRepository:
         """
         if not prep_ids:
             return []
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(ExamPrep).where(ExamPrep.id.in_(prep_ids))
             return list((await s.execute(stmt)).scalars().all())
 
@@ -1409,7 +1453,7 @@ class PersonalLearningRepository:
         def bucket(topic_id: str) -> dict[str, int]:
             return counts.setdefault(topic_id, {"question_count": 0, "answered_count": 0})
 
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             banked = await s.execute(
                 select(PrepQuestion.prep_topic_id, func.count(PrepQuestion.id))
                 .where(
@@ -1458,7 +1502,7 @@ class PersonalLearningRepository:
         """
         if not prep_ids:
             return []
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(StudyPlanItem, StudyPlan.prep_id)
                 .join(StudyPlan, StudyPlanItem.plan_id == StudyPlan.id)
@@ -1477,7 +1521,7 @@ class PersonalLearningRepository:
         """Weakest topics across the given preparations, lowest mastery first."""
         if not prep_ids:
             return []
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PrepTopic)
                 .where(PrepTopic.prep_id.in_(prep_ids))
@@ -1496,7 +1540,7 @@ class PersonalLearningRepository:
         the learner did, so surfacing them as practice history would misrepresent
         the account.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(QuizSession)
                 .where(
@@ -1529,7 +1573,7 @@ class PersonalLearningRepository:
         Ordered oldest first, because every consumer walks it chronologically to
         measure gaps.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(QuizSession)
                 .where(
@@ -1549,7 +1593,7 @@ class PersonalLearningRepository:
         Callers must have already verified the preparation belongs to the user,
         so scoping by ``prep_id`` is what prevents cross-preparation access.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(PrepTopic).where(
                 PrepTopic.id == topic_id,
                 PrepTopic.prep_id == prep_id,
@@ -1576,7 +1620,7 @@ class PersonalLearningRepository:
             await s.execute(delete(PrepTopic).where(PrepTopic.id == topic_id))
 
     async def count_prep_topics(self, prep_id: str, *, session: AsyncSession | None = None) -> int:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(func.count()).select_from(PrepTopic).where(PrepTopic.prep_id == prep_id)
             return (await s.execute(stmt)).scalar_one() or 0
 
@@ -1597,7 +1641,7 @@ class PersonalLearningRepository:
     async def list_prep_materials(
         self, prep_id: str, *, session: AsyncSession | None = None
     ) -> list[PrepMaterial]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PrepMaterial)
                 .where(PrepMaterial.prep_id == prep_id)
@@ -1609,7 +1653,7 @@ class PersonalLearningRepository:
     async def find_prep_material(
         self, material_id: str, prep_id: str, *, session: AsyncSession | None = None
     ) -> PrepMaterial | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(PrepMaterial).where(
                 PrepMaterial.id == material_id,
                 PrepMaterial.prep_id == prep_id,
@@ -1654,7 +1698,7 @@ class PersonalLearningRepository:
     async def get_quiz_session(
         self, quiz_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> QuizSession | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(QuizSession)
                 .options(selectinload(QuizSession.answers))
@@ -1734,7 +1778,7 @@ class PersonalLearningRepository:
         outer-joined in one query rather than fetched per question, and the join is
         scoped to ``user_id`` so one learner never sees another's flags.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             flag_join = (PrepQuestionFlag.prep_question_id == PrepQuestion.id) & (
                 PrepQuestionFlag.user_id == user_id
             )
@@ -1776,7 +1820,7 @@ class PersonalLearningRepository:
         The preparation timeline is derived from these items rather than from a
         separate milestone entity, so the items must come back with the plan.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(StudyPlan)
                 .options(selectinload(StudyPlan.items))
@@ -1815,7 +1859,7 @@ class PersonalLearningRepository:
         them. Ordered by ``timesAnswered`` so a session reaches for material the
         learner has seen least, rather than repeating the same few questions.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             condition = (PrepQuestion.prep_id == prep_id) & (PrepQuestion.prep_topic_id == topic_id)
             if difficulty:
                 condition = condition & (PrepQuestion.difficulty == difficulty)
@@ -1848,7 +1892,7 @@ class PersonalLearningRepository:
         """
         if not topic_ids:
             return []
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PracticeObservation)
                 .where(
@@ -1869,7 +1913,7 @@ class PersonalLearningRepository:
         session: AsyncSession | None = None,
     ) -> list[PracticeObservation]:
         """Every observation for one preparation, newest first."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PracticeObservation)
                 .where(
@@ -1885,7 +1929,7 @@ class PersonalLearningRepository:
         self, *, quiz_session_id: str, prep_question_id: str, session: AsyncSession | None = None
     ) -> QuizSessionQuestion | None:
         """The link recording that a session asked a question, and its hint count."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(QuizSessionQuestion).where(
                 QuizSessionQuestion.quiz_session_id == quiz_session_id,
                 QuizSessionQuestion.prep_question_id == prep_question_id,
@@ -1959,7 +2003,7 @@ class PersonalLearningRepository:
         Oldest first because a chart reads left to right, and bounded by `since`
         because a trend does not need a preparation's entire history.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PrepReadinessSnapshot)
                 .where(
@@ -1978,7 +2022,7 @@ class PersonalLearningRepository:
         Completed preparations are excluded: their readiness no longer moves, so a
         further snapshot would add a row per day saying nothing new.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(ExamPrep)
                 .where(ExamPrep.status != "COMPLETED")
@@ -2044,7 +2088,7 @@ class PersonalLearningRepository:
         Callers must have verified the preparation belongs to the user, so scoping
         by ``prep_id`` is what prevents reaching another learner's question.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(PrepQuestion).where(
                 PrepQuestion.id == question_id,
                 PrepQuestion.prep_id == prep_id,
@@ -2099,7 +2143,7 @@ class PersonalLearningRepository:
         streak, and a workspace claiming otherwise would be telling the learner
         they had prepared when they had not.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             day = func.date(QuizSession.completed_at)
             condition = (
                 (QuizSession.user_id == user_id)
@@ -2132,7 +2176,7 @@ class PersonalLearningRepository:
         the learner could legitimately see in the bank is still not answerable in
         an unrelated session.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PrepQuestion)
                 .join(
@@ -2156,7 +2200,7 @@ class PersonalLearningRepository:
         created before answers were made idempotent may hold more than one row
         per question, and a read should not raise on that legacy data.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(QuizAnswer)
                 .where(
@@ -2204,7 +2248,7 @@ class PersonalLearningRepository:
         accumulated, so it cannot drift, and duplicate rows on legacy sessions
         cannot inflate it.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(func.count(func.distinct(QuizAnswer.question_id)))
                 .select_from(QuizAnswer)
@@ -2218,7 +2262,7 @@ class PersonalLearningRepository:
     async def list_quiz_answers(
         self, quiz_id: str, *, session: AsyncSession | None = None
     ) -> list[QuizAnswer]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(QuizAnswer).where(QuizAnswer.quiz_session_id == quiz_id)
             result = await s.execute(stmt)
             return list(result.scalars().all())
@@ -2233,7 +2277,7 @@ class PersonalLearningRepository:
         taken. The same banked question can appear at a different position, with a
         different hint count, in a later session.
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(PrepQuestion, QuizSessionQuestion)
                 .join(
@@ -2254,7 +2298,7 @@ class PersonalLearningRepository:
         session: AsyncSession | None = None,
     ) -> list[QuizSession]:
         """Return all quiz sessions for a preparation, newest first."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(QuizSession)
                 .where(
@@ -2311,6 +2355,7 @@ class PersonalLearningRepository:
             "correctCount": "correct_count",
             "scorePercentage": "score_percentage",
             "durationSeconds": "duration_seconds",
+            "generationMs": "generation_ms",
             "completedAt": "completed_at",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}
@@ -2378,7 +2423,7 @@ class PersonalLearningRepository:
     async def get_study_plan(
         self, plan_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> StudyPlan | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(StudyPlan)
                 .options(selectinload(StudyPlan.items))
@@ -2393,7 +2438,7 @@ class PersonalLearningRepository:
     async def list_active_plans(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> list[StudyPlan]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(StudyPlan)
                 .options(selectinload(StudyPlan.items))
@@ -2445,7 +2490,7 @@ class PersonalLearningRepository:
     async def list_plan_items(
         self, plan_id: str, *, session: AsyncSession | None = None
     ) -> list[StudyPlanItem]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(StudyPlanItem)
                 .where(StudyPlanItem.plan_id == plan_id)
@@ -2467,6 +2512,7 @@ class PersonalLearningRepository:
             "deadline": "deadline",
             "prepId": "prep_id",
             "status": "status",
+            "strategy": "strategy",
             "totalItems": "total_items",
             "completedItems": "completed_items",
         }
@@ -2511,7 +2557,7 @@ class PersonalLearningRepository:
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[Reflection], int]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             conditions = [Reflection.user_id == user_id]
 
             if type_filter is not None:
@@ -2536,7 +2582,7 @@ class PersonalLearningRepository:
     async def get_reflection(
         self, reflection_id: str, user_id: str, *, session: AsyncSession | None = None
     ) -> Reflection | None:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(Reflection).where(
                 Reflection.id == reflection_id,
                 Reflection.user_id == user_id,
@@ -2580,7 +2626,7 @@ class PersonalLearningRepository:
     async def list_active_recommendations(
         self, user_id: str, *, limit: int = 5, session: AsyncSession | None = None
     ) -> list[DiscoveryRecommendation]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(DiscoveryRecommendation)
                 .where(
@@ -2672,7 +2718,7 @@ class PersonalLearningRepository:
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[ActivityFeedEntry], int]:
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             conditions = [ActivityFeedEntry.user_id == user_id]
 
             # Count
@@ -2715,7 +2761,7 @@ class PersonalLearningRepository:
         self, *, skip: int = 0, take: int = 100, session: AsyncSession | None = None
     ) -> list[LearningProfile]:
         """Return LearningProfiles in paginated batches (for background tasks)."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(LearningProfile).order_by(LearningProfile.user_id).offset(skip).limit(take)
             )
@@ -2724,7 +2770,7 @@ class PersonalLearningRepository:
 
     async def count_active_profiles(self, *, session: AsyncSession | None = None) -> int:
         """Return total count of active learning profiles."""
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = select(func.count()).select_from(LearningProfile)
             return (await s.execute(stmt)).scalar() or 0
 
@@ -2742,7 +2788,7 @@ class PersonalLearningRepository:
         but for now we use the cached dropout_risk score computed by the
         behaviour analysis task (> 0.5 indicates declining engagement).
         """
-        async with self._use_session(session) as s:
+        async with self._read_session(session) as s:
             stmt = (
                 select(LearningProfile)
                 .where(

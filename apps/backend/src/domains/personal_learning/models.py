@@ -917,6 +917,62 @@ class PrepTimelineResponse(CamelModel):
     milestones: list[PrepTimelineMilestone]
 
 
+# ---------------------------------------------------------------------------
+# Commercial: the Plus trial
+# ---------------------------------------------------------------------------
+
+
+class TrialShowcaseSuggestion(CamelModel):
+    """A Plus capability worth trying, chosen from what this learner actually has."""
+
+    capability_id: str
+    title: str
+    description: str
+    action_url: str
+    #: Why this learner specifically. Shown, so a suggestion is not a generic ad.
+    reason: str
+
+
+class TrialStatusResponse(CamelModel):
+    """Where the learner stands with the 7-day Plus trial.
+
+    Typed because it was not, and the cost was concrete: the route returned bare
+    dicts whose keys differed between branches, so nothing was generated into the
+    client's types and the commercial dialog was built against a hand-written
+    fixture (`COMMERCIAL_TRIAL_DEMO`) instead. That fixture then announced "Day 3 of
+    your Plus trial" to Free learners who had never trialled at all.
+
+    `trialAvailable` is present on every branch and derived from the same rules
+    `start_trial` enforces, so the offer shown matches what pressing it would do.
+    """
+
+    is_active: bool
+    expired: bool = False
+    #: Whether starting a trial now would succeed.
+    trial_available: bool
+    #: 1-7 while a trial runs, 0 otherwise. Never invented for a learner not on one.
+    day_number: int = 0
+    days_remaining: int = 0
+    total_days: int
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    #: Set only while a cooldown is in force; `None` once eligible again.
+    next_trial_available_at: datetime | None = None
+    #: Populated only during an active trial — there is nothing to showcase
+    #: otherwise, and an empty list says so rather than filling it with examples.
+    showcase_suggestions: list[TrialShowcaseSuggestion] = Field(default_factory=list)
+
+
+class TrialSummaryResponse(CamelModel):
+    """What a finished trial delivered. Available only after it ends."""
+
+    trial_days: int
+    plus_features_used: list[str]
+    learning_outcomes: list[str]
+    what_you_would_lose: list[str]
+    upgrade_url: str
+
+
 class PrepCreateRequest(CamelModel):
     subject: str = Field(min_length=1, max_length=200)
     prep_type: PreparationType = Field(

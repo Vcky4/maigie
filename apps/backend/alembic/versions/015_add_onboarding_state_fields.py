@@ -6,9 +6,9 @@ Create Date: 2026-08-09
 
 """
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "015_add_onboarding_state_fields"

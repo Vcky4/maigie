@@ -9410,6 +9410,165 @@
         "title": "TopicUpdate",
         "type": "object"
       },
+      "TrialShowcaseSuggestion": {
+        "description": "A Plus capability worth trying, chosen from what this learner actually has.",
+        "properties": {
+          "actionUrl": {
+            "title": "Actionurl",
+            "type": "string"
+          },
+          "capabilityId": {
+            "title": "Capabilityid",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capabilityId",
+          "title",
+          "description",
+          "actionUrl",
+          "reason"
+        ],
+        "title": "TrialShowcaseSuggestion",
+        "type": "object"
+      },
+      "TrialStatusResponse": {
+        "description": "Where the learner stands with the 7-day Plus trial.\n\nTyped because it was not, and the cost was concrete: the route returned bare\ndicts whose keys differed between branches, so nothing was generated into the\nclient's types and the commercial dialog was built against a hand-written\nfixture (`COMMERCIAL_TRIAL_DEMO`) instead. That fixture then announced \"Day 3 of\nyour Plus trial\" to Free learners who had never trialled at all.\n\n`trialAvailable` is present on every branch and derived from the same rules\n`start_trial` enforces, so the offer shown matches what pressing it would do.",
+        "properties": {
+          "dayNumber": {
+            "default": 0,
+            "title": "Daynumber",
+            "type": "integer"
+          },
+          "daysRemaining": {
+            "default": 0,
+            "title": "Daysremaining",
+            "type": "integer"
+          },
+          "endsAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endsat"
+          },
+          "expired": {
+            "default": false,
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "isActive": {
+            "title": "Isactive",
+            "type": "boolean"
+          },
+          "nextTrialAvailableAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nexttrialavailableat"
+          },
+          "showcaseSuggestions": {
+            "items": {
+              "$ref": "#/components/schemas/TrialShowcaseSuggestion"
+            },
+            "title": "Showcasesuggestions",
+            "type": "array"
+          },
+          "startsAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Startsat"
+          },
+          "totalDays": {
+            "title": "Totaldays",
+            "type": "integer"
+          },
+          "trialAvailable": {
+            "title": "Trialavailable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "isActive",
+          "trialAvailable",
+          "totalDays"
+        ],
+        "title": "TrialStatusResponse",
+        "type": "object"
+      },
+      "TrialSummaryResponse": {
+        "description": "What a finished trial delivered. Available only after it ends.",
+        "properties": {
+          "learningOutcomes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Learningoutcomes",
+            "type": "array"
+          },
+          "plusFeaturesUsed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Plusfeaturesused",
+            "type": "array"
+          },
+          "trialDays": {
+            "title": "Trialdays",
+            "type": "integer"
+          },
+          "upgradeUrl": {
+            "title": "Upgradeurl",
+            "type": "string"
+          },
+          "whatYouWouldLose": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Whatyouwouldlose",
+            "type": "array"
+          }
+        },
+        "required": [
+          "trialDays",
+          "plusFeaturesUsed",
+          "learningOutcomes",
+          "whatYouWouldLose",
+          "upgradeUrl"
+        ],
+        "title": "TrialSummaryResponse",
+        "type": "object"
+      },
       "UpgradeRequiredDetail": {
         "description": "Body of a `403` raised by a tier gate.\n\nPreviously an ad-hoc dict, so the client had nothing to render an upgrade\npath from. Built from `feature_tier_service.CapabilityDenied`.",
         "properties": {
@@ -16690,13 +16849,15 @@
     },
     "/api/v1/learning/trial/start": {
       "post": {
-        "description": "Start a 7-day Plus trial.",
+        "description": "Start a 7-day Plus trial.\n\nReturns the same shape as `GET /trial/status`, so a client can write the\nresponse straight into the cache it already reads instead of refetching.",
         "operationId": "start_trial_api_v1_learning_trial_start_post",
         "responses": {
           "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TrialStatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16722,7 +16883,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TrialStatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16748,7 +16911,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/TrialSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"

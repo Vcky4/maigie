@@ -605,6 +605,17 @@ class QuizSession(Base, TimestampMixin):
     correct_count: Mapped[int] = mapped_column("correctCount", Integer, default=0)
     score_percentage: Mapped[float | None] = mapped_column("scorePercentage", Float, nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column("durationSeconds", Integer, nullable=True)
+    # How long question selection and generation took, in milliseconds.
+    #
+    # Decision H says quiz start stays synchronous until p95 exceeds 10s. That was
+    # unanswerable: the figure was emitted only as a log field, so unlike every
+    # other measurement on this surface it could not be read with a script against
+    # the database. Persisting it makes the trigger checkable — see
+    # `scripts/check_generation_latency.py`.
+    #
+    # Nullable with no default, because sessions that predate this column have no
+    # timing and zero would read as instantaneous.
+    generation_ms: Mapped[int | None] = mapped_column("generationMs", Integer, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )
@@ -955,7 +966,21 @@ class StudyPlan(Base, TimestampMixin):
     prep_id: Mapped[str | None] = mapped_column(
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True
     )
+    # `ACTIVE`, `COMPLETED`, or `SUPERSEDED` — a plan replaced by a newer one for
+    # the same preparation. The preparation timeline takes only completed items from
+    # a superseded plan, so regenerating replaces the schedule instead of doubling
+    # it.
     status: Mapped[str] = mapped_column(String, default="ACTIVE")
+    # Which scheduler produced this plan: `ADAPTIVE` or `EVEN`.
+    #
+    # Recorded because "adaptive study plans" was sold as a Plus capability while
+    # `generate_plan` computed `is_adaptive` and branched on nothing — a Plus plan
+    # was byte-for-byte a Free plan. A claim about behaviour that leaves no trace in
+    # the data is a claim nobody can check, which is why it survived so long.
+    #
+    # Nullable: plans created before this column exist and were all even, but
+    # backfilling them to `EVEN` would assert something about rows nobody measured.
+    strategy: Mapped[str | None] = mapped_column(String, nullable=True)
     total_items: Mapped[int] = mapped_column("totalItems", Integer, default=0)
     completed_items: Mapped[int] = mapped_column("completedItems", Integer, default=0)
 

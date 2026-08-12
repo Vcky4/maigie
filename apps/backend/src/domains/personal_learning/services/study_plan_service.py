@@ -12,7 +12,7 @@ from typing import Any
 from src.shared.exceptions import NotFoundError
 
 from ..repository import personal_learning_repo as repo
-from . import prep_intent
+from . import prep_intent, prep_plan_adaptive
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +66,15 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     # learner has never sustained. With no pace stored this yields the previous
     # behaviour unchanged.
     prep_pace: str | None = None
+    # The preparation's stated readiness target, used by adaptive scheduling to size
+    # how far each topic has to travel. Read here rather than re-fetched, and left
+    # None when the learner set no target so nothing invents a goal for them.
+    prep_target_mastery: float | None = None
     if prep_id:
         prep_for_pace = await repo.find_exam_prep(prep_id, user_id)
         prep_pace = getattr(prep_for_pace, "pace", None) if prep_for_pace else None
+        target = getattr(prep_for_pace, "target_readiness", None) if prep_for_pace else None
+        prep_target_mastery = float(target) if target else None
 
     if prep_pace:
         max_daily_minutes = prep_intent.daily_minute_budget(
@@ -80,10 +86,14 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
 
     # Get topics to distribute (from prep if provided)
     topics_to_plan: list[dict[str, Any]] = []
+    # The ORM rows are kept as well as the dicts: adaptive scheduling ranks topics
+    # by measured competence and needs the rows, not a flattened copy.
+    prep_topic_rows: list[Any] = []
     if prep_id:
         prep_topics = await repo.list_prep_topics(prep_id)
         for t in prep_topics:
             if t.status != "MASTERED":
+                prep_topic_rows.append(t)
                 topics_to_plan.append(
                     {
                         "title": t.title,
@@ -102,12 +112,42 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     now = datetime.now(UTC)
     days_available = max(1, (deadline - now).days)
 
-    # Distribute items across days
-    plan_items = _distribute_items(topics_to_plan, days_available, now, max_daily_minutes)
+    # Adaptive scheduling is what the Plus tier is sold on, and until now nothing
+    # branched on `is_adaptive` — a Plus plan was byte-for-byte a Free plan. It
+    # needs the learner's own topic rows to rank them by need, so it applies to
+    # preparation-scoped plans; a goal-only plan has no measured topics to rank.
+    strategy = prep_plan_adaptive.STRATEGY_EVEN
+    all_items: list[dict[str, Any]] = []
+    if is_adaptive and prep_topic_rows:
+        scheduled = await prep_plan_adaptive.load_and_schedule(
+            user_id=user_id,
+            topics=prep_topic_rows,
+            days_available=days_available,
+            start=now,
+            max_daily_minutes=max_daily_minutes,
+            target_mastery=prep_target_mastery,
+        )
+        if scheduled:
+            strategy = prep_plan_adaptive.STRATEGY_ADAPTIVE
+            all_items = [
+                {
+                    "title": item.title,
+                    "description": item.description,
+                    "scheduledDate": item.scheduled_date,
+                    "estimatedMinutes": item.estimated_minutes,
+                    "type": item.item_type,
+                    "topicId": item.topic_id,
+                    "prepTopicId": item.prep_topic_id,
+                }
+                for item in scheduled
+            ]
 
-    # Add review items (interleaved at 25% of plan items)
-    review_items = _add_review_items(plan_items, days_available, now)
-    all_items = sorted(plan_items + review_items, key=lambda x: x["scheduledDate"])
+    if not all_items:
+        # The even walk, unchanged. This is what Free gets, and what a goal-only
+        # plan gets whether or not the learner is on Plus.
+        plan_items = _distribute_items(topics_to_plan, days_available, now, max_daily_minutes)
+        review_items = _add_review_items(plan_items, days_available, now)
+        all_items = sorted(plan_items + review_items, key=lambda x: x["scheduledDate"])
 
     # Create plan
     plan = await repo.create_study_plan(
@@ -120,6 +160,11 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
             "status": "ACTIVE",
             "totalItems": len(all_items),
             "completedItems": 0,
+            # Which scheduler produced this plan. Recorded so "adaptive" is a
+            # checkable property of a stored row rather than a claim in a docstring
+            # — which is exactly how it went unnoticed that nothing branched on
+            # `is_adaptive` for as long as it did.
+            "strategy": strategy,
         }
     )
 
