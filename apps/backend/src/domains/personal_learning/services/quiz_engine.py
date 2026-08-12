@@ -5,8 +5,10 @@ Supports multiple modes: FULL_PRACTICE (all topics), WEAK_AREAS (mastery < 70),
 TOPIC_FOCUS (single topic), and QUICK_REVIEW.
 """
 
+import asyncio
 import logging
 import random
+import re
 import time
 from datetime import UTC, datetime, timezone
 from typing import Any
@@ -53,6 +55,50 @@ MAX_HINT_LEVEL = HINT_LEVEL_NARROW
 # The guarantee that matters is unchanged: a learner still never sees an answer to a
 # question they have not committed to.
 EXAM_CONDITION_MODES = ("PAST_PAPER_SIM",)
+
+
+class GenerationStage:
+    """The phases a session passes through while `status` is `GENERATING`.
+
+    Each one is a real server-side phase with a write behind it, which is the whole
+    point: Phase 4e refused a timer-driven progress bar because the client cannot
+    observe the stages of a synchronous POST, and a bar that guesses would report
+    "Writing questions" for a request that had already failed selecting them.
+
+    Ordered. `INDEX` gives the client something to draw without hardcoding the list.
+    """
+
+    PREPARING = "PREPARING"
+    REUSING_BANK = "REUSING_BANK"
+    WRITING_QUESTIONS = "WRITING_QUESTIONS"
+    CHECKING_QUESTIONS = "CHECKING_QUESTIONS"
+    READY = "READY"
+
+    ORDER = (PREPARING, REUSING_BANK, WRITING_QUESTIONS, CHECKING_QUESTIONS, READY)
+    INDEX = {stage: position for position, stage in enumerate(ORDER)}
+
+
+#: A session still `GENERATING` after this long is treated as lost rather than slow.
+#:
+#: Generation runs as an in-process background task, so a deploy or a crash between
+#: creating the session and finishing it would otherwise leave the row `GENERATING`
+#: forever — and the client would poll a spinner with no end. The bound is the
+#: provider timeout (60s) plus room for the surrounding database work; the measured
+#: p50 is 16.3s, so this is generous rather than tight.
+GENERATION_TIMEOUT_SECONDS = 90
+
+
+def generation_progress(stage: str | None) -> float | None:
+    """How far through generation a session is, 0.0-1.0, or `None` if unknown.
+
+    Derived from the stage rather than stored, so it cannot disagree with it. `None`
+    for a session that predates the column: no stage was recorded, and reporting 0
+    would claim it had not started when in fact it had finished.
+    """
+    if stage is None or stage not in GenerationStage.INDEX:
+        return None
+    last = len(GenerationStage.ORDER) - 1
+    return round(GenerationStage.INDEX[stage] / last, 2)
 
 
 def defers_feedback(mode: str | None) -> bool:
@@ -108,13 +154,25 @@ async def start_quiz(
 
         await trial_service.record_plus_feature_used(user_id, "quiz_modes")
 
-    # Verify prep exists and belongs to user
-    prep = await repo.find_exam_prep(prep_id, user_id)
+    # The preparation, its topics and its materials, in one wave rather than three.
+    #
+    # A round trip to the hosted database costs ~1.2s, so three sequential reads were
+    # most of a 7.9s "returns immediately" response. They are independent: all three
+    # are keyed on `prep_id`, and none needs another's result.
+    #
+    # Scoping is unchanged. Ownership is still decided by `find_exam_prep(prep_id,
+    # user_id)` and still raises before anything is returned; the concurrent reads are
+    # keyed only by `prep_id` and their results are discarded on that raise, so no
+    # other learner's rows can reach a response.
+    prep, all_topics, materials = await asyncio.gather(
+        repo.find_exam_prep(prep_id, user_id),
+        repo.list_prep_topics(prep_id),
+        repo.list_prep_materials(prep_id),
+    )
+
     if not prep:
         raise NotFoundError("Preparation", prep_id)
 
-    # Get topics based on mode
-    all_topics = await repo.list_prep_topics(prep_id)
     if not all_topics:
         # A bare ValueError here reached clients as a generic 500 via the
         # catch-all handler, hiding an actionable next step.
@@ -166,9 +224,9 @@ async def start_quiz(
     # must not introduce anything absent from the paper, whereas ordinary practice is
     # allowed to ask a fair question the document implies.
     is_exam_simulation = mode == "PAST_PAPER_SIM"
-    material_context = await _own_material_context(
-        user_id=user_id,
-        prep_id=prep_id,
+    # Selected from the rows already fetched in the wave above — no further round trip.
+    material_context = prep_material_context.select(
+        materials,
         budget=(
             prep_material_context.PAST_PAPER_BUDGET
             if is_exam_simulation
@@ -222,229 +280,359 @@ async def start_quiz(
             "topicId": topic_id,
             "status": "GENERATING",
             "totalQuestions": count,
+            "generationStage": GenerationStage.PREPARING,
         }
     )
 
-    # ADAPTIVE draws on the bank before generating anything. This is the first real
-    # payoff of promoting questions out of the session that created them: a question
-    # written last week at the right difficulty beats a fresh one, because it is
-    # already validated and it carries its own answer history. Done *before*
-    # generation so we do not pay for questions we would then discard.
-    reused = 0
-    if adaptive_plan:
-        reused = await _fill_from_bank(
-            prep_id=prep_id, quiz_session_id=quiz_session.id, plan=adaptive_plan
-        )
-
-    remaining = max(0, count - reused)
-
-    # Generate questions via LLM.
+    # Everything above is validation and cheap reads, and every failure above is a
+    # refusal the learner can act on — no topics, no topic chosen, no readable
+    # material, mode not on their plan. Those must stay in the request, because a
+    # refusal returned as a *failed session* is much harder to act on than a 4xx.
     #
-    # Topics are numbered and the model is asked for the number rather than the
-    # title. Attribution used to be a lowercased match on an LLM-returned title,
-    # so any paraphrase silently produced `prepTopicId = None`, which broke both
-    # the topic breakdown and the per-topic mastery updates that readiness is
-    # derived from. Numbering also keeps internal topic ids out of the prompt.
-    topics_text = "\n".join(
-        f"{index}. {topic.title}: {topic.description or ''}"
-        for index, topic in enumerate(target_topics, start=1)
-    )
-    # Questions are grounded in the learner's own material rather than invented from
-    # the topic titles, so they test what the learner was actually given.
-    grounding = ""
-    if material_context.has_text:
-        source_block = material_context.as_prompt_block()
-        if is_exam_simulation:
-            grounding = (
-                "Base every question strictly on this source material, which the "
-                "learner uploaded themselves. Do not introduce facts that are not "
-                "present in it.\n"
-                f"--- SOURCE MATERIAL ---\n{source_block}\n--- END SOURCE MATERIAL ---\n\n"
-                "Write questions in the style of a written examination: no hints in "
-                "the wording, and a spread of difficulty across the paper.\n\n"
-            )
-        else:
-            # Deliberately weaker than the simulation's instruction. An excerpt is a
-            # sample of the document, not the whole of it, so forbidding anything
-            # absent would rule out fair questions about material that exists but did
-            # not fit the budget. It must still not wander off the subject.
-            grounding = (
-                "Draw the questions from this material, which the learner uploaded "
-                "themselves. Use its terminology, notation and worked conventions, "
-                "and stay within the subject it covers. Where it is silent, ask a "
-                "question the material clearly implies rather than inventing new "
-                "facts.\n"
-                f"--- SOURCE MATERIAL ---\n{source_block}\n--- END SOURCE MATERIAL ---\n\n"
-            )
-
-    prompt = (
-        f"{grounding}"
-        f"Generate {remaining} quiz questions for these numbered topics:\n{topics_text}\n\n"
-        f"Return a JSON array of question objects with:\n"
-        f"- 'topicNumber': the number of the topic this tests, from the list above\n"
-        f"- 'questionText': the question\n"
-        f"- 'questionType': 'MULTIPLE_CHOICE'\n"
-        f"- 'options': array of 4 options (strings)\n"
-        f"- 'correctAnswer': the correct option (must match one of the options exactly)\n"
-        f"- 'explanation': brief explanation of why the answer is correct\n"
-        f"- 'difficulty': one of EASY, MEDIUM, HARD\n"
-        f"- 'examTip': one sentence on how to approach this kind of question\n"
-        f"- 'hint': one sentence pointing at the concept or method needed, which "
-        f"must NOT reveal, restate or paraphrase the correct answer\n\n"
-        f"Return ONLY the JSON array."
-    )
-
-    # Timed so the sync-versus-queued decision (Decision H) can be revisited from
-    # measurements rather than from opinion. The provider is chosen per user by
-    # llm_resilient, so this covers whichever of Gemini/OpenAI/Anthropic ran.
-    started = time.monotonic()
-    questions_data: Any = []
-    if remaining > 0:
-        try:
-            questions_data = await generate_content_json(
-                prompt, max_tokens=8000, timeout_s=60, fallback=[], user_id=user_id
-            )
-        except Exception as e:
-            logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
-            questions_data = []
-    generation_ms = int((time.monotonic() - started) * 1000)
-    logger.info(
-        "Quiz generation finished",
-        extra={
-            "prep_id": prep_id,
-            "quiz_id": quiz_session.id,
-            "mode": mode,
-            "requested": count,
-            "generation_ms": generation_ms,
-        },
-    )
-
-    if not isinstance(questions_data, list):
-        logger.warning(
-            "Quiz generation returned a non-list payload",
-            extra={"prep_id": prep_id, "quiz_id": quiz_session.id},
-        )
-        questions_data = []
-
-    # Persist only questions that can actually be scored — see _usable_question.
-    # Generation fills whatever the bank could not supply.
-    #
-    # Normalised in full before anything is written, so answer positions can be
-    # balanced across the batch rather than chosen one question at a time. Topic
-    # attribution is resolved in the same pass, since it needs the raw candidate.
-    created = reused
-    rejected = 0
-    unattributed = 0
-    accepted: list[tuple[dict[str, Any], str | None]] = []
-    for candidate in questions_data:
-        if reused + len(accepted) >= count:
-            break
-        normalized = _usable_question(candidate)
-        if normalized is None:
-            rejected += 1
-            continue
-
-        matched_topic_id = _resolve_topic_id(candidate, target_topics)
-        if matched_topic_id is None:
-            unattributed += 1
-        accepted.append((normalized, matched_topic_id))
-
-    # Every position gets used in turn, so no session can land its answers on one
-    # letter. Applied to the whole batch, before persisting.
-    balance_answer_positions([normalized for normalized, _ in accepted])
-
-    for normalized, matched_topic_id in accepted:
-        # The question is banked against the preparation, then linked to this
-        # session at this position. The bank outlives the session, so the question
-        # remains browsable and reusable afterwards.
-        question = await repo.create_prep_question(
-            {
-                "prepId": prep_id,
-                "prepTopicId": matched_topic_id,
-                "questionText": normalized["question_text"],
-                "questionType": normalized["question_type"],
-                "options": normalized["options"],
-                "correctAnswer": normalized["correct_answer"],
-                "explanation": normalized["explanation"],
-                "difficulty": normalized["difficulty"],
-                "examTip": normalized["exam_tip"],
-                "hintNudge": normalized["hint_nudge"],
-                # Set here, not taken from the model. A generator asked to report
-                # its own provenance is not a source of truth about it, and
-                # `sourceYear` stays null because a generated question has no year.
-                "source": QUESTION_SOURCE_AI,
-            }
-        )
-        await repo.attach_question_to_session(
-            quiz_session_id=quiz_session.id,
-            prep_question_id=question.id,
-            order_index=created,
-        )
-        created += 1
-
-    if rejected or unattributed:
-        # Unattributed questions are still scorable, but they update no topic's
-        # mastery, so they quietly weaken readiness. Worth seeing in logs.
-        logger.warning(
-            "Generated quiz questions were discarded or unattributed",
-            extra={
-                "prep_id": prep_id,
-                "quiz_id": quiz_session.id,
-                "rejected": rejected,
-                "unattributed": unattributed,
-            },
-        )
-
-    if created == 0:
-        # Decision F: a session with no usable questions is a failure, not a
-        # quiz. The row is kept as FAILED so the attempt stays visible for
-        # support, and the caller is told, rather than being handed a 201 with an
-        # empty `questions` array that no client can render.
-        # `generationMs` is written on the failure path too. A start that spent 40s
-        # and produced nothing is the most important reading Decision H needs, and
-        # recording it only on success would bias the percentile towards the fast
-        # attempts.
-        await repo.update_quiz_session(
-            quiz_session.id,
-            {"status": "FAILED", "totalQuestions": 0, "generationMs": generation_ms},
-        )
-        logger.error(
-            "Quiz generation produced no usable questions",
-            extra={
-                "prep_id": prep_id,
-                "quiz_id": quiz_session.id,
-                "mode": mode,
-                "returned": len(questions_data),
-            },
-        )
-        raise MaigieError(
-            "We could not generate questions for this practice session. Please try again.",
-            status_code=503,
-            code="QUIZ_GENERATION_FAILED",
-        )
-
-    # Generation succeeded: the session is now playable. Partial generation still
-    # makes a usable quiz, so report the real number and give the score an honest
-    # denominator.
-    await repo.update_quiz_session(
-        quiz_session.id,
-        {
-            "status": "IN_PROGRESS",
-            "totalQuestions": created,
-            # Persisted, not just logged. See migration `018`: the p95 that gates
-            # Decision H was cited three times and never read, because a log field
-            # is not queryable the way every other measurement here was.
-            "generationMs": generation_ms,
-        },
+    # Everything below is the expensive half, and the 16.3s p50 lives in it. It runs
+    # in the background so the request can return a session the client can poll,
+    # which is what makes a real staged progress display possible at all.
+    _schedule_generation(
+        quiz_id=quiz_session.id,
+        user_id=user_id,
+        prep_id=prep_id,
+        mode=mode,
+        count=count,
+        target_topics=target_topics,
+        all_topics=all_topics,
+        adaptive_plan=adaptive_plan,
+        material_context=material_context,
+        is_exam_simulation=is_exam_simulation,
     )
 
     session = await repo.get_quiz_session(quiz_session.id, user_id)
-    questions = await repo.list_quiz_questions(quiz_session.id)
-    # A new quiz has no answers yet, and being IN_PROGRESS it carries no answer
-    # key either. Topic titles come from the topics already loaded above.
-    return _build_quiz_response(
-        session, questions, [], {topic.id: topic.title for topic in all_topics}
-    )
+    # No questions yet, and the response says so through `status` and
+    # `generationStage` rather than through an empty array the client has to interpret.
+    return _build_quiz_response(session, [], [], {topic.id: topic.title for topic in all_topics})
+
+
+def _schedule_generation(**kwargs: Any) -> None:
+    """Run generation outside the request, without requiring a broker.
+
+    An in-process `asyncio` task rather than a Celery job. Celery is available, but
+    routing quiz generation through it would make practice depend on a worker being
+    up — and `check_prepare_exercised.py` already showed what that costs: readiness
+    snapshots have never been written because beat is not running. A learner should
+    not lose the ability to practise for the same reason.
+
+    The trade is that a restart mid-generation abandons the task. `get_quiz` handles
+    that by treating a session still `GENERATING` past `GENERATION_TIMEOUT_SECONDS`
+    as failed, so a lost task surfaces as an actionable error rather than a spinner
+    with no end.
+    """
+    task = asyncio.create_task(_run_generation(**kwargs))
+    # Held so the event loop cannot garbage-collect a running task, which is a real
+    # asyncio footgun: without a reference the task can vanish mid-await.
+    _IN_FLIGHT.add(task)
+    task.add_done_callback(_IN_FLIGHT.discard)
+
+
+#: Strong references to running generation tasks. See `_schedule_generation`.
+_IN_FLIGHT: set[Any] = set()
+
+
+async def _run_generation(
+    *,
+    quiz_id: str,
+    user_id: str,
+    prep_id: str,
+    mode: str,
+    count: int,
+    target_topics: list[Any],
+    all_topics: list[Any],
+    adaptive_plan: list[Any],
+    material_context: prep_material_context.MaterialContext,
+    is_exam_simulation: bool,
+) -> None:
+    """The expensive half of starting a quiz, run outside the request.
+
+    Everything here was the tail of `start_quiz`. It is unchanged except that each
+    phase now records itself, and that a failure marks the session `FAILED` instead of
+    raising to a caller — there is no caller left to raise to, and the client learns
+    the outcome by polling `status`.
+    """
+    from .llm_resilient import generate_content_json
+
+    try:
+        # ADAPTIVE draws on the bank before generating anything. This is the first real
+        # payoff of promoting questions out of the session that created them: a question
+        # written last week at the right difficulty beats a fresh one, because it is
+        # already validated and it carries its own answer history. Done *before*
+        # generation so we do not pay for questions we would then discard.
+        reused = 0
+        if adaptive_plan:
+            await _set_stage(quiz_id, GenerationStage.REUSING_BANK)
+            reused = await _fill_from_bank(
+                prep_id=prep_id, quiz_session_id=quiz_id, plan=adaptive_plan
+            )
+
+        remaining = max(0, count - reused)
+
+        # Generate questions via LLM.
+        #
+        # Topics are numbered and the model is asked for the number rather than the
+        # title. Attribution used to be a lowercased match on an LLM-returned title,
+        # so any paraphrase silently produced `prepTopicId = None`, which broke both
+        # the topic breakdown and the per-topic mastery updates that readiness is
+        # derived from. Numbering also keeps internal topic ids out of the prompt.
+        topics_text = "\n".join(
+            f"{index}. {topic.title}: {topic.description or ''}"
+            for index, topic in enumerate(target_topics, start=1)
+        )
+        # Questions are grounded in the learner's own material rather than invented from
+        # the topic titles, so they test what the learner was actually given.
+        grounding = ""
+        if material_context.has_text:
+            source_block = material_context.as_prompt_block()
+            if is_exam_simulation:
+                grounding = (
+                    "Base every question strictly on this source material, which the "
+                    "learner uploaded themselves. Do not introduce facts that are not "
+                    "present in it.\n"
+                    f"--- SOURCE MATERIAL ---\n{source_block}\n--- END SOURCE MATERIAL ---\n\n"
+                    "Write questions in the style of a written examination: no hints in "
+                    "the wording, and a spread of difficulty across the paper.\n\n"
+                )
+            else:
+                # Deliberately weaker than the simulation's instruction. An excerpt is a
+                # sample of the document, not the whole of it, so forbidding anything
+                # absent would rule out fair questions about material that exists but did
+                # not fit the budget. It must still not wander off the subject.
+                grounding = (
+                    "Draw the questions from this material, which the learner uploaded "
+                    "themselves. Use its terminology, notation and worked conventions, "
+                    "and stay within the subject it covers. Where it is silent, ask a "
+                    "question the material clearly implies rather than inventing new "
+                    "facts.\n"
+                    f"--- SOURCE MATERIAL ---\n{source_block}\n--- END SOURCE MATERIAL ---\n\n"
+                )
+
+        prompt = (
+            f"{grounding}"
+            f"Generate {remaining} quiz questions for these numbered topics:\n{topics_text}\n\n"
+            f"Return a JSON array of question objects with:\n"
+            f"- 'topicNumber': the number of the topic this tests, from the list above\n"
+            f"- 'questionText': the question\n"
+            f"- 'questionType': 'MULTIPLE_CHOICE'\n"
+            f"- 'options': array of 4 options (strings)\n"
+            f"- 'correctAnswer': the correct option (must match one of the options exactly)\n"
+            f"- 'explanation': brief explanation of why the answer is correct\n"
+            f"- 'difficulty': one of EASY, MEDIUM, HARD\n"
+            f"- 'examTip': one sentence on how to approach this kind of question\n"
+            f"- 'hint': one sentence pointing at the concept or method needed, which "
+            f"must NOT reveal, restate or paraphrase the correct answer\n\n"
+            f"Return ONLY the JSON array."
+        )
+
+        # Timed so the sync-versus-queued decision (Decision H) can be revisited from
+        # measurements rather than from opinion. The provider is chosen per user by
+        # llm_resilient, so this covers whichever of Gemini/OpenAI/Anthropic ran.
+        await _set_stage(quiz_id, GenerationStage.WRITING_QUESTIONS)
+        started = time.monotonic()
+        questions_data: Any = []
+        if remaining > 0:
+            try:
+                questions_data = await generate_content_json(
+                    prompt, max_tokens=8000, timeout_s=60, fallback=[], user_id=user_id
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate quiz questions for prep {prep_id}: {e}")
+                questions_data = []
+        generation_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "Quiz generation finished",
+            extra={
+                "prep_id": prep_id,
+                "quiz_id": quiz_id,
+                "mode": mode,
+                "requested": count,
+                "generation_ms": generation_ms,
+            },
+        )
+
+        await _set_stage(quiz_id, GenerationStage.CHECKING_QUESTIONS)
+
+        if not isinstance(questions_data, list):
+            logger.warning(
+                "Quiz generation returned a non-list payload",
+                extra={"prep_id": prep_id, "quiz_id": quiz_id},
+            )
+            questions_data = []
+
+        # Persist only questions that can actually be scored — see _usable_question.
+        # Generation fills whatever the bank could not supply.
+        #
+        # Normalised in full before anything is written, so answer positions can be
+        # balanced across the batch rather than chosen one question at a time. Topic
+        # attribution is resolved in the same pass, since it needs the raw candidate.
+        created = reused
+        rejected = 0
+        unattributed = 0
+        accepted: list[tuple[dict[str, Any], str | None]] = []
+        for candidate in questions_data:
+            if reused + len(accepted) >= count:
+                break
+            normalized = _usable_question(candidate)
+            if normalized is None:
+                rejected += 1
+                continue
+
+            matched_topic_id = _resolve_topic_id(candidate, target_topics)
+            if matched_topic_id is None:
+                unattributed += 1
+            accepted.append((normalized, matched_topic_id))
+
+        # Every position gets used in turn, so no session can land its answers on one
+        # letter. Applied to the whole batch, before persisting.
+        balance_answer_positions([normalized for normalized, _ in accepted])
+
+        async def _persist(
+            normalized: dict[str, Any], matched_topic_id: str | None, order_index: int
+        ) -> None:
+            # The question is banked against the preparation, then linked to this
+            # session at this position. The bank outlives the session, so the question
+            # remains browsable and reusable afterwards.
+            question = await repo.create_prep_question(
+                {
+                    "prepId": prep_id,
+                    "prepTopicId": matched_topic_id,
+                    "questionText": normalized["question_text"],
+                    "questionType": normalized["question_type"],
+                    "options": normalized["options"],
+                    "correctAnswer": normalized["correct_answer"],
+                    "explanation": normalized["explanation"],
+                    "difficulty": normalized["difficulty"],
+                    "examTip": normalized["exam_tip"],
+                    "hintNudge": normalized["hint_nudge"],
+                    # Set here, not taken from the model. A generator asked to report
+                    # its own provenance is not a source of truth about it, and
+                    # `sourceYear` stays null because a generated question has no year.
+                    "source": QUESTION_SOURCE_AI,
+                }
+            )
+            await repo.attach_question_to_session(
+                quiz_session_id=quiz_id,
+                prep_question_id=question.id,
+                order_index=order_index,
+            )
+
+        # Questions are persisted concurrently. Each one still does its own
+        # create-then-link in order, because the link needs the new question's id, but
+        # the questions do not depend on each other — and a round trip to the hosted
+        # database costs ~1.2s, so doing five sequentially spent ~12s of a 70s start on
+        # writes alone. Measured before and after with `smoke_generation_stages.py`.
+        #
+        # `order_index` is computed up front rather than incremented inside the
+        # coroutines, so the stored order is the balanced batch order and does not
+        # depend on which write finishes first.
+        await asyncio.gather(
+            *(
+                _persist(normalized, matched_topic_id, reused + offset)
+                for offset, (normalized, matched_topic_id) in enumerate(accepted)
+            )
+        )
+        created = reused + len(accepted)
+
+        if rejected or unattributed:
+            # Unattributed questions are still scorable, but they update no topic's
+            # mastery, so they quietly weaken readiness. Worth seeing in logs.
+            logger.warning(
+                "Generated quiz questions were discarded or unattributed",
+                extra={
+                    "prep_id": prep_id,
+                    "quiz_id": quiz_id,
+                    "rejected": rejected,
+                    "unattributed": unattributed,
+                },
+            )
+
+        if created == 0:
+            # Decision F: a session with no usable questions is a failure, not a
+            # quiz. The row is kept as FAILED so the attempt stays visible for
+            # support, and the caller is told, rather than being handed a 201 with an
+            # empty `questions` array that no client can render.
+            # `generationMs` is written on the failure path too. A start that spent 40s
+            # and produced nothing is the most important reading Decision H needs, and
+            # recording it only on success would bias the percentile towards the fast
+            # attempts.
+            await repo.update_quiz_session(
+                quiz_id,
+                {
+                    "status": "FAILED",
+                    "totalQuestions": 0,
+                    "generationMs": generation_ms,
+                    "generationStage": None,
+                },
+            )
+            logger.error(
+                "Quiz generation produced no usable questions",
+                extra={
+                    "prep_id": prep_id,
+                    "quiz_id": quiz_id,
+                    "mode": mode,
+                    "returned": len(questions_data),
+                },
+            )
+            raise MaigieError(
+                "We could not generate questions for this practice session. Please try again.",
+                status_code=503,
+                code="QUIZ_GENERATION_FAILED",
+            )
+
+        # Generation succeeded: the session is now playable. Partial generation still
+        # makes a usable quiz, so report the real number and give the score an honest
+        # denominator.
+        await repo.update_quiz_session(
+            quiz_id,
+            {
+                "status": "IN_PROGRESS",
+                "totalQuestions": created,
+                # Persisted, not just logged. See migration `018`: the p95 that gates
+                # Decision H was cited three times and never read, because a log field
+                # is not queryable the way every other measurement here was.
+                "generationMs": generation_ms,
+                "generationStage": GenerationStage.READY,
+            },
+        )
+
+    except MaigieError:
+        # Swallowed on purpose. The only `MaigieError` raised below is the
+        # no-usable-questions case, which marks the session `FAILED` and logs before
+        # raising — and there is no caller left to receive it. Re-raising would give
+        # asyncio an exception nobody retrieves, which is noise, not information. The
+        # client learns the outcome from `status`, which is already correct.
+        return
+    except Exception:
+        # Nothing is watching this coroutine, so an unhandled error would vanish and
+        # leave the session GENERATING until the staleness bound caught it. Record the
+        # failure where the client will actually look.
+        logger.exception(
+            "Quiz generation failed unexpectedly",
+            extra={"quiz_id": quiz_id, "prep_id": prep_id, "mode": mode},
+        )
+        await repo.update_quiz_session(
+            quiz_id, {"status": "FAILED", "totalQuestions": 0, "generationStage": None}
+        )
+
+
+async def _set_stage(quiz_id: str, stage: str) -> None:
+    """Record which phase generation reached.
+
+    Best-effort: a failed stage write must not abort a generation that is otherwise
+    fine. The learner would rather have their questions than an accurate progress bar.
+    """
+    try:
+        await repo.update_quiz_session(quiz_id, {"generationStage": stage})
+    except Exception:  # noqa: BLE001 - progress reporting is not worth failing over
+        logger.warning(
+            "Could not record generation stage",
+            extra={"quiz_id": quiz_id, "stage": stage},
+        )
 
 
 # Reading the question, working it out, and reading the explanation.
@@ -589,6 +777,83 @@ def balance_answer_positions(
     return questions
 
 
+#: Characters models substitute freely for their ASCII equivalents. A question whose
+#: key uses a unicode minus while its option uses a hyphen is a formatting difference,
+#: not an unanswerable question.
+_EQUIVALENT_CHARS = str.maketrans(
+    {
+        "\u2212": "-",  # minus sign
+        "\u2013": "-",  # en dash
+        "\u2014": "-",  # em dash
+        "\u00a0": " ",  # non-breaking space
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u00d7": "*",  # multiplication sign
+    }
+)
+
+#: Stripping a leading enumeration label (`A) `, `(a) `, `1. `) was tried and removed.
+#: Any pattern loose enough to catch them also catches real content: `n - 1` reads as
+#: label `n`, separator `-`, value `1`, so it normalised to `1` and stopped matching
+#: itself. On mathematical material that is most of the option set. Presentation-only
+#: normalisation has to be transformations that cannot change meaning, and this one can.
+
+
+def _comparable(value: str) -> str:
+    """A form in which two renderings of the same answer compare equal.
+
+    Deliberately narrow. This normalises **presentation** — case, whitespace, unicode
+    look-alikes, LaTeX delimiters, an enumeration label, a trailing full stop — and
+    nothing about meaning. It is used only to match the model's own `correctAnswer`
+    to the model's own `options` at ingest.
+
+    It is emphatically **not** used to grade a learner. Phase 4d removed a substring
+    fallback from grading that marked wrong multiple-choice answers correct; loosening
+    that again would repeat the defect. The distinction is that here both strings come
+    from the same generator and are meant to be the same string, whereas there one
+    string came from the learner and being generous told them they knew something they
+    did not.
+    """
+    text = value.translate(_EQUIVALENT_CHARS)
+    text = text.strip().strip("$").strip()
+    text = text.rstrip(".").strip()
+    return " ".join(text.lower().split())
+
+
+def _resolve_correct_option(options: list[str], correct_answer: str) -> str | None:
+    """Which option the model meant by `correct_answer`, or `None` if unclear.
+
+    Exact match first, so nothing changes for the questions that were already fine.
+    Otherwise the presentational normalisation above, and **only if exactly one option
+    matches** — an ambiguous match is genuinely unscorable and is still rejected.
+
+    Kept deliberately narrow: case, surrounding whitespace, unicode look-alikes, LaTeX
+    `$` delimiters and a trailing full stop. Enumeration labels are *not* stripped;
+    see the note by `_comparable`.
+
+    This exists because of a measured regression. Grounding ordinary practice in the
+    learner's material (Phase 4m) told the model to use "its terminology, notation and
+    worked conventions", and on mathematical material that means notation: a live
+    session asked for five questions, the model returned five usable ones, and **four
+    were discarded** because the key rendered `x = -3` where the option rendered
+    `x = −3`. The rejection rule was right in principle and was throwing away good
+    questions in practice.
+    """
+    for option in options:
+        if option.lower() == correct_answer.lower():
+            return option
+
+    key = _comparable(correct_answer)
+    if not key:
+        return None
+    matches = [option for option in options if _comparable(option) == key]
+    # Exactly one. Two options that normalise alike means the question cannot be
+    # scored no matter which is stored, so rejecting is the honest outcome.
+    return matches[0] if len(matches) == 1 else None
+
+
 def _usable_question(candidate: Any) -> dict[str, Any] | None:
     """Normalize one generated question, or return `None` if it cannot be scored.
 
@@ -621,8 +886,13 @@ def _usable_question(candidate: Any) -> dict[str, Any] | None:
     if question_type == "MULTIPLE_CHOICE":
         if not options or len(options) < _MIN_OPTIONS:
             return None
-        if not any(option.lower() == correct_answer.lower() for option in options):
+        resolved = _resolve_correct_option(options, correct_answer)
+        if resolved is None:
             return None
+        # Snapped to the option's exact text. Everything downstream compares the
+        # stored key to the stored options, so a key that merely *resembles* an
+        # option would fail at grading time even though the question is fine.
+        correct_answer = resolved
         # Answer position is *not* fixed here. It is assigned across the whole batch
         # by `balance_answer_positions`, because balancing one question at a time can
         # only be even on average — and a five-question session that lands four
@@ -892,32 +1162,6 @@ def _answer_result(
         "alreadyAnswered": already_answered,
         "feedbackDeferred": False,
     }
-
-
-async def _own_material_context(
-    *,
-    user_id: str,
-    prep_id: str,
-    budget: int,
-    categories: tuple[str, ...] | None = None,
-) -> prep_material_context.MaterialContext:
-    """The learner's own material for this preparation, selected and budgeted.
-
-    Ownership is verified on the preparation before any material is read, so one
-    learner's documents can never ground another learner's questions.
-
-    Selection is `prep_material_context`'s job. This previously walked the list
-    front-to-back spending a 5,000-character budget, so the most recently uploaded
-    file took everything and category was ignored entirely — an "exam simulation" was
-    grounded in whatever happened to be uploaded last rather than in the material the
-    learner marked `PAST_QUESTION`.
-    """
-    prep = await repo.find_exam_prep(prep_id, user_id)
-    if not prep:
-        raise NotFoundError("Preparation", prep_id)
-
-    materials = await repo.list_prep_materials(prep_id)
-    return prep_material_context.select(materials, budget=budget, categories=categories)
 
 
 async def _fill_from_bank(*, prep_id: str, quiz_session_id: str, plan: list[Any]) -> int:
@@ -1241,16 +1485,62 @@ async def complete_quiz(
 
 
 async def get_quiz(*, user_id: str, quiz_id: str) -> Any:
-    """Get a quiz session with its questions."""
+    """Get a quiz session with its questions.
+
+    This is also the polling endpoint while a session is `GENERATING`, so it is where
+    a lost generation has to be caught: the background task lives in the API process,
+    and a restart between creating the session and finishing it would otherwise leave
+    the row `GENERATING` forever with the client polling a spinner that never ends.
+    """
     quiz = await repo.get_quiz_session(quiz_id, user_id)
     if not quiz:
         raise NotFoundError("QuizSession", quiz_id)
+
+    quiz = await _fail_if_generation_was_lost(quiz, user_id=user_id)
+
     questions = await repo.list_quiz_questions(quiz_id)
     answers = await repo.list_quiz_answers(quiz_id)
     topics = await repo.list_prep_topics(quiz.prep_id)
     return _build_quiz_response(
         quiz, questions, answers, {topic.id: topic.title for topic in topics}
     )
+
+
+async def _fail_if_generation_was_lost(quiz: Any, *, user_id: str) -> Any:
+    """Mark a session `FAILED` once it has been `GENERATING` for too long.
+
+    "Too long" is decided against the clock rather than against a heartbeat, which is
+    the honest bound available: nothing is watching an abandoned task, so its absence
+    cannot be observed directly. `GENERATION_TIMEOUT_SECONDS` is the provider timeout
+    plus room, and the measured p50 is 16.3s, so a session that trips this is stuck
+    rather than slow.
+
+    Written back rather than merely reported, so the next poll and every later read
+    agree, and so the row stops looking like work in progress to the aggregates.
+    """
+    if quiz.status != "GENERATING":
+        return quiz
+
+    created_at = quiz.created_at
+    if created_at is None:
+        return quiz
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+
+    age = (datetime.now(UTC) - created_at).total_seconds()
+    if age <= GENERATION_TIMEOUT_SECONDS:
+        return quiz
+
+    logger.warning(
+        "Quiz generation abandoned; marking the session failed",
+        extra={
+            "quiz_id": quiz.id,
+            "age_seconds": int(age),
+            "last_stage": quiz.generation_stage,
+        },
+    )
+    await repo.update_quiz_session(quiz.id, {"status": "FAILED", "generationStage": None})
+    return await repo.get_quiz_session(quiz.id, user_id) or quiz
 
 
 async def list_prep_quizzes(*, user_id: str, prep_id: str) -> list[Any]:
@@ -1306,6 +1596,11 @@ def _build_quiz_response(
         "duration_seconds": quiz.duration_seconds,
         "completed_at": quiz.completed_at,
         "created_at": quiz.created_at,
+        # Which phase generation reached, and how far through that is. Both are
+        # `None` once a session is playable, so a client showing a wait screen has a
+        # single unambiguous signal to stop: `status` leaves `GENERATING`.
+        "generation_stage": quiz.generation_stage,
+        "generation_progress": generation_progress(quiz.generation_stage),
         "questions": [
             _question_dict(
                 question,

@@ -6967,6 +6967,35 @@
             ],
             "title": "Durationseconds"
           },
+          "generationProgress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generationprogress"
+          },
+          "generationStage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PREPARING",
+                  "REUSING_BANK",
+                  "WRITING_QUESTIONS",
+                  "CHECKING_QUESTIONS",
+                  "READY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generationstage"
+          },
           "id": {
             "title": "Id",
             "type": "string"

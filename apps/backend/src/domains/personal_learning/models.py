@@ -517,6 +517,18 @@ PreparationType = Literal[
 # material is uploaded, `COMPLETED` on completion or when the target date passes.
 PreparationStatus = Literal["SETUP", "IN_PROGRESS", "COMPLETED"]
 
+#: Phases a quiz session passes through while it is `GENERATING`. Typed rather than a
+#: bare string so the client gets a closed set to switch on: a wait screen that has to
+#: guess at stage names cannot report an unknown one honestly. Kept in step with
+#: `quiz_engine.GenerationStage`, which owns the order and is asserted against this.
+GenerationStage = Literal[
+    "PREPARING",
+    "REUSING_BANK",
+    "WRITING_QUESTIONS",
+    "CHECKING_QUESTIONS",
+    "READY",
+]
+
 PrepMaterialCategory = Literal[
     "TEXTBOOK",
     "NOTES",
@@ -1162,6 +1174,22 @@ class QuizSessionResponse(CamelModel):
     duration_seconds: int | None = None
     completed_at: datetime | None = None
     created_at: datetime
+    #: Which phase generation reached, while `status` is `GENERATING`.
+    #:
+    #: `POST .../quizzes` returns as soon as the session exists and generation
+    #: continues in the background, so the client polls this endpoint to follow it.
+    #: Decision H set the trigger for that at p95 start latency above 10s; migration
+    #: `018` made the figure readable and the first reading was a **p50 of 16.3s**.
+    #:
+    #: Phase 4e deliberately shipped no staged progress bar until this existed,
+    #: because a bar driven by a timer describes state the browser has no access to —
+    #: it would read "Writing questions" for a request that had already failed
+    #: selecting them. Every value here has a server-side write behind it.
+    generation_stage: GenerationStage | None = None
+    #: 0.0-1.0, derived from `generationStage` so the two cannot disagree. `None`
+    #: when no stage is known, which includes every session created before the
+    #: column existed — reporting 0 for those would claim they had not started.
+    generation_progress: float | None = None
     questions: list[QuizQuestionPresentation] = []
 
 

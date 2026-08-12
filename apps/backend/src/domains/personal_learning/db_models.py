@@ -616,6 +616,15 @@ class QuizSession(Base, TimestampMixin):
     # Nullable with no default, because sessions that predate this column have no
     # timing and zero would read as instantaneous.
     generation_ms: Mapped[int | None] = mapped_column("generationMs", Integer, nullable=True)
+    # Which phase of generation the session is in while `status` is `GENERATING`.
+    #
+    # Exists so the wait screen can report a stage the server actually reached.
+    # Phase 4e refused to show a staged progress bar driven by a timer, because the
+    # client cannot observe the stages of a POST that does not return until it is
+    # done — it would have read "Writing questions" for a request that had already
+    # failed selecting them. Generation is now backgrounded and this is what the
+    # client polls. See `quiz_engine.GenerationStage`.
+    generation_stage: Mapped[str | None] = mapped_column("generationStage", String, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
     )

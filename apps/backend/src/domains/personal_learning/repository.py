@@ -2356,6 +2356,7 @@ class PersonalLearningRepository:
             "scorePercentage": "score_percentage",
             "durationSeconds": "duration_seconds",
             "generationMs": "generation_ms",
+            "generationStage": "generation_stage",
             "completedAt": "completed_at",
         }
         return {field_map[k]: v for k, v in data.items() if k in field_map}

@@ -52,12 +52,12 @@ def _question(qid: str = "q1", *, key: str = "the right one", explanation: str =
     )
 
 
-def _session(status: str):
+def _session(status: str, *, mode: str = "FULL_PRACTICE", generation_stage: str | None = None):
     return SimpleNamespace(
         id="quiz-1",
         user_id="user-1",
         prep_id="prep-1",
-        mode="FULL_PRACTICE",
+        mode=mode,
         topic_id=None,
         status=status,
         total_questions=2,
@@ -66,6 +66,10 @@ def _session(status: str):
         duration_seconds=60,
         completed_at=NOW if status == "COMPLETED" else None,
         created_at=NOW,
+        # Only meaningful while GENERATING. A playable session carries no stage, and
+        # the response reports `None` rather than a terminal value, so the client's
+        # single signal to stop waiting stays `status`.
+        generation_stage=generation_stage,
     )
 
 
