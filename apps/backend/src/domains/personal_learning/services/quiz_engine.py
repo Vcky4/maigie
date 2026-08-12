@@ -15,7 +15,7 @@ from src.shared.exceptions import MaigieError, NotFoundError
 
 from .. import models
 from ..repository import personal_learning_repo as repo
-from . import prep_adaptive
+from . import prep_adaptive, prep_material_context
 
 logger = logging.getLogger(__name__)
 
@@ -152,19 +152,51 @@ async def start_quiz(
     # The learner's choice wins; otherwise the mode and the material decide.
     count = question_count or default_question_count(mode, len(target_topics))
 
-    # PAST_PAPER_SIM is grounded in the learner's *own* uploaded material and is
-    # scoped to that learner. Nobody else's documents, and no third-party past
-    # papers — which would be someone else's copyright to license, not ours to use.
-    source_excerpt: str | None = None
-    if mode == "PAST_PAPER_SIM":
-        source_excerpt = await _own_material_excerpt(user_id=user_id, prep_id=prep_id)
-        if not source_excerpt:
-            raise MaigieError(
-                "Upload some course material first — exam simulation is built from "
-                "your own documents.",
-                status_code=409,
-                code="PREP_MATERIAL_REQUIRED",
-            )
+    # Every mode now reads the learner's material, scoped to that learner. Nobody
+    # else's documents, and no third-party past papers — which would be someone
+    # else's copyright to license, not ours to use.
+    #
+    # Only PAST_PAPER_SIM used to. The other five sent topic titles and descriptions
+    # alone, so their questions came from the model's knowledge of the phrase
+    # "Functions and Graphs" rather than from the uploaded document — while the
+    # workspace promised questions "tailored to your preparation" and the launcher
+    # had a heading reading "Written from your material".
+    #
+    # The difference between the two cases is strictness, not access: a simulation
+    # must not introduce anything absent from the paper, whereas ordinary practice is
+    # allowed to ask a fair question the document implies.
+    is_exam_simulation = mode == "PAST_PAPER_SIM"
+    material_context = await _own_material_context(
+        user_id=user_id,
+        prep_id=prep_id,
+        budget=(
+            prep_material_context.PAST_PAPER_BUDGET
+            if is_exam_simulation
+            else prep_material_context.QUESTION_GROUNDING_BUDGET
+        ),
+        # A paper is built from past questions and the syllabus that defines its
+        # scope, falling back to everything when neither is labelled.
+        categories=("PAST_QUESTION", "SYLLABUS") if is_exam_simulation else None,
+    )
+    if is_exam_simulation and not material_context.has_text:
+        raise MaigieError(
+            "Upload some course material first — exam simulation is built from "
+            "your own documents.",
+            status_code=409,
+            code="PREP_MATERIAL_REQUIRED",
+        )
+    if material_context.has_text:
+        logger.info(
+            "Quiz generation material context",
+            extra={
+                "prep_id": prep_id,
+                "mode": mode,
+                "files_read": len(material_context.excerpts),
+                "files_omitted": len(material_context.omitted),
+                "stored_chars": material_context.stored_chars,
+                "used_chars": material_context.used_chars,
+            },
+        )
 
     # ADAPTIVE composes a plan from what practice has revealed: which topics, at
     # which difficulty, ordered to ramp gently. Before this, the mode was billed as
@@ -217,17 +249,33 @@ async def start_quiz(
         f"{index}. {topic.title}: {topic.description or ''}"
         for index, topic in enumerate(target_topics, start=1)
     )
-    # Exam simulation is grounded in the learner's own material rather than invented
-    # from the topic titles, so the questions test what they were actually given.
+    # Questions are grounded in the learner's own material rather than invented from
+    # the topic titles, so they test what the learner was actually given.
     grounding = ""
-    if source_excerpt:
-        grounding = (
-            "Base every question strictly on this source material, which the learner "
-            "uploaded themselves. Do not introduce facts that are not present in it.\n"
-            f"--- SOURCE MATERIAL ---\n{source_excerpt}\n--- END SOURCE MATERIAL ---\n\n"
-            "Write questions in the style of a written examination: no hints in the "
-            "wording, and a spread of difficulty across the paper.\n\n"
-        )
+    if material_context.has_text:
+        source_block = material_context.as_prompt_block()
+        if is_exam_simulation:
+            grounding = (
+                "Base every question strictly on this source material, which the "
+                "learner uploaded themselves. Do not introduce facts that are not "
+                "present in it.\n"
+                f"--- SOURCE MATERIAL ---\n{source_block}\n--- END SOURCE MATERIAL ---\n\n"
+                "Write questions in the style of a written examination: no hints in "
+                "the wording, and a spread of difficulty across the paper.\n\n"
+            )
+        else:
+            # Deliberately weaker than the simulation's instruction. An excerpt is a
+            # sample of the document, not the whole of it, so forbidding anything
+            # absent would rule out fair questions about material that exists but did
+            # not fit the budget. It must still not wander off the subject.
+            grounding = (
+                "Draw the questions from this material, which the learner uploaded "
+                "themselves. Use its terminology, notation and worked conventions, "
+                "and stay within the subject it covers. Where it is silent, ask a "
+                "question the material clearly implies rather than inventing new "
+                "facts.\n"
+                f"--- SOURCE MATERIAL ---\n{source_block}\n--- END SOURCE MATERIAL ---\n\n"
+            )
 
     prompt = (
         f"{grounding}"
@@ -846,39 +894,30 @@ def _answer_result(
     }
 
 
-# How much of the learner's own material to ground an exam simulation in. The same
-# cap topic extraction already uses, for the same reason: prompts have limits and a
-# textbook chapter does not fit in one.
-_MATERIAL_EXCERPT_CHARS = 5000
-
-
-async def _own_material_excerpt(*, user_id: str, prep_id: str) -> str | None:
-    """Text from the learner's own uploaded material for this preparation.
+async def _own_material_context(
+    *,
+    user_id: str,
+    prep_id: str,
+    budget: int,
+    categories: tuple[str, ...] | None = None,
+) -> prep_material_context.MaterialContext:
+    """The learner's own material for this preparation, selected and budgeted.
 
     Ownership is verified on the preparation before any material is read, so one
-    learner's documents can never ground another learner's exam simulation.
+    learner's documents can never ground another learner's questions.
 
-    Returns `None` when there is nothing to work from — a preparation may have
-    materials whose text was never extracted, which is different from having none.
+    Selection is `prep_material_context`'s job. This previously walked the list
+    front-to-back spending a 5,000-character budget, so the most recently uploaded
+    file took everything and category was ignored entirely — an "exam simulation" was
+    grounded in whatever happened to be uploaded last rather than in the material the
+    learner marked `PAST_QUESTION`.
     """
     prep = await repo.find_exam_prep(prep_id, user_id)
     if not prep:
         raise NotFoundError("Preparation", prep_id)
 
     materials = await repo.list_prep_materials(prep_id)
-
-    excerpts: list[str] = []
-    budget = _MATERIAL_EXCERPT_CHARS
-    for material in materials:
-        text = (material.extracted_text or "").strip()
-        if not text:
-            continue
-        excerpts.append(text[:budget])
-        budget -= len(excerpts[-1])
-        if budget <= 0:
-            break
-
-    return "\n\n".join(excerpts) if excerpts else None
+    return prep_material_context.select(materials, budget=budget, categories=categories)
 
 
 async def _fill_from_bank(*, prep_id: str, quiz_session_id: str, plan: list[Any]) -> int:

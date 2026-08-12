@@ -13,6 +13,7 @@ from typing import Any
 from src.shared.exceptions import MaigieError, NotFoundError
 
 from ..repository import personal_learning_repo as repo
+from . import prep_material_context
 
 logger = logging.getLogger(__name__)
 
@@ -520,22 +521,40 @@ async def extract_topics(*, user_id: str, prep_id: str) -> list[Any]:
 
     from . import llm_resilient
 
-    # Gather material text
+    # Gather material text.
+    #
+    # Selection and budgeting live in `prep_material_context` because this used to
+    # join every material and slice 5,000 characters off the *joined* string. Two
+    # consequences, both measured: only 3.1% of a 162,885-character document was read,
+    # and any file behind the cap contributed nothing at all — so a syllabus uploaded
+    # after a textbook was invisible to the one step that most needed it.
     materials = await repo.list_prep_materials(prep_id)
-    material_text = "\n\n".join(
-        [f"[{m.filename}]: {m.extracted_text or ''}" for m in materials if m.extracted_text]
+    context = prep_material_context.select(
+        materials, budget=prep_material_context.TOPIC_EXTRACTION_BUDGET
     )
 
     # No uploaded text is not a blocker: the subject and description are enough to
     # get a usable topic list, which is what keeps a preparation created without
     # files from being permanently unable to practise.
-    if not material_text:
+    if context.has_text:
+        material_text = context.as_prompt_block()
+        logger.info(
+            "Topic extraction material context",
+            extra={
+                "prep_id": prep_id,
+                "files_read": len(context.excerpts),
+                "files_omitted": len(context.omitted),
+                "stored_chars": context.stored_chars,
+                "used_chars": context.used_chars,
+            },
+        )
+    else:
         material_text = f"Subject: {prep.subject}\nDescription: {prep.description or ''}"
 
     prompt = (
         f"Analyze this learning material and extract the key topics for study.\n"
         f"Subject: {prep.subject}\n"
-        f"Materials:\n{material_text[:5000]}\n\n"
+        f"Materials:\n{material_text}\n\n"
         f"Return a JSON array of topic objects with:\n"
         f"- 'title': short topic name\n"
         f"- 'description': brief description of what to learn\n"
