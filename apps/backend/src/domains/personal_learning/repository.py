@@ -1619,6 +1619,18 @@ class PersonalLearningRepository:
         async with self._use_session(session) as s:
             await s.execute(delete(PrepTopic).where(PrepTopic.id == topic_id))
 
+    async def count_flashcards(self, user_id: str, *, session: AsyncSession | None = None) -> int:
+        """How many flashcards a learner has. Used by the onboarding progress read."""
+        async with self._read_session(session) as s:
+            stmt = select(func.count()).select_from(Flashcard).where(Flashcard.user_id == user_id)
+            return (await s.execute(stmt)).scalar_one() or 0
+
+    async def count_study_plans(self, user_id: str, *, session: AsyncSession | None = None) -> int:
+        """How many study plans a learner has, in any state."""
+        async with self._read_session(session) as s:
+            stmt = select(func.count()).select_from(StudyPlan).where(StudyPlan.user_id == user_id)
+            return (await s.execute(stmt)).scalar_one() or 0
+
     async def count_prep_topics(self, prep_id: str, *, session: AsyncSession | None = None) -> int:
         async with self._read_session(session) as s:
             stmt = select(func.count()).select_from(PrepTopic).where(PrepTopic.prep_id == prep_id)

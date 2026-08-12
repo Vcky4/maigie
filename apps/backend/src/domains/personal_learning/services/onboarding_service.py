@@ -87,17 +87,12 @@ async def set_exam_details(
 
     # Trigger background content generation
     try:
-        # Run in background (fire-and-forget for now, should be Celery task)
-        import asyncio
-
-        asyncio.create_task(
-            _generate_onboarding_content(
-                user_id=user_id,
-                exam_name=exam_name,
-                exam_date=exam_date,
-                subjects=subjects or [],
-                goals=goals,
-            )
+        _spawn_content_generation(
+            user_id=user_id,
+            exam_name=exam_name,
+            exam_date=exam_date,
+            subjects=subjects or [],
+            goals=goals,
         )
     except Exception as e:
         logger.error(f"Failed to start content generation: {e}")
@@ -146,21 +141,41 @@ async def set_skill_details(
 
     # Trigger background content generation
     try:
-        import asyncio
-
-        asyncio.create_task(
-            _generate_onboarding_content(
-                user_id=user_id,
-                skill_name=skill_name,
-                current_level=current_level,
-                subjects=subjects or [],
-                goals=goals,
-            )
+        _spawn_content_generation(
+            user_id=user_id,
+            skill_name=skill_name,
+            current_level=current_level,
+            subjects=subjects or [],
+            goals=goals,
         )
     except Exception as e:
         logger.error(f"Failed to start content generation: {e}")
 
     return profile
+
+
+#: Strong references to running content-generation tasks.
+#:
+#: `asyncio.create_task` returns a task the event loop only weakly references, so a
+#: caller that discards the handle can have the task garbage-collected part-way
+#: through. Both call sites used to discard it. That is one of the ways a profile ends
+#: up reading `not_started` while its preparations and topics exist — the work
+#: happened, and the line that advanced the state never ran.
+_IN_FLIGHT: set[Any] = set()
+
+
+def _spawn_content_generation(**kwargs: Any) -> None:
+    """Start content generation and keep hold of the task.
+
+    The status read no longer depends on this finishing — it derives readiness from
+    the content itself — but a task that vanishes mid-flight still leaves a learner
+    with half a workspace, so it is worth not dropping.
+    """
+    import asyncio
+
+    task = asyncio.create_task(_generate_onboarding_content(**kwargs))
+    _IN_FLIGHT.add(task)
+    task.add_done_callback(_IN_FLIGHT.discard)
 
 
 async def _generate_onboarding_content(
@@ -217,25 +232,59 @@ async def get_onboarding_status(*, user_id: str) -> dict[str, Any]:
             "firstPreparation": None,
         }
 
-    state = profile.onboarding_state or "not_started"
+    stored_state = profile.onboarding_state or "not_started"
 
-    # Check if content exists
+    # What actually exists, rather than three literals.
+    #
+    # `topics`, `flashcards` and `studyPlan` were hardcoded `False` with `TODO`
+    # comments, so the setup screen's step list could never advance past step one no
+    # matter what the server had done. A learner watched "Extracting key topics" spin
+    # for as long as they were willing to wait, while their topics sat in the database.
     preps = await repo.list_exam_preps(user_id)
     first_prep = preps[0] if preps else None
 
+    topic_count = 0
+    if first_prep is not None:
+        # The first preparation is the one the screen navigates into, so it is the one
+        # whose readiness matters.
+        topic_count = await repo.count_prep_topics(first_prep.id)
+    flashcard_count = await repo.count_flashcards(user_id)
+    plan_count = await repo.count_study_plans(user_id)
+
     progress = {
         "preparation": first_prep is not None,
-        "topics": False,  # TODO: check topics table
-        "flashcards": False,  # TODO: check flashcards
-        "studyPlan": False,  # TODO: check study plans
+        "topics": topic_count > 0,
+        "flashcards": flashcard_count > 0,
+        "studyPlan": plan_count > 0,
     }
 
-    # Estimate time remaining (rough heuristic)
+    # A preparation with topics is enough to open. Flashcards and a study plan are
+    # both best-effort in `auto_setup_for_learner` — each is wrapped in its own
+    # `try` and returns empty on failure — so requiring them would strand a learner
+    # whose content is perfectly usable.
+    content_is_usable = progress["preparation"] and progress["topics"]
+
+    # Derived, not just read. `content_ready` is written by a background task, and
+    # anything that stops that task from reaching its last line — a crash, a deploy,
+    # a dropped `asyncio` task — leaves the flag behind while the content exists.
+    # Observed live: a profile reading `not_started` with 3 preparations and 17
+    # topics already created, and a setup screen whose only exit was the flag.
+    #
+    # The stored state still wins once it has moved past content generation, so
+    # `completed` is never walked backwards.
+    if stored_state == "completed":
+        state = stored_state
+    elif content_is_usable:
+        state = "content_ready"
+    else:
+        state = stored_state
+
+    # Rough, and only offered while there is genuinely something to wait for.
     estimated_seconds = None
-    if state == "details_set":
-        estimated_seconds = 30  # Initial estimate
-    elif state == "content_ready":
+    if state == "content_ready":
         estimated_seconds = 0
+    elif stored_state in ("details_set", "purpose_set"):
+        estimated_seconds = 30
 
     return {
         "state": state,
