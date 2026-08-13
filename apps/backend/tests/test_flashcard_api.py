@@ -98,7 +98,10 @@ class TestDeckContract:
         response = await client.post(
             f"{BASE}/decks", json={"title": "X", "accent": "chartreuse"}, headers=auth_headers
         )
-        assert response.status_code == 422
+        # 400, not FastAPI's default 422: `validation_error_handler` is registered
+        # app-wide and normalises validation failures to 400 with a stable code.
+        assert response.status_code == 400
+        assert response.json()["code"] == "VALIDATION_ERROR"
 
     async def test_new_deck_reports_empty_aggregates_and_learning_status(
         self, client: AsyncClient, auth_headers
@@ -244,7 +247,8 @@ class TestFlashcardListing:
         response = await client.get(
             f"{BASE}/flashcards", params={"state": "forgotten"}, headers=auth_headers
         )
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert response.json()["code"] == "VALIDATION_ERROR"
 
     async def test_deck_filter_scopes_the_list(self, client: AsyncClient, auth_headers):
         deck = await _create_deck(client, auth_headers)
@@ -468,13 +472,14 @@ class TestDueQueue:
         from src.shared.database.session import get_session_factory
 
         cards = [await _create_card(client, auth_headers, front=f"Q{i}") for i in range(3)]
-        # New cards are scheduled a day out, so make them due.
+        # New cards are scheduled a day out, so make them due. `values()` on an ORM
+        # update takes the mapped attribute name, not the camelCase column name.
         factory = get_session_factory()
         async with factory() as session:
             await session.execute(
                 sa_update(Flashcard)
                 .where(Flashcard.id.in_([card["id"] for card in cards]))
-                .values(nextReviewAt=datetime.now(UTC) - timedelta(hours=1))
+                .values(next_review_at=datetime.now(UTC) - timedelta(hours=1))
             )
             await session.commit()
 
@@ -503,7 +508,7 @@ class TestDueQueue:
             await session.execute(
                 sa_update(Flashcard)
                 .where(Flashcard.id.in_([filed["id"], unfiled["id"]]))
-                .values(nextReviewAt=datetime.now(UTC) - timedelta(hours=1))
+                .values(next_review_at=datetime.now(UTC) - timedelta(hours=1))
             )
             await session.commit()
 
@@ -599,7 +604,8 @@ class TestFlashcardsDashboard:
         response = await client.get(
             f"{BASE}/flashcards/dashboard", params={"forecastDays": 400}, headers=auth_headers
         )
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert response.json()["code"] == "VALIDATION_ERROR"
 
     async def test_reports_the_zone_its_day_figures_were_computed_in(
         self, client: AsyncClient, auth_headers
@@ -609,6 +615,43 @@ class TestFlashcardsDashboard:
         assert "name" in timezone
         # A learner who has never been asked must not be reported as being in UTC.
         assert timezone["isKnown"] is False
+
+    async def test_day_figures_use_the_learners_zone_once_it_is_known(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Exercises the Postgres-only zone conversion, which the default path skips.
+
+        Day grouping uses `timezone(name, timestamptz)`, which exists in Postgres and
+        not in SQLite, and it is only reached when the learner's zone is a fact rather
+        than a fallback. Every other test here runs as a learner who has never been
+        asked, so without this one the zone-aware query would ship unexecuted.
+        """
+        recorded = await client.put(
+            "/api/v1/users/me/timezone",
+            json={"timezone": "Pacific/Auckland"},
+            headers=auth_headers,
+        )
+        assert recorded.status_code == 200, recorded.text
+
+        deck = await _create_deck(client, auth_headers)
+        card = await _create_card(client, auth_headers, deck_id=deck["id"])
+        graded = await client.post(
+            f"{BASE}/flashcards/{card['id']}/review", json={"quality": 4}, headers=auth_headers
+        )
+        assert graded.status_code == 200
+
+        response = await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["meta"]["timezone"] == {"name": "Pacific/Auckland", "isKnown": True}
+        # The streak, weekly count and activity feed all come from the zone-grouped
+        # query, so a non-zero reading proves it ran rather than silently erroring.
+        assert body["review"]["reviewStreak"] == 1
+        assert body["review"]["reviewedThisWeek"] == 1
+        assert body["meta"]["hasReviewHistory"] is True
+        assert any(entry["kind"] == "reviewed" for entry in body["activity"])
+        # And the forecast is bucketed on Auckland days, not UTC days.
+        assert body["forecast"][0]["isToday"] is True
 
     async def test_a_new_card_appears_in_the_forecast_and_the_counts(
         self, client: AsyncClient, auth_headers
