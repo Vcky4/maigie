@@ -169,8 +169,7 @@ class TestStatistics:
         assert stats["learning_count"] == 1
         assert stats["new_count"] == 1
         assert (
-            stats["mastered_count"] + stats["learning_count"] + stats["new_count"]
-            == stats["total"]
+            stats["mastered_count"] + stats["learning_count"] + stats["new_count"] == stats["total"]
         )
 
     async def test_recall_excludes_the_never_reviewed_sentinel(self, repo, library):
@@ -189,9 +188,7 @@ class TestStatistics:
         stats = await repo.get_flashcard_stats(USER)
         assert stats["recall_percent"] is None
 
-    async def test_history_counts_start_empty_and_are_not_inferred_from_cards(
-        self, repo, library
-    ):
+    async def test_history_counts_start_empty_and_are_not_inferred_from_cards(self, repo, library):
         """Three cards carry a ``lastReviewedAt`` and the log is empty.
 
         The old derivation would have reported three reviews and a streak from those
@@ -334,7 +331,9 @@ class TestApplyReview:
             review=_review_payload(deck.id, quality=5, interval=60),
         )
         assert result is None
-        assert await repo.list_review_events(USER, since=datetime.now(UTC) - timedelta(days=1)) == []
+        assert (
+            await repo.list_review_events(USER, since=datetime.now(UTC) - timedelta(days=1)) == []
+        )
         unchanged = await repo.get_flashcard(cards[0].id, USER)
         assert unchanged.interval_days == 30
 
@@ -371,8 +370,7 @@ class TestApplyReview:
         # Every card now carries the same single timestamp, which is exactly why the
         # old projection could not have produced the answer above.
         timestamps = {
-            (await repo.get_flashcard(card.id, USER)).last_reviewed_at.date()
-            for card in cards[:3]
+            (await repo.get_flashcard(card.id, USER)).last_reviewed_at.date() for card in cards[:3]
         }
         assert len(timestamps) == 1
 
@@ -517,8 +515,7 @@ class TestCardWrites:
     async def test_refuses_to_edit_another_learners_card(self, repo, library):
         _, cards = library
         assert (
-            await repo.update_flashcard_fields(cards[0].id, OTHER_USER, {"front": "theirs"})
-            is None
+            await repo.update_flashcard_fields(cards[0].id, OTHER_USER, {"front": "theirs"}) is None
         )
         assert (await repo.get_flashcard(cards[0].id, USER)).front == "mature-1"
 
@@ -636,9 +633,7 @@ class TestGraduationEvents:
         events = await repo.list_graduation_events(USER, since=now - timedelta(days=30))
         assert len(events) == 2
 
-    async def test_a_prior_review_outside_the_window_is_still_the_baseline(
-        self, repo, library
-    ):
+    async def test_a_prior_review_outside_the_window_is_still_the_baseline(self, repo, library):
         """Otherwise a card looks newly graduated every time the window moves."""
         deck, cards = library
         now = datetime.now(UTC)
@@ -678,9 +673,7 @@ class TestGraduationEvents:
 class TestCardCreations:
     async def test_reports_cards_added_in_the_window(self, repo, library):
         deck, cards = library
-        events = await repo.list_card_creations(
-            USER, since=datetime.now(UTC) - timedelta(days=1)
-        )
+        events = await repo.list_card_creations(USER, since=datetime.now(UTC) - timedelta(days=1))
         assert len(events) == len(cards)
         assert {event["deck_id"] for event in events} == {deck.id}
 

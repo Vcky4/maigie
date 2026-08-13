@@ -902,9 +902,7 @@ async def get_flashcard(card_id: str, current_user: CurrentUser):
 
 
 @router.patch("/flashcards/{card_id}", response_model=models.FlashcardResponse)
-async def update_flashcard(
-    card_id: str, body: models.FlashcardUpdate, current_user: CurrentUser
-):
+async def update_flashcard(card_id: str, body: models.FlashcardUpdate, current_user: CurrentUser):
     """Edit a card's text, or move it to another deck.
 
     ``exclude_unset`` is what makes an explicit ``"deckId": null`` mean "unfile this
@@ -1000,9 +998,7 @@ async def update_deck(deck_id: str, body: models.DeckUpdate, current_user: Curre
     """Rename a deck, or change its description, subject, colour or daily pace."""
     data = body.model_dump(exclude_unset=True)
     deck = (
-        await flashcard_service.update_deck(
-            user_id=current_user.id, deck_id=deck_id, data=data
-        )
+        await flashcard_service.update_deck(user_id=current_user.id, deck_id=deck_id, data=data)
         if data
         else await flashcard_service.get_deck(user_id=current_user.id, deck_id=deck_id)
     )

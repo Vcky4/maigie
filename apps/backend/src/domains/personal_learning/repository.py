@@ -885,20 +885,14 @@ class PersonalLearningRepository:
                 card_conditions.append(Flashcard.deck_id == deck_id)
 
             def count_cards(*extra: Any) -> Any:
-                return (
-                    select(func.count())
-                    .select_from(Flashcard)
-                    .where(*card_conditions, *extra)
-                )
+                return select(func.count()).select_from(Flashcard).where(*card_conditions, *extra)
 
             total = (await s.execute(count_cards())).scalar() or 0
             due_today = (
                 await s.execute(count_cards(Flashcard.next_review_at <= now))
             ).scalar() or 0
             mastered_count = (
-                await s.execute(
-                    count_cards(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS)
-                )
+                await s.execute(count_cards(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS))
             ).scalar() or 0
             # "New" is never reviewed at all; "learning" is reviewed but not yet
             # mature. The two plus mastered partition the library exactly, which is
@@ -921,7 +915,9 @@ class PersonalLearningRepository:
             recall_row = (await s.execute(recall_stmt)).one()
             reviewed_card_count = int(recall_row[1] or 0)
             recall_percent = (
-                round(float(recall_row[0]) / 5 * 100) if reviewed_card_count and recall_row[0] is not None else None
+                round(float(recall_row[0]) / 5 * 100)
+                if reviewed_card_count and recall_row[0] is not None
+                else None
             )
 
             review_conditions = [FlashcardReview.user_id == user_id]
@@ -1181,9 +1177,7 @@ class PersonalLearningRepository:
     ) -> bool:
         """Delete a card the caller owns. Its review rows survive, detached."""
         async with self._use_session(session) as s:
-            stmt = delete(Flashcard).where(
-                Flashcard.id == card_id, Flashcard.user_id == user_id
-            )
+            stmt = delete(Flashcard).where(Flashcard.id == card_id, Flashcard.user_id == user_id)
             result = await s.execute(stmt)
             return result.rowcount > 0
 
@@ -1371,9 +1365,7 @@ class PersonalLearningRepository:
                     .label(f"new_{index}")
                 )
 
-            row = (
-                await s.execute(select(*columns).where(Flashcard.user_id == user_id))
-            ).one()
+            row = (await s.execute(select(*columns).where(Flashcard.user_id == user_id))).one()
             return [
                 {
                     "date": first_day + timedelta(days=index),

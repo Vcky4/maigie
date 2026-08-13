@@ -32,6 +32,7 @@ async def db_lifecycle():
     """
     yield
 
+
 AUCKLAND = LearnerTimezone(
     zone=ZoneInfo("Pacific/Auckland"), name="Pacific/Auckland", is_known=True, source="DEVICE"
 )
@@ -98,9 +99,7 @@ class TestStreakLength:
 class TestDeckStatus:
     def test_anything_due_outranks_maturity(self):
         """A fully mature deck with work waiting is still work waiting."""
-        assert (
-            fs.deck_status(card_count=10, due_count=1, mastered_count=10) == "due"
-        )
+        assert fs.deck_status(card_count=10, due_count=1, mastered_count=10) == "due"
 
     def test_strong_at_the_threshold(self):
         assert fs.deck_status(card_count=10, due_count=0, mastered_count=8) == "strong"
@@ -212,9 +211,7 @@ class TestGroupActivity:
             _event(at=base, quality=1, deck="d1", card="c1"),
             _event(at=base + timedelta(minutes=1), quality=4, deck="d1", card="c1"),
         ]
-        entries = fs.group_activity(
-            events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=10
-        )
+        entries = fs.group_activity(events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=10)
         assert len(entries) == 1
         assert entries[0].card_count == 1
         # Recall still averages both grades, because both grades happened.
@@ -227,9 +224,7 @@ class TestGroupActivity:
             _event(at=base, quality=4, deck="d1", card=None),
             _event(at=base + timedelta(minutes=1), quality=4, deck="d1", card=None),
         ]
-        entries = fs.group_activity(
-            events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=10
-        )
+        entries = fs.group_activity(events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=10)
         assert entries[0].card_count == 2
 
     def test_newest_first_and_bounded(self):
@@ -238,9 +233,7 @@ class TestGroupActivity:
             _event(at=base - timedelta(days=offset), quality=4, deck="d1", card=f"c{offset}")
             for offset in range(5)
         ]
-        entries = fs.group_activity(
-            events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=3
-        )
+        entries = fs.group_activity(events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=3)
         assert len(entries) == 3
         assert entries == sorted(entries, key=lambda item: item.occurred_at, reverse=True)
 
@@ -259,9 +252,7 @@ class TestGroupActivity:
             _event(at=datetime(2026, 8, 13, 9, 0, tzinfo=UTC), quality=4, deck="d", card="c3"),
             _event(at=datetime(2026, 8, 13, 13, 0, tzinfo=UTC), quality=4, deck="d", card="c4"),
         ]
-        local = fs.group_activity(
-            events, deck_titles={}, learner_timezone=AUCKLAND, limit=10
-        )
+        local = fs.group_activity(events, deck_titles={}, learner_timezone=AUCKLAND, limit=10)
         assert sorted(entry.card_count for entry in local) == [1, 3]
 
         utc = fs.group_activity(events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=10)
@@ -407,7 +398,7 @@ class TestChooseInsight:
         assert "70%" in insight.body
 
     def test_time_of_day_rung_is_withheld_when_the_zone_is_unknown(self):
-        """"You recall best in the morning" is a claim about the learner's morning."""
+        """ "You recall best in the morning" is a claim about the learner's morning."""
         events = _reviews(12, hour=8, quality=5) + _reviews(12, hour=20, quality=2)
         insight = fs.choose_insight(
             events=events,

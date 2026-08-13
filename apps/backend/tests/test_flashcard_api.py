@@ -92,9 +92,7 @@ class TestDeckContract:
         assert detail.status_code == 200
         assert detail.json()["subject"] == "Mathematics"
 
-    async def test_rejects_an_accent_it_does_not_define(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_rejects_an_accent_it_does_not_define(self, client: AsyncClient, auth_headers):
         response = await client.post(
             f"{BASE}/decks", json={"title": "X", "accent": "chartreuse"}, headers=auth_headers
         )
@@ -234,9 +232,7 @@ class TestFlashcardListing:
         )
         assert [item["front"] for item in by_back.json()["items"]] == ["Quicksort"]
 
-    async def test_new_state_selects_never_reviewed_cards(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_new_state_selects_never_reviewed_cards(self, client: AsyncClient, auth_headers):
         card = await _create_card(client, auth_headers)
         response = await client.get(
             f"{BASE}/flashcards", params={"state": "new"}, headers=auth_headers
@@ -349,9 +345,7 @@ async def _count_reviews(user_email_token: dict[str, str] | None = None) -> int:
 
 
 class TestReviewLogging:
-    async def test_a_grade_writes_exactly_one_review_row(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_a_grade_writes_exactly_one_review_row(self, client: AsyncClient, auth_headers):
         card = await _create_card(client, auth_headers)
         before = await _count_reviews()
 
@@ -527,9 +521,7 @@ class TestDueQueue:
 
 
 class TestStatsScoping:
-    async def test_deck_scoped_stats_count_only_that_deck(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_deck_scoped_stats_count_only_that_deck(self, client: AsyncClient, auth_headers):
         deck = await _create_deck(client, auth_headers)
         await _create_card(client, auth_headers, deck_id=deck["id"])
         await _create_card(client, auth_headers, front="Elsewhere")
@@ -545,9 +537,7 @@ class TestStatsScoping:
     async def test_states_partition_the_library(self, client: AsyncClient, auth_headers):
         await _create_card(client, auth_headers)
         stats = (await client.get(f"{BASE}/flashcards/stats", headers=auth_headers)).json()
-        assert (
-            stats["masteredCount"] + stats["learningCount"] + stats["newCount"] == stats["total"]
-        )
+        assert stats["masteredCount"] + stats["learningCount"] + stats["newCount"] == stats["total"]
 
 
 # ---------------------------------------------------------------------------
@@ -659,24 +649,18 @@ class TestFlashcardsDashboard:
         deck = await _create_deck(client, auth_headers)
         await _create_card(client, auth_headers, deck_id=deck["id"])
 
-        body = (
-            await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)
-        ).json()
+        body = (await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)).json()
         assert body["stats"]["totalCards"] == 1
         assert body["stats"]["newCards"] == 1
         assert sum(day["newCards"] for day in body["forecast"]) == 1
         assert [deck_row["id"] for deck_row in body["decks"]] == [deck["id"]]
 
-    async def test_deck_figures_agree_with_the_deck_route(
-        self, client: AsyncClient, auth_headers
-    ):
+    async def test_deck_figures_agree_with_the_deck_route(self, client: AsyncClient, auth_headers):
         """One composed read must not contradict the per-deck read beside it."""
         deck = await _create_deck(client, auth_headers)
         await _create_card(client, auth_headers, deck_id=deck["id"])
 
-        dashboard = (
-            await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)
-        ).json()
+        dashboard = (await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)).json()
         detail = (await client.get(f"{BASE}/decks/{deck['id']}", headers=auth_headers)).json()
         row = next(item for item in dashboard["decks"] if item["id"] == deck["id"])
         for field in ("cardCount", "dueCount", "masteredCount", "masteryPercent", "status"):
@@ -689,7 +673,5 @@ class TestFlashcardsDashboard:
         intruder = await _second_user(client)
         await _create_deck(client, intruder, title="Theirs")
 
-        body = (
-            await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)
-        ).json()
+        body = (await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)).json()
         assert [deck["title"] for deck in body["decks"]] == ["Mine"]

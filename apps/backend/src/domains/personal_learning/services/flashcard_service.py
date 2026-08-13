@@ -416,9 +416,7 @@ async def get_statistics(
     """
     if deck_id is not None or timezone_name is not None:
         return _shape_statistics(
-            await repo.get_flashcard_stats(
-                user_id, deck_id=deck_id, timezone_name=timezone_name
-            )
+            await repo.get_flashcard_stats(user_id, deck_id=deck_id, timezone_name=timezone_name)
         )
     return await _get_statistics_cached(user_id=user_id)
 
@@ -462,7 +460,10 @@ def deck_status(*, card_count: int, due_count: int, mastered_count: int) -> str:
     """
     if due_count > 0:
         return "due"
-    if card_count > 0 and mastery_percent(mastered_count, card_count) >= STRONG_DECK_MASTERY_PERCENT:
+    if (
+        card_count > 0
+        and mastery_percent(mastered_count, card_count) >= STRONG_DECK_MASTERY_PERCENT
+    ):
         return "strong"
     return "learning"
 
@@ -543,9 +544,7 @@ async def get_deck(*, user_id: str, deck_id: str) -> dict[str, Any] | None:
     return _deck_payload(rows[0]) if rows else None
 
 
-async def update_deck(
-    *, user_id: str, deck_id: str, data: dict[str, Any]
-) -> dict[str, Any] | None:
+async def update_deck(*, user_id: str, deck_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
     """Rename or relabel a deck. Returns ``None`` when it is not the caller's."""
     deck = await repo.update_deck(deck_id, user_id, data)
     if deck is None:
@@ -804,9 +803,7 @@ def choose_insight(
         minutes = max(1, (due_today * REVIEW_SECONDS_PER_CARD + 59) // 60)
         return models.FlashcardInsight(
             kind="due_now",
-            title=(
-                "1 card is ready now" if due_today == 1 else f"{due_today} cards are ready now"
-            ),
+            title=("1 card is ready now" if due_today == 1 else f"{due_today} cards are ready now"),
             body=f"About {minutes} {'minute' if minutes == 1 else 'minutes'} of review keeps this schedule intact.",
             action_label="Start review",
         )
