@@ -267,6 +267,64 @@ class TestGroupActivity:
         utc = fs.group_activity(events, deck_titles={}, learner_timezone=KNOWN_UTC, limit=10)
         assert sorted(entry.card_count for entry in utc) == [2, 2]
 
+    def test_reports_graduations_and_creations_alongside_reviews(self):
+        """The feed shows three kinds of progress, not only review.
+
+        A learner who spent the week writing cards did something, and a review-only
+        feed would be blank for them.
+        """
+        base = datetime(2026, 8, 13, 9, 0, tzinfo=UTC)
+        entries = fs.group_activity(
+            [_event(at=base, quality=4, deck="d1", card="c1")],
+            deck_titles={"d1": "Algorithms"},
+            graduations=[{"occurred_at": base, "deck_id": "d1", "flashcard_id": "c1"}],
+            creations=[
+                {"occurred_at": base, "deck_id": "d1", "flashcard_id": "c9"},
+                {"occurred_at": base, "deck_id": "d1", "flashcard_id": "c8"},
+            ],
+            learner_timezone=KNOWN_UTC,
+            limit=10,
+        )
+        by_kind = {entry.kind: entry for entry in entries}
+        assert set(by_kind) == {"reviewed", "graduated", "created"}
+        assert by_kind["created"].card_count == 2
+        assert by_kind["graduated"].card_count == 1
+        assert by_kind["reviewed"].recall_percent == 80
+        # Writing or graduating a card produces no recall figure, so it is absent
+        # rather than zero.
+        assert by_kind["created"].recall_percent is None
+        assert by_kind["graduated"].recall_percent is None
+        assert all(entry.deck_title == "Algorithms" for entry in entries)
+
+    def test_entry_ids_are_unique_across_kinds_on_the_same_day(self):
+        """The client keys a list on these; a collision would drop rows."""
+        base = datetime(2026, 8, 13, 9, 0, tzinfo=UTC)
+        entries = fs.group_activity(
+            [_event(at=base, quality=4, deck="d1", card="c1")],
+            deck_titles={},
+            graduations=[{"occurred_at": base, "deck_id": "d1", "flashcard_id": "c1"}],
+            creations=[{"occurred_at": base, "deck_id": "d1", "flashcard_id": "c1"}],
+            learner_timezone=KNOWN_UTC,
+            limit=10,
+        )
+        assert len({entry.id for entry in entries}) == len(entries) == 3
+
+    def test_a_week_of_only_writing_still_produces_a_feed(self):
+        entries = fs.group_activity(
+            [],
+            deck_titles={"d1": "German"},
+            creations=[
+                {
+                    "occurred_at": datetime(2026, 8, 13, 9, 0, tzinfo=UTC),
+                    "deck_id": "d1",
+                    "flashcard_id": "c1",
+                }
+            ],
+            learner_timezone=KNOWN_UTC,
+            limit=10,
+        )
+        assert [entry.kind for entry in entries] == ["created"]
+
     def test_ignores_rows_with_no_timestamp(self):
         entries = fs.group_activity(
             [_event(at=None, quality=4, deck="d", card="c")],

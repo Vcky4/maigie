@@ -571,6 +571,21 @@ class TestFlashcardsDashboard:
         assert body["meta"]["hasReviewHistory"] is False
         assert body["insight"]["kind"] == "empty_library"
 
+    async def test_activity_reports_card_creation_before_any_review(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Adding cards is progress, so the feed must not be empty until the first review."""
+        deck = await _create_deck(client, auth_headers)
+        await _create_card(client, auth_headers, deck_id=deck["id"])
+
+        body = (await client.get(f"{BASE}/flashcards/dashboard", headers=auth_headers)).json()
+        kinds = {entry["kind"] for entry in body["activity"]}
+        assert kinds == {"created"}
+        created = body["activity"][0]
+        assert created["deckTitle"] == deck["title"]
+        assert created["cardCount"] == 1
+        assert created["recallPercent"] is None
+
     async def test_forecast_is_bounded_and_labelled(self, client: AsyncClient, auth_headers):
         response = await client.get(
             f"{BASE}/flashcards/dashboard", params={"forecastDays": 7}, headers=auth_headers

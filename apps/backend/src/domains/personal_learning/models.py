@@ -500,21 +500,34 @@ class FlashcardForecastDay(CamelModel):
 
 
 class FlashcardActivityEntry(CamelModel):
-    """One review sitting: the cards a learner graded in one deck on one local day.
+    """Something the learner did to one deck on one local day.
 
-    Derived from the review log rather than persisted. A "session" has no start or
-    end the server observed, so inventing a session entity would be claiming more
-    than is known; grouping graded cards by deck and day claims exactly what the
-    rows say.
+    Three kinds, because the feed shows three kinds of progress and a feed that only
+    ever reported reviews would go silent for a learner who spent the week writing
+    cards:
+
+    - ``reviewed`` — cards graded. ``recallPercent`` and ``lapseCount`` apply.
+    - ``graduated`` — cards that crossed into maturity, detected as a transition
+      between consecutive reviews rather than read from a stored flag.
+    - ``created`` — cards added, from ``Flashcard.createdAt``.
+
+    Derived at read time, not persisted. A "session" has no start or end the server
+    observed, so inventing a session entity would claim more than is known; grouping
+    events by deck and calendar day claims exactly what the rows say. ``kind`` is
+    carried so the client can label an entry without inferring it from which fields
+    happen to be null.
     """
 
     id: str
+    kind: Literal["reviewed", "graduated", "created"]
     deck_id: str | None = None
     deck_title: str | None = None
     occurred_at: datetime
     card_count: int
+    # Only meaningful for `reviewed`. Null elsewhere, because a day spent writing
+    # cards has no recall figure rather than a recall figure of zero.
     recall_percent: int | None = None
-    lapse_count: int
+    lapse_count: int = 0
 
 
 class DeckMasterySummary(CamelModel):

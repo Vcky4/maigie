@@ -1406,6 +1406,7 @@ class PersonalLearningRepository:
                     FlashcardReview.deck_id,
                     FlashcardReview.flashcard_id,
                     FlashcardReview.was_lapse,
+                    FlashcardReview.interval_days,
                 )
                 .where(
                     FlashcardReview.user_id == user_id,
@@ -1421,7 +1422,86 @@ class PersonalLearningRepository:
                     "deck_id": row[2],
                     "flashcard_id": row[3],
                     "was_lapse": row[4],
+                    "interval_days": row[5],
                 }
+                for row in (await s.execute(stmt)).all()
+            ]
+
+    async def list_graduation_events(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Reviews at which a card crossed into maturity for the first time in a run.
+
+        A graduation is not a stored fact, it is a transition: this review put the card
+        at or past the mastery interval and the one before it did not. Detected with a
+        window function over the card's whole history rather than over the requested
+        slice, because a card whose previous review predates the window would otherwise
+        look like a first-time graduation every time the window moved.
+
+        Re-graduation after a lapse counts. A card the learner lost and rebuilt to
+        maturity has been mastered again, and suppressing that would make the feed go
+        quiet exactly when the learner recovered something hard.
+        """
+        async with self._read_session(session) as s:
+            previous = func.lag(FlashcardReview.interval_days).over(
+                partition_by=FlashcardReview.flashcard_id,
+                order_by=FlashcardReview.reviewed_at.asc(),
+            )
+            history = (
+                select(
+                    FlashcardReview.reviewed_at.label("reviewed_at"),
+                    FlashcardReview.deck_id.label("deck_id"),
+                    FlashcardReview.flashcard_id.label("flashcard_id"),
+                    FlashcardReview.interval_days.label("interval_days"),
+                    previous.label("previous_interval"),
+                )
+                .where(
+                    FlashcardReview.user_id == user_id,
+                    FlashcardReview.flashcard_id.is_not(None),
+                )
+                .subquery()
+            )
+            stmt = select(history.c.reviewed_at, history.c.deck_id, history.c.flashcard_id).where(
+                history.c.interval_days >= MASTERED_INTERVAL_DAYS,
+                or_(
+                    history.c.previous_interval.is_(None),
+                    history.c.previous_interval < MASTERED_INTERVAL_DAYS,
+                ),
+                history.c.reviewed_at >= since,
+            )
+            return [
+                {"occurred_at": row[0], "deck_id": row[1], "flashcard_id": row[2]}
+                for row in (await s.execute(stmt)).all()
+            ]
+
+    async def list_card_creations(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        limit: int = 2000,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """When the learner added cards, and to which deck.
+
+        Creation is already recorded by ``Flashcard.createdAt``; this reads it rather
+        than adding another log. Attributed to the card's current deck, which is the
+        one honest option available — the deck a card was created in is not stored, and
+        inventing it from the deck it now sits in would be presented as history.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(Flashcard.created_at, Flashcard.deck_id, Flashcard.id)
+                .where(Flashcard.user_id == user_id, Flashcard.created_at >= since)
+                .order_by(Flashcard.created_at.desc())
+                .limit(limit)
+            )
+            return [
+                {"occurred_at": row[0], "deck_id": row[1], "flashcard_id": row[2]}
                 for row in (await s.execute(stmt)).all()
             ]
 

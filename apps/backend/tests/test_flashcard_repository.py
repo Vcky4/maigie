@@ -580,6 +580,117 @@ class TestDeckDeletion:
         assert await repo.get_deck(deck.id, USER) is not None
 
 
+class TestGraduationEvents:
+    async def test_detects_the_review_that_crossed_into_maturity(self, repo, library):
+        deck, cards = library
+        now = datetime.now(UTC)
+        earlier = now - timedelta(days=3)
+
+        # Below the threshold, then across it.
+        await repo.apply_flashcard_review(
+            cards[0].id,
+            USER,
+            card_update=_card_update(interval=6, at=earlier),
+            review=_review_payload(deck.id, quality=4, interval=6, at=earlier),
+        )
+        await repo.apply_flashcard_review(
+            cards[0].id,
+            USER,
+            card_update=_card_update(interval=40, at=now),
+            review=_review_payload(deck.id, quality=5, interval=40, at=now),
+        )
+
+        events = await repo.list_graduation_events(USER, since=now - timedelta(days=30))
+        assert len(events) == 1
+        assert events[0]["flashcard_id"] == cards[0].id
+
+    async def test_does_not_repeat_a_graduation_on_every_later_review(self, repo, library):
+        """Staying mature is not graduating again."""
+        deck, cards = library
+        now = datetime.now(UTC)
+        for offset, interval in ((3, 40), (2, 60), (1, 90)):
+            at = now - timedelta(days=offset)
+            await repo.apply_flashcard_review(
+                cards[0].id,
+                USER,
+                card_update=_card_update(interval=interval, at=at),
+                review=_review_payload(deck.id, quality=5, interval=interval, at=at),
+            )
+        events = await repo.list_graduation_events(USER, since=now - timedelta(days=30))
+        assert len(events) == 1
+
+    async def test_counts_recovery_after_a_lapse(self, repo, library):
+        """A card lost and rebuilt to maturity has been mastered again."""
+        deck, cards = library
+        now = datetime.now(UTC)
+        for offset, interval in ((4, 40), (3, 1), (1, 30)):
+            at = now - timedelta(days=offset)
+            await repo.apply_flashcard_review(
+                cards[0].id,
+                USER,
+                card_update=_card_update(interval=interval, at=at),
+                review=_review_payload(
+                    deck.id, quality=1 if interval == 1 else 5, interval=interval, at=at
+                ),
+            )
+        events = await repo.list_graduation_events(USER, since=now - timedelta(days=30))
+        assert len(events) == 2
+
+    async def test_a_prior_review_outside_the_window_is_still_the_baseline(
+        self, repo, library
+    ):
+        """Otherwise a card looks newly graduated every time the window moves."""
+        deck, cards = library
+        now = datetime.now(UTC)
+        long_ago = now - timedelta(days=90)
+
+        await repo.apply_flashcard_review(
+            cards[0].id,
+            USER,
+            card_update=_card_update(interval=40, at=long_ago),
+            review=_review_payload(deck.id, quality=5, interval=40, at=long_ago),
+        )
+        await repo.apply_flashcard_review(
+            cards[0].id,
+            USER,
+            card_update=_card_update(interval=90, at=now),
+            review=_review_payload(deck.id, quality=5, interval=90, at=now),
+        )
+        events = await repo.list_graduation_events(USER, since=now - timedelta(days=30))
+        assert events == []
+
+    async def test_scoped_to_the_caller(self, repo, library):
+        deck, cards = library
+        await repo.apply_flashcard_review(
+            cards[0].id,
+            USER,
+            card_update=_card_update(interval=40),
+            review=_review_payload(deck.id, quality=5, interval=40),
+        )
+        assert (
+            await repo.list_graduation_events(
+                OTHER_USER, since=datetime.now(UTC) - timedelta(days=30)
+            )
+            == []
+        )
+
+
+class TestCardCreations:
+    async def test_reports_cards_added_in_the_window(self, repo, library):
+        deck, cards = library
+        events = await repo.list_card_creations(
+            USER, since=datetime.now(UTC) - timedelta(days=1)
+        )
+        assert len(events) == len(cards)
+        assert {event["deck_id"] for event in events} == {deck.id}
+
+    async def test_scoped_to_the_caller(self, repo, library):
+        events = await repo.list_card_creations(
+            OTHER_USER, since=datetime.now(UTC) - timedelta(days=1)
+        )
+        assert events == []
+
+
 class TestLapsingCards:
     async def test_counts_cards_at_or_over_the_threshold(self, repo):
         now = datetime.now(UTC)

@@ -1707,7 +1707,7 @@
         "type": "object"
       },
       "FlashcardActivityEntry": {
-        "description": "One review sitting: the cards a learner graded in one deck on one local day.\n\nDerived from the review log rather than persisted. A \"session\" has no start or\nend the server observed, so inventing a session entity would be claiming more\nthan is known; grouping graded cards by deck and day claims exactly what the\nrows say.",
+        "description": "Something the learner did to one deck on one local day.\n\nThree kinds, because the feed shows three kinds of progress and a feed that only\never reported reviews would go silent for a learner who spent the week writing\ncards:\n\n- ``reviewed`` — cards graded. ``recallPercent`` and ``lapseCount`` apply.\n- ``graduated`` — cards that crossed into maturity, detected as a transition\n  between consecutive reviews rather than read from a stored flag.\n- ``created`` — cards added, from ``Flashcard.createdAt``.\n\nDerived at read time, not persisted. A \"session\" has no start or end the server\nobserved, so inventing a session entity would claim more than is known; grouping\nevents by deck and calendar day claims exactly what the rows say. ``kind`` is\ncarried so the client can label an entry without inferring it from which fields\nhappen to be null.",
         "properties": {
           "cardCount": {
             "title": "Cardcount",
@@ -1739,7 +1739,17 @@
             "title": "Id",
             "type": "string"
           },
+          "kind": {
+            "enum": [
+              "reviewed",
+              "graduated",
+              "created"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "lapseCount": {
+            "default": 0,
             "title": "Lapsecount",
             "type": "integer"
           },
@@ -1762,9 +1772,9 @@
         },
         "required": [
           "id",
+          "kind",
           "occurredAt",
-          "cardCount",
-          "lapseCount"
+          "cardCount"
         ],
         "title": "FlashcardActivityEntry",
         "type": "object"

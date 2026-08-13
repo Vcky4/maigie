@@ -635,63 +635,98 @@ def _weekday_label(value: date) -> str:
     return value.strftime("%a")
 
 
+def _bucket_by_deck_and_day(
+    events: list[dict[str, Any]],
+    *,
+    timestamp_key: str,
+    learner_timezone: LearnerTimezone,
+) -> dict[tuple[date, str | None], dict[str, Any]]:
+    """Collect events into one bucket per deck per local calendar day."""
+    buckets: dict[tuple[date, str | None], dict[str, Any]] = {}
+    for event in events:
+        occurred = event.get(timestamp_key)
+        if occurred is None:
+            continue
+        local_day = to_learner_local(occurred, learner_timezone).date()
+        bucket = buckets.setdefault(
+            (local_day, event.get("deck_id")),
+            {"occurred_at": occurred, "card_ids": set(), "rows": []},
+        )
+        if occurred > bucket["occurred_at"]:
+            bucket["occurred_at"] = occurred
+        if event.get("flashcard_id"):
+            bucket["card_ids"].add(event["flashcard_id"])
+        bucket["rows"].append(event)
+    return buckets
+
+
 def group_activity(
     events: list[dict[str, Any]],
     *,
     deck_titles: dict[str, str],
+    graduations: list[dict[str, Any]] | None = None,
+    creations: list[dict[str, Any]] | None = None,
     learner_timezone: LearnerTimezone = UNKNOWN_TIMEZONE,
     limit: int,
 ) -> list[models.FlashcardActivityEntry]:
-    """Group review rows into one entry per deck per local day, newest first.
+    """Build the activity feed: reviews, graduations and card creations, newest first.
 
     A "session" is not persisted and was never observed: the server sees grades
     arriving, not a sitting starting and ending. Grouping by deck and calendar day
     claims only what the rows support, and distinct cards are counted rather than
     grades so that re-grading one card does not read as reviewing two.
-    """
-    buckets: dict[tuple[date, str | None], dict[str, Any]] = {}
-    for event in events:
-        occurred = event["reviewed_at"]
-        if occurred is None:
-            continue
-        local_day = to_learner_local(occurred, learner_timezone).date()
-        key = (local_day, event["deck_id"])
-        bucket = buckets.setdefault(
-            key,
-            {
-                "occurred_at": occurred,
-                "card_ids": set(),
-                "qualities": [],
-                "lapses": 0,
-            },
-        )
-        if occurred > bucket["occurred_at"]:
-            bucket["occurred_at"] = occurred
-        if event["flashcard_id"]:
-            bucket["card_ids"].add(event["flashcard_id"])
-        bucket["qualities"].append(event["quality"])
-        if event["was_lapse"]:
-            bucket["lapses"] += 1
 
-    entries = []
-    for (local_day, deck_id), bucket in buckets.items():
-        qualities = bucket["qualities"]
+    Three kinds rather than one because progress is not only review. A learner who
+    spent the week writing cards, or who finally pushed a hard deck to maturity, did
+    something the feed should show; reporting reviews alone would leave it blank for
+    them.
+    """
+    entries: list[models.FlashcardActivityEntry] = []
+
+    def deck_title(deck_id: str | None) -> str | None:
+        return deck_titles.get(deck_id) if deck_id else None
+
+    for (local_day, deck_id), bucket in _bucket_by_deck_and_day(
+        events, timestamp_key="reviewed_at", learner_timezone=learner_timezone
+    ).items():
+        rows = bucket["rows"]
+        qualities = [row["quality"] for row in rows]
         # A card deleted since its review leaves a row with no card id, so the grade
         # count is the floor for how many cards were involved.
-        card_count = len(bucket["card_ids"]) or len(qualities)
+        card_count = len(bucket["card_ids"]) or len(rows)
         entries.append(
             models.FlashcardActivityEntry(
-                id=f"{local_day.isoformat()}:{deck_id or 'unfiled'}",
+                id=f"reviewed:{local_day.isoformat()}:{deck_id or 'unfiled'}",
+                kind="reviewed",
                 deck_id=deck_id,
-                deck_title=deck_titles.get(deck_id) if deck_id else None,
+                deck_title=deck_title(deck_id),
                 occurred_at=bucket["occurred_at"],
                 card_count=card_count,
                 recall_percent=(
                     round(sum(qualities) / len(qualities) / 5 * 100) if qualities else None
                 ),
-                lapse_count=bucket["lapses"],
+                lapse_count=sum(1 for row in rows if row["was_lapse"]),
             )
         )
+
+    for kind, rows in (("graduated", graduations or []), ("created", creations or [])):
+        for (local_day, deck_id), bucket in _bucket_by_deck_and_day(
+            rows, timestamp_key="occurred_at", learner_timezone=learner_timezone
+        ).items():
+            entries.append(
+                models.FlashcardActivityEntry(
+                    id=f"{kind}:{local_day.isoformat()}:{deck_id or 'unfiled'}",
+                    kind=kind,
+                    deck_id=deck_id,
+                    deck_title=deck_title(deck_id),
+                    occurred_at=bucket["occurred_at"],
+                    card_count=len(bucket["card_ids"]) or len(bucket["rows"]),
+                    # Neither graduating nor creating a card produces a recall figure.
+                    recall_percent=None,
+                    lapse_count=0,
+                )
+            )
+
     entries.sort(key=lambda entry: entry.occurred_at, reverse=True)
     return entries[:limit]
 
@@ -847,6 +882,8 @@ async def get_dashboard(
         repo.list_review_events(user_id, since=insight_since),
         repo.count_mastered_by_deck_as_of(user_id, cutoff=mastery_cutoff),
         repo.count_lapsing_flashcards(user_id, min_lapses=LAPSING_CARD_THRESHOLD),
+        repo.list_graduation_events(user_id, since=insight_since),
+        repo.list_card_creations(user_id, since=insight_since),
         return_exceptions=True,
     )
     source_names = (
@@ -857,6 +894,8 @@ async def get_dashboard(
         "events",
         "masteryHistory",
         "lapsing",
+        "graduations",
+        "creations",
     )
     if all(isinstance(result, BaseException) for result in results):
         for source, error in zip(source_names, results, strict=True):
@@ -875,6 +914,8 @@ async def get_dashboard(
         "events": {"activity", "insight"},
         "masteryHistory": {"deckMastery"},
         "lapsing": {"insight"},
+        "graduations": {"activity"},
+        "creations": {"activity"},
     }
     degraded: set[models.FlashcardsDashboardSection] = set()
     for source, result in zip(source_names, results, strict=True):
@@ -891,6 +932,8 @@ async def get_dashboard(
     events: list[dict[str, Any]] = [] if isinstance(results[4], BaseException) else results[4]
     mastered_before: dict[str, int] = {} if isinstance(results[5], BaseException) else results[5]
     lapsing_cards = 0 if isinstance(results[6], BaseException) else results[6]
+    graduations: list[dict[str, Any]] = [] if isinstance(results[7], BaseException) else results[7]
+    creations: list[dict[str, Any]] = [] if isinstance(results[8], BaseException) else results[8]
 
     due_today = max(0, int(stats.get("dueToday", 0)))
     total_cards = max(0, int(stats.get("total", 0)))
@@ -929,6 +972,8 @@ async def get_dashboard(
     activity = group_activity(
         events,
         deck_titles=deck_titles,
+        graduations=graduations,
+        creations=creations,
         learner_timezone=learner_timezone,
         limit=activity_limit,
     )
