@@ -914,6 +914,23 @@
       },
       "DeckCreate": {
         "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "enum": [
+                  "violet",
+                  "orange",
+                  "blue",
+                  "green"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
           "courseId": {
             "anyOf": [
               {
@@ -924,6 +941,19 @@
               }
             ],
             "title": "Courseid"
+          },
+          "dailyGoal": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dailygoal"
           },
           "description": {
             "anyOf": [
@@ -947,7 +977,19 @@
             ],
             "title": "Prepid"
           },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
           "title": {
+            "minLength": 1,
             "title": "Title",
             "type": "string"
           },
@@ -969,8 +1011,64 @@
         "title": "DeckCreate",
         "type": "object"
       },
+      "DeckMasterySummary": {
+        "properties": {
+          "changePercent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changepercent"
+          },
+          "deckId": {
+            "title": "Deckid",
+            "type": "string"
+          },
+          "masteryPercent": {
+            "title": "Masterypercent",
+            "type": "integer"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deckId",
+          "title",
+          "masteryPercent"
+        ],
+        "title": "DeckMasterySummary",
+        "type": "object"
+      },
       "DeckResponse": {
         "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
           "cardCount": {
             "title": "Cardcount",
             "type": "integer"
@@ -991,6 +1089,17 @@
             "title": "Createdat",
             "type": "string"
           },
+          "dailyGoal": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dailygoal"
+          },
           "description": {
             "anyOf": [
               {
@@ -1010,6 +1119,38 @@
             "title": "Id",
             "type": "string"
           },
+          "lastReviewedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastreviewedat"
+          },
+          "masteredCount": {
+            "title": "Masteredcount",
+            "type": "integer"
+          },
+          "masteryPercent": {
+            "title": "Masterypercent",
+            "type": "integer"
+          },
+          "nextReviewAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextreviewat"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -1020,6 +1161,41 @@
               }
             ],
             "title": "Prepid"
+          },
+          "recallPercent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recallpercent"
+          },
+          "reviewedCount": {
+            "title": "Reviewedcount",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "due",
+              "learning",
+              "strong"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
           },
           "title": {
             "title": "Title",
@@ -1052,10 +1228,85 @@
           "title",
           "cardCount",
           "dueCount",
+          "masteredCount",
+          "reviewedCount",
+          "masteryPercent",
+          "status",
           "createdAt",
           "updatedAt"
         ],
         "title": "DeckResponse",
+        "type": "object"
+      },
+      "DeckUpdate": {
+        "description": "Partial update of a deck. Read with ``exclude_unset=True``, so an explicit\n``null`` clears a field and an omitted key leaves it untouched.",
+        "properties": {
+          "accent": {
+            "anyOf": [
+              {
+                "enum": [
+                  "violet",
+                  "orange",
+                  "blue",
+                  "green"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accent"
+          },
+          "dailyGoal": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dailygoal"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "DeckUpdate",
         "type": "object"
       },
       "DeviceTimezoneRequest": {
@@ -1455,6 +1706,69 @@
         "title": "ExamDetailsRequest",
         "type": "object"
       },
+      "FlashcardActivityEntry": {
+        "description": "One review sitting: the cards a learner graded in one deck on one local day.\n\nDerived from the review log rather than persisted. A \"session\" has no start or\nend the server observed, so inventing a session entity would be claiming more\nthan is known; grouping graded cards by deck and day claims exactly what the\nrows say.",
+        "properties": {
+          "cardCount": {
+            "title": "Cardcount",
+            "type": "integer"
+          },
+          "deckId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deckid"
+          },
+          "deckTitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decktitle"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lapseCount": {
+            "title": "Lapsecount",
+            "type": "integer"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "recallPercent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recallpercent"
+          }
+        },
+        "required": [
+          "id",
+          "occurredAt",
+          "cardCount",
+          "lapseCount"
+        ],
+        "title": "FlashcardActivityEntry",
+        "type": "object"
+      },
       "FlashcardCreate": {
         "properties": {
           "back": {
@@ -1504,6 +1818,121 @@
           "back"
         ],
         "title": "FlashcardCreate",
+        "type": "object"
+      },
+      "FlashcardForecastDay": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "due": {
+            "title": "Due",
+            "type": "integer"
+          },
+          "isToday": {
+            "title": "Istoday",
+            "type": "boolean"
+          },
+          "newCards": {
+            "title": "Newcards",
+            "type": "integer"
+          },
+          "weekday": {
+            "title": "Weekday",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "weekday",
+          "isToday",
+          "due",
+          "newCards"
+        ],
+        "title": "FlashcardForecastDay",
+        "type": "object"
+      },
+      "FlashcardInsight": {
+        "description": "A statement about this learner's own reviews, chosen by a fixed ladder.\n\n``kind`` is present so the client can style or suppress a category without\nparsing the prose, and so it is obvious in a response which rule fired. Every\nvariant is computed from persisted rows; none is generated text.",
+        "properties": {
+          "actionLabel": {
+            "title": "Actionlabel",
+            "type": "string"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "best_time_of_day",
+              "overdue_backlog",
+              "due_now",
+              "lapsing_cards",
+              "library_summary",
+              "empty_library"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "title",
+          "body",
+          "actionLabel"
+        ],
+        "title": "FlashcardInsight",
+        "type": "object"
+      },
+      "FlashcardLibraryStats": {
+        "properties": {
+          "averageEase": {
+            "title": "Averageease",
+            "type": "number"
+          },
+          "learningCards": {
+            "title": "Learningcards",
+            "type": "integer"
+          },
+          "masteredCards": {
+            "title": "Masteredcards",
+            "type": "integer"
+          },
+          "masteredPercent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masteredpercent"
+          },
+          "newCards": {
+            "title": "Newcards",
+            "type": "integer"
+          },
+          "totalCards": {
+            "title": "Totalcards",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "totalCards",
+          "masteredCards",
+          "learningCards",
+          "newCards",
+          "averageEase"
+        ],
+        "title": "FlashcardLibraryStats",
         "type": "object"
       },
       "FlashcardResponse": {
@@ -1637,18 +2066,105 @@
         "title": "FlashcardReviewRequest",
         "type": "object"
       },
-      "FlashcardStats": {
+      "FlashcardReviewSummary": {
         "properties": {
+          "dueToday": {
+            "title": "Duetoday",
+            "type": "integer"
+          },
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "integer"
+          },
+          "retentionPercent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retentionpercent"
+          },
+          "reviewStreak": {
+            "title": "Reviewstreak",
+            "type": "integer"
+          },
+          "reviewedThisWeek": {
+            "title": "Reviewedthisweek",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dueToday",
+          "overdue",
+          "estimatedMinutes",
+          "reviewStreak",
+          "reviewedThisWeek"
+        ],
+        "title": "FlashcardReviewSummary",
+        "type": "object"
+      },
+      "FlashcardStats": {
+        "description": "Flashcard counts for the whole library, or for one deck.\n\nPreviously this model declared four fields while the service returned eight, so\nthe streak and weekly counts it computed were dropped on the way out and no\nclient could ever see them.",
+        "properties": {
+          "activeDaysThisWeek": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Activedaysthisweek",
+            "type": "array"
+          },
           "averageEaseFactor": {
             "title": "Averageeasefactor",
             "type": "number"
+          },
+          "currentStreak": {
+            "title": "Currentstreak",
+            "type": "integer"
           },
           "dueToday": {
             "title": "Duetoday",
             "type": "integer"
           },
+          "learningCount": {
+            "title": "Learningcount",
+            "type": "integer"
+          },
           "masteredCount": {
             "title": "Masteredcount",
+            "type": "integer"
+          },
+          "newCount": {
+            "title": "Newcount",
+            "type": "integer"
+          },
+          "recallPercent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recallpercent"
+          },
+          "reviewedCardCount": {
+            "title": "Reviewedcardcount",
+            "type": "integer"
+          },
+          "reviewedThisWeek": {
+            "title": "Reviewedthisweek",
+            "type": "integer"
+          },
+          "reviewedTotal": {
+            "title": "Reviewedtotal",
             "type": "integer"
           },
           "total": {
@@ -1660,9 +2176,173 @@
           "total",
           "dueToday",
           "masteredCount",
-          "averageEaseFactor"
+          "learningCount",
+          "newCount",
+          "averageEaseFactor",
+          "reviewedCardCount",
+          "reviewedTotal",
+          "reviewedThisWeek",
+          "activeDaysThisWeek",
+          "currentStreak"
         ],
         "title": "FlashcardStats",
+        "type": "object"
+      },
+      "FlashcardUpdate": {
+        "description": "Partial update of a card. Omitted fields are left alone.\n\n``deckId`` is how a card moves between decks, and an explicit ``null`` is a\nmeaningful value for it — detaching the card from every deck. Routes therefore\ndump these with ``exclude_unset=True``, which is what keeps \"leave the deck\nalone\" distinguishable from \"remove it from its deck\"; a plain ``None`` default\nread without that flag would collapse the two.",
+        "properties": {
+          "back": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Back"
+          },
+          "deckId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deckid"
+          },
+          "front": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Front"
+          }
+        },
+        "title": "FlashcardUpdate",
+        "type": "object"
+      },
+      "FlashcardsDashboardMeta": {
+        "properties": {
+          "degradedSections": {
+            "items": {
+              "enum": [
+                "review",
+                "stats",
+                "decks",
+                "forecast",
+                "activity",
+                "deckMastery",
+                "insight"
+              ],
+              "type": "string"
+            },
+            "title": "Degradedsections",
+            "type": "array"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "hasReviewHistory": {
+            "title": "Hasreviewhistory",
+            "type": "boolean"
+          },
+          "timezone": {
+            "$ref": "#/components/schemas/FlashcardsTimezoneMeta"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "degradedSections",
+          "timezone",
+          "hasReviewHistory"
+        ],
+        "title": "FlashcardsDashboardMeta",
+        "type": "object"
+      },
+      "FlashcardsDashboardResponse": {
+        "properties": {
+          "activity": {
+            "items": {
+              "$ref": "#/components/schemas/FlashcardActivityEntry"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "deckMastery": {
+            "items": {
+              "$ref": "#/components/schemas/DeckMasterySummary"
+            },
+            "title": "Deckmastery",
+            "type": "array"
+          },
+          "decks": {
+            "items": {
+              "$ref": "#/components/schemas/DeckResponse"
+            },
+            "title": "Decks",
+            "type": "array"
+          },
+          "forecast": {
+            "items": {
+              "$ref": "#/components/schemas/FlashcardForecastDay"
+            },
+            "title": "Forecast",
+            "type": "array"
+          },
+          "insight": {
+            "$ref": "#/components/schemas/FlashcardInsight"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/FlashcardsDashboardMeta"
+          },
+          "review": {
+            "$ref": "#/components/schemas/FlashcardReviewSummary"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/FlashcardLibraryStats"
+          }
+        },
+        "required": [
+          "meta",
+          "review",
+          "stats",
+          "decks",
+          "forecast",
+          "activity",
+          "deckMastery",
+          "insight"
+        ],
+        "title": "FlashcardsDashboardResponse",
+        "type": "object"
+      },
+      "FlashcardsTimezoneMeta": {
+        "description": "Which zone the day-based figures were computed in, and whether it is known.\n\nStreaks, \"this week\" and the forecast are claims about the learner's calendar.\nWhen the zone was never captured these fall back to UTC, and the client is told\nso rather than being left to assume the boundaries are local.",
+        "properties": {
+          "isKnown": {
+            "title": "Isknown",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "isKnown"
+        ],
+        "title": "FlashcardsTimezoneMeta",
         "type": "object"
       },
       "ForgotPasswordRequest": {
@@ -3945,6 +4625,42 @@
           "state"
         ],
         "title": "OnboardingStatusResponse",
+        "type": "object"
+      },
+      "PaginatedResponse_FlashcardResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FlashcardResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[FlashcardResponse]",
         "type": "object"
       },
       "PaginatedResponse_NoteResponse_": {
@@ -12472,7 +13188,7 @@
     },
     "/api/v1/learning/decks": {
       "get": {
-        "description": "List all flashcard decks.",
+        "description": "List all flashcard decks with their card, due, mastery and recall figures.",
         "operationId": "list_decks_api_v1_learning_decks_get",
         "responses": {
           "200": {
@@ -12502,7 +13218,7 @@
         ]
       },
       "post": {
-        "description": "Create a flashcard deck.",
+        "description": "Create a flashcard deck.\n\nReturns as soon as the deck exists. Generating starter cards is a separate call\nrather than part of this one: generation is LLM-backed and slow, and folding it in\nwould mean a request that either blocks for seconds or fails after the deck has\nalready been created, leaving the client unsure what happened.",
         "operationId": "create_deck_api_v1_learning_decks_post",
         "requestBody": {
           "content": {
@@ -12542,6 +13258,152 @@
           }
         ],
         "summary": "Create Deck",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/decks/{deck_id}": {
+      "delete": {
+        "description": "Delete a deck. Its cards stay in the library, unfiled.\n\nDetaching rather than cascading is deliberate — a deck is an organising container,\nand deleting a container should not destroy the cards the learner wrote or the\nreview history attached to them. Cards are removed one at a time through\n`DELETE /flashcards/{id}`.",
+        "operationId": "delete_deck_api_v1_learning_decks__deck_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deck_id",
+            "required": true,
+            "schema": {
+              "title": "Deck Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Deck",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "get": {
+        "description": "Get one deck with its aggregates.\n\nThe deck page previously had to fetch the whole deck list and pick its deck out of\nit, because this route did not exist.",
+        "operationId": "get_deck_api_v1_learning_decks__deck_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deck_id",
+            "required": true,
+            "schema": {
+              "title": "Deck Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Deck",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Rename a deck, or change its description, subject, colour or daily pace.",
+        "operationId": "update_deck_api_v1_learning_decks__deck_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deck_id",
+            "required": true,
+            "schema": {
+              "title": "Deck Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeckUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeckResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Deck",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -12595,6 +13457,59 @@
           }
         ],
         "summary": "List Deck Flashcards",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/decks/{deck_id}/starter-cards": {
+      "post": {
+        "description": "Generate a first set of cards for a deck from its own title, subject and goal.\n\nBacks the create wizard's \"guided starter\" option with real generated cards rather\nthan a fixed template. An empty list means generation produced nothing usable; the\ndeck is unchanged and the learner can still add cards by hand.",
+        "operationId": "generate_deck_starter_cards_api_v1_learning_decks__deck_id__starter_cards_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deck_id",
+            "required": true,
+            "schema": {
+              "title": "Deck Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FlashcardResponse"
+                  },
+                  "title": "Response Generate Deck Starter Cards Api V1 Learning Decks  Deck Id  Starter Cards Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Generate Deck Starter Cards",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -13119,6 +14034,137 @@
       }
     },
     "/api/v1/learning/flashcards": {
+      "get": {
+        "description": "List the learner's cards. Cards were previously reachable only through the due\nqueue or a deck, so a card that was neither due nor filed was unreachable.",
+        "operationId": "list_flashcards_api_v1_learning_flashcards_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deckId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Deckid"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sourcetype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "due",
+                    "new",
+                    "learning",
+                    "mastered"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_FlashcardResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Flashcards",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
       "post": {
         "description": "Create a flashcard.",
         "operationId": "create_flashcard_api_v1_learning_flashcards_post",
@@ -13166,10 +14212,122 @@
         ]
       }
     },
+    "/api/v1/learning/flashcards/dashboard": {
+      "get": {
+        "description": "Everything the flashcards page shows, in one authenticated request.\n\nBounded and composed server-side for the same reason as the Learn dashboard: the\npage otherwise needs half a dozen round trips to assemble figures that must agree\nwith each other, and figures assembled independently drift.",
+        "operationId": "get_flashcards_dashboard_api_v1_learning_flashcards_dashboard_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "forecastDays",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 30,
+              "minimum": 1,
+              "title": "Forecastdays",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "activityLimit",
+            "required": false,
+            "schema": {
+              "default": 6,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Activitylimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "masteryLimit",
+            "required": false,
+            "schema": {
+              "default": 4,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Masterylimit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashcardsDashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Flashcards Dashboard",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/flashcards/due": {
       "get": {
-        "description": "Get flashcards due for review.",
+        "description": "Get flashcards due for review, most overdue first.\n\nOmitting both parameters returns the whole queue, which is what this route did\nbefore they existed.",
         "operationId": "get_due_flashcards_api_v1_learning_flashcards_due_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 500,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deckId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Deckid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -13184,6 +14342,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -13200,7 +14368,7 @@
     },
     "/api/v1/learning/flashcards/generate/note/{note_id}": {
       "post": {
-        "description": "Generate flashcards from a note using AI.",
+        "description": "Generate flashcards from a note using AI, optionally straight into a deck.",
         "operationId": "generate_from_note_api_v1_learning_flashcards_generate_note__note_id__post",
         "parameters": [
           {
@@ -13210,6 +14378,22 @@
             "schema": {
               "title": "Note Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deckId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Deckid"
             }
           }
         ],
@@ -13253,7 +14437,7 @@
     },
     "/api/v1/learning/flashcards/generate/topic/{topic_id}": {
       "post": {
-        "description": "Generate flashcards from a topic using AI.",
+        "description": "Generate flashcards from a topic using AI, optionally straight into a deck.",
         "operationId": "generate_from_topic_api_v1_learning_flashcards_generate_topic__topic_id__post",
         "parameters": [
           {
@@ -13263,6 +14447,22 @@
             "schema": {
               "title": "Topic Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "deckId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Deckid"
             }
           }
         ],
@@ -13306,8 +14506,26 @@
     },
     "/api/v1/learning/flashcards/stats": {
       "get": {
-        "description": "Get flashcard statistics.",
+        "description": "Get flashcard statistics, for the whole library or one deck.",
         "operationId": "get_flashcard_stats_api_v1_learning_flashcards_stats_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "deckId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Deckid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -13318,6 +14536,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -13326,6 +14554,152 @@
           }
         ],
         "summary": "Get Flashcard Stats",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/flashcards/{card_id}": {
+      "delete": {
+        "description": "Delete a flashcard. Its past reviews are kept, detached from the card.",
+        "operationId": "delete_flashcard_api_v1_learning_flashcards__card_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Flashcard",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "get": {
+        "description": "Get one flashcard.",
+        "operationId": "get_flashcard_api_v1_learning_flashcards__card_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashcardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Flashcard",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Edit a card's text, or move it to another deck.\n\n``exclude_unset`` is what makes an explicit ``\"deckId\": null`` mean \"unfile this\ncard\" while omitting the key leaves its deck alone.",
+        "operationId": "update_flashcard_api_v1_learning_flashcards__card_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "card_id",
+            "required": true,
+            "schema": {
+              "title": "Card Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlashcardUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlashcardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Flashcard",
         "tags": [
           "personal-learning",
           "personal-learning"

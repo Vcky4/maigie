@@ -18,7 +18,9 @@ from . import document_impl, flashcard_service, note_service, prep_readiness
 
 logger = logging.getLogger(__name__)
 
-REVIEW_SECONDS_PER_CARD = 30
+#: Re-exported from the flashcard service, which owns it. Two surfaces quote a review
+#: estimate and they must not be able to disagree about what a card costs.
+REVIEW_SECONDS_PER_CARD = flashcard_service.REVIEW_SECONDS_PER_CARD
 
 
 def _clamp_percent(value: float) -> float:

@@ -331,23 +331,76 @@ class FlashcardResponse(CamelModel):
     updated_at: datetime
 
 
+class FlashcardUpdate(BaseModel):
+    """Partial update of a card. Omitted fields are left alone.
+
+    ``deckId`` is how a card moves between decks, and an explicit ``null`` is a
+    meaningful value for it — detaching the card from every deck. Routes therefore
+    dump these with ``exclude_unset=True``, which is what keeps "leave the deck
+    alone" distinguishable from "remove it from its deck"; a plain ``None`` default
+    read without that flag would collapse the two.
+    """
+
+    front: str | None = Field(default=None, min_length=1)
+    back: str | None = Field(default=None, min_length=1)
+    deckId: str | None = None
+
+
 class FlashcardReviewRequest(CamelModel):
     quality: int = Field(ge=0, le=5)
 
 
-class FlashcardStats(BaseModel):
+class FlashcardStats(CamelModel):
+    """Flashcard counts for the whole library, or for one deck.
+
+    Previously this model declared four fields while the service returned eight, so
+    the streak and weekly counts it computed were dropped on the way out and no
+    client could ever see them.
+    """
+
     total: int
-    dueToday: int
-    masteredCount: int
-    averageEaseFactor: float
+    due_today: int
+    # Mastered, learning and new partition the library exactly.
+    mastered_count: int
+    learning_count: int
+    new_count: int
+    average_ease_factor: float
+    # Mean of each reviewed card's most recent grade, as a percentage of the 0-5
+    # scale. Null when nothing has been reviewed: a library with no reviews has no
+    # recall, and 0% would report the learner as failing everything.
+    recall_percent: int | None = None
+    reviewed_card_count: int
+    # Counted from the review log, so they are zero until reviews accumulate after
+    # migration 020 rather than being back-filled from invented history.
+    reviewed_total: int
+    reviewed_this_week: int
+    active_days_this_week: list[str]
+    current_streak: int
 
 
 class DeckCreate(BaseModel):
-    title: str
+    title: str = Field(min_length=1)
     description: str | None = None
+    # The learner's own grouping label, and the colour they picked. Both optional,
+    # because a deck without them is complete; the client derives a colour when the
+    # learner expressed no preference.
+    subject: str | None = None
+    accent: Literal["violet", "orange", "blue", "green"] | None = None
+    dailyGoal: int | None = Field(default=None, ge=1, le=200)
     courseId: str | None = None
     topicId: str | None = None
     prepId: str | None = None
+
+
+class DeckUpdate(BaseModel):
+    """Partial update of a deck. Read with ``exclude_unset=True``, so an explicit
+    ``null`` clears a field and an omitted key leaves it untouched."""
+
+    title: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+    subject: str | None = None
+    accent: Literal["violet", "orange", "blue", "green"] | None = None
+    dailyGoal: int | None = Field(default=None, ge=1, le=200)
 
 
 class DeckResponse(CamelModel):
@@ -355,14 +408,156 @@ class DeckResponse(CamelModel):
     user_id: str
     title: str
     description: str | None = None
+    subject: str | None = None
+    accent: str | None = None
+    daily_goal: int | None = None
     course_id: str | None = None
     topic_id: str | None = None
     prep_id: str | None = None
     # Aggregated in a single grouped query by the deck listing.
     card_count: int
     due_count: int
+    mastered_count: int
+    # Cards in this deck that have been reviewed at least once. Present because it is
+    # the denominator of `recallPercent`, which is otherwise uninterpretable.
+    reviewed_count: int
+    # Null for a deck with no reviewed cards; see `FlashcardStats.recallPercent`.
+    recall_percent: int | None = None
+    mastery_percent: int
+    # Null for a deck that has never been reviewed, and for an empty deck there is
+    # nothing scheduled either.
+    last_reviewed_at: datetime | None = None
+    next_review_at: datetime | None = None
+    # Derived server-side so every surface agrees on what makes a deck "strong":
+    # `due` when anything is due now, `strong` at or above the mastery threshold,
+    # otherwise `learning`. An empty deck is `learning` — it is not strong, and it
+    # has nothing due.
+    status: Literal["due", "learning", "strong"]
     created_at: datetime
     updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Flashcards dashboard (composed read for the flashcards page)
+# ---------------------------------------------------------------------------
+
+
+FlashcardsDashboardSection = Literal[
+    "review", "stats", "decks", "forecast", "activity", "deckMastery", "insight"
+]
+
+
+class FlashcardsTimezoneMeta(CamelModel):
+    """Which zone the day-based figures were computed in, and whether it is known.
+
+    Streaks, "this week" and the forecast are claims about the learner's calendar.
+    When the zone was never captured these fall back to UTC, and the client is told
+    so rather than being left to assume the boundaries are local.
+    """
+
+    name: str
+    is_known: bool
+
+
+class FlashcardsDashboardMeta(CamelModel):
+    generated_at: datetime
+    degraded_sections: list[FlashcardsDashboardSection]
+    timezone: FlashcardsTimezoneMeta
+    # True once the review log holds at least one row for this learner. Until then,
+    # streak, weekly counts and activity are legitimately empty rather than zero
+    # because nothing happened, and the client can say which.
+    has_review_history: bool
+
+
+class FlashcardReviewSummary(CamelModel):
+    due_today: int
+    overdue: int
+    # Thirty seconds per due card, the same constant the Learn dashboard uses, so the
+    # two surfaces cannot quote different estimates for the same queue.
+    estimated_minutes: int
+    retention_percent: int | None = None
+    review_streak: int
+    reviewed_this_week: int
+
+
+class FlashcardLibraryStats(CamelModel):
+    total_cards: int
+    mastered_cards: int
+    learning_cards: int
+    new_cards: int
+    average_ease: float
+    mastered_percent: int | None = None
+
+
+class FlashcardForecastDay(CamelModel):
+    date: date
+    # Short weekday name in the learner's zone, so the client does not have to
+    # recompute a label that depends on the same zone the counts were bucketed in.
+    weekday: str
+    is_today: bool
+    due: int
+    new_cards: int
+
+
+class FlashcardActivityEntry(CamelModel):
+    """One review sitting: the cards a learner graded in one deck on one local day.
+
+    Derived from the review log rather than persisted. A "session" has no start or
+    end the server observed, so inventing a session entity would be claiming more
+    than is known; grouping graded cards by deck and day claims exactly what the
+    rows say.
+    """
+
+    id: str
+    deck_id: str | None = None
+    deck_title: str | None = None
+    occurred_at: datetime
+    card_count: int
+    recall_percent: int | None = None
+    lapse_count: int
+
+
+class DeckMasterySummary(CamelModel):
+    deck_id: str
+    title: str
+    subject: str | None = None
+    mastery_percent: int
+    # Change in mastery over the trailing window, in percentage points. Null when the
+    # review log has nothing before the window opened, which is the honest answer for
+    # a deck whose earlier state was never recorded.
+    change_percent: int | None = None
+
+
+class FlashcardInsight(CamelModel):
+    """A statement about this learner's own reviews, chosen by a fixed ladder.
+
+    ``kind`` is present so the client can style or suppress a category without
+    parsing the prose, and so it is obvious in a response which rule fired. Every
+    variant is computed from persisted rows; none is generated text.
+    """
+
+    kind: Literal[
+        "best_time_of_day",
+        "overdue_backlog",
+        "due_now",
+        "lapsing_cards",
+        "library_summary",
+        "empty_library",
+    ]
+    title: str
+    body: str
+    action_label: str
+
+
+class FlashcardsDashboardResponse(CamelModel):
+    meta: FlashcardsDashboardMeta
+    review: FlashcardReviewSummary
+    stats: FlashcardLibraryStats
+    decks: list[DeckResponse]
+    forecast: list[FlashcardForecastDay]
+    activity: list[FlashcardActivityEntry]
+    deck_mastery: list[DeckMasterySummary]
+    insight: FlashcardInsight
 
 
 # ===========================================================================

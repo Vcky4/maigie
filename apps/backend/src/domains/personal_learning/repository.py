@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +29,7 @@ from .db_models import (
     ExamPrep,
     Flashcard,
     FlashcardDeck,
+    FlashcardReview,
     GeneratedDocument,
     LearningProfile,
     Note,
@@ -52,6 +53,92 @@ from .db_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Interval at which a card counts as mastered, in days.
+#:
+#: One definition, in one place, because there were two. This layer used
+#: ``intervalDays > 21`` while the web deck page used ``repetitionCount >= 5 and
+#: intervalDays >= 21``, so the same library could be reported as 62% mastered on the
+#: dashboard and 48% on the deck page. Twenty-one days is the conventional SM-2
+#: maturity boundary; the comparison is inclusive because a card scheduled exactly 21
+#: days out has reached it, and the previous strict ``>`` excluded it for no stated
+#: reason.
+MASTERED_INTERVAL_DAYS = 21
+
+
+def _as_date(value: Any) -> date | None:
+    """Coerce whatever the driver returned for a date expression into a ``date``."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def _local_day(column: Any, timezone_name: str | None) -> Any:
+    """A SQL expression for the calendar day an instant fell on, in a given zone.
+
+    Day boundaries are the reason this exists. Grouping a ``timestamptz`` by its UTC
+    date puts a learner in Auckland or Los Angeles into the wrong day for part of
+    every day, which silently corrupts streaks and "this week" counts — the same
+    defect ``shared.time.learner_timezone`` was written to close elsewhere. When the
+    learner's zone is unknown this falls back to UTC, which is a fallback rather than
+    a claim, and callers that assert something about the learner's local day are
+    expected to check ``is_known`` first.
+    """
+    if not timezone_name:
+        return func.date(column)
+    return func.date(func.timezone(timezone_name, column))
+
+
+def _zone(timezone_name: str | None) -> Any:
+    """Resolve a zone name, tolerating a bad one by falling back to UTC."""
+    if not timezone_name:
+        return UTC
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    try:
+        return ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("Unresolvable timezone in flashcard read", extra={"tz": timezone_name})
+        return UTC
+
+
+def _in_zone(instant: datetime, timezone_name: str | None) -> datetime:
+    """The learner's wall clock for an instant."""
+    aware = instant.replace(tzinfo=UTC) if instant.tzinfo is None else instant
+    return aware.astimezone(_zone(timezone_name))
+
+
+def _zone_midnight(day: date, timezone_name: str | None) -> datetime:
+    """The UTC instant at which a given local calendar day begins."""
+    return datetime.combine(day, datetime.min.time(), tzinfo=_zone(timezone_name)).astimezone(UTC)
+
+
+def _streak_length(active_dates: set[date], today: date) -> int:
+    """Consecutive active days ending today, or ending yesterday if today is unused.
+
+    Allowing the run to end yesterday is deliberate: a learner who reviewed for six
+    days and has not opened the app yet this morning is on a six-day streak, not a
+    broken one. The run is only broken once a full day has passed with no review.
+    """
+    if not active_dates:
+        return 0
+    cursor = today
+    if cursor not in active_dates:
+        cursor = today - timedelta(days=1)
+        if cursor not in active_dates:
+            return 0
+    length = 0
+    while cursor in active_dates:
+        length += 1
+        cursor -= timedelta(days=1)
+    return length
 
 
 class PersonalLearningRepository:
@@ -729,17 +816,27 @@ class PersonalLearningRepository:
             return result.scalar_one_or_none()
 
     async def list_due_flashcards(
-        self, user_id: str, *, limit: int | None = None, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        *,
+        limit: int | None = None,
+        deck_id: str | None = None,
+        session: AsyncSession | None = None,
     ) -> list[Flashcard]:
         async with self._read_session(session) as s:
             now = datetime.now(UTC)
+            conditions: list[Any] = [
+                Flashcard.user_id == user_id,
+                Flashcard.next_review_at <= now,
+            ]
+            if deck_id is not None:
+                conditions.append(Flashcard.deck_id == deck_id)
             stmt = (
                 select(Flashcard)
                 .options(selectinload(Flashcard.deck))
-                .where(
-                    Flashcard.user_id == user_id,
-                    Flashcard.next_review_at <= now,
-                )
+                .where(*conditions)
+                # Most overdue first, so a bounded session spends its cards on the
+                # work that has decayed furthest rather than on an arbitrary slice.
                 .order_by(Flashcard.next_review_at.asc())
             )
             if limit is not None:
@@ -748,72 +845,134 @@ class PersonalLearningRepository:
             return list(result.scalars().all())
 
     async def get_flashcard_stats(
-        self, user_id: str, *, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        *,
+        deck_id: str | None = None,
+        timezone_name: str | None = None,
+        session: AsyncSession | None = None,
     ) -> dict[str, Any]:
+        """Card-state counts, plus review-history counts drawn from ``FlashcardReview``.
+
+        Card-state figures (total, due, mastered, learning, new, average ease, recall)
+        come from ``Flashcard`` columns and are correct for every learner immediately.
+
+        Frequency figures (reviews this week, active days, streak) come from the review
+        log and are therefore empty until reviews accumulate after migration 020. They
+        used to be derived from ``Flashcard.lastReviewedAt``, which holds one date per
+        card: re-reviewing a card moved its only date forward and erased the day it had
+        been counted under, so a streak could shrink because the learner studied. An
+        empty history reported honestly is better than a number that moves the wrong
+        way.
+
+        ``deck_id`` scopes every figure to one deck. Review-log figures are scoped by
+        the deck the grade was given in, which is snapshotted on the review row, so
+        moving a card between decks does not move its past grades with it.
+        """
         async with self._read_session(session) as s:
             now = datetime.now(UTC)
-            today = now.date()
+            # "Today" and "this week" are claims about the learner's calendar, so they
+            # are resolved in their zone when it is known and in UTC when it is not.
+            # The SQL day grouping below uses the same zone, so the two cannot
+            # disagree about where a day starts.
+            local_now = _in_zone(now, timezone_name)
+            today = local_now.date()
             week_start_date = today - timedelta(days=today.weekday())
+            week_start = _zone_midnight(week_start_date, timezone_name)
 
-            total_stmt = (
-                select(func.count()).select_from(Flashcard).where(Flashcard.user_id == user_id)
-            )
-            total = (await s.execute(total_stmt)).scalar() or 0
+            card_conditions = [Flashcard.user_id == user_id]
+            if deck_id is not None:
+                card_conditions.append(Flashcard.deck_id == deck_id)
 
-            due_stmt = (
-                select(func.count())
-                .select_from(Flashcard)
-                .where(
-                    Flashcard.user_id == user_id,
-                    Flashcard.next_review_at <= now,
+            def count_cards(*extra: Any) -> Any:
+                return (
+                    select(func.count())
+                    .select_from(Flashcard)
+                    .where(*card_conditions, *extra)
                 )
-            )
-            due_today = (await s.execute(due_stmt)).scalar() or 0
 
-            mastered_stmt = (
-                select(func.count())
-                .select_from(Flashcard)
-                .where(
-                    Flashcard.user_id == user_id,
-                    Flashcard.interval_days > 21,
+            total = (await s.execute(count_cards())).scalar() or 0
+            due_today = (
+                await s.execute(count_cards(Flashcard.next_review_at <= now))
+            ).scalar() or 0
+            mastered_count = (
+                await s.execute(
+                    count_cards(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS)
                 )
-            )
-            mastered_count = (await s.execute(mastered_stmt)).scalar() or 0
+            ).scalar() or 0
+            # "New" is never reviewed at all; "learning" is reviewed but not yet
+            # mature. The two plus mastered partition the library exactly, which is
+            # what lets the page show three tiles that add up to the total.
+            new_count = (
+                await s.execute(count_cards(Flashcard.last_reviewed_at.is_(None)))
+            ).scalar() or 0
+            learning_count = max(0, total - mastered_count - new_count)
 
-            avg_ease_stmt = select(func.avg(Flashcard.ease_factor)).where(
-                Flashcard.user_id == user_id
-            )
+            avg_ease_stmt = select(func.avg(Flashcard.ease_factor)).where(*card_conditions)
             avg_ease_factor = (await s.execute(avg_ease_stmt)).scalar() or 2.5
 
-            activity_stmt = select(Flashcard.last_reviewed_at).where(
-                Flashcard.user_id == user_id,
-                Flashcard.last_reviewed_at.is_not(None),
+            # Recall across the library: the mean of each card's most recent grade,
+            # as a percentage of the 0-5 scale. Negative `lastQuality` is the
+            # never-reviewed sentinel and is excluded by the timestamp filter rather
+            # than by value, because 0 is a real grade.
+            recall_stmt = select(func.avg(Flashcard.last_quality), func.count()).where(
+                *card_conditions, Flashcard.last_reviewed_at.is_not(None)
             )
-            activity_result = await s.execute(activity_stmt)
-            review_timestamps = [value for value in activity_result.scalars().all() if value]
-            activity_dates = {value.date() for value in review_timestamps}
+            recall_row = (await s.execute(recall_stmt)).one()
+            reviewed_card_count = int(recall_row[1] or 0)
+            recall_percent = (
+                round(float(recall_row[0]) / 5 * 100) if reviewed_card_count and recall_row[0] is not None else None
+            )
+
+            review_conditions = [FlashcardReview.user_id == user_id]
+            if deck_id is not None:
+                review_conditions.append(FlashcardReview.deck_id == deck_id)
+
+            reviewed_total = (
+                await s.execute(
+                    select(func.count()).select_from(FlashcardReview).where(*review_conditions)
+                )
+            ).scalar() or 0
+            reviewed_this_week = (
+                await s.execute(
+                    select(func.count())
+                    .select_from(FlashcardReview)
+                    .where(*review_conditions, FlashcardReview.reviewed_at >= week_start)
+                )
+            ).scalar() or 0
+
+            # Distinct review days, newest first, bounded to a year. A streak longer
+            # than that is not a figure any surface shows, and the bound keeps this a
+            # small read for a heavy user.
+            day = _local_day(FlashcardReview.reviewed_at, timezone_name)
+            days_stmt = (
+                select(day)
+                .where(
+                    *review_conditions,
+                    FlashcardReview.reviewed_at >= now - timedelta(days=366),
+                )
+                .group_by(day)
+                .order_by(day.desc())
+            )
+            day_values = (await s.execute(days_stmt)).scalars().all()
+            activity_dates = {_as_date(value) for value in day_values if value is not None}
+            activity_dates.discard(None)
+
             active_days_this_week = sorted(
                 value.isoformat() for value in activity_dates if value >= week_start_date
             )
-            reviewed_this_week = sum(
-                1 for value in review_timestamps if value.date() >= week_start_date
-            )
-
-            streak_cursor = today
-            if streak_cursor not in activity_dates:
-                yesterday = today - timedelta(days=1)
-                streak_cursor = yesterday if yesterday in activity_dates else today
-            current_streak = 0
-            while streak_cursor in activity_dates:
-                current_streak += 1
-                streak_cursor -= timedelta(days=1)
+            current_streak = _streak_length(activity_dates, today)
 
             return {
                 "total": total,
                 "due_today": due_today,
                 "mastered_count": mastered_count,
+                "learning_count": learning_count,
+                "new_count": new_count,
                 "avg_ease_factor": round(float(avg_ease_factor), 2),
-                "reviewed_total": len(review_timestamps),
+                "recall_percent": recall_percent,
+                "reviewed_card_count": reviewed_card_count,
+                "reviewed_total": reviewed_total,
                 "reviewed_this_week": reviewed_this_week,
                 "active_days_this_week": active_days_this_week,
                 "current_streak": current_streak,
@@ -887,6 +1046,453 @@ class PersonalLearningRepository:
             return list(result.scalars().all())
 
     # -----------------------------------------------------------------------
+    # Flashcards — write paths added in stage 2
+    # -----------------------------------------------------------------------
+
+    async def apply_flashcard_review(
+        self,
+        card_id: str,
+        user_id: str,
+        *,
+        card_update: dict[str, Any],
+        review: dict[str, Any],
+    ) -> Flashcard | None:
+        """Advance a card's schedule and append its review row in one transaction.
+
+        The two writes are inseparable. A card whose schedule moved without a logged
+        review makes the streak understate what the learner did; a logged review
+        whose card did not move would double-count. Neither is recoverable after the
+        fact, so they share a transaction rather than being two repository calls.
+        """
+        async with self.unit_of_work() as s:
+            stmt = (
+                update(Flashcard)
+                .where(Flashcard.id == card_id, Flashcard.user_id == user_id)
+                .values(**self._map_flashcard(card_update))
+            )
+            result = await s.execute(stmt)
+            if result.rowcount == 0:
+                # Not the caller's card, or gone. Nothing is logged either way.
+                return None
+
+            s.add(
+                FlashcardReview(
+                    user_id=user_id,
+                    flashcard_id=card_id,
+                    deck_id=review.get("deckId"),
+                    quality=review["quality"],
+                    interval_days=review["intervalDays"],
+                    ease_factor=review["easeFactor"],
+                    repetition_count=review["repetitionCount"],
+                    was_lapse=review["wasLapse"],
+                    reviewed_at=review["reviewedAt"],
+                )
+            )
+            await s.flush()
+
+            refreshed = await s.execute(select(Flashcard).where(Flashcard.id == card_id))
+            return refreshed.scalar_one_or_none()
+
+    async def list_flashcards(
+        self,
+        user_id: str,
+        *,
+        deck_id: str | None = None,
+        search: str | None = None,
+        source_type: str | None = None,
+        state: str | None = None,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[Flashcard], int]:
+        """A page of the learner's cards, newest first.
+
+        ``state`` filters on scheduling state using the same definitions as the stats
+        read — ``due``, ``new`` (never reviewed), ``learning`` (reviewed, not mature)
+        and ``mastered`` — so a filtered list can never disagree with the counts shown
+        above it.
+        """
+        async with self._read_session(session) as s:
+            now = datetime.now(UTC)
+            conditions: list[Any] = [Flashcard.user_id == user_id]
+            if deck_id is not None:
+                conditions.append(Flashcard.deck_id == deck_id)
+            if source_type:
+                conditions.append(Flashcard.source_type == source_type)
+            if search:
+                pattern = f"%{search}%"
+                conditions.append(
+                    or_(Flashcard.front.ilike(pattern), Flashcard.back.ilike(pattern))
+                )
+            if state == "due":
+                conditions.append(Flashcard.next_review_at <= now)
+            elif state == "new":
+                conditions.append(Flashcard.last_reviewed_at.is_(None))
+            elif state == "mastered":
+                conditions.append(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS)
+            elif state == "learning":
+                conditions.append(Flashcard.last_reviewed_at.is_not(None))
+                conditions.append(Flashcard.interval_days < MASTERED_INTERVAL_DAYS)
+
+            total_stmt = select(func.count()).select_from(Flashcard).where(*conditions)
+            total = (await s.execute(total_stmt)).scalar_one() or 0
+
+            stmt = (
+                select(Flashcard)
+                .where(*conditions)
+                .order_by(Flashcard.created_at.desc())
+                .offset(skip)
+                .limit(take)
+            )
+            rows = list((await s.execute(stmt)).scalars().all())
+            return rows, total
+
+    async def update_flashcard_fields(
+        self,
+        card_id: str,
+        user_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
+    ) -> Flashcard | None:
+        """Update a card the caller owns, returning ``None`` when they do not.
+
+        The ownership predicate is in the ``UPDATE`` itself rather than in a
+        preceding ``SELECT``, so there is no window between the check and the write.
+        """
+        async with self._use_session(session) as s:
+            mapped = self._map_flashcard(data)
+            if mapped:
+                stmt = (
+                    update(Flashcard)
+                    .where(Flashcard.id == card_id, Flashcard.user_id == user_id)
+                    .values(**mapped)
+                )
+                result = await s.execute(stmt)
+                if result.rowcount == 0:
+                    return None
+            refreshed = await s.execute(
+                select(Flashcard).where(Flashcard.id == card_id, Flashcard.user_id == user_id)
+            )
+            return refreshed.scalar_one_or_none()
+
+    async def delete_flashcard(
+        self, card_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Delete a card the caller owns. Its review rows survive, detached."""
+        async with self._use_session(session) as s:
+            stmt = delete(Flashcard).where(
+                Flashcard.id == card_id, Flashcard.user_id == user_id
+            )
+            result = await s.execute(stmt)
+            return result.rowcount > 0
+
+    # -----------------------------------------------------------------------
+    # Decks — detail, update, delete, aggregates
+    # -----------------------------------------------------------------------
+
+    async def get_deck(
+        self, deck_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> FlashcardDeck | None:
+        async with self._read_session(session) as s:
+            stmt = select(FlashcardDeck).where(
+                FlashcardDeck.id == deck_id, FlashcardDeck.user_id == user_id
+            )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def update_deck(
+        self,
+        deck_id: str,
+        user_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
+    ) -> FlashcardDeck | None:
+        async with self._use_session(session) as s:
+            mapped = self._map_deck(data)
+            if mapped:
+                stmt = (
+                    update(FlashcardDeck)
+                    .where(FlashcardDeck.id == deck_id, FlashcardDeck.user_id == user_id)
+                    .values(**mapped)
+                )
+                result = await s.execute(stmt)
+                if result.rowcount == 0:
+                    return None
+            refreshed = await s.execute(
+                select(FlashcardDeck).where(
+                    FlashcardDeck.id == deck_id, FlashcardDeck.user_id == user_id
+                )
+            )
+            return refreshed.scalar_one_or_none()
+
+    async def delete_deck(
+        self, deck_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Delete a deck and detach its cards, leaving them in the library.
+
+        Detaching rather than cascading is the resolution of a contradiction: the
+        foreign key on ``Flashcard.deckId`` is ``SET NULL`` while the ORM
+        relationship declared ``delete-orphan``, so the same request destroyed or
+        preserved cards depending on which layer executed the delete. A deck is a
+        container the learner organises with; removing it should not destroy cards
+        they wrote or the review history attached to them. Cards are removed
+        deliberately, one at a time, through the card delete route.
+
+        The detach is explicit rather than left to the database so it happens in the
+        same transaction as the delete and cannot be half-applied.
+        """
+        async with self._use_session(session) as s:
+            owned = await s.execute(
+                select(FlashcardDeck.id).where(
+                    FlashcardDeck.id == deck_id, FlashcardDeck.user_id == user_id
+                )
+            )
+            if owned.scalar_one_or_none() is None:
+                return False
+            await s.execute(
+                update(Flashcard)
+                .where(Flashcard.deck_id == deck_id, Flashcard.user_id == user_id)
+                .values(deck_id=None)
+            )
+            await s.execute(delete(FlashcardDeck).where(FlashcardDeck.id == deck_id))
+            return True
+
+    async def list_decks_with_stats(
+        self,
+        user_id: str,
+        *,
+        deck_id: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Decks with every per-deck figure the library card shows, in one query.
+
+        Card count, due count, mastered count, newest review, next scheduled review
+        and recall all come from one grouped ``LEFT JOIN`` rather than a query per
+        deck. The previous helper returned only card and due counts, which is why the
+        page had to invent the rest.
+
+        Recall is the mean of each card's most recent grade over the 0-5 scale, and is
+        ``None`` for a deck where nothing has been reviewed — an unreviewed deck has
+        no recall, and reporting 0% would state that the learner is failing it.
+        """
+        async with self._read_session(session) as s:
+            now = datetime.now(UTC)
+            reviewed = Flashcard.last_reviewed_at.is_not(None)
+            stmt = (
+                select(
+                    FlashcardDeck,
+                    func.count(Flashcard.id).label("card_count"),
+                    func.count(Flashcard.id)
+                    .filter(Flashcard.next_review_at <= now)
+                    .label("due_count"),
+                    func.count(Flashcard.id)
+                    .filter(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS)
+                    .label("mastered_count"),
+                    func.count(Flashcard.id).filter(reviewed).label("reviewed_count"),
+                    func.max(Flashcard.last_reviewed_at).label("last_reviewed_at"),
+                    func.min(Flashcard.next_review_at).label("next_review_at"),
+                    func.avg(Flashcard.last_quality).filter(reviewed).label("avg_quality"),
+                )
+                .outerjoin(
+                    Flashcard,
+                    (Flashcard.deck_id == FlashcardDeck.id)
+                    & (Flashcard.user_id == FlashcardDeck.user_id),
+                )
+                .where(FlashcardDeck.user_id == user_id)
+                .group_by(FlashcardDeck.id)
+                .order_by(FlashcardDeck.created_at.desc())
+            )
+            if deck_id is not None:
+                stmt = stmt.where(FlashcardDeck.id == deck_id)
+
+            rows = (await s.execute(stmt)).all()
+            return [
+                {
+                    "deck": row[0],
+                    "card_count": row[1] or 0,
+                    "due_count": row[2] or 0,
+                    "mastered_count": row[3] or 0,
+                    "reviewed_count": row[4] or 0,
+                    "last_reviewed_at": row[5],
+                    "next_review_at": row[6],
+                    "recall_percent": (
+                        round(float(row[7]) / 5 * 100) if row[4] and row[7] is not None else None
+                    ),
+                }
+                for row in rows
+            ]
+
+    # -----------------------------------------------------------------------
+    # Flashcard review history (reads)
+    # -----------------------------------------------------------------------
+
+    async def get_review_forecast(
+        self,
+        user_id: str,
+        *,
+        days: int,
+        timezone_name: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Cards scheduled for each of the next ``days`` local calendar days.
+
+        Two figures per day, which partition the scheduled cards rather than
+        overlapping: ``due`` is cards already in repetition, ``new`` is cards never
+        reviewed. The first bucket absorbs everything overdue, because a card that was
+        due last week is work waiting today and putting it anywhere else would hide
+        it.
+
+        One query with conditional aggregates, not one query per day.
+        """
+        async with self._read_session(session) as s:
+            now = datetime.now(UTC)
+            first_day = _in_zone(now, timezone_name).date()
+            boundaries = [
+                _zone_midnight(first_day + timedelta(days=offset), timezone_name)
+                for offset in range(days + 1)
+            ]
+
+            columns: list[Any] = []
+            for index in range(days):
+                start, end = boundaries[index], boundaries[index + 1]
+                # The first bucket has no lower bound so overdue work lands in it.
+                window = Flashcard.next_review_at < end
+                if index > 0:
+                    window = window & (Flashcard.next_review_at >= start)
+                columns.append(
+                    func.count(Flashcard.id)
+                    .filter(window, Flashcard.last_reviewed_at.is_not(None))
+                    .label(f"due_{index}")
+                )
+                columns.append(
+                    func.count(Flashcard.id)
+                    .filter(window, Flashcard.last_reviewed_at.is_(None))
+                    .label(f"new_{index}")
+                )
+
+            row = (
+                await s.execute(select(*columns).where(Flashcard.user_id == user_id))
+            ).one()
+            return [
+                {
+                    "date": first_day + timedelta(days=index),
+                    "due": row[index * 2] or 0,
+                    "new": row[index * 2 + 1] or 0,
+                }
+                for index in range(days)
+            ]
+
+    async def list_review_events(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        limit: int = 2000,
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Raw review rows in a window, newest first, for read-side derivation.
+
+        Returned as plain dictionaries because every consumer aggregates them —
+        grouping into sessions, bucketing by hour — and none needs an ORM identity.
+        Bounded by ``limit`` so a heavy reviewer cannot turn a page render into an
+        unbounded read.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(
+                    FlashcardReview.reviewed_at,
+                    FlashcardReview.quality,
+                    FlashcardReview.deck_id,
+                    FlashcardReview.flashcard_id,
+                    FlashcardReview.was_lapse,
+                )
+                .where(
+                    FlashcardReview.user_id == user_id,
+                    FlashcardReview.reviewed_at >= since,
+                )
+                .order_by(FlashcardReview.reviewed_at.desc())
+                .limit(limit)
+            )
+            return [
+                {
+                    "reviewed_at": row[0],
+                    "quality": row[1],
+                    "deck_id": row[2],
+                    "flashcard_id": row[3],
+                    "was_lapse": row[4],
+                }
+                for row in (await s.execute(stmt)).all()
+            ]
+
+    async def count_mastered_by_deck_as_of(
+        self,
+        user_id: str,
+        *,
+        cutoff: datetime,
+        session: AsyncSession | None = None,
+    ) -> dict[str, int]:
+        """How many of each deck's cards were mature at an earlier instant.
+
+        Reconstructed by replay: for each card, the interval recorded by its most
+        recent review before ``cutoff``. This is the reason ``FlashcardReview`` stores
+        SM-2 state and not just a grade — without it, "mastery went up 6 points this
+        week" would have no earlier number to subtract and would have to be invented.
+
+        Cards are grouped by the deck they are in *now*, so that the comparison is
+        between two measurements of the same deck rather than of two different sets.
+        Cards with no review before the cutoff are absent, which is correct: they were
+        not mature then.
+        """
+        async with self._read_session(session) as s:
+            latest = (
+                select(
+                    FlashcardReview.flashcard_id.label("card_id"),
+                    func.max(FlashcardReview.reviewed_at).label("reviewed_at"),
+                )
+                .where(
+                    FlashcardReview.user_id == user_id,
+                    FlashcardReview.reviewed_at < cutoff,
+                    FlashcardReview.flashcard_id.is_not(None),
+                )
+                .group_by(FlashcardReview.flashcard_id)
+                .subquery()
+            )
+            stmt = (
+                select(Flashcard.deck_id, func.count())
+                .select_from(latest)
+                .join(
+                    FlashcardReview,
+                    (FlashcardReview.flashcard_id == latest.c.card_id)
+                    & (FlashcardReview.reviewed_at == latest.c.reviewed_at),
+                )
+                .join(Flashcard, Flashcard.id == latest.c.card_id)
+                .where(
+                    Flashcard.user_id == user_id,
+                    FlashcardReview.interval_days >= MASTERED_INTERVAL_DAYS,
+                    Flashcard.deck_id.is_not(None),
+                )
+                .group_by(Flashcard.deck_id)
+            )
+            return {row[0]: row[1] or 0 for row in (await s.execute(stmt)).all() if row[0]}
+
+    async def count_lapsing_flashcards(
+        self,
+        user_id: str,
+        *,
+        min_lapses: int,
+        session: AsyncSession | None = None,
+    ) -> int:
+        """Cards the learner has forgotten at least ``min_lapses`` times."""
+        async with self._read_session(session) as s:
+            stmt = (
+                select(func.count())
+                .select_from(Flashcard)
+                .where(Flashcard.user_id == user_id, Flashcard.lapse_count >= min_lapses)
+            )
+            return (await s.execute(stmt)).scalar_one() or 0
+
+    # -----------------------------------------------------------------------
     # Field mapping helpers — Flashcards & Decks
     # -----------------------------------------------------------------------
 
@@ -915,6 +1521,9 @@ class PersonalLearningRepository:
             "userId": "user_id",
             "title": "title",
             "description": "description",
+            "subject": "subject",
+            "accent": "accent",
+            "dailyGoal": "daily_goal",
             "courseId": "course_id",
             "topicId": "topic_id",
             "prepId": "prep_id",

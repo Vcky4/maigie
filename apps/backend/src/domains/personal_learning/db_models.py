@@ -262,6 +262,17 @@ class FlashcardDeck(Base, TimestampMixin):
     )
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
+    # A grouping label the learner types ("Computer Science", "Language"). Their own
+    # words, so it cannot be derived; null for decks created before the create form
+    # had anywhere to send it.
+    subject: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The colour the learner picked for this deck. Presentation, and the one place
+    # the API carries it, because the server never chooses it — a null accent means
+    # the client derives one. See migration 020 for the reasoning.
+    accent: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Cards per day the learner is aiming for in this deck. An intention, not a
+    # measurement: null means they never set one, and a default would invent a goal.
+    daily_goal: Mapped[int | None] = mapped_column("dailyGoal", Integer, nullable=True)
     course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
     prep_id: Mapped[str | None] = mapped_column(
@@ -269,9 +280,15 @@ class FlashcardDeck(Base, TimestampMixin):
     )
 
     # Relationships
-    flashcards: Mapped[list["Flashcard"]] = relationship(
-        "Flashcard", back_populates="deck", cascade="all, delete-orphan"
-    )
+    #
+    # No `delete-orphan`. It used to be declared here, which contradicted the
+    # `SET NULL` foreign key on `Flashcard.deckId`: the ORM would delete a deck's
+    # cards while the database was configured to detach them, so the outcome
+    # depended on which layer performed the delete. Deleting a deck now detaches
+    # its cards, matching the FK — a deck is an organising container, and removing
+    # a container should not destroy authored cards along with their review
+    # history. Cards are deleted individually through `DELETE /flashcards/{id}`.
+    flashcards: Mapped[list["Flashcard"]] = relationship("Flashcard", back_populates="deck")
 
     def __repr__(self) -> str:
         return f"<FlashcardDeck id={self.id} title={self.title}>"
@@ -330,6 +347,76 @@ class Flashcard(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Flashcard id={self.id} front={self.front[:30]}>"
+
+
+# ---------------------------------------------------------------------------
+# FlashcardReview
+# ---------------------------------------------------------------------------
+
+
+class FlashcardReview(Base):
+    """One row per grade a learner gave a card.
+
+    `Flashcard` holds only the most recent review, which is everything the SM-2
+    scheduler needs and nothing that a question about frequency needs. Deriving
+    "days active this week" from `Flashcard.lastReviewedAt` gives one date per card,
+    so re-reviewing a card overwrites the earlier date and the day it belonged to
+    disappears — a learner's streak could be shortened by studying. This table is
+    what makes streaks, weekly counts, recall trend, per-deck recall and mastery
+    change answerable. See migration 020.
+
+    `flashcard_id` and `deck_id` are nullable and detach on delete rather than
+    cascading: the review happened, and deleting the card afterwards must not
+    retract it.
+    """
+
+    __tablename__ = "FlashcardReview"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    flashcard_id: Mapped[str | None] = mapped_column(
+        "flashcardId",
+        String,
+        ForeignKey("Flashcard.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # The deck the card was graded in, snapshotted, because a card can be moved
+    # later and per-deck recall must attribute the grade where it was earned.
+    deck_id: Mapped[str | None] = mapped_column(
+        "deckId",
+        String,
+        ForeignKey("FlashcardDeck.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    quality: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # SM-2 state *after* this review, so an earlier state can be replayed. Without
+    # these, "was this card mature a week ago" is unanswerable.
+    interval_days: Mapped[int] = mapped_column("intervalDays", Integer, nullable=False)
+    ease_factor: Mapped[float] = mapped_column("easeFactor", Float, nullable=False)
+    repetition_count: Mapped[int] = mapped_column("repetitionCount", Integer, nullable=False)
+    # Stored rather than recomputed from `quality`, so tuning the lapse threshold
+    # does not retroactively change what historic rows mean.
+    was_lapse: Mapped[bool] = mapped_column(
+        "wasLapse", Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    reviewed_at: Mapped[datetime] = mapped_column(
+        "reviewedAt", DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        Index("FlashcardReview_userId_reviewedAt_idx", "userId", "reviewedAt"),
+        Index("FlashcardReview_deckId_reviewedAt_idx", "deckId", "reviewedAt"),
+        Index("FlashcardReview_flashcardId_reviewedAt_idx", "flashcardId", "reviewedAt"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<FlashcardReview id={self.id} quality={self.quality}>"
 
 
 # ---------------------------------------------------------------------------

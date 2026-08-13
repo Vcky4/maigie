@@ -58,6 +58,9 @@ weasyprint = "^69.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.0"
 pytest-asyncio = "^0.24.0"
+# Lets repository tests run their queries against a real engine instead of skipping
+# whenever no Postgres is configured. Test-only: nothing in `src` targets SQLite.
+aiosqlite = "^0.20.0"
 ruff = "^0.6.0"
 black = "^25.12.0"
 mypy = "^1.11.0"

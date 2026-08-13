@@ -790,13 +790,93 @@ async def get_quiz(quiz_id: str, current_user: CurrentUser):
 @router.post("/flashcards", response_model=models.FlashcardResponse, status_code=201)
 async def create_flashcard(body: models.FlashcardCreate, current_user: CurrentUser):
     """Create a flashcard."""
-    return await flashcard_service.create_flashcard(user_id=current_user.id, data=body.model_dump())
+    try:
+        return await flashcard_service.create_flashcard(
+            user_id=current_user.id, data=body.model_dump()
+        )
+    except flashcard_service.DeckNotFound as error:
+        raise HTTPException(status_code=404, detail="Deck not found") from error
+
+
+# --- Literal flashcard paths -------------------------------------------------
+#
+# Declared before `/flashcards/{card_id}`. FastAPI matches in declaration order, so
+# a `{card_id}` route placed above these would swallow `/flashcards/due` and answer
+# it with "card 'due' not found".
+
+
+@router.get("/flashcards/dashboard", response_model=models.FlashcardsDashboardResponse)
+async def get_flashcards_dashboard(
+    current_user: CurrentUser,
+    forecastDays: int = Query(7, ge=1, le=30),
+    activityLimit: int = Query(6, ge=1, le=20),
+    masteryLimit: int = Query(4, ge=1, le=20),
+):
+    """Everything the flashcards page shows, in one authenticated request.
+
+    Bounded and composed server-side for the same reason as the Learn dashboard: the
+    page otherwise needs half a dozen round trips to assemble figures that must agree
+    with each other, and figures assembled independently drift.
+    """
+    return await flashcard_service.get_dashboard(
+        user_id=current_user.id,
+        forecast_days=forecastDays,
+        activity_limit=activityLimit,
+        mastery_limit=masteryLimit,
+    )
 
 
 @router.get("/flashcards/due", response_model=list[models.FlashcardResponse])
-async def get_due_flashcards(current_user: CurrentUser):
-    """Get flashcards due for review."""
-    return await flashcard_service.get_due_flashcards(user_id=current_user.id)
+async def get_due_flashcards(
+    current_user: CurrentUser,
+    limit: int | None = Query(None, ge=1, le=500),
+    deckId: str | None = Query(None),
+):
+    """Get flashcards due for review, most overdue first.
+
+    Omitting both parameters returns the whole queue, which is what this route did
+    before they existed.
+    """
+    return await flashcard_service.get_due_flashcards(
+        user_id=current_user.id, limit=limit, deck_id=deckId
+    )
+
+
+@router.get("/flashcards/stats", response_model=models.FlashcardStats)
+async def get_flashcard_stats(current_user: CurrentUser, deckId: str | None = Query(None)):
+    """Get flashcard statistics, for the whole library or one deck."""
+    return await flashcard_service.get_statistics(user_id=current_user.id, deck_id=deckId)
+
+
+@router.get("/flashcards", response_model=models.PaginatedResponse[models.FlashcardResponse])
+async def list_flashcards(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    deckId: str | None = Query(None),
+    search: str | None = Query(None),
+    sourceType: str | None = Query(None),
+    state: Literal["due", "new", "learning", "mastered"] | None = Query(None),
+):
+    """List the learner's cards. Cards were previously reachable only through the due
+    queue or a deck, so a card that was neither due nor filed was unreachable."""
+    items, total = await flashcard_service.list_flashcards(
+        user_id=current_user.id,
+        deck_id=deckId,
+        search=search,
+        source_type=sourceType,
+        state=state,
+        page=page,
+        page_size=pageSize,
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.FlashcardResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
 
 
 @router.post("/flashcards/{card_id}/review", response_model=models.FlashcardResponse)
@@ -812,34 +892,156 @@ async def review_flashcard(
     return result
 
 
-@router.get("/flashcards/stats", response_model=models.FlashcardStats)
-async def get_flashcard_stats(current_user: CurrentUser):
-    """Get flashcard statistics."""
-    return await flashcard_service.get_statistics(user_id=current_user.id)
+@router.get("/flashcards/{card_id}", response_model=models.FlashcardResponse)
+async def get_flashcard(card_id: str, current_user: CurrentUser):
+    """Get one flashcard."""
+    card = await flashcard_service.get_flashcard(user_id=current_user.id, card_id=card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    return card
+
+
+@router.patch("/flashcards/{card_id}", response_model=models.FlashcardResponse)
+async def update_flashcard(
+    card_id: str, body: models.FlashcardUpdate, current_user: CurrentUser
+):
+    """Edit a card's text, or move it to another deck.
+
+    ``exclude_unset`` is what makes an explicit ``"deckId": null`` mean "unfile this
+    card" while omitting the key leaves its deck alone.
+    """
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        card = await flashcard_service.get_flashcard(user_id=current_user.id, card_id=card_id)
+        if not card:
+            raise HTTPException(status_code=404, detail="Flashcard not found")
+        return card
+    try:
+        card = await flashcard_service.update_flashcard(
+            user_id=current_user.id, card_id=card_id, data=data
+        )
+    except flashcard_service.DeckNotFound as error:
+        raise HTTPException(status_code=404, detail="Deck not found") from error
+    if not card:
+        raise HTTPException(status_code=404, detail="Flashcard not found")
+    return card
+
+
+@router.delete("/flashcards/{card_id}", status_code=204)
+async def delete_flashcard(card_id: str, current_user: CurrentUser):
+    """Delete a flashcard. Its past reviews are kept, detached from the card."""
+    if not await flashcard_service.delete_flashcard(user_id=current_user.id, card_id=card_id):
+        # 404 for another learner's card as well as a missing one, so the route
+        # cannot be used to discover which ids exist.
+        raise HTTPException(status_code=404, detail="Flashcard not found")
 
 
 @router.post("/flashcards/generate/note/{note_id}", response_model=list[models.FlashcardResponse])
-async def generate_from_note(note_id: str, current_user: CurrentUser):
-    """Generate flashcards from a note using AI."""
-    return await flashcard_service.generate_from_note(user_id=current_user.id, note_id=note_id)
+async def generate_from_note(
+    note_id: str, current_user: CurrentUser, deckId: str | None = Query(None)
+):
+    """Generate flashcards from a note using AI, optionally straight into a deck."""
+    try:
+        return await flashcard_service.generate_from_note(
+            user_id=current_user.id, note_id=note_id, deck_id=deckId
+        )
+    except flashcard_service.DeckNotFound as error:
+        raise HTTPException(status_code=404, detail="Deck not found") from error
 
 
 @router.post("/flashcards/generate/topic/{topic_id}", response_model=list[models.FlashcardResponse])
-async def generate_from_topic(topic_id: str, current_user: CurrentUser):
-    """Generate flashcards from a topic using AI."""
-    return await flashcard_service.generate_from_topic(user_id=current_user.id, topic_id=topic_id)
+async def generate_from_topic(
+    topic_id: str, current_user: CurrentUser, deckId: str | None = Query(None)
+):
+    """Generate flashcards from a topic using AI, optionally straight into a deck."""
+    try:
+        return await flashcard_service.generate_from_topic(
+            user_id=current_user.id, topic_id=topic_id, deck_id=deckId
+        )
+    except flashcard_service.DeckNotFound as error:
+        raise HTTPException(status_code=404, detail="Deck not found") from error
 
 
 @router.get("/decks", response_model=list[models.DeckResponse])
 async def list_decks(current_user: CurrentUser):
-    """List all flashcard decks."""
+    """List all flashcard decks with their card, due, mastery and recall figures."""
     return await flashcard_service.list_decks(user_id=current_user.id)
 
 
 @router.post("/decks", response_model=models.DeckResponse, status_code=201)
 async def create_deck(body: models.DeckCreate, current_user: CurrentUser):
-    """Create a flashcard deck."""
-    return await flashcard_service.create_deck(user_id=current_user.id, data=body.model_dump())
+    """Create a flashcard deck.
+
+    Returns as soon as the deck exists. Generating starter cards is a separate call
+    rather than part of this one: generation is LLM-backed and slow, and folding it in
+    would mean a request that either blocks for seconds or fails after the deck has
+    already been created, leaving the client unsure what happened.
+    """
+    return await flashcard_service.create_deck(
+        user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
+
+
+@router.get("/decks/{deck_id}", response_model=models.DeckResponse)
+async def get_deck(deck_id: str, current_user: CurrentUser):
+    """Get one deck with its aggregates.
+
+    The deck page previously had to fetch the whole deck list and pick its deck out of
+    it, because this route did not exist.
+    """
+    deck = await flashcard_service.get_deck(user_id=current_user.id, deck_id=deck_id)
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    return deck
+
+
+@router.patch("/decks/{deck_id}", response_model=models.DeckResponse)
+async def update_deck(deck_id: str, body: models.DeckUpdate, current_user: CurrentUser):
+    """Rename a deck, or change its description, subject, colour or daily pace."""
+    data = body.model_dump(exclude_unset=True)
+    deck = (
+        await flashcard_service.update_deck(
+            user_id=current_user.id, deck_id=deck_id, data=data
+        )
+        if data
+        else await flashcard_service.get_deck(user_id=current_user.id, deck_id=deck_id)
+    )
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    return deck
+
+
+@router.delete("/decks/{deck_id}", status_code=204)
+async def delete_deck(deck_id: str, current_user: CurrentUser):
+    """Delete a deck. Its cards stay in the library, unfiled.
+
+    Detaching rather than cascading is deliberate — a deck is an organising container,
+    and deleting a container should not destroy the cards the learner wrote or the
+    review history attached to them. Cards are removed one at a time through
+    `DELETE /flashcards/{id}`.
+    """
+    if not await flashcard_service.delete_deck(user_id=current_user.id, deck_id=deck_id):
+        raise HTTPException(status_code=404, detail="Deck not found")
+
+
+@router.post(
+    "/decks/{deck_id}/starter-cards",
+    response_model=list[models.FlashcardResponse],
+    status_code=201,
+)
+async def generate_deck_starter_cards(deck_id: str, current_user: CurrentUser):
+    """Generate a first set of cards for a deck from its own title, subject and goal.
+
+    Backs the create wizard's "guided starter" option with real generated cards rather
+    than a fixed template. An empty list means generation produced nothing usable; the
+    deck is unchanged and the learner can still add cards by hand.
+    """
+    try:
+        return await flashcard_service.generate_deck_starter_cards(
+            user_id=current_user.id, deck_id=deck_id
+        )
+    except flashcard_service.DeckNotFound as error:
+        raise HTTPException(status_code=404, detail="Deck not found") from error
 
 
 @router.get("/decks/{deck_id}/flashcards", response_model=list[models.FlashcardResponse])
