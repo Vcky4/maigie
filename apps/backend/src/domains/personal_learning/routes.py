@@ -178,16 +178,16 @@ async def set_llm_provider(body: models.LlmProviderSetRequest, current_user: Cur
 # Knowledge domain: use `GET /api/v1/knowledge/courses`.
 
 
-@router.get("/courses/{course_id}/path", response_model=models.LearningPathResponse)
-async def get_learning_path(course_id: str, current_user: CurrentUser):
-    """Get learning path for a course."""
-    raise HTTPException(status_code=501, detail="Course study integration pending")
-
-
-@router.post("/courses/{course_id}/topics/{topic_id}/study", status_code=200)
-async def record_topic_study(course_id: str, topic_id: str, current_user: CurrentUser):
-    """Record a topic study activity."""
-    return {"message": "Study activity recorded"}
+# `GET /learning/courses/{id}/path` was removed. It was a published route that raised
+# `501` unconditionally, so it advertised a capability that had never been built. Study
+# plans are the real "path through material" concept and live under `/study-plans`;
+# course structure is `GET /api/v1/knowledge/courses/{id}`.
+#
+# `POST /learning/courses/{id}/topics/{tid}/study` was removed. It answered `200` with
+# `{"message": "Study activity recorded"}` and persisted nothing — worse than a missing
+# endpoint, because a caller had no way to discover that its writes were discarded, and
+# any surface built on it would have reported study time that never existed. Study
+# sessions are recorded by `/analytics/sessions/*`, which does persist them.
 
 
 @router.post("/courses/{course_id}/topics/{topic_id}/complete", status_code=200)
@@ -1124,10 +1124,51 @@ async def create_study_plan(body: models.StudyPlanCreate, current_user: CurrentU
     return await study_plan_service.generate_plan(user_id=current_user.id, data=body.model_dump())
 
 
-@router.get("/study-plans", response_model=list[models.StudyPlanResponse])
-async def list_study_plans(current_user: CurrentUser):
-    """List active study plans."""
-    return await study_plan_service.list_plans(user_id=current_user.id)
+@router.get(
+    "/study-plans", response_model=models.PaginatedResponse[models.StudyPlanSummaryResponse]
+)
+async def list_study_plans(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    status: Literal["ACTIVE", "PAUSED", "COMPLETED", "SUPERSEDED"] | None = Query(None),
+    search: str | None = Query(None),
+):
+    """List study plans, newest deadline first, without their items.
+
+    Two changes from the previous version, both of which the UI needed. It returned only
+    `ACTIVE` plans, so a "Completed" or "Paused" tab could never match anything; status
+    is now a filter and defaults to all. And it embedded every item of every plan, which
+    an all-plans page cannot afford — the card renders counts, and those live on the
+    plan. `GET /study-plans/{id}` returns the items.
+    """
+    items, total = await study_plan_service.list_plans_page(
+        user_id=current_user.id,
+        status=status,
+        search=search,
+        page=page,
+        page_size=pageSize,
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.StudyPlanSummaryResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
+
+
+@router.get("/study-plans/today", response_model=list[models.StudyPlanTodayItem])
+async def list_study_plan_items_due_today(current_user: CurrentUser):
+    """Pending items due today or earlier, across every active plan.
+
+    Declared before `/study-plans/{plan_id}` so FastAPI does not read "today" as a plan
+    id. Overdue items are included: work that slipped is work waiting today, and the
+    caller can tell them apart from `scheduledDate`. Paused plans are excluded, because
+    pausing is the learner saying they are not working on it now.
+    """
+    return await study_plan_service.list_items_due_today(user_id=current_user.id)
 
 
 @router.get("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
@@ -1136,12 +1177,100 @@ async def get_study_plan(plan_id: str, current_user: CurrentUser):
     return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
 
 
+@router.patch("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
+async def update_study_plan(
+    plan_id: str, body: models.StudyPlanUpdate, current_user: CurrentUser
+):
+    """Rename a plan, restate its goal, move its deadline, or pause and resume it.
+
+    Moving the deadline redistributes pending items, so the schedule cannot end up
+    contradicting the date printed above it.
+    """
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
+    return await study_plan_service.update_plan(
+        user_id=current_user.id, plan_id=plan_id, data=data
+    )
+
+
+@router.delete("/study-plans/{plan_id}", status_code=204)
+async def delete_study_plan(plan_id: str, current_user: CurrentUser):
+    """Delete a plan and its items.
+
+    Cascades, unlike deck deletion: a plan item is a scheduled slot rather than
+    independently authored content, and has no meaning without its plan.
+    """
+    if not await study_plan_service.delete_plan(user_id=current_user.id, plan_id=plan_id):
+        # 404 for another learner's plan as well as a missing one, so this cannot be
+        # used to discover which plan ids exist.
+        raise HTTPException(status_code=404, detail="Study plan not found")
+
+
+@router.post(
+    "/study-plans/{plan_id}/items", response_model=models.StudyPlanResponse, status_code=201
+)
+async def add_study_plan_item(
+    plan_id: str, body: models.StudyPlanItemCreate, current_user: CurrentUser
+):
+    """Add an item to a plan by hand.
+
+    Returns the whole plan, because adding an item changes its counts and a client that
+    only received the item would have to recompute them.
+    """
+    return await study_plan_service.add_item(
+        user_id=current_user.id, plan_id=plan_id, data=body.model_dump()
+    )
+
+
+@router.patch(
+    "/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse
+)
+async def update_study_plan_item(
+    plan_id: str, item_id: str, body: models.StudyPlanItemUpdate, current_user: CurrentUser
+):
+    """Reschedule, retitle, resize, regroup, or restatus one item."""
+    data = body.model_dump(exclude_unset=True)
+    if not data:
+        return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
+    return await study_plan_service.update_item(
+        user_id=current_user.id, plan_id=plan_id, item_id=item_id, data=data
+    )
+
+
+@router.delete("/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse)
+async def delete_study_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
+    """Remove an item from a plan.
+
+    Returns the plan rather than `204`, because removing an item changes its counts and
+    the caller needs them.
+    """
+    return await study_plan_service.delete_item(
+        user_id=current_user.id, plan_id=plan_id, item_id=item_id
+    )
+
+
 @router.post(
     "/study-plans/{plan_id}/items/{item_id}/complete", response_model=models.StudyPlanResponse
 )
 async def complete_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
     """Complete a study plan item."""
     return await study_plan_service.complete_item(
+        user_id=current_user.id, plan_id=plan_id, item_id=item_id
+    )
+
+
+@router.post(
+    "/study-plans/{plan_id}/items/{item_id}/uncomplete", response_model=models.StudyPlanResponse
+)
+async def uncomplete_plan_item(plan_id: str, item_id: str, current_user: CurrentUser):
+    """Return an item to pending — the inverse of completing it.
+
+    A learner who ticked the wrong task previously had no way back, and the only
+    recovery was to complete the right one too, leaving the plan permanently
+    overstating progress.
+    """
+    return await study_plan_service.uncomplete_item(
         user_id=current_user.id, plan_id=plan_id, item_id=item_id
     )
 

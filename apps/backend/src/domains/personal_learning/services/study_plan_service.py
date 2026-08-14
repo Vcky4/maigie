@@ -104,9 +104,12 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
                     }
                 )
 
+    skills: list[str] = []
     if not topics_to_plan:
         # Generate generic plan items from goal description via LLM
-        topics_to_plan = await _generate_topics_from_goal(title, goal_description, user_id=user_id)
+        topics_to_plan, skills = await _generate_topics_from_goal(
+            title, goal_description, user_id=user_id
+        )
 
     # Calculate available days
     now = datetime.now(UTC)
@@ -158,6 +161,13 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
             "deadline": deadline,
             "prepId": prep_id,
             "status": "ACTIVE",
+            # The learner's stated weekly intent, from the create wizard. Left null
+            # when they set none, so a surface shows minutes planned without a target
+            # rather than inventing one.
+            "weeklyGoalMinutes": data.get("weeklyGoalMinutes"),
+            # Empty rather than null-vs-missing games: a prep-scoped plan derives its
+            # items from topics and names no skills, and an empty list says that.
+            "skills": skills or None,
             "totalItems": len(all_items),
             "completedItems": 0,
             # Which scheduler produced this plan. Recorded so "adaptive" is a
@@ -178,13 +188,25 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
                 "scheduledDate": item["scheduledDate"],
                 "estimatedMinutes": item.get("estimatedMinutes", 30),
                 "itemType": item.get("type", "STUDY"),
+                "phase": item.get("phase"),
                 "topicId": item.get("topicId"),
                 "prepTopicId": item.get("prepTopicId"),
                 "status": "PENDING",
             }
         )
 
+    # Counts come from the rows that were actually written, not from the length of the
+    # list we meant to write. The two can differ if an item insert fails.
+    await repo.recount_plan_progress(plan.id)
     return await repo.get_study_plan(plan.id, user_id)
+
+
+#: Statuses a plan may be set to by a learner. `SUPERSEDED` is deliberately absent: it
+#: is written by plan regeneration, not chosen.
+SETTABLE_PLAN_STATUSES = frozenset({"ACTIVE", "PAUSED", "COMPLETED"})
+
+#: Statuses an item may be set to.
+SETTABLE_ITEM_STATUSES = frozenset({"PENDING", "COMPLETED", "SKIPPED"})
 
 
 async def list_plans(*, user_id: str) -> list[Any]:
@@ -192,8 +214,33 @@ async def list_plans(*, user_id: str) -> list[Any]:
     List active study plans.
 
     Req 7.6: Return with completion %, today's tasks, days remaining.
+
+    Kept for the callers that want active plans with their items loaded — the home and
+    dashboard compositions. Paged surfaces use `list_plans_page`, which omits items.
     """
     return await repo.list_active_plans(user_id)
+
+
+async def list_plans_page(
+    *,
+    user_id: str,
+    status: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[Any], int]:
+    """A page of plans without their items, for a plan library view.
+
+    Items are omitted because the card only needs the counts, which live on the plan.
+    Embedding them meant an "all plans" page loaded every item of every plan.
+    """
+    return await repo.list_plans_paginated(
+        user_id,
+        status=status,
+        search=search,
+        skip=(page - 1) * page_size,
+        take=page_size,
+    )
 
 
 async def get_plan(*, user_id: str, plan_id: str) -> Any:
@@ -204,70 +251,231 @@ async def get_plan(*, user_id: str, plan_id: str) -> Any:
     return plan
 
 
+async def update_plan(*, user_id: str, plan_id: str, data: dict[str, Any]) -> Any:
+    """Rename a plan, restate its goal, move its deadline, or pause and resume it.
+
+    Moving the deadline redistributes the pending items, by reusing the same
+    redistribution the completion path uses. Leaving the dates alone would produce a
+    plan whose items sit past its own deadline — a schedule that contradicts the date
+    printed above it.
+    """
+    if "status" in data and data["status"] not in SETTABLE_PLAN_STATUSES:
+        raise ValueError(f"Unsupported plan status: {data['status']}")
+
+    existing = await repo.get_study_plan(plan_id, user_id)
+    if not existing:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    deadline_changed = "deadline" in data and data["deadline"] != existing.deadline
+
+    plan = await repo.update_study_plan(plan_id, user_id, data)
+    if plan is None:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    if deadline_changed:
+        await _redistribute_plan(plan_id, user_id)
+        plan = await repo.get_study_plan(plan_id, user_id)
+
+    return plan
+
+
+async def delete_plan(*, user_id: str, plan_id: str) -> bool:
+    """Delete a plan and its items.
+
+    Unlike a flashcard deck, a plan item is not independently authored content — it is a
+    scheduled slot with no meaning outside its plan — so this cascades rather than
+    detaching.
+    """
+    return await repo.delete_study_plan(plan_id, user_id)
+
+
+async def add_item(*, user_id: str, plan_id: str, data: dict[str, Any]) -> Any:
+    """Add an item to a plan by hand.
+
+    Generated plans are a starting point; a learner who knows they need an extra session
+    had no way to add one, which meant editing the plan meant abandoning it.
+    """
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    await repo.create_plan_item(
+        {
+            "planId": plan_id,
+            "title": data["title"],
+            "description": data.get("description"),
+            "scheduledDate": data["scheduledDate"],
+            "estimatedMinutes": data.get("estimatedMinutes", 30),
+            "itemType": data.get("itemType", "STUDY"),
+            "phase": data.get("phase"),
+            "status": "PENDING",
+        }
+    )
+    await repo.recount_plan_progress(plan_id)
+    return await repo.get_study_plan(plan_id, user_id)
+
+
+async def update_item(*, user_id: str, plan_id: str, item_id: str, data: dict[str, Any]) -> Any:
+    """Reschedule, retitle, resize, regroup, or restatus one item."""
+    if "status" in data and data["status"] not in SETTABLE_ITEM_STATUSES:
+        raise ValueError(f"Unsupported plan item status: {data['status']}")
+
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    if "status" in data:
+        # Status changes go through the one path that also clears `completedAt` and
+        # recounts, so a status set here cannot diverge from one set by the complete
+        # route.
+        status = data.pop("status")
+        if data:
+            updated = await repo.update_plan_item(item_id, data, plan_id=plan_id)
+            if updated is None:
+                raise NotFoundError("StudyPlanItem", item_id)
+        return await set_item_status(
+            user_id=user_id, plan_id=plan_id, item_id=item_id, status=status
+        )
+
+    updated = await repo.update_plan_item(item_id, data, plan_id=plan_id)
+    if updated is None:
+        raise NotFoundError("StudyPlanItem", item_id)
+    return await repo.get_study_plan(plan_id, user_id)
+
+
+async def delete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
+    """Remove an item from a plan, then recount so progress reflects what is left."""
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    if not await repo.delete_plan_item(item_id, plan_id=plan_id):
+        raise NotFoundError("StudyPlanItem", item_id)
+
+    await repo.recount_plan_progress(plan_id)
+    return await repo.get_study_plan(plan_id, user_id)
+
+
+async def list_items_due_today(*, user_id: str) -> list[dict[str, Any]]:
+    """Pending items due today or earlier, across every active plan.
+
+    What a "today" panel needs and what no endpoint provided: plans had to be fetched
+    one at a time and their items filtered client-side. Overdue items are included
+    rather than shown separately, because work that slipped is work waiting today; the
+    caller can tell them apart from `scheduledDate`.
+
+    "Today" ends at the end of the learner's own day, not UTC's.
+    """
+    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+
+    learner_timezone = await resolve_learner_timezone(user_id)
+    local_now = to_learner_local(datetime.now(UTC), learner_timezone)
+    end_of_local_day = local_now.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+    rows = await repo.list_items_due_by(user_id, until=end_of_local_day.astimezone(UTC))
+    return [
+        {
+            "item": item,
+            "planId": plan.id,
+            "planTitle": plan.title,
+            "planDeadline": plan.deadline,
+        }
+        for item, plan in rows
+    ]
+
+
 async def complete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
     """
     Mark a plan item as completed.
 
     Req 7.4: Mark done and adjust if ahead/behind schedule.
     """
+    return await set_item_status(
+        user_id=user_id, plan_id=plan_id, item_id=item_id, status="COMPLETED"
+    )
+
+
+async def uncomplete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
+    """Return an item to pending — the inverse of completing it.
+
+    A learner who ticks the wrong task had no way back, and the only recovery was to
+    complete the right one too, which left the plan permanently overstating progress.
+    """
+    return await set_item_status(
+        user_id=user_id, plan_id=plan_id, item_id=item_id, status="PENDING"
+    )
+
+
+async def set_item_status(*, user_id: str, plan_id: str, item_id: str, status: str) -> Any:
+    """Move one item to ``PENDING``, ``COMPLETED`` or ``SKIPPED``, then recount.
+
+    Two defects are closed here.
+
+    **Ownership.** This used to verify that the *plan* belonged to the learner and then
+    update the item by id alone, so an item id belonging to someone else's plan was
+    written to. The item update is now scoped to the plan, and a mismatch is a `404`.
+
+    **Counting.** ``completedItems`` used to be incremented on every call, without
+    regard for what the item's status already was — so completing the same item twice
+    counted twice and progress could pass 100%. It is now recomputed from the items,
+    which also makes uncompleting and skipping expressible at all: those cannot be
+    represented by an increment.
+    """
+    if status not in {"PENDING", "COMPLETED", "SKIPPED"}:
+        raise ValueError(f"Unsupported plan item status: {status}")
+
     plan = await repo.get_study_plan(plan_id, user_id)
     if not plan:
         raise NotFoundError("StudyPlan", plan_id)
 
     now = datetime.now(UTC)
-    await repo.update_plan_item(
+    updated = await repo.update_plan_item(
         item_id,
         {
-            "status": "COMPLETED",
-            "completedAt": now,
+            "status": status,
+            # Cleared when leaving COMPLETED: a pending item with a completion
+            # timestamp is a row that contradicts itself, and anything reading
+            # `completedAt` to build a history would count it.
+            "completedAt": now if status == "COMPLETED" else None,
         },
+        plan_id=plan_id,
     )
+    if updated is None:
+        raise NotFoundError("StudyPlanItem", item_id)
 
-    # Update plan completion count
-    new_completed = (plan.completed_items or 0) + 1
+    completed, total = await repo.recount_plan_progress(plan_id)
 
-    from sqlalchemy import update as sa_update
+    # A plan is complete when nothing is left pending, not when a counter reaches a
+    # number. Reopening an item therefore reopens the plan, which the increment-based
+    # version could not express.
+    if total > 0 and completed >= total:
+        if plan.status == "ACTIVE":
+            await repo.update_plan_status(plan_id, "COMPLETED")
+    elif plan.status == "COMPLETED":
+        await repo.update_plan_status(plan_id, "ACTIVE")
 
-    from src.domains.personal_learning.db_models import StudyPlan
-    from src.shared.database import get_session_factory
+    if status == "COMPLETED":
+        from . import activity_feed_service
 
-    factory = get_session_factory()
-    async with factory() as session:
-        stmt = (
-            sa_update(StudyPlan)
-            .where(StudyPlan.id == plan_id)
-            .values(completed_items=new_completed)
+        await activity_feed_service.record(
+            user_id=user_id,
+            activity_type="plan_item_completed",
+            title=f"Completed study task ({completed}/{total})",
+            context={"source": "personal", "planId": plan_id, "itemId": item_id},
         )
-        await session.execute(stmt)
-        await session.commit()
 
-    # Check if plan is fully completed
-    if new_completed >= (plan.total_items or 0):
-        await repo.update_plan_status(plan_id, "COMPLETED")
+        from . import milestone_service
 
-    # Record in activity feed
-    from . import activity_feed_service
+        completion_pct = (completed / total * 100) if total else 0
+        await milestone_service.check_milestones(
+            user_id, {"plan_completion_percentage": completion_pct}
+        )
 
-    await activity_feed_service.record(
-        user_id=user_id,
-        activity_type="plan_item_completed",
-        title=f"Completed study task ({new_completed}/{plan.total_items or 0})",
-        context={"source": "personal", "planId": plan_id, "itemId": item_id},
-    )
-
-    # Check milestones (plan_complete)
-    from . import milestone_service
-
-    completion_pct = (new_completed / (plan.total_items or 1)) * 100
-    await milestone_service.check_milestones(
-        user_id, {"plan_completion_percentage": completion_pct}
-    )
-
-    # Check if behind schedule and redistribute if needed (Req 7.5)
-    items = await repo.list_plan_items(plan_id)
-    pending_past_due = [i for i in items if i.status == "PENDING" and i.scheduled_date < now]
-    if len(pending_past_due) > 2:
-        await _redistribute_plan(plan_id, user_id)
+        # Check if behind schedule and redistribute if needed (Req 7.5)
+        items = await repo.list_plan_items(plan_id)
+        pending_past_due = [i for i in items if i.status == "PENDING" and i.scheduled_date < now]
+        if len(pending_past_due) > 2:
+            await _redistribute_plan(plan_id, user_id)
 
     return await repo.get_study_plan(plan_id, user_id)
 
@@ -316,7 +524,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
         # Cap at deadline — if we run out of days, pack remaining into last day
         actual_day = min(day_index, days_remaining - 1)
         new_date = now + timedelta(days=actual_day + 1)
-        await repo.update_plan_item(item.id, {"scheduledDate": new_date})
+        await repo.update_plan_item(item.id, {"scheduledDate": new_date}, plan_id=plan_id)
 
         daily_minutes_used += item_minutes
 
@@ -405,32 +613,62 @@ def _add_review_items(
 
 async def _generate_topics_from_goal(
     title: str, goal_description: str | None, *, user_id: str | None = None
-) -> list[dict[str, Any]]:
-    """Generate study topics from a goal description using AI."""
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Generate study topics from a goal description using AI.
+
+    Also asks for a ``phase`` per topic and a list of skills the plan builds, because
+    both are things only the generator knows. A phase is the grouping the plan is drawn
+    in terms of, and inferring one afterwards from topic titles would be guessing at
+    structure the model already had in mind. Skills are the same: derivable from the
+    goal, not from the items.
+
+    Returns ``(topics, skills)``. Either can be empty, and the caller stores nothing
+    rather than inventing a stand-in.
+    """
     from .llm_resilient import generate_content_json
 
     prompt = (
-        f"Break down this learning goal into study topics:\n"
+        "Break this learning goal into a study plan.\n"
         f"Goal: {title}\n"
         f"Description: {goal_description or ''}\n\n"
-        f"Return a JSON array of objects with 'title' and 'estimatedMinutes' (15-90).\n"
-        f"Generate 5-15 topics. Return ONLY the JSON array."
+        "Return ONLY a JSON object with two keys:\n"
+        '  "topics": an array of objects with "title", "estimatedMinutes" (15-90), and\n'
+        '            "phase" — a short grouping label shared by consecutive topics that\n'
+        "            belong together, e.g. \"Foundations\", \"Core patterns\".\n"
+        '  "skills": an array of 3-6 short skill names this plan builds.\n'
+        "Generate 5-15 topics, ordered so phases progress from basics to application."
     )
 
     try:
-        topics_data = await generate_content_json(
+        generated = await generate_content_json(
             prompt, max_tokens=2000, fallback=None, user_id=user_id
         )
-        return [
+        # Tolerate the model returning a bare array, which is what the previous prompt
+        # asked for and what it still sometimes produces.
+        if isinstance(generated, list):
+            raw_topics, raw_skills = generated, []
+        else:
+            raw_topics = generated.get("topics") or []
+            raw_skills = generated.get("skills") or []
+
+        topics = [
             {
                 "title": t["title"],
                 "estimatedMinutes": t.get("estimatedMinutes", 30),
+                "phase": t.get("phase") or None,
                 "type": "STUDY",
             }
-            for t in topics_data
-            if isinstance(t, dict) and "title" in t
+            for t in raw_topics
+            if isinstance(t, dict) and t.get("title")
         ]
+        skills = [s for s in raw_skills if isinstance(s, str) and s.strip()][:6]
+        if topics:
+            return topics, skills
+        logger.warning("Goal breakdown returned no usable topics")
     except Exception as e:
         logger.warning(f"Failed to generate topics from goal: {e}")
-        # Fallback: single topic from the title
-        return [{"title": title, "estimatedMinutes": 60, "type": "STUDY"}]
+
+    # Fallback: a single topic from the title, with no phase and no skills. Both are
+    # left empty rather than filled with the title, which would present a placeholder
+    # as a structure the learner can act on.
+    return [{"title": title, "estimatedMinutes": 60, "phase": None, "type": "STUDY"}], []

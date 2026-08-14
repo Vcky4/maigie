@@ -1534,11 +1534,57 @@ class QuizSummaryResponse(CamelModel):
 # ===========================================================================
 
 
+#: What a plan item's status may be set to.
+StudyPlanItemStatus = Literal["PENDING", "COMPLETED", "SKIPPED"]
+
+#: What a learner may set a plan's status to. `SUPERSEDED` is absent on purpose — it is
+#: written by regeneration, never chosen.
+SettableStudyPlanStatus = Literal["ACTIVE", "PAUSED", "COMPLETED"]
+
+
 class StudyPlanCreate(BaseModel):
-    title: str
+    title: str = Field(min_length=1)
     goalDescription: str | None = None
     deadline: str
     prepId: str | None = None
+    # Minutes a week the learner intends to study, from the create wizard's pace and
+    # session-length choices. Optional, because it is an intention: with none set, a
+    # surface reports minutes planned without a target instead of inventing one.
+    weeklyGoalMinutes: int | None = Field(default=None, ge=15, le=10_080)
+
+
+class StudyPlanUpdate(BaseModel):
+    """Partial update of a plan. Read with ``exclude_unset=True``.
+
+    Changing `deadline` redistributes pending items, because leaving them put would
+    produce a schedule with work sitting past the plan's own deadline.
+    """
+
+    title: str | None = Field(default=None, min_length=1)
+    goalDescription: str | None = None
+    deadline: datetime | None = None
+    status: SettableStudyPlanStatus | None = None
+    weeklyGoalMinutes: int | None = Field(default=None, ge=15, le=10_080)
+
+
+class StudyPlanItemCreate(BaseModel):
+    title: str = Field(min_length=1)
+    description: str | None = None
+    scheduledDate: datetime
+    estimatedMinutes: int = Field(default=30, ge=5, le=600)
+    itemType: str = "STUDY"
+    phase: str | None = None
+
+
+class StudyPlanItemUpdate(BaseModel):
+    """Partial update of an item. Read with ``exclude_unset=True``."""
+
+    title: str | None = Field(default=None, min_length=1)
+    description: str | None = None
+    scheduledDate: datetime | None = None
+    estimatedMinutes: int | None = Field(default=None, ge=5, le=600)
+    phase: str | None = None
+    status: StudyPlanItemStatus | None = None
 
 
 class StudyPlanItemResponse(CamelModel):
@@ -1551,17 +1597,22 @@ class StudyPlanItemResponse(CamelModel):
     scheduled_date: datetime
     estimated_minutes: int
     item_type: str
+    # The grouping label this item belongs to. Null for items generated before phases
+    # existed, and for plans the generator did not group — such a plan is one flat list,
+    # which is what it is.
+    phase: str | None = None
     topic_id: str | None = None
     prep_topic_id: str | None = None
     status: str
     completed_at: datetime | None = None
 
 
-class StudyPlanResponse(CamelModel):
-    """Mirrors the persisted plan.
+class StudyPlanSummaryResponse(CamelModel):
+    """A plan without its items, for list views.
 
-    `deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and
-    plan queries eagerly load `items`, so these are always serialized.
+    The items are deliberately absent. A plan card shows counts, which are stored on the
+    plan, so embedding every item of every plan made an "all plans" page pay for
+    hundreds of rows it never rendered. `GET /study-plans/{id}` returns them.
     """
 
     id: str
@@ -1571,11 +1622,39 @@ class StudyPlanResponse(CamelModel):
     deadline: datetime
     prep_id: str | None = None
     status: str
+    # `ADAPTIVE` or `EVEN` — which scheduler produced this plan. Exposed because
+    # adaptive scheduling is a paid claim, and a client that cannot read this cannot
+    # tell the learner which one they got. Null for plans predating the column.
+    strategy: str | None = None
+    weekly_goal_minutes: int | None = None
+    skills: list[str] | None = None
     total_items: int
     completed_items: int
-    items: list[StudyPlanItemResponse]
     created_at: datetime
     updated_at: datetime
+
+
+class StudyPlanResponse(StudyPlanSummaryResponse):
+    """A plan with its items.
+
+    `deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan
+    queries eagerly load `items`, so these are always serialized.
+    """
+
+    items: list[StudyPlanItemResponse]
+
+
+class StudyPlanTodayItem(CamelModel):
+    """One pending item due today or earlier, with the plan it came from.
+
+    The plan's title travels with the item because a cross-plan list is unreadable
+    without it, and fetching each plan separately would be a query per row.
+    """
+
+    item: StudyPlanItemResponse
+    plan_id: str
+    plan_title: str
+    plan_deadline: datetime
 
 
 # ===========================================================================
@@ -1655,21 +1734,11 @@ class CourseProgressResponse(BaseModel):
     currentTopicTitle: str | None = None
 
 
-class LearningPathTopicResponse(BaseModel):
-    topicId: str
-    title: str
-    moduleTitle: str
-    status: str
-    estimatedMinutes: int
-    order: int
-
-
-class LearningPathResponse(BaseModel):
-    courseId: str
-    courseTitle: str
-    topics: list[LearningPathTopicResponse]
-    completionPercentage: float
-    estimatedMinutesRemaining: int
+# `LearningPathTopicResponse` and `LearningPathResponse` were removed with the route
+# that used them, `GET /learning/courses/{id}/path`, which raised `501` unconditionally.
+# A response model with no route describes a shape nothing returns, and leaving it in the
+# schema advertises an endpoint that does not exist. A path through material is a study
+# plan; course structure is `GET /api/v1/knowledge/courses/{id}`.
 
 
 # ===========================================================================

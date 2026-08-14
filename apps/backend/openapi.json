@@ -3505,80 +3505,6 @@
         "title": "LearnToolSummary",
         "type": "object"
       },
-      "LearningPathResponse": {
-        "properties": {
-          "completionPercentage": {
-            "title": "Completionpercentage",
-            "type": "number"
-          },
-          "courseId": {
-            "title": "Courseid",
-            "type": "string"
-          },
-          "courseTitle": {
-            "title": "Coursetitle",
-            "type": "string"
-          },
-          "estimatedMinutesRemaining": {
-            "title": "Estimatedminutesremaining",
-            "type": "integer"
-          },
-          "topics": {
-            "items": {
-              "$ref": "#/components/schemas/LearningPathTopicResponse"
-            },
-            "title": "Topics",
-            "type": "array"
-          }
-        },
-        "required": [
-          "courseId",
-          "courseTitle",
-          "topics",
-          "completionPercentage",
-          "estimatedMinutesRemaining"
-        ],
-        "title": "LearningPathResponse",
-        "type": "object"
-      },
-      "LearningPathTopicResponse": {
-        "properties": {
-          "estimatedMinutes": {
-            "title": "Estimatedminutes",
-            "type": "integer"
-          },
-          "moduleTitle": {
-            "title": "Moduletitle",
-            "type": "string"
-          },
-          "order": {
-            "title": "Order",
-            "type": "integer"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "topicId": {
-            "title": "Topicid",
-            "type": "string"
-          }
-        },
-        "required": [
-          "topicId",
-          "title",
-          "moduleTitle",
-          "status",
-          "estimatedMinutes",
-          "order"
-        ],
-        "title": "LearningPathTopicResponse",
-        "type": "object"
-      },
       "LearningProfileResponse": {
         "properties": {
           "createdAt": {
@@ -4851,6 +4777,42 @@
           "pages"
         ],
         "title": "PaginatedResponse[SavedResourceResponse]",
+        "type": "object"
+      },
+      "PaginatedResponse_StudyPlanSummaryResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanSummaryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[StudyPlanSummaryResponse]",
         "type": "object"
       },
       "PendingDeletionResponse": {
@@ -9582,8 +9544,22 @@
             "title": "Prepid"
           },
           "title": {
+            "minLength": 1,
             "title": "Title",
             "type": "string"
+          },
+          "weeklyGoalMinutes": {
+            "anyOf": [
+              {
+                "maximum": 10080.0,
+                "minimum": 15.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklygoalminutes"
           }
         },
         "required": [
@@ -9591,6 +9567,60 @@
           "deadline"
         ],
         "title": "StudyPlanCreate",
+        "type": "object"
+      },
+      "StudyPlanItemCreate": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "estimatedMinutes": {
+            "default": 30,
+            "maximum": 600.0,
+            "minimum": 5.0,
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "itemType": {
+            "default": "STUDY",
+            "title": "Itemtype",
+            "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "scheduledDate": {
+            "format": "date-time",
+            "title": "Scheduleddate",
+            "type": "string"
+          },
+          "title": {
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "scheduledDate"
+        ],
+        "title": "StudyPlanItemCreate",
         "type": "object"
       },
       "StudyPlanItemResponse": {
@@ -9630,6 +9660,17 @@
           "itemType": {
             "title": "Itemtype",
             "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
           },
           "planId": {
             "title": "Planid",
@@ -9683,8 +9724,90 @@
         "title": "StudyPlanItemResponse",
         "type": "object"
       },
+      "StudyPlanItemUpdate": {
+        "description": "Partial update of an item. Read with ``exclude_unset=True``.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 5.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "scheduledDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scheduleddate"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PENDING",
+                  "COMPLETED",
+                  "SKIPPED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "StudyPlanItemUpdate",
+        "type": "object"
+      },
       "StudyPlanResponse": {
-        "description": "Mirrors the persisted plan.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and\nplan queries eagerly load `items`, so these are always serialized.",
+        "description": "A plan with its items.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan\nqueries eagerly load `items`, so these are always serialized.",
         "properties": {
           "completedItems": {
             "title": "Completeditems",
@@ -9733,9 +9856,34 @@
             ],
             "title": "Prepid"
           },
+          "skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skills"
+          },
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
           },
           "title": {
             "title": "Title",
@@ -9753,6 +9901,17 @@
           "userId": {
             "title": "Userid",
             "type": "string"
+          },
+          "weeklyGoalMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklygoalminutes"
           }
         },
         "required": [
@@ -9763,11 +9922,226 @@
           "status",
           "totalItems",
           "completedItems",
-          "items",
+          "createdAt",
+          "updatedAt",
+          "items"
+        ],
+        "title": "StudyPlanResponse",
+        "type": "object"
+      },
+      "StudyPlanSummaryResponse": {
+        "description": "A plan without its items, for list views.\n\nThe items are deliberately absent. A plan card shows counts, which are stored on the\nplan, so embedding every item of every plan made an \"all plans\" page pay for\nhundreds of rows it never rendered. `GET /study-plans/{id}` returns them.",
+        "properties": {
+          "completedItems": {
+            "title": "Completeditems",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "deadline": {
+            "format": "date-time",
+            "title": "Deadline",
+            "type": "string"
+          },
+          "goalDescription": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goaldescription"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "prepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prepid"
+          },
+          "skills": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skills"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "strategy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strategy"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "totalItems": {
+            "title": "Totalitems",
+            "type": "integer"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          },
+          "weeklyGoalMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklygoalminutes"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "title",
+          "deadline",
+          "status",
+          "totalItems",
+          "completedItems",
           "createdAt",
           "updatedAt"
         ],
-        "title": "StudyPlanResponse",
+        "title": "StudyPlanSummaryResponse",
+        "type": "object"
+      },
+      "StudyPlanTodayItem": {
+        "description": "One pending item due today or earlier, with the plan it came from.\n\nThe plan's title travels with the item because a cross-plan list is unreadable\nwithout it, and fetching each plan separately would be a query per row.",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/StudyPlanItemResponse"
+          },
+          "planDeadline": {
+            "format": "date-time",
+            "title": "Plandeadline",
+            "type": "string"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "planTitle": {
+            "title": "Plantitle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "planId",
+          "planTitle",
+          "planDeadline"
+        ],
+        "title": "StudyPlanTodayItem",
+        "type": "object"
+      },
+      "StudyPlanUpdate": {
+        "description": "Partial update of a plan. Read with ``exclude_unset=True``.\n\nChanging `deadline` redistributes pending items, because leaving them put would\nproduce a schedule with work sitting past the plan's own deadline.",
+        "properties": {
+          "deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "goalDescription": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goaldescription"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "ACTIVE",
+                  "PAUSED",
+                  "COMPLETED"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "weeklyGoalMinutes": {
+            "anyOf": [
+              {
+                "maximum": 10080.0,
+                "minimum": 15.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklygoalminutes"
+          }
+        },
+        "title": "StudyPlanUpdate",
         "type": "object"
       },
       "SubjectsSetRequest": {
@@ -12959,55 +13333,6 @@
         ]
       }
     },
-    "/api/v1/learning/courses/{course_id}/path": {
-      "get": {
-        "description": "Get learning path for a course.",
-        "operationId": "get_learning_path_api_v1_learning_courses__course_id__path_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "course_id",
-            "required": true,
-            "schema": {
-              "title": "Course Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LearningPathResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get Learning Path",
-        "tags": [
-          "personal-learning",
-          "personal-learning"
-        ]
-      }
-    },
     "/api/v1/learning/courses/{course_id}/topics/{topic_id}/complete": {
       "post": {
         "description": "Mark a topic as completed. Emits topic.completed event.",
@@ -13058,62 +13383,6 @@
           }
         ],
         "summary": "Complete Topic",
-        "tags": [
-          "personal-learning",
-          "personal-learning"
-        ]
-      }
-    },
-    "/api/v1/learning/courses/{course_id}/topics/{topic_id}/study": {
-      "post": {
-        "description": "Record a topic study activity.",
-        "operationId": "record_topic_study_api_v1_learning_courses__course_id__topics__topic_id__study_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "course_id",
-            "required": true,
-            "schema": {
-              "title": "Course Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "topic_id",
-            "required": true,
-            "schema": {
-              "title": "Topic Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Record Topic Study",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -18091,22 +18360,91 @@
     },
     "/api/v1/learning/study-plans": {
       "get": {
-        "description": "List active study plans.",
+        "description": "List study plans, newest deadline first, without their items.\n\nTwo changes from the previous version, both of which the UI needed. It returned only\n`ACTIVE` plans, so a \"Completed\" or \"Paused\" tab could never match anything; status\nis now a filter and defaults to all. And it embedded every item of every plan, which\nan all-plans page cannot afford — the card renders counts, and those live on the\nplan. `GET /study-plans/{id}` returns the items.",
         "operationId": "list_study_plans_api_v1_learning_study_plans_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "ACTIVE",
+                    "PAUSED",
+                    "COMPLETED",
+                    "SUPERSEDED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/StudyPlanResponse"
-                  },
-                  "title": "Response List Study Plans Api V1 Learning Study Plans Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/PaginatedResponse_StudyPlanSummaryResponse_"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -18167,7 +18505,79 @@
         ]
       }
     },
+    "/api/v1/learning/study-plans/today": {
+      "get": {
+        "description": "Pending items due today or earlier, across every active plan.\n\nDeclared before `/study-plans/{plan_id}` so FastAPI does not read \"today\" as a plan\nid. Overdue items are included: work that slipped is work waiting today, and the\ncaller can tell them apart from `scheduledDate`. Paused plans are excluded, because\npausing is the learner saying they are not working on it now.",
+        "operationId": "list_study_plan_items_due_today_api_v1_learning_study_plans_today_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StudyPlanTodayItem"
+                  },
+                  "title": "Response List Study Plan Items Due Today Api V1 Learning Study Plans Today Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Study Plan Items Due Today",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/study-plans/{plan_id}": {
+      "delete": {
+        "description": "Delete a plan and its items.\n\nCascades, unlike deck deletion: a plan item is a scheduled slot rather than\nindependently authored content, and has no meaning without its plan.",
+        "operationId": "delete_study_plan_api_v1_learning_study_plans__plan_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Study Plan",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
       "get": {
         "description": "Get a study plan with items.",
         "operationId": "get_study_plan_api_v1_learning_study_plans__plan_id__get",
@@ -18210,6 +18620,246 @@
           }
         ],
         "summary": "Get Study Plan",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Rename a plan, restate its goal, move its deadline, or pause and resume it.\n\nMoving the deadline redistributes pending items, so the schedule cannot end up\ncontradicting the date printed above it.",
+        "operationId": "update_study_plan_api_v1_learning_study_plans__plan_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyPlanUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Study Plan",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/items": {
+      "post": {
+        "description": "Add an item to a plan by hand.\n\nReturns the whole plan, because adding an item changes its counts and a client that\nonly received the item would have to recompute them.",
+        "operationId": "add_study_plan_item_api_v1_learning_study_plans__plan_id__items_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyPlanItemCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Study Plan Item",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/items/{item_id}": {
+      "delete": {
+        "description": "Remove an item from a plan.\n\nReturns the plan rather than `204`, because removing an item changes its counts and\nthe caller needs them.",
+        "operationId": "delete_study_plan_item_api_v1_learning_study_plans__plan_id__items__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Study Plan Item",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Reschedule, retitle, resize, regroup, or restatus one item.",
+        "operationId": "update_study_plan_item_api_v1_learning_study_plans__plan_id__items__item_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyPlanItemUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Study Plan Item",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -18268,6 +18918,64 @@
           }
         ],
         "summary": "Complete Plan Item",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/items/{item_id}/uncomplete": {
+      "post": {
+        "description": "Return an item to pending — the inverse of completing it.\n\nA learner who ticked the wrong task previously had no way back, and the only\nrecovery was to complete the right one too, leaving the plan permanently\noverstating progress.",
+        "operationId": "uncomplete_plan_item_api_v1_learning_study_plans__plan_id__items__item_id__uncomplete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Uncomplete Plan Item",
         "tags": [
           "personal-learning",
           "personal-learning"

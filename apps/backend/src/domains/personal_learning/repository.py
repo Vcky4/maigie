@@ -3163,6 +3163,133 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    async def list_plans_paginated(
+        self,
+        user_id: str,
+        *,
+        status: str | None = None,
+        search: str | None = None,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[StudyPlan], int]:
+        """A page of the learner's plans, **without** their items.
+
+        Two problems with the previous listing. It hard-filtered `status == "ACTIVE"`,
+        so a "Completed" or "Paused" tab could never match anything. And it eager-loaded
+        every item of every plan, which an "all plans" page cannot afford — a learner
+        with ten 40-item plans paid for 400 rows to render ten cards showing counts that
+        are already stored on the plan.
+
+        Ordered by deadline, tie-broken by id so paging cannot repeat or drop a plan.
+        """
+        async with self._read_session(session) as s:
+            conditions: list[Any] = [StudyPlan.user_id == user_id]
+            if status:
+                conditions.append(StudyPlan.status == status)
+            if search:
+                pattern = f"%{search}%"
+                conditions.append(
+                    or_(StudyPlan.title.ilike(pattern), StudyPlan.goal_description.ilike(pattern))
+                )
+
+            total = (
+                await s.execute(select(func.count()).select_from(StudyPlan).where(*conditions))
+            ).scalar_one() or 0
+            rows = await s.execute(
+                select(StudyPlan)
+                .where(*conditions)
+                .order_by(StudyPlan.deadline.asc(), StudyPlan.id.asc())
+                .offset(skip)
+                .limit(take)
+            )
+            return list(rows.scalars().all()), total
+
+    async def update_study_plan(
+        self,
+        plan_id: str,
+        user_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
+    ) -> StudyPlan | None:
+        """Update a plan the caller owns, returning ``None`` when they do not.
+
+        Ownership is in the ``UPDATE`` predicate rather than a preceding ``SELECT``, so
+        there is no window between the check and the write.
+        """
+        async with self._use_session(session) as s:
+            mapped = self._map_study_plan(data)
+            if mapped:
+                result = await s.execute(
+                    update(StudyPlan)
+                    .where(StudyPlan.id == plan_id, StudyPlan.user_id == user_id)
+                    .values(**mapped)
+                )
+                if result.rowcount == 0:
+                    return None
+            refreshed = await s.execute(
+                select(StudyPlan)
+                .options(selectinload(StudyPlan.items))
+                .where(StudyPlan.id == plan_id, StudyPlan.user_id == user_id)
+            )
+            return refreshed.scalar_one_or_none()
+
+    async def delete_study_plan(
+        self, plan_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Delete a plan and its items.
+
+        Cascading is right here, unlike deck deletion: a plan item is not content the
+        learner authored independently of the plan — it is a scheduled slot that has no
+        meaning without one. `StudyPlan.items` already declares
+        ``cascade="all, delete-orphan"`` and the foreign key is ``CASCADE``, so both
+        layers agree, which is what the deck relationship did not.
+        """
+        async with self._use_session(session) as s:
+            owned = await s.execute(
+                select(StudyPlan.id).where(
+                    StudyPlan.id == plan_id, StudyPlan.user_id == user_id
+                )
+            )
+            if owned.scalar_one_or_none() is None:
+                return False
+            await s.execute(delete(StudyPlanItem).where(StudyPlanItem.plan_id == plan_id))
+            await s.execute(delete(StudyPlan).where(StudyPlan.id == plan_id))
+            return True
+
+    async def list_items_due_by(
+        self,
+        user_id: str,
+        *,
+        until: datetime,
+        statuses: tuple[str, ...] = ("PENDING",),
+        session: AsyncSession | None = None,
+    ) -> list[tuple[StudyPlanItem, StudyPlan]]:
+        """Items scheduled on or before ``until``, across the learner's active plans.
+
+        Returns each item with its plan, because a cross-plan list is unreadable without
+        saying which plan each row came from — and fetching the plans separately would
+        be a query per row.
+
+        Paused and superseded plans are excluded. Pausing is a statement that the
+        learner is not working on this now, so continuing to present its tasks as due
+        today would ignore what they asked for.
+        """
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(StudyPlanItem, StudyPlan)
+                .join(StudyPlan, StudyPlan.id == StudyPlanItem.plan_id)
+                .where(
+                    StudyPlan.user_id == user_id,
+                    StudyPlan.status == "ACTIVE",
+                    StudyPlanItem.status.in_(statuses),
+                    StudyPlanItem.scheduled_date <= until,
+                )
+                .order_by(StudyPlanItem.scheduled_date.asc(), StudyPlanItem.id.asc())
+            )
+            return [(item, plan) for item, plan in rows.all()]
+
     async def update_plan_status(
         self, plan_id: str, status: str, *, session: AsyncSession | None = None
     ) -> None:
@@ -3185,19 +3312,54 @@ class PersonalLearningRepository:
             return item
 
     async def update_plan_item(
-        self, item_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+        self,
+        item_id: str,
+        data: dict[str, Any],
+        *,
+        plan_id: str,
+        session: AsyncSession | None = None,
     ) -> StudyPlanItem | None:
+        """Update an item, scoped to the plan it must belong to.
+
+        ``plan_id`` is required rather than optional. This method previously matched on
+        the item id alone, and the only caller checked that the *plan* belonged to the
+        learner without checking that the *item* belonged to the plan — so
+        ``POST /study-plans/{myPlan}/items/{someoneElsesItem}/complete`` wrote
+        ``status`` and ``completedAt`` onto a row the caller did not own. Making the
+        parameter mandatory means a caller cannot reintroduce that by forgetting it.
+
+        Returns ``None`` when the item is not in that plan, which callers render as a
+        `404` — the same response as a missing item, so the route cannot be used to
+        discover which item ids exist.
+        """
         async with self._use_session(session) as s:
             mapped = self._map_plan_item(data)
             if mapped:
-                stmt = update(StudyPlanItem).where(StudyPlanItem.id == item_id).values(**mapped)
-                await s.execute(stmt)
+                stmt = (
+                    update(StudyPlanItem)
+                    .where(StudyPlanItem.id == item_id, StudyPlanItem.plan_id == plan_id)
+                    .values(**mapped)
+                )
+                result = await s.execute(stmt)
+                if result.rowcount == 0:
+                    return None
+            refreshed = await s.execute(
+                select(StudyPlanItem).where(
+                    StudyPlanItem.id == item_id, StudyPlanItem.plan_id == plan_id
+                )
+            )
+            return refreshed.scalar_one_or_none()
 
-        # Re-fetch to return updated object
-        async with self._use_session(None) as s:
-            stmt = select(StudyPlanItem).where(StudyPlanItem.id == item_id)
+    async def delete_plan_item(
+        self, item_id: str, *, plan_id: str, session: AsyncSession | None = None
+    ) -> bool:
+        """Remove an item from a plan. Scoped to the plan for the same reason."""
+        async with self._use_session(session) as s:
+            stmt = delete(StudyPlanItem).where(
+                StudyPlanItem.id == item_id, StudyPlanItem.plan_id == plan_id
+            )
             result = await s.execute(stmt)
-            return result.scalar_one_or_none()
+            return result.rowcount > 0
 
     async def list_plan_items(
         self, plan_id: str, *, session: AsyncSession | None = None
@@ -3206,10 +3368,41 @@ class PersonalLearningRepository:
             stmt = (
                 select(StudyPlanItem)
                 .where(StudyPlanItem.plan_id == plan_id)
-                .order_by(StudyPlanItem.scheduled_date.asc())
+                .order_by(StudyPlanItem.scheduled_date.asc(), StudyPlanItem.id.asc())
             )
             result = await s.execute(stmt)
             return list(result.scalars().all())
+
+    async def recount_plan_progress(
+        self, plan_id: str, *, session: AsyncSession | None = None
+    ) -> tuple[int, int]:
+        """Recompute a plan's item counts from its items, and store them.
+
+        ``completedItems`` was maintained by incrementing it on every completion,
+        without checking whether the item was already complete — so completing the same
+        item twice counted twice, and progress could exceed 100%. Skipping and
+        uncompleting an item make an incremented counter harder still to keep honest.
+
+        Deriving it removes the class of bug rather than the instance: whatever the
+        caller did to the items, the stored counts are what the items say. Returns
+        ``(completed, total)``.
+        """
+        async with self._use_session(session) as s:
+            counts = await s.execute(
+                select(
+                    func.count(StudyPlanItem.id),
+                    func.count(StudyPlanItem.id).filter(StudyPlanItem.status == "COMPLETED"),
+                ).where(StudyPlanItem.plan_id == plan_id)
+            )
+            total, completed = counts.one()
+            total = int(total or 0)
+            completed = int(completed or 0)
+            await s.execute(
+                update(StudyPlan)
+                .where(StudyPlan.id == plan_id)
+                .values(total_items=total, completed_items=completed)
+            )
+            return completed, total
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Study Plans
@@ -3225,6 +3418,8 @@ class PersonalLearningRepository:
             "prepId": "prep_id",
             "status": "status",
             "strategy": "strategy",
+            "weeklyGoalMinutes": "weekly_goal_minutes",
+            "skills": "skills",
             "totalItems": "total_items",
             "completedItems": "completed_items",
         }
@@ -3239,6 +3434,7 @@ class PersonalLearningRepository:
             "scheduledDate": "scheduled_date",
             "estimatedMinutes": "estimated_minutes",
             "itemType": "item_type",
+            "phase": "phase",
             "topicId": "topic_id",
             "prepTopicId": "prep_topic_id",
             "status": "status",

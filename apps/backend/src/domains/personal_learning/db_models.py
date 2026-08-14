@@ -1062,10 +1062,15 @@ class StudyPlan(Base, TimestampMixin):
     prep_id: Mapped[str | None] = mapped_column(
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True
     )
-    # `ACTIVE`, `COMPLETED`, or `SUPERSEDED` — a plan replaced by a newer one for
-    # the same preparation. The preparation timeline takes only completed items from
-    # a superseded plan, so regenerating replaces the schedule instead of doubling
-    # it.
+    # `ACTIVE`, `PAUSED`, `COMPLETED`, or `SUPERSEDED` — the last meaning a plan
+    # replaced by a newer one for the same preparation. The preparation timeline takes
+    # only completed items from a superseded plan, so regenerating replaces the
+    # schedule instead of doubling it.
+    #
+    # `PAUSED` is a learner action: the detail page has always had a pause control,
+    # and until it could be stored the button changed local state and forgot. A paused
+    # plan keeps its items and its dates; it is excluded from "what should I do today"
+    # rather than rescheduled, because pausing is not a statement about the deadline.
     status: Mapped[str] = mapped_column(String, default="ACTIVE")
     # Which scheduler produced this plan: `ADAPTIVE` or `EVEN`.
     #
@@ -1077,6 +1082,21 @@ class StudyPlan(Base, TimestampMixin):
     # Nullable: plans created before this column exist and were all even, but
     # backfilling them to `EVEN` would assert something about rows nobody measured.
     strategy: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Minutes a week the learner means to spend. An intention rather than a
+    # measurement, so it is nullable: it cannot be derived, and a default would set a
+    # goal on their behalf. Same reasoning as `ExamPrep.targetReadiness`.
+    weekly_goal_minutes: Mapped[int | None] = mapped_column(
+        "weeklyGoalMinutes", Integer, nullable=True
+    )
+    # What this plan builds, as a JSON array of strings, named by the generator
+    # alongside the items. Not derivable from item titles after the fact without
+    # guessing. Follows `LearningProfile.subjects`.
+    skills: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # Counts of this plan's items. Derived rather than accumulated — see
+    # `repository.recount_plan_progress` for why: incrementing `completedItems` on each
+    # completion double-counted a repeated completion and could not express
+    # uncompleting or skipping at all.
     total_items: Mapped[int] = mapped_column("totalItems", Integer, default=0)
     completed_items: Mapped[int] = mapped_column("completedItems", Integer, default=0)
 
@@ -1115,8 +1135,20 @@ class StudyPlanItem(Base, TimestampMixin):
     )
     estimated_minutes: Mapped[int] = mapped_column("estimatedMinutes", Integer, default=30)
     item_type: Mapped[str] = mapped_column("itemType", String, default="STUDY")
+    # A grouping label — "Foundations", "Core patterns", "Mock interviews". The phase a
+    # plan is drawn in terms of is this, and nothing else: a phase's week range is the
+    # span of its items' dates, its progress is the share of them completed, and its
+    # number is its position in that order. A separate phase table would hold a name
+    # and a foreign key and derive the rest from these rows anyway.
+    #
+    # Null for items generated before this existed; those plans render as one flat
+    # list, which is what they are. Same shape and reasoning as `PrepTopic.category`.
+    phase: Mapped[str | None] = mapped_column(String, nullable=True)
     topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True)
     prep_topic_id: Mapped[str | None] = mapped_column("prepTopicId", String, nullable=True)
+    # `PENDING`, `COMPLETED` or `SKIPPED`. Only `COMPLETED` was ever written before
+    # stage 3; skipping is how a learner says "not doing this" without it counting
+    # against the plan's progress or sitting overdue forever.
     status: Mapped[str] = mapped_column(String, default="PENDING")
     completed_at: Mapped[datetime | None] = mapped_column(
         "completedAt", DateTime(timezone=True), nullable=True
@@ -1125,7 +1157,10 @@ class StudyPlanItem(Base, TimestampMixin):
     # Relationships
     plan: Mapped["StudyPlan"] = relationship("StudyPlan", back_populates="items")
 
-    __table_args__ = (Index("StudyPlanItem_planId_scheduledDate_idx", "planId", "scheduledDate"),)
+    __table_args__ = (
+        Index("StudyPlanItem_planId_scheduledDate_idx", "planId", "scheduledDate"),
+        Index("StudyPlanItem_planId_phase_idx", "planId", "phase"),
+    )
 
     def __repr__(self) -> str:
         return f"<StudyPlanItem id={self.id} title={self.title}>"
