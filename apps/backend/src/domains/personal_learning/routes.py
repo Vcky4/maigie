@@ -857,15 +857,22 @@ async def list_flashcards(
     search: str | None = Query(None),
     sourceType: str | None = Query(None),
     state: Literal["due", "new", "learning", "mastered"] | None = Query(None),
+    sort: Literal["recent", "due"] = Query("recent"),
 ):
     """List the learner's cards. Cards were previously reachable only through the due
-    queue or a deck, so a card that was neither due nor filed was unreachable."""
+    queue or a deck, so a card that was neither due nor filed was unreachable.
+
+    `sort` belongs to the server because ordering and paging are inseparable — a page
+    boundary means nothing without a defined order, and a client re-sorting the page it
+    received gets a list ordered within pages and unordered across them.
+    """
     items, total = await flashcard_service.list_flashcards(
         user_id=current_user.id,
         deck_id=deckId,
         search=search,
         source_type=sourceType,
         state=state,
+        sort=sort,
         page=page,
         page_size=pageSize,
     )

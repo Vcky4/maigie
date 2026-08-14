@@ -1097,16 +1097,29 @@ class PersonalLearningRepository:
         search: str | None = None,
         source_type: str | None = None,
         state: str | None = None,
+        sort: str = "recent",
         skip: int = 0,
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[Flashcard], int]:
-        """A page of the learner's cards, newest first.
+        """A page of the learner's cards.
 
         ``state`` filters on scheduling state using the same definitions as the stats
         read — ``due``, ``new`` (never reviewed), ``learning`` (reviewed, not mature)
         and ``mastered`` — so a filtered list can never disagree with the counts shown
         above it.
+
+        ``sort`` is part of the contract rather than a client concern because ordering
+        and pagination are inseparable: a page boundary is only meaningful against a
+        defined order, and a client that re-sorts the page it received produces a list
+        that is sorted within each page and unsorted across them.
+
+        - ``recent`` — newest first. The default, and what a library view wants.
+        - ``due`` — soonest due first, so a deck's page one is the work waiting.
+
+        Both are tie-broken by id. Without it, rows sharing a timestamp can be returned
+        in a different relative order on each query, which silently duplicates or drops
+        cards across page boundaries.
         """
         async with self._read_session(session) as s:
             now = datetime.now(UTC)
@@ -1133,10 +1146,15 @@ class PersonalLearningRepository:
             total_stmt = select(func.count()).select_from(Flashcard).where(*conditions)
             total = (await s.execute(total_stmt)).scalar_one() or 0
 
+            order = (
+                (Flashcard.next_review_at.asc(), Flashcard.id.asc())
+                if sort == "due"
+                else (Flashcard.created_at.desc(), Flashcard.id.asc())
+            )
             stmt = (
                 select(Flashcard)
                 .where(*conditions)
-                .order_by(Flashcard.created_at.desc())
+                .order_by(*order)
                 .offset(skip)
                 .limit(take)
             )

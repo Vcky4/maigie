@@ -246,6 +246,42 @@ class TestFlashcardListing:
         assert response.status_code == 400
         assert response.json()["code"] == "VALIDATION_ERROR"
 
+    async def test_due_sort_orders_the_page_and_survives_paging(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Ordering is the server's, because a page boundary needs a defined order.
+
+        Also guards the tie-break: these cards are created in one loop and can share a
+        timestamp, and without a secondary key a card can land on two pages or none.
+        """
+        deck = await _create_deck(client, auth_headers)
+        for index in range(5):
+            await _create_card(client, auth_headers, deck_id=deck["id"], front=f"Q{index}")
+
+        collected: list[str] = []
+        for page in (1, 2, 3):
+            response = await client.get(
+                f"{BASE}/flashcards",
+                params={"deckId": deck["id"], "sort": "due", "page": page, "pageSize": 2},
+                headers=auth_headers,
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["total"] == 5
+            due_dates = [item["nextReviewAt"] for item in body["items"]]
+            assert due_dates == sorted(due_dates)
+            collected.extend(item["id"] for item in body["items"])
+
+        assert len(collected) == 5
+        assert len(set(collected)) == 5, "paging lost or repeated a card"
+
+    async def test_rejects_a_sort_it_does_not_define(self, client: AsyncClient, auth_headers):
+        response = await client.get(
+            f"{BASE}/flashcards", params={"sort": "alphabetical"}, headers=auth_headers
+        )
+        assert response.status_code == 400
+        assert response.json()["code"] == "VALIDATION_ERROR"
+
     async def test_deck_filter_scopes_the_list(self, client: AsyncClient, auth_headers):
         deck = await _create_deck(client, auth_headers)
         filed = await _create_card(client, auth_headers, deck_id=deck["id"], front="Filed")

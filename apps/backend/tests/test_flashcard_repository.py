@@ -501,6 +501,51 @@ class TestCardListing:
         assert len(page_two) == 1
         assert {card.id for card in page_one}.isdisjoint({card.id for card in page_two})
 
+    async def test_due_sort_puts_the_soonest_first(self, repo, library):
+        """The deck page's order. Server-side, because paging needs a defined order."""
+        cards, _ = await repo.list_flashcards(USER, sort="due")
+        due_dates = [card.next_review_at for card in cards]
+        assert due_dates == sorted(due_dates)
+        # The overdue, never-reviewed card is the most urgent work in the deck.
+        assert cards[0].front == "new-1"
+
+    async def test_recent_sort_is_the_default(self, repo, library):
+        default_order = [card.id for card in (await repo.list_flashcards(USER))[0]]
+        explicit = [card.id for card in (await repo.list_flashcards(USER, sort="recent"))[0]]
+        assert default_order == explicit
+
+    async def test_pages_do_not_overlap_when_timestamps_tie(self, repo):
+        """Rows sharing a timestamp need a tie-break or paging drops and repeats cards.
+
+        Cards created in one bulk generation share a `createdAt` to the microsecond,
+        and without a secondary sort key the database may return them in a different
+        relative order per query — so a card can appear on both pages or on neither.
+        """
+        now = datetime.now(UTC)
+        for index in range(6):
+            await repo.create_flashcard(
+                {
+                    "userId": USER,
+                    "front": f"tied-{index}",
+                    "back": "x",
+                    "intervalDays": 1,
+                    "repetitionCount": 0,
+                    "easeFactor": 2.5,
+                    # Identical for every card, in both sort keys.
+                    "nextReviewAt": now,
+                    "lastQuality": -1,
+                    "lapseCount": 0,
+                }
+            )
+
+        for sort in ("recent", "due"):
+            collected: list[str] = []
+            for page in range(3):
+                rows, total = await repo.list_flashcards(USER, sort=sort, skip=page * 2, take=2)
+                collected.extend(card.id for card in rows)
+            assert total == 6
+            assert len(set(collected)) == 6, f"{sort} paging lost or repeated a card"
+
     async def test_scoped_to_the_caller(self, repo, library):
         _, total = await repo.list_flashcards(OTHER_USER)
         assert total == 0

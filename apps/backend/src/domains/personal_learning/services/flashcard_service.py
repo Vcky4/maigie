@@ -583,6 +583,7 @@ async def list_flashcards(
     search: str | None = None,
     source_type: str | None = None,
     state: str | None = None,
+    sort: str = "recent",
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Any], int]:
@@ -593,6 +594,7 @@ async def list_flashcards(
         search=search,
         source_type=source_type,
         state=state,
+        sort=sort,
         skip=(page - 1) * page_size,
         take=page_size,
     )
