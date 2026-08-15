@@ -3373,6 +3373,71 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    async def get_plan_metrics(
+        self, plan_id: str, *, session: AsyncSession | None = None
+    ) -> dict[str, Any]:
+        """Figures about a plan's progress that its columns do not already hold.
+
+        All four are derived from the plan's own items, so they cannot contradict the
+        item list rendered beside them, and all four are genuinely about *this plan* —
+        deliberately not borrowed from another domain to fill a tile.
+
+        - ``completed_minutes`` is the estimated minutes on completed items. That is
+          *planned* effort for work that got done, not measured time at a desk; nothing
+          here observes how long a learner actually spent, and callers must not label it
+          as though it did.
+        - ``practice_completed`` counts completed items that were practice or review
+          rather than first-pass study.
+        - ``skipped`` is reported because a plan where a third of the work was skipped
+          reads very differently from one where it was all done.
+        - ``active_dates`` are the distinct days something was completed, newest first,
+          for a plan-scoped streak. Not the flashcard review streak, which measures a
+          different activity and would be that number wearing this label.
+        """
+        async with self._read_session(session) as s:
+            practice_types = ("REVIEW", "PRACTICE")
+            row = (
+                await s.execute(
+                    select(
+                        func.coalesce(
+                            func.sum(StudyPlanItem.estimated_minutes).filter(
+                                StudyPlanItem.status == "COMPLETED"
+                            ),
+                            0,
+                        ),
+                        func.coalesce(func.sum(StudyPlanItem.estimated_minutes), 0),
+                        func.count(StudyPlanItem.id).filter(
+                            StudyPlanItem.status == "COMPLETED",
+                            StudyPlanItem.item_type.in_(practice_types),
+                        ),
+                        func.count(StudyPlanItem.id).filter(
+                            StudyPlanItem.status == "SKIPPED"
+                        ),
+                    ).where(StudyPlanItem.plan_id == plan_id)
+                )
+            ).one()
+
+            day = func.date(StudyPlanItem.completed_at)
+            days = (
+                await s.execute(
+                    select(day)
+                    .where(
+                        StudyPlanItem.plan_id == plan_id,
+                        StudyPlanItem.completed_at.is_not(None),
+                    )
+                    .group_by(day)
+                    .order_by(day.desc())
+                )
+            ).scalars().all()
+
+            return {
+                "completed_minutes": int(row[0] or 0),
+                "planned_minutes": int(row[1] or 0),
+                "practice_completed": int(row[2] or 0),
+                "skipped_items": int(row[3] or 0),
+                "active_dates": [value for value in (_as_date(d) for d in days) if value],
+            }
+
     async def recount_plan_progress(
         self, plan_id: str, *, session: AsyncSession | None = None
     ) -> tuple[int, int]:

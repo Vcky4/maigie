@@ -21,16 +21,6 @@ USER = "plan-test-user"
 OTHER_USER = "plan-test-intruder"
 
 
-@pytest.fixture(scope="function", autouse=True)
-async def db_lifecycle():
-    """Shadow the Postgres lifecycle fixture; nothing here needs it.
-
-    A fixture rather than ``SKIP_DB_FIXTURE`` in the environment, which is process-wide
-    and would disable the database fixture for every other module in the run.
-    """
-    yield
-
-
 @pytest.fixture
 async def repo(monkeypatch):
     import src.shared.database as shared_db
@@ -345,6 +335,66 @@ class TestItemsDueBy:
 # ---------------------------------------------------------------------------
 # Plan update and delete
 # ---------------------------------------------------------------------------
+
+
+class TestPlanMetrics:
+    async def test_counts_planned_minutes_only_for_completed_work(self, repo):
+        """Planned effort on work that got done — not measured time at a desk."""
+        plan = await _plan(repo)
+        await _item(repo, plan, title="Done", minutes=45, status="COMPLETED")
+        await _item(repo, plan, title="Pending", minutes=30)
+
+        metrics = await repo.get_plan_metrics(plan.id)
+        assert metrics["completed_minutes"] == 45
+        assert metrics["planned_minutes"] == 75
+
+    async def test_counts_practice_and_review_separately_from_study(self, repo):
+        plan = await _plan(repo)
+        for title, item_type in (
+            ("Read", "STUDY"),
+            ("Recap", "REVIEW"),
+            ("Drill", "PRACTICE"),
+        ):
+            await repo.create_plan_item(
+                {
+                    "planId": plan.id,
+                    "title": title,
+                    "scheduledDate": datetime.now(UTC),
+                    "estimatedMinutes": 20,
+                    "itemType": item_type,
+                    "status": "COMPLETED",
+                }
+            )
+        metrics = await repo.get_plan_metrics(plan.id)
+        assert metrics["practice_completed"] == 2
+
+    async def test_reports_skipped_work(self, repo):
+        """A plan where a third was skipped reads differently from one all done."""
+        plan = await _plan(repo)
+        await _item(repo, plan, title="Skipped", status="SKIPPED")
+        await _item(repo, plan, title="Done", status="COMPLETED")
+        metrics = await repo.get_plan_metrics(plan.id)
+        assert metrics["skipped_items"] == 1
+
+    async def test_active_dates_come_from_completion_timestamps(self, repo):
+        plan = await _plan(repo)
+        now = datetime.now(UTC)
+        for offset in (0, 0, 1, 3):
+            item = await _item(repo, plan, title=f"Task {offset}")
+            await repo.update_plan_item(
+                item.id,
+                {"status": "COMPLETED", "completedAt": now - timedelta(days=offset)},
+                plan_id=plan.id,
+            )
+        metrics = await repo.get_plan_metrics(plan.id)
+        # Two items completed today collapse to one active day.
+        assert len(metrics["active_dates"]) == 3
+
+    async def test_an_untouched_plan_has_no_active_days(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        metrics = await repo.get_plan_metrics(plan.id)
+        assert metrics["active_dates"] == []
+        assert metrics["completed_minutes"] == 0
 
 
 class TestPlanWrites:

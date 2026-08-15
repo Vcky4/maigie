@@ -1177,6 +1177,21 @@ async def get_study_plan(plan_id: str, current_user: CurrentUser):
     return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
 
 
+@router.get(
+    "/study-plans/{plan_id}/metrics", response_model=models.StudyPlanMetricsResponse
+)
+async def get_study_plan_metrics(plan_id: str, current_user: CurrentUser):
+    """Progress figures for one plan, derived from its items.
+
+    Separate from the plan read because it is a different question — the plan and its
+    items describe what to do, these describe how it has gone — and because a client
+    rendering only the schedule should not pay for the aggregates.
+    """
+    return await study_plan_service.get_plan_metrics(
+        user_id=current_user.id, plan_id=plan_id
+    )
+
+
 @router.patch("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
 async def update_study_plan(
     plan_id: str, body: models.StudyPlanUpdate, current_user: CurrentUser

@@ -6,10 +6,11 @@ interleaves spaced repetition reviews, and adapts when learners fall behind.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
 from src.shared.exceptions import NotFoundError
+from src.shared.time.learner_timezone import to_learner_local
 
 from ..repository import personal_learning_repo as repo
 from . import prep_intent, prep_plan_adaptive
@@ -251,6 +252,73 @@ async def get_plan(*, user_id: str, plan_id: str) -> Any:
     return plan
 
 
+async def get_plan_metrics(*, user_id: str, plan_id: str) -> dict[str, Any]:
+    """Plan-scoped progress figures, for the detail page's metrics panel.
+
+    Everything here is about this plan and derived from its items. The panel it feeds
+    also showed a "retention" figure, which is deliberately absent: retention is
+    flashcard recall, a different domain, and a plan with no flashcards has none — see
+    the open decision in the integration plan. Reporting library-wide recall under a
+    plan heading would be a real number answering a question nobody asked.
+    """
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    from src.shared.time.learner_timezone import resolve_learner_timezone
+
+    metrics = await repo.get_plan_metrics(plan_id)
+    learner_timezone = await resolve_learner_timezone(user_id)
+    local_today = to_learner_local(datetime.now(UTC), learner_timezone).date()
+
+    return {
+        "completedMinutes": metrics["completed_minutes"],
+        "plannedMinutes": metrics["planned_minutes"],
+        "practiceCompleted": metrics["practice_completed"],
+        "skippedItems": metrics["skipped_items"],
+        "currentStreakDays": _streak_from_dates(set(metrics["active_dates"]), local_today),
+        "activeDays": len(metrics["active_dates"]),
+    }
+
+
+def _streak_from_dates(active_dates: set[date], today: date) -> int:
+    """Consecutive days ending today, or ending yesterday if today is unused.
+
+    Same rule as the flashcard streak, and the same reason: a learner who worked six
+    days straight and has not started this morning is on a six-day run, not a broken
+    one. Duplicated deliberately rather than shared — this counts completed plan items
+    and that counts graded cards, and a future change to one should not silently move
+    the other.
+    """
+    if not active_dates:
+        return 0
+    cursor = today
+    if cursor not in active_dates:
+        cursor = today - timedelta(days=1)
+        if cursor not in active_dates:
+            return 0
+    length = 0
+    while cursor in active_dates:
+        length += 1
+        cursor -= timedelta(days=1)
+    return length
+
+
+def _as_utc(value: Any) -> Any:
+    """Read a naive datetime as UTC, leave an aware one alone, pass anything else through.
+
+    Every datetime column here is ``timestamptz`` and every calculation subtracts one
+    instant from another, but a client may send `2026-09-01T00:00:00` with no offset and
+    Pydantic parses that to a naive value. Mixing the two is not a cosmetic problem:
+    subtracting a naive datetime from an aware one raises, so a deadline without an
+    offset made `_redistribute_plan` fail with a `TypeError` — a `500` on a request that
+    looked valid. Naive input is read as UTC, matching how these columns are written.
+    """
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
 async def update_plan(*, user_id: str, plan_id: str, data: dict[str, Any]) -> Any:
     """Rename a plan, restate its goal, move its deadline, or pause and resume it.
 
@@ -261,6 +329,8 @@ async def update_plan(*, user_id: str, plan_id: str, data: dict[str, Any]) -> An
     """
     if "status" in data and data["status"] not in SETTABLE_PLAN_STATUSES:
         raise ValueError(f"Unsupported plan status: {data['status']}")
+
+    data = {key: _as_utc(value) for key, value in data.items()}
 
     existing = await repo.get_study_plan(plan_id, user_id)
     if not existing:
@@ -304,7 +374,7 @@ async def add_item(*, user_id: str, plan_id: str, data: dict[str, Any]) -> Any:
             "planId": plan_id,
             "title": data["title"],
             "description": data.get("description"),
-            "scheduledDate": data["scheduledDate"],
+            "scheduledDate": _as_utc(data["scheduledDate"]),
             "estimatedMinutes": data.get("estimatedMinutes", 30),
             "itemType": data.get("itemType", "STUDY"),
             "phase": data.get("phase"),
@@ -319,6 +389,8 @@ async def update_item(*, user_id: str, plan_id: str, item_id: str, data: dict[st
     """Reschedule, retitle, resize, regroup, or restatus one item."""
     if "status" in data and data["status"] not in SETTABLE_ITEM_STATUSES:
         raise ValueError(f"Unsupported plan item status: {data['status']}")
+
+    data = {key: _as_utc(value) for key, value in data.items()}
 
     plan = await repo.get_study_plan(plan_id, user_id)
     if not plan:

@@ -236,3 +236,87 @@ class TestStudyPlanCoverageInvariant:
             assert (
                 total <= max_daily
             ), f"Day {date.date()} has {total}min, exceeding sustainable limit {max_daily}min"
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers added in stage 3
+# ---------------------------------------------------------------------------
+
+
+class TestNaiveDatetimeCoercion:
+    """A deadline without an offset used to make redistribution raise.
+
+    Every datetime column here is `timestamptz` and every calculation subtracts one
+    instant from another. Pydantic parses `2026-09-01T00:00:00` to a naive value, and
+    subtracting naive from aware raises `TypeError` — so a request that looked valid
+    returned a 500 from `_redistribute_plan`.
+    """
+
+    def test_reads_a_naive_datetime_as_utc(self):
+        from datetime import UTC, datetime
+
+        from src.domains.personal_learning.services.study_plan_service import _as_utc
+
+        coerced = _as_utc(datetime(2026, 9, 1, 12, 0))
+        assert coerced.tzinfo is UTC
+        # The arithmetic that used to raise.
+        assert isinstance(datetime.now(UTC) - coerced, __import__("datetime").timedelta)
+
+    def test_leaves_an_aware_datetime_alone(self):
+        from datetime import UTC, datetime
+
+        from src.domains.personal_learning.services.study_plan_service import _as_utc
+
+        original = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+        assert _as_utc(original) is original
+
+    def test_passes_other_values_through(self):
+        from src.domains.personal_learning.services.study_plan_service import _as_utc
+
+        assert _as_utc("Renamed plan") == "Renamed plan"
+        assert _as_utc(None) is None
+        assert _as_utc(45) == 45
+
+
+class TestPlanStreak:
+    """Consecutive days with a completed plan item."""
+
+    def test_no_completions_is_no_streak(self):
+        from datetime import date
+
+        from src.domains.personal_learning.services.study_plan_service import (
+            _streak_from_dates,
+        )
+
+        assert _streak_from_dates(set(), date(2026, 8, 14)) == 0
+
+    def test_counts_a_run_ending_today(self):
+        from datetime import date, timedelta
+
+        from src.domains.personal_learning.services.study_plan_service import (
+            _streak_from_dates,
+        )
+
+        today = date(2026, 8, 14)
+        active = {today, today - timedelta(days=1), today - timedelta(days=2)}
+        assert _streak_from_dates(active, today) == 3
+
+    def test_survives_a_day_not_yet_started(self):
+        from datetime import date, timedelta
+
+        from src.domains.personal_learning.services.study_plan_service import (
+            _streak_from_dates,
+        )
+
+        today = date(2026, 8, 14)
+        assert _streak_from_dates({today - timedelta(days=1)}, today) == 1
+
+    def test_breaks_after_a_full_missed_day(self):
+        from datetime import date, timedelta
+
+        from src.domains.personal_learning.services.study_plan_service import (
+            _streak_from_dates,
+        )
+
+        today = date(2026, 8, 14)
+        assert _streak_from_dates({today - timedelta(days=2)}, today) == 0

@@ -19,20 +19,6 @@ from src.domains.personal_learning.repository import _streak_length
 from src.domains.personal_learning.services import flashcard_service as fs
 from src.shared.time.learner_timezone import UNKNOWN_TIMEZONE, LearnerTimezone
 
-
-@pytest.fixture(scope="function", autouse=True)
-async def db_lifecycle():
-    """Shadow the Postgres lifecycle fixture from conftest; nothing here needs a database.
-
-    Done with a fixture rather than by setting ``SKIP_DB_FIXTURE`` in the environment.
-    That variable is process-wide and is read at fixture time, so a module setting it at
-    import time turns off the database fixture for every module in the run — including
-    the API tests that need it. Two existing test modules do exactly that, which is why
-    this one does not.
-    """
-    yield
-
-
 AUCKLAND = LearnerTimezone(
     zone=ZoneInfo("Pacific/Auckland"), name="Pacific/Auckland", is_known=True, source="DEVICE"
 )

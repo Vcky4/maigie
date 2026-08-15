@@ -55,20 +55,53 @@ def pytest_ignore_collect(collection_path, config):
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="function", autouse=True)
-async def db_lifecycle():
-    """
-    Connect/disconnect the SQLAlchemy async engine per test.
+#: Fixtures whose presence means a test needs a live database.
+_DB_FIXTURES = frozenset({"db", "client", "auth_headers"})
 
-    - Set ``SKIP_DB_FIXTURE=1`` to skip DB setup entirely (unit tests).
-    - If ``DATABASE_URL`` is not set, tests requiring DB are skipped.
+
+@pytest.fixture
+def db():
+    """Declare that a test needs a live database.
+
+    A signal, not the setup — ``db_lifecycle`` below does the connecting. Request this
+    when a test talks to the database without going through ``client``.
     """
-    if os.getenv("SKIP_DB_FIXTURE", "").lower() in ("1", "true", "yes"):
+    return None
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def db_lifecycle(request):
+    """Connect/disconnect the SQLAlchemy async engine, for tests that need one.
+
+    Which tests those are is decided **per test**, from the fixtures it requests. It
+    used to be decided by a ``SKIP_DB_FIXTURE`` environment variable, which is
+    process-wide while pytest imports every module during collection — so one unit-test
+    module setting it at import time disabled the database for the *entire* run. Over
+    forty modules set it. The effect was that every database-backed test skipped
+    regardless of ``DATABASE_URL``, and in a summary line a skipped test looks much
+    like a passing one. It hid the flashcard API suite for a whole stage.
+
+    Reading ``request.fixturenames`` fixes that without touching those forty modules,
+    and without the opposite failure: a test that never asked for a database is left
+    alone rather than being connected — or skipped — on another file's behalf. The
+    ``SKIP_DB_FIXTURE`` lines are now inert.
+
+    **Running them is opt-in.** ``DATABASE_URL`` is not a safe trigger: the configured
+    database is a shared hosted one, and `.env` can reach ``os.environ`` as a side
+    effect of collection — ``test_generation_latency`` used to do exactly that by
+    exec'ing a script that calls ``load_dotenv()``. Keying off it meant ``pytest tests``
+    silently spent half an hour writing to a real database, depending on which files
+    were collected. ``RUN_DB_TESTS=1`` says so deliberately::
+
+        RUN_DB_TESTS=1 DATABASE_URL=... pytest tests/test_study_plan_api.py
+    """
+    if not _DB_FIXTURES & set(request.fixturenames):
         yield
         return
 
-    database_url = os.getenv("DATABASE_URL", "")
-    if not database_url:
+    if os.getenv("RUN_DB_TESTS", "").lower() not in ("1", "true", "yes"):
+        pytest.skip("RUN_DB_TESTS not set — skipping database-dependent test")
+    if not os.getenv("DATABASE_URL", ""):
         pytest.skip("DATABASE_URL not set — skipping database-dependent test")
 
     from src.shared.database.session import connect_db, disconnect_db
@@ -97,8 +130,8 @@ async def db_lifecycle():
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Async HTTP client against the FastAPI app.
 
-    The app's lifespan is intentionally bypassed — the ``db_lifecycle``
-    fixture owns database setup/teardown.
+    The app's lifespan is intentionally bypassed — ``db_lifecycle`` owns database setup
+    and teardown, and recognises this fixture by name as needing one.
     """
     from src.app import app
 

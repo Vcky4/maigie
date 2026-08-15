@@ -27,7 +27,21 @@ _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_generation_la
 _spec = importlib.util.spec_from_file_location("check_generation_latency", _SCRIPT)
 assert _spec and _spec.loader
 check_generation_latency = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(check_generation_latency)
+
+# The script calls `load_dotenv()` at import, which is right for a script and wrong
+# here: executing it would copy `.env` — including `DATABASE_URL` — into `os.environ`
+# for the whole pytest process. Because pytest imports every module during collection,
+# that quietly pointed the entire suite at the real database, and any test that decides
+# what to do based on `DATABASE_URL` would then decide differently depending on whether
+# this file happened to be collected. Neutralised for the duration of the import; the
+# functions under test take their inputs as arguments and need no environment.
+_dotenv = importlib.import_module("dotenv")
+_real_load_dotenv = _dotenv.load_dotenv
+_dotenv.load_dotenv = lambda *args, **kwargs: False
+try:
+    _spec.loader.exec_module(check_generation_latency)
+finally:
+    _dotenv.load_dotenv = _real_load_dotenv
 
 percentile = check_generation_latency.percentile
 

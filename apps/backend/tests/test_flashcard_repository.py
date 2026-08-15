@@ -24,18 +24,6 @@ USER = "repo-test-user"
 OTHER_USER = "repo-test-intruder"
 
 
-@pytest.fixture(scope="function", autouse=True)
-async def db_lifecycle():
-    """Shadow the Postgres lifecycle fixture from conftest.
-
-    Declared here rather than by setting ``SKIP_DB_FIXTURE`` in the environment,
-    because that variable is process-wide: a module that sets it at import time
-    silently disables the database fixture for every other module collected in the
-    same run, including ones that need it.
-    """
-    yield
-
-
 @pytest.fixture
 async def repo(monkeypatch):
     """A repository bound to a fresh in-memory database, with one learner in it."""

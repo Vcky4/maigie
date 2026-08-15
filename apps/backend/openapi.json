@@ -9806,6 +9806,45 @@
         "title": "StudyPlanItemUpdate",
         "type": "object"
       },
+      "StudyPlanMetricsResponse": {
+        "description": "Plan-scoped progress figures, derived from the plan's own items.\n\n`completedMinutes` is **planned** effort on completed work, not measured time — no\npart of this observes how long a learner actually spent, and a client must not label\nit as focus or time-at-desk. Measured session time lives in `/analytics/sessions`.\n\nThere is no retention figure. Retention is flashcard recall, a different domain, and\na plan with no flashcards has none; the honest options are to omit it or to show\nlibrary recall from `GET /flashcards/stats` under a heading that says so.",
+        "properties": {
+          "activeDays": {
+            "title": "Activedays",
+            "type": "integer"
+          },
+          "completedMinutes": {
+            "title": "Completedminutes",
+            "type": "integer"
+          },
+          "currentStreakDays": {
+            "title": "Currentstreakdays",
+            "type": "integer"
+          },
+          "plannedMinutes": {
+            "title": "Plannedminutes",
+            "type": "integer"
+          },
+          "practiceCompleted": {
+            "title": "Practicecompleted",
+            "type": "integer"
+          },
+          "skippedItems": {
+            "title": "Skippeditems",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "completedMinutes",
+          "plannedMinutes",
+          "practiceCompleted",
+          "skippedItems",
+          "currentStreakDays",
+          "activeDays"
+        ],
+        "title": "StudyPlanMetricsResponse",
+        "type": "object"
+      },
       "StudyPlanResponse": {
         "description": "A plan with its items.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan\nqueries eagerly load `items`, so these are always serialized.",
         "properties": {
@@ -18976,6 +19015,55 @@
           }
         ],
         "summary": "Uncomplete Plan Item",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/metrics": {
+      "get": {
+        "description": "Progress figures for one plan, derived from its items.\n\nSeparate from the plan read because it is a different question — the plan and its\nitems describe what to do, these describe how it has gone — and because a client\nrendering only the schedule should not pay for the aggregates.",
+        "operationId": "get_study_plan_metrics_api_v1_learning_study_plans__plan_id__metrics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanMetricsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Study Plan Metrics",
         "tags": [
           "personal-learning",
           "personal-learning"

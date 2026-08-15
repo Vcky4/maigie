@@ -405,6 +405,72 @@ class TestPlanEditing:
         ).status_code == 404
 
 
+class TestPlanMetrics:
+    async def test_reports_plan_scoped_progress(self, client: AsyncClient, auth_headers):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, item_ids = await _seed_plan(user_id, item_count=3)
+
+        await client.post(
+            f"{BASE}/study-plans/{plan_id}/items/{item_ids[0]}/complete", headers=auth_headers
+        )
+        response = await client.get(
+            f"{BASE}/study-plans/{plan_id}/metrics", headers=auth_headers
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # 30 minutes per seeded item; one completed.
+        assert body["completedMinutes"] == 30
+        assert body["plannedMinutes"] == 90
+        assert body["currentStreakDays"] == 1
+        assert body["activeDays"] == 1
+        assert body["skippedItems"] == 0
+        # No retention figure: that is flashcard recall, a different domain.
+        assert "retention" not in body
+
+    async def test_untouched_plan_reports_zeroes_not_absent_figures(
+        self, client: AsyncClient, auth_headers
+    ):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+        body = (
+            await client.get(f"{BASE}/study-plans/{plan_id}/metrics", headers=auth_headers)
+        ).json()
+        assert body["completedMinutes"] == 0
+        assert body["currentStreakDays"] == 0
+        assert body["activeDays"] == 0
+
+    async def test_unreachable_for_another_learner(self, client: AsyncClient, auth_headers):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+        intruder = await _login(client)
+        response = await client.get(
+            f"{BASE}/study-plans/{plan_id}/metrics", headers=intruder
+        )
+        assert response.status_code == 404
+
+
+class TestNaiveDeadline:
+    async def test_a_deadline_without_an_offset_is_accepted(
+        self, client: AsyncClient, auth_headers
+    ):
+        """This used to 500.
+
+        A naive deadline reached `_redistribute_plan`, which subtracts it from an aware
+        `now` — and mixing the two raises `TypeError`.
+        """
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id, item_count=3)
+
+        naive = (datetime.now(UTC) + timedelta(days=4)).replace(tzinfo=None)
+        response = await client.patch(
+            f"{BASE}/study-plans/{plan_id}",
+            json={"deadline": naive.isoformat()},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["deadline"].startswith(naive.strftime("%Y-%m-%d"))
+
+
 class TestTodayView:
     async def test_lists_pending_work_with_its_plan(self, client: AsyncClient, auth_headers):
         user_id = await _user_id_for(auth_headers, client)

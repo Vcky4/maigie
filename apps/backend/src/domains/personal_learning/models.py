@@ -1644,6 +1644,29 @@ class StudyPlanResponse(StudyPlanSummaryResponse):
     items: list[StudyPlanItemResponse]
 
 
+class StudyPlanMetricsResponse(CamelModel):
+    """Plan-scoped progress figures, derived from the plan's own items.
+
+    `completedMinutes` is **planned** effort on completed work, not measured time — no
+    part of this observes how long a learner actually spent, and a client must not label
+    it as focus or time-at-desk. Measured session time lives in `/analytics/sessions`.
+
+    There is no retention figure. Retention is flashcard recall, a different domain, and
+    a plan with no flashcards has none; the honest options are to omit it or to show
+    library recall from `GET /flashcards/stats` under a heading that says so.
+    """
+
+    completed_minutes: int
+    planned_minutes: int
+    practice_completed: int
+    skipped_items: int
+    # Consecutive days ending today, or yesterday if today is unused. Counts completed
+    # plan items — deliberately not the flashcard review streak, which measures
+    # something else.
+    current_streak_days: int
+    active_days: int
+
+
 class StudyPlanTodayItem(CamelModel):
     """One pending item due today or earlier, with the plan it came from.
 
