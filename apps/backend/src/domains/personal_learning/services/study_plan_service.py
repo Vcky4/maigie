@@ -5,6 +5,7 @@ Distributes topics across available days, respects behaviour patterns,
 interleaves spaced repetition reviews, and adapts when learners fall behind.
 """
 
+import asyncio
 import logging
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
@@ -105,6 +106,16 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
                     }
                 )
 
+    # Validated before generation, not after. Rejecting a course the learner does not own
+    # only after an LLM round trip would waste the call and leave them staring at an
+    # error for a plan that was nearly built.
+    requested_course_ids = list(dict.fromkeys(data.get("courseIds") or []))
+    if requested_course_ids:
+        owned = await repo.find_courses_owned_by(user_id, requested_course_ids)
+        missing = [cid for cid in requested_course_ids if cid not in owned]
+        if missing:
+            raise NotFoundError("Course", missing[0])
+
     skills: list[str] = []
     if not topics_to_plan:
         # Generate generic plan items from goal description via LLM
@@ -166,6 +177,10 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
             # when they set none, so a surface shows minutes planned without a target
             # rather than inventing one.
             "weeklyGoalMinutes": data.get("weeklyGoalMinutes"),
+            # The wizard's toggles, stored because they are acted on: see
+            # `set_item_status` for review cards and the daily check-in task.
+            "generateReviewCards": bool(data.get("generateReviewCards")),
+            "weeklyCheckIn": bool(data.get("weeklyCheckIn")),
             # Empty rather than null-vs-missing games: a prep-scoped plan derives its
             # items from topics and names no skills, and an empty list says that.
             "skills": skills or None,
@@ -196,10 +211,13 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
             }
         )
 
+    if requested_course_ids:
+        await repo.link_plan_courses(plan.id, requested_course_ids)
+
     # Counts come from the rows that were actually written, not from the length of the
     # list we meant to write. The two can differ if an item insert fails.
     await repo.recount_plan_progress(plan.id)
-    return await repo.get_study_plan(plan.id, user_id)
+    return await _detail_by_id(plan.id, user_id)
 
 
 #: Statuses a plan may be set to by a learner. `SUPERSEDED` is deliberately absent: it
@@ -244,12 +262,63 @@ async def list_plans_page(
     )
 
 
-async def get_plan(*, user_id: str, plan_id: str) -> Any:
-    """Get a study plan with all items."""
+async def _detail(plan: Any, user_id: str) -> dict[str, Any]:
+    """Compose the detail payload: the plan, its items, its links and its files.
+
+    Built as a mapping rather than returned as the ORM row, because two of the fields do
+    not exist on it. A linked course's title lives on `Course`, and reading it through a
+    lazy relationship outside the session that loaded it raises — so both are fetched
+    explicitly. Every route that returns `StudyPlanResponse` goes through here; letting
+    one return the bare row would serialize empty lists for a plan that has links, which
+    reads as "no courses linked" rather than "not loaded".
+    """
+    linked_courses, materials = await asyncio.gather(
+        repo.list_plan_courses(plan.id),
+        repo.list_plan_materials(plan.id),
+    )
+    return {
+        "id": plan.id,
+        "userId": plan.user_id,
+        "title": plan.title,
+        "goalDescription": plan.goal_description,
+        "deadline": plan.deadline,
+        "prepId": plan.prep_id,
+        "status": plan.status,
+        "strategy": plan.strategy,
+        "weeklyGoalMinutes": plan.weekly_goal_minutes,
+        "skills": plan.skills,
+        "generateReviewCards": plan.generate_review_cards,
+        "weeklyCheckIn": plan.weekly_check_in,
+        "reviewDeckId": plan.review_deck_id,
+        "lastCheckInAt": plan.last_check_in_at,
+        "totalItems": plan.total_items,
+        "completedItems": plan.completed_items,
+        "items": plan.items,
+        "linkedCourses": [
+            {
+                "courseId": row["course_id"],
+                "title": row["title"],
+                "difficulty": row["difficulty"],
+                "linkedAt": row["linked_at"],
+            }
+            for row in linked_courses
+        ],
+        "materials": materials,
+        "createdAt": plan.created_at,
+        "updatedAt": plan.updated_at,
+    }
+
+
+async def _detail_by_id(plan_id: str, user_id: str) -> dict[str, Any]:
     plan = await repo.get_study_plan(plan_id, user_id)
     if not plan:
         raise NotFoundError("StudyPlan", plan_id)
-    return plan
+    return await _detail(plan, user_id)
+
+
+async def get_plan(*, user_id: str, plan_id: str) -> Any:
+    """Get a study plan with its items, linked courses and reference files."""
+    return await _detail_by_id(plan_id, user_id)
 
 
 async def get_plan_metrics(*, user_id: str, plan_id: str) -> dict[str, Any]:
@@ -344,9 +413,98 @@ async def update_plan(*, user_id: str, plan_id: str, data: dict[str, Any]) -> An
 
     if deadline_changed:
         await _redistribute_plan(plan_id, user_id)
-        plan = await repo.get_study_plan(plan_id, user_id)
 
-    return plan
+    return await _detail_by_id(plan_id, user_id)
+
+
+async def link_courses(*, user_id: str, plan_id: str, course_ids: list[str]) -> Any:
+    """Link courses to a plan, ignoring any already linked.
+
+    Ownership of each course is checked before writing. The foreign key only proves a
+    course exists, so without this a learner could attach someone else's course and read
+    its title off their own detail page — the same hole that let flashcards be filed into
+    another learner's deck.
+    """
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    requested = list(dict.fromkeys(course_ids))
+    if requested:
+        owned = await repo.find_courses_owned_by(user_id, requested)
+        missing = [cid for cid in requested if cid not in owned]
+        if missing:
+            raise NotFoundError("Course", missing[0])
+        await repo.link_plan_courses(plan_id, requested)
+
+    return await _detail_by_id(plan_id, user_id)
+
+
+async def unlink_course(*, user_id: str, plan_id: str, course_id: str) -> Any:
+    """Remove a course link. The course itself is untouched."""
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+    if not await repo.unlink_plan_course(plan_id, course_id):
+        raise NotFoundError("StudyPlanCourse", course_id)
+    return await _detail_by_id(plan_id, user_id)
+
+
+async def add_material(*, user_id: str, plan_id: str, file: Any) -> Any:
+    """Store a reference file against a plan.
+
+    Uploaded through the shared storage service, the same path notes and generated
+    documents use, rather than a second upload mechanism. The row is written only after
+    the upload succeeds, so a failed upload leaves no material pointing at a URL that
+    holds nothing.
+    """
+    from src.shared.infrastructure.storage import StorageError, storage_service
+
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    try:
+        # Scoped by learner and plan, so two plans can hold files of the same name and
+        # one learner's upload cannot overwrite another's.
+        stored = await storage_service.upload_upload_file(
+            file, path_prefix=f"study-plans/{user_id}/{plan_id}"
+        )
+    except StorageError as error:
+        raise ValueError(f"Upload failed: {error}") from error
+
+    await repo.create_plan_material(
+        {
+            "planId": plan_id,
+            "filename": stored["filename"],
+            "url": stored["url"],
+            "fileType": getattr(file, "content_type", None),
+            "size": stored.get("size"),
+        }
+    )
+    return await _detail_by_id(plan_id, user_id)
+
+
+async def delete_material(*, user_id: str, plan_id: str, material_id: str) -> Any:
+    """Remove a reference file, from storage as well as from the plan.
+
+    The stored object is deleted first. If that fails the row stays, because a row
+    pointing at a file that still exists is recoverable, while a deleted row pointing at
+    an orphaned object leaves something nobody can find or clean up.
+    """
+    from src.shared.infrastructure.storage import storage_service
+
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan:
+        raise NotFoundError("StudyPlan", plan_id)
+
+    material = await repo.get_plan_material(material_id, plan_id=plan_id)
+    if material is None:
+        raise NotFoundError("StudyPlanMaterial", material_id)
+
+    await storage_service.delete(material.url)
+    await repo.delete_plan_material(material_id, plan_id=plan_id)
+    return await _detail_by_id(plan_id, user_id)
 
 
 async def delete_plan(*, user_id: str, plan_id: str) -> bool:
@@ -382,7 +540,7 @@ async def add_item(*, user_id: str, plan_id: str, data: dict[str, Any]) -> Any:
         }
     )
     await repo.recount_plan_progress(plan_id)
-    return await repo.get_study_plan(plan_id, user_id)
+    return await _detail_by_id(plan_id, user_id)
 
 
 async def update_item(*, user_id: str, plan_id: str, item_id: str, data: dict[str, Any]) -> Any:
@@ -412,7 +570,7 @@ async def update_item(*, user_id: str, plan_id: str, item_id: str, data: dict[st
     updated = await repo.update_plan_item(item_id, data, plan_id=plan_id)
     if updated is None:
         raise NotFoundError("StudyPlanItem", item_id)
-    return await repo.get_study_plan(plan_id, user_id)
+    return await _detail_by_id(plan_id, user_id)
 
 
 async def delete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
@@ -425,7 +583,7 @@ async def delete_item(*, user_id: str, plan_id: str, item_id: str) -> Any:
         raise NotFoundError("StudyPlanItem", item_id)
 
     await repo.recount_plan_progress(plan_id)
-    return await repo.get_study_plan(plan_id, user_id)
+    return await _detail_by_id(plan_id, user_id)
 
 
 async def list_items_due_today(*, user_id: str) -> list[dict[str, Any]]:
@@ -527,6 +685,12 @@ async def set_item_status(*, user_id: str, plan_id: str, item_id: str, status: s
         await repo.update_plan_status(plan_id, "ACTIVE")
 
     if status == "COMPLETED":
+        # The wizard's "Generate review cards" option, acted on. Queued rather than
+        # awaited: generation is an LLM round trip, and a learner ticking a task off
+        # should not wait seconds for it — nor see the completion fail if the model does.
+        if plan.generate_review_cards:
+            await _queue_review_cards(user_id=user_id, plan=plan, item=updated)
+
         from . import activity_feed_service
 
         await activity_feed_service.record(
@@ -549,7 +713,140 @@ async def set_item_status(*, user_id: str, plan_id: str, item_id: str, status: s
         if len(pending_past_due) > 2:
             await _redistribute_plan(plan_id, user_id)
 
-    return await repo.get_study_plan(plan_id, user_id)
+    return await _detail_by_id(plan_id, user_id)
+
+
+async def ensure_review_deck(*, user_id: str, plan: Any) -> str:
+    """The deck this plan generates review cards into, created on first use.
+
+    One deck per plan, reused after, so a plan's cards stay together instead of
+    scattering through the library. The id is stored on the plan rather than found by
+    title, because a learner may rename either and a title match would then either miss
+    or collide.
+    """
+    from . import flashcard_service
+
+    if plan.review_deck_id:
+        deck = await repo.get_deck(plan.review_deck_id, user_id)
+        if deck is not None:
+            return deck.id
+        # The deck was deleted. Fall through and make a new one rather than failing:
+        # the learner asked for review cards, not for this particular deck.
+
+    created = await flashcard_service.create_deck(
+        user_id=user_id,
+        data={
+            "title": f"{plan.title} — review",
+            "description": "Cards generated from tasks you completed in this study plan.",
+        },
+    )
+    await repo.update_study_plan(plan.id, user_id, {"reviewDeckId": created["id"]})
+    return created["id"]
+
+
+async def _queue_review_cards(*, user_id: str, plan: Any, item: Any) -> None:
+    """Hand review-card generation to a worker, or do it inline if there is no broker.
+
+    The inline path is not a convenience: without it, a deployment with no Celery broker
+    would accept the learner's "generate review cards" choice and quietly never act on
+    it, which is the failure mode this whole exercise is removing. Slow is better than
+    silent.
+    """
+    try:
+        from src.domains.personal_learning.tasks.review_cards import (
+            generate_plan_item_cards_task,
+        )
+
+        generate_plan_item_cards_task.delay(user_id, plan.id, item.id)
+        return
+    except Exception as error:  # pragma: no cover - broker/environmental
+        logger.warning(
+            "Could not queue review-card generation; generating inline",
+            extra={"plan_id": plan.id, "item_id": item.id},
+            exc_info=error,
+        )
+
+    try:
+        await generate_review_cards_for_item(user_id=user_id, plan_id=plan.id, item_id=item.id)
+    except Exception:
+        # Never let this fail the completion. The learner finished the task; the cards
+        # are a side effect they can trigger again by completing another.
+        logger.exception(
+            "Inline review-card generation failed",
+            extra={"plan_id": plan.id, "item_id": item.id},
+        )
+
+
+async def generate_review_cards_for_item(
+    *, user_id: str, plan_id: str, item_id: str
+) -> list[Any]:
+    """Generate review cards for one completed plan item. Entry point for the worker."""
+    from . import flashcard_service
+
+    plan = await repo.get_study_plan(plan_id, user_id)
+    if not plan or not plan.generate_review_cards:
+        return []
+
+    item = next((row for row in (plan.items or []) if row.id == item_id), None)
+    if item is None or item.status != "COMPLETED":
+        # Re-checked rather than trusted: the task may run after the learner reopened
+        # the item, and generating cards for work no longer marked done would be acting
+        # on a state that has passed.
+        return []
+
+    deck_id = await ensure_review_deck(user_id=user_id, plan=plan)
+    return await flashcard_service.generate_from_plan_item(
+        user_id=user_id,
+        deck_id=deck_id,
+        title=item.title,
+        description=item.description,
+        source_id=item.id,
+    )
+
+
+async def run_weekly_check_ins(*, before: datetime | None = None, limit: int = 500) -> int:
+    """Create this week's check-in notification for each plan that asked for one.
+
+    Backs the wizard's "Weekly Maigie check-in". Idempotent through
+    `StudyPlan.lastCheckInAt`: a retry inside the same week finds nothing due, and a week
+    the scheduler missed produces one notification rather than a backlog of them.
+
+    The message carries the plan's real numbers, so it says something the learner can act
+    on rather than a generic nudge.
+    """
+    from . import notification_service
+
+    cutoff = before or (datetime.now(UTC) - timedelta(days=7))
+    plans = await repo.list_plans_due_check_in(before=cutoff, limit=limit)
+
+    sent = 0
+    for plan in plans:
+        completed = plan.completed_items or 0
+        total = plan.total_items or 0
+        remaining = max(0, total - completed)
+        days_left = max(0, (plan.deadline - datetime.now(UTC)).days)
+
+        notification = await notification_service.create_notification(
+            user_id=plan.user_id,
+            type="study_plan_check_in",
+            title=f"Weekly check-in: {plan.title}",
+            body=(
+                f"{completed} of {total} tasks done, {remaining} to go, "
+                f"{days_left} days until your deadline."
+            ),
+            priority=4,
+            action_data={"planId": plan.id, "route": "study_plan"},
+        )
+        # Recorded even when the notification was suppressed by quiet hours or the daily
+        # limit. Otherwise the plan stays "due" and retries every run, turning a
+        # suppressed notification into a queue that all arrives at once.
+        await repo.update_study_plan(
+            plan.id, plan.user_id, {"lastCheckInAt": datetime.now(UTC)}
+        )
+        if notification is not None:
+            sent += 1
+
+    return sent
 
 
 async def _redistribute_plan(plan_id: str, user_id: str) -> None:

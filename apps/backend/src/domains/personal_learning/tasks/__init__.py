@@ -21,6 +21,8 @@ from . import (  # noqa: F401
     readiness_snapshots,
     recommendations,
     reflections,
+    review_cards,
+    study_plan_check_ins,
 )
 
 
@@ -68,6 +70,16 @@ def get_beat_schedule() -> dict:
         "learning.notification_delivery": {
             "task": "learning.notification_delivery",
             "schedule": 300.0,  # Every 5 minutes
+            "options": {"queue": "default"},
+        },
+        # Daily rather than weekly. The task asks "which plans have not been checked in
+        # for seven days", from a stored timestamp, so a daily sweep gives each learner a
+        # check-in seven days after their own last one instead of herding everyone onto
+        # one morning — and a day the scheduler missed is picked up the next day rather
+        # than a week later.
+        "learning.study_plan_check_ins": {
+            "task": "learning.study_plan_check_ins",
+            "schedule": crontab(hour=7, minute=0),
             "options": {"queue": "default"},
         },
     }

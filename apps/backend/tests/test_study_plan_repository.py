@@ -25,6 +25,7 @@ OTHER_USER = "plan-test-intruder"
 async def repo(monkeypatch):
     import src.shared.database as shared_db
     from src.domains.identity import db_models as identity_models
+    from src.domains.knowledge import db_models as knowledge_models
     from src.domains.personal_learning import db_models as pl_models
     from src.domains.personal_learning import repository as repository_module
     from src.shared.database.base import Base
@@ -39,12 +40,21 @@ async def repo(monkeypatch):
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
     # Only the tables under test plus their foreign-key parents. The shared metadata is
-    # one namespace for every domain and some of it uses Postgres-only column types.
+    # one namespace for every domain and some of it uses Postgres-only column types, so
+    # creating all of it would pass or fail depending on what else the run imported.
+    #
+    # With foreign keys enforced, a parent table missing is an error on insert rather
+    # than a silent no-op — which is how `FlashcardDeck` and `Course` came to be listed:
+    # a plan references a review deck, and a course link references a course.
     tables = [
         identity_models.User.__table__,
+        knowledge_models.Course.__table__,
         pl_models.ExamPrep.__table__,
+        pl_models.FlashcardDeck.__table__,
         pl_models.StudyPlan.__table__,
         pl_models.StudyPlanItem.__table__,
+        pl_models.StudyPlanCourse.__table__,
+        pl_models.StudyPlanMaterial.__table__,
     ]
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all, tables=tables)
@@ -335,6 +345,179 @@ class TestItemsDueBy:
 # ---------------------------------------------------------------------------
 # Plan update and delete
 # ---------------------------------------------------------------------------
+
+
+async def _course(repo, *, user_id=USER, title="Algorithms"):
+    """Insert a course directly; the knowledge domain owns its own service."""
+    from src.domains.knowledge.db_models import Course
+    from src.shared.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        course = Course(user_id=user_id, title=title, description="d")
+        session.add(course)
+        await session.flush()
+        course_id = course.id
+        await session.commit()
+    return course_id
+
+
+class TestCourseLinks:
+    async def test_links_courses_and_reads_their_titles(self, repo, plan_with_items):
+        """The title comes from `Course`, so a rename reads correctly here."""
+        plan, _ = plan_with_items
+        course_id = await _course(repo, title="Graph Algorithms")
+
+        assert await repo.link_plan_courses(plan.id, [course_id]) == 1
+        links = await repo.list_plan_courses(plan.id)
+        assert [(row["course_id"], row["title"]) for row in links] == [
+            (course_id, "Graph Algorithms")
+        ]
+
+    async def test_relinking_the_same_course_is_a_no_op(self, repo, plan_with_items):
+        """Re-sending a selection that overlaps must not fail the request.
+
+        The unique constraint would abort the transaction, so existing links are read and
+        skipped instead of relying on it to reject them.
+        """
+        plan, _ = plan_with_items
+        course_id = await _course(repo)
+
+        assert await repo.link_plan_courses(plan.id, [course_id]) == 1
+        assert await repo.link_plan_courses(plan.id, [course_id]) == 0
+        assert len(await repo.list_plan_courses(plan.id)) == 1
+
+    async def test_deduplicates_within_one_request(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        course_id = await _course(repo)
+        assert await repo.link_plan_courses(plan.id, [course_id, course_id]) == 1
+
+    async def test_only_the_owners_courses_are_linkable(self, repo, plan_with_items):
+        """The foreign key proves a course exists, not who owns it."""
+        theirs = await _course(repo, user_id=OTHER_USER, title="Theirs")
+        mine = await _course(repo, user_id=USER, title="Mine")
+
+        owned = await repo.find_courses_owned_by(USER, [mine, theirs])
+        assert owned == {mine}
+
+    async def test_unlink_removes_only_the_link(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        course_id = await _course(repo)
+        await repo.link_plan_courses(plan.id, [course_id])
+
+        assert await repo.unlink_plan_course(plan.id, course_id) is True
+        assert await repo.list_plan_courses(plan.id) == []
+        # The course itself survives.
+        assert await repo.find_courses_owned_by(USER, [course_id]) == {course_id}
+
+    async def test_unlink_reports_a_link_that_was_not_there(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        assert await repo.unlink_plan_course(plan.id, "no-such-course") is False
+
+    async def test_deleting_a_plan_removes_its_links(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        course_id = await _course(repo)
+        await repo.link_plan_courses(plan.id, [course_id])
+
+        await repo.delete_study_plan(plan.id, USER)
+        assert await repo.list_plan_courses(plan.id) == []
+
+
+class TestPlanMaterials:
+    async def test_stores_and_lists_a_reference_file(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        await repo.create_plan_material(
+            {
+                "planId": plan.id,
+                "filename": "brief.pdf",
+                "url": "https://cdn.example/study-plans/u/p/brief.pdf",
+                "fileType": "application/pdf",
+                "size": 2048,
+            }
+        )
+        materials = await repo.list_plan_materials(plan.id)
+        assert [(m.filename, m.file_type, m.size) for m in materials] == [
+            ("brief.pdf", "application/pdf", 2048)
+        ]
+
+    async def test_material_lookup_is_scoped_to_its_plan(self, repo, plan_with_items):
+        """A material id from another plan must not be reachable."""
+        plan, _ = plan_with_items
+        other = await _plan(repo, title="Other")
+        material = await repo.create_plan_material(
+            {"planId": other.id, "filename": "x.pdf", "url": "https://cdn/x.pdf"}
+        )
+
+        assert await repo.get_plan_material(material.id, plan_id=plan.id) is None
+        assert await repo.get_plan_material(material.id, plan_id=other.id) is not None
+        assert await repo.delete_plan_material(material.id, plan_id=plan.id) is False
+
+    async def test_deleting_a_plan_removes_its_materials(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        await repo.create_plan_material(
+            {"planId": plan.id, "filename": "x.pdf", "url": "https://cdn/x.pdf"}
+        )
+        await repo.delete_study_plan(plan.id, USER)
+        assert await repo.list_plan_materials(plan.id) == []
+
+
+class TestCheckInScheduling:
+    async def test_a_plan_that_never_checked_in_is_due(self, repo):
+        await _plan(repo, title="Opted in", weeklyCheckIn=True)
+        due = await repo.list_plans_due_check_in(before=datetime.now(UTC) - timedelta(days=7))
+        assert [plan.title for plan in due] == ["Opted in"]
+
+    async def test_a_plan_that_did_not_opt_in_is_never_due(self, repo):
+        await _plan(repo, title="Not opted in", weeklyCheckIn=False)
+        due = await repo.list_plans_due_check_in(before=datetime.now(UTC) - timedelta(days=7))
+        assert due == []
+
+    async def test_a_recent_check_in_is_not_due_again(self, repo):
+        """What makes the daily sweep idempotent."""
+        plan = await _plan(repo, title="Recent", weeklyCheckIn=True)
+        await repo.update_study_plan(
+            plan.id, USER, {"lastCheckInAt": datetime.now(UTC) - timedelta(days=2)}
+        )
+        due = await repo.list_plans_due_check_in(before=datetime.now(UTC) - timedelta(days=7))
+        assert due == []
+
+    async def test_a_check_in_older_than_the_window_is_due(self, repo):
+        plan = await _plan(repo, title="Stale", weeklyCheckIn=True)
+        await repo.update_study_plan(
+            plan.id, USER, {"lastCheckInAt": datetime.now(UTC) - timedelta(days=9)}
+        )
+        due = await repo.list_plans_due_check_in(before=datetime.now(UTC) - timedelta(days=7))
+        assert [p.id for p in due] == [plan.id]
+
+    async def test_paused_and_completed_plans_are_not_due(self, repo):
+        """Pausing means the learner is not working on this now."""
+        await _plan(repo, title="Paused", status="PAUSED", weeklyCheckIn=True)
+        await _plan(repo, title="Done", status="COMPLETED", weeklyCheckIn=True)
+        due = await repo.list_plans_due_check_in(before=datetime.now(UTC) - timedelta(days=7))
+        assert due == []
+
+
+class TestReviewCardFlags:
+    async def test_flags_default_to_off(self, repo, plan_with_items):
+        """An existing plan was never asked, so nothing is turned on for it."""
+        plan, _ = plan_with_items
+        stored = await repo.get_study_plan(plan.id, USER)
+        assert stored.generate_review_cards is False
+        assert stored.weekly_check_in is False
+        assert stored.review_deck_id is None
+
+    async def test_flags_and_review_deck_round_trip(self, repo, plan_with_items):
+        plan, _ = plan_with_items
+        deck = await repo.create_deck({"userId": USER, "title": "Plan — review"})
+        await repo.update_study_plan(
+            plan.id,
+            USER,
+            {"generateReviewCards": True, "weeklyCheckIn": True, "reviewDeckId": deck.id},
+        )
+        stored = await repo.get_study_plan(plan.id, USER)
+        assert stored.generate_review_cards is True
+        assert stored.weekly_check_in is True
+        assert stored.review_deck_id == deck.id
 
 
 class TestPlanMetrics:

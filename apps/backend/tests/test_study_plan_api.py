@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import AsyncClient
 
 BASE = "/api/v1/learning"
@@ -469,6 +470,215 @@ class TestNaiveDeadline:
         )
         assert response.status_code == 200, response.text
         assert response.json()["deadline"].startswith(naive.strftime("%Y-%m-%d"))
+
+
+async def _create_course(user_id: str, title: str = "Algorithms") -> str:
+    from src.domains.knowledge.db_models import Course
+    from src.shared.database.session import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        course = Course(user_id=user_id, title=title, description="seeded")
+        session.add(course)
+        await session.flush()
+        course_id = course.id
+        await session.commit()
+        return course_id
+
+
+class TestConnectedLearning:
+    async def test_links_courses_and_returns_them_with_titles(
+        self, client: AsyncClient, auth_headers
+    ):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+        course_id = await _create_course(user_id, "Graph Algorithms")
+
+        response = await client.post(
+            f"{BASE}/study-plans/{plan_id}/courses",
+            json={"courseIds": [course_id]},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        linked = response.json()["linkedCourses"]
+        assert [(row["courseId"], row["title"]) for row in linked] == [
+            (course_id, "Graph Algorithms")
+        ]
+
+    async def test_relinking_is_a_no_op_rather_than_an_error(
+        self, client: AsyncClient, auth_headers
+    ):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+        course_id = await _create_course(user_id)
+
+        for _ in range(2):
+            response = await client.post(
+                f"{BASE}/study-plans/{plan_id}/courses",
+                json={"courseIds": [course_id]},
+                headers=auth_headers,
+            )
+            assert response.status_code == 200, response.text
+        assert len(response.json()["linkedCourses"]) == 1
+
+    async def test_cannot_link_another_learners_course(
+        self, client: AsyncClient, auth_headers
+    ):
+        """Rejected, not skipped — a selection that cannot be honoured is reported."""
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+
+        intruder = await _login(client)
+        intruder_id = await _user_id_for(intruder, client)
+        their_course = await _create_course(intruder_id, "Theirs")
+
+        response = await client.post(
+            f"{BASE}/study-plans/{plan_id}/courses",
+            json={"courseIds": [their_course]},
+            headers=auth_headers,
+        )
+        assert response.status_code == 404
+
+        detail = await client.get(f"{BASE}/study-plans/{plan_id}", headers=auth_headers)
+        assert detail.json()["linkedCourses"] == []
+
+    async def test_unlink_removes_the_link_and_keeps_the_course(
+        self, client: AsyncClient, auth_headers
+    ):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+        course_id = await _create_course(user_id)
+        await client.post(
+            f"{BASE}/study-plans/{plan_id}/courses",
+            json={"courseIds": [course_id]},
+            headers=auth_headers,
+        )
+
+        response = await client.delete(
+            f"{BASE}/study-plans/{plan_id}/courses/{course_id}", headers=auth_headers
+        )
+        assert response.status_code == 200
+        assert response.json()["linkedCourses"] == []
+        # The course itself is untouched.
+        still_there = await client.get(
+            f"/api/v1/knowledge/courses/{course_id}", headers=auth_headers
+        )
+        assert still_there.status_code == 200
+
+    async def test_uploads_a_reference_file_and_lists_it(
+        self, client: AsyncClient, auth_headers
+    ):
+        """The wizard's file drop, persisted. It used to keep names in browser memory."""
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+
+        response = await client.post(
+            f"{BASE}/study-plans/{plan_id}/materials",
+            files={"file": ("brief.txt", b"interview prep brief", "text/plain")},
+            headers=auth_headers,
+        )
+        if response.status_code == 502:
+            pytest.skip("Object storage not configured in this environment")
+        assert response.status_code == 201, response.text
+        materials = response.json()["materials"]
+        assert len(materials) == 1
+        assert materials[0]["filename"] == "brief.txt"
+        assert materials[0]["url"]
+        assert materials[0]["size"] == len(b"interview prep brief")
+
+        removed = await client.delete(
+            f"{BASE}/study-plans/{plan_id}/materials/{materials[0]['id']}",
+            headers=auth_headers,
+        )
+        assert removed.status_code == 200
+        assert removed.json()["materials"] == []
+
+    async def test_material_routes_are_unreachable_for_another_learner(
+        self, client: AsyncClient, auth_headers
+    ):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+        intruder = await _login(client)
+
+        response = await client.post(
+            f"{BASE}/study-plans/{plan_id}/materials",
+            files={"file": ("x.txt", b"x", "text/plain")},
+            headers=intruder,
+        )
+        assert response.status_code == 404
+
+    async def test_toggles_persist_through_create_and_patch(
+        self, client: AsyncClient, auth_headers
+    ):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, _ = await _seed_plan(user_id)
+
+        # Default off: a seeded plan was never asked.
+        detail = (
+            await client.get(f"{BASE}/study-plans/{plan_id}", headers=auth_headers)
+        ).json()
+        assert detail["generateReviewCards"] is False
+        assert detail["weeklyCheckIn"] is False
+
+        updated = await client.patch(
+            f"{BASE}/study-plans/{plan_id}",
+            json={"generateReviewCards": True, "weeklyCheckIn": True},
+            headers=auth_headers,
+        )
+        assert updated.status_code == 200
+        assert updated.json()["generateReviewCards"] is True
+        assert updated.json()["weeklyCheckIn"] is True
+
+
+class TestReviewCardGeneration:
+    async def test_completing_an_item_generates_cards_into_a_deck_owned_by_the_plan(
+        self, client: AsyncClient, auth_headers
+    ):
+        """The "Generate review cards" toggle, acted on.
+
+        Generation is an LLM call, so this exercises the inline fallback path used when
+        no Celery broker is reachable — which exists precisely so the learner's choice is
+        never accepted and then ignored.
+        """
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, item_ids = await _seed_plan(user_id, item_count=2)
+        await client.patch(
+            f"{BASE}/study-plans/{plan_id}",
+            json={"generateReviewCards": True},
+            headers=auth_headers,
+        )
+
+        response = await client.post(
+            f"{BASE}/study-plans/{plan_id}/items/{item_ids[0]}/complete",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+
+        deck_id = response.json()["reviewDeckId"]
+        if not deck_id:
+            pytest.skip("No LLM provider reachable in this environment")
+
+        decks = (await client.get(f"{BASE}/decks", headers=auth_headers)).json()
+        deck = next(row for row in decks if row["id"] == deck_id)
+        assert deck["cardCount"] >= 1
+
+        cards = (
+            await client.get(f"{BASE}/decks/{deck_id}/flashcards", headers=auth_headers)
+        ).json()
+        assert cards, "expected at least one generated card"
+        assert all(card["sourceType"] == "study_plan_item" for card in cards)
+        assert all(card["sourceId"] == item_ids[0] for card in cards)
+
+    async def test_no_cards_when_the_toggle_is_off(self, client: AsyncClient, auth_headers):
+        user_id = await _user_id_for(auth_headers, client)
+        plan_id, item_ids = await _seed_plan(user_id)
+
+        response = await client.post(
+            f"{BASE}/study-plans/{plan_id}/items/{item_ids[0]}/complete",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["reviewDeckId"] is None
 
 
 class TestTodayView:

@@ -1222,6 +1222,69 @@ async def delete_study_plan(plan_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Study plan not found")
 
 
+@router.post("/study-plans/{plan_id}/courses", response_model=models.StudyPlanResponse)
+async def link_study_plan_courses(
+    plan_id: str, body: models.StudyPlanCourseLinkRequest, current_user: CurrentUser
+):
+    """Link courses to a plan.
+
+    Courses the caller does not own are rejected with `404` rather than skipped, so a
+    selection that cannot be honoured is reported instead of quietly disappearing.
+    Already-linked courses are ignored, which makes re-sending a selection a no-op.
+    """
+    return await study_plan_service.link_courses(
+        user_id=current_user.id, plan_id=plan_id, course_ids=body.courseIds
+    )
+
+
+@router.delete(
+    "/study-plans/{plan_id}/courses/{course_id}", response_model=models.StudyPlanResponse
+)
+async def unlink_study_plan_course(plan_id: str, course_id: str, current_user: CurrentUser):
+    """Remove a course link. The course itself is untouched."""
+    return await study_plan_service.unlink_course(
+        user_id=current_user.id, plan_id=plan_id, course_id=course_id
+    )
+
+
+@router.post(
+    "/study-plans/{plan_id}/materials",
+    response_model=models.StudyPlanResponse,
+    status_code=201,
+)
+async def add_study_plan_material(
+    plan_id: str,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Attach a reference file to a plan.
+
+    Multipart, and stored through the same storage service notes and generated documents
+    use. The wizard's file drop previously kept filenames in browser memory only; this is
+    where they go now.
+    """
+    try:
+        return await study_plan_service.add_material(
+            user_id=current_user.id, plan_id=plan_id, file=file
+        )
+    except ValueError as error:
+        # Storage refused the object. A 502 rather than a 400: the request was fine and
+        # the learner can do nothing differently.
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.delete(
+    "/study-plans/{plan_id}/materials/{material_id}", response_model=models.StudyPlanResponse
+)
+async def delete_study_plan_material(
+    plan_id: str, material_id: str, current_user: CurrentUser
+):
+    """Remove a reference file from a plan, and from storage."""
+    return await study_plan_service.delete_material(
+        user_id=current_user.id, plan_id=plan_id, material_id=material_id
+    )
+
+
 @router.post(
     "/study-plans/{plan_id}/items", response_model=models.StudyPlanResponse, status_code=201
 )

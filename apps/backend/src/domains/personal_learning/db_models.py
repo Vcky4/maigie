@@ -1100,12 +1100,45 @@ class StudyPlan(Base, TimestampMixin):
     total_items: Mapped[int] = mapped_column("totalItems", Integer, default=0)
     completed_items: Mapped[int] = mapped_column("completedItems", Integer, default=0)
 
+    # --- Connected learning, from step 3 of the create wizard ---
+    #
+    # Both flags are false by default rather than nullable: a plan created before they
+    # existed was never asked, and "not asked" and "declined" lead to the same
+    # behaviour — nothing happens — so a tri-state would be a distinction without a
+    # consequence. Both are only stored because something reads them; see migration 022.
+    generate_review_cards: Mapped[bool] = mapped_column(
+        "generateReviewCards", Boolean, nullable=False, default=False, server_default="false"
+    )
+    weekly_check_in: Mapped[bool] = mapped_column(
+        "weeklyCheckIn", Boolean, nullable=False, default=False, server_default="false"
+    )
+    # The deck this plan generates review cards into, created on first use and reused
+    # after, so a plan's cards stay together instead of scattering through the library.
+    review_deck_id: Mapped[str | None] = mapped_column(
+        "reviewDeckId",
+        String,
+        ForeignKey("FlashcardDeck.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # When the weekly check-in last went out. What makes the beat task idempotent: a
+    # retried or overlapping run cannot send twice, and a missed week cannot silently
+    # become two notifications at once.
+    last_check_in_at: Mapped[datetime | None] = mapped_column(
+        "lastCheckInAt", DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     items: Mapped[list["StudyPlanItem"]] = relationship(
         "StudyPlanItem",
         back_populates="plan",
         cascade="all, delete-orphan",
         order_by="StudyPlanItem.scheduled_date",
+    )
+    course_links: Mapped[list["StudyPlanCourse"]] = relationship(
+        "StudyPlanCourse", back_populates="plan", cascade="all, delete-orphan"
+    )
+    materials: Mapped[list["StudyPlanMaterial"]] = relationship(
+        "StudyPlanMaterial", back_populates="plan", cascade="all, delete-orphan"
     )
 
     __table_args__ = (Index("StudyPlan_userId_status_idx", "userId", "status"),)
@@ -1164,6 +1197,86 @@ class StudyPlanItem(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<StudyPlanItem id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# StudyPlanCourse
+# ---------------------------------------------------------------------------
+
+
+class StudyPlanCourse(Base):
+    """A course the learner linked to a plan.
+
+    A table with a real foreign key rather than a JSON list of ids on the plan, because
+    the two behave differently when a course is deleted: `CASCADE` removes the link,
+    while a JSON array keeps an id that resolves to nothing and has to be filtered by
+    every reader who remembers to. The detail page lists these by title, so it joins to
+    `Course` regardless.
+    """
+
+    __tablename__ = "StudyPlanCourse"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    plan_id: Mapped[str] = mapped_column(
+        "planId", String, ForeignKey("StudyPlan.id", ondelete="CASCADE"), index=True
+    )
+    course_id: Mapped[str] = mapped_column(
+        "courseId", String, ForeignKey("Course.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    plan: Mapped["StudyPlan"] = relationship("StudyPlan", back_populates="course_links")
+
+    __table_args__ = (
+        # Linking the same course twice is not a state the UI can produce or the page
+        # can render, so it is refused by the database rather than deduplicated on read.
+        UniqueConstraint("planId", "courseId", name="StudyPlanCourse_planId_courseId_key"),
+        Index("StudyPlanCourse_planId_idx", "planId"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<StudyPlanCourse plan={self.plan_id} course={self.course_id}>"
+
+
+# ---------------------------------------------------------------------------
+# StudyPlanMaterial
+# ---------------------------------------------------------------------------
+
+
+class StudyPlanMaterial(Base, TimestampMixin):
+    """A reference file the learner attached to a plan.
+
+    Mirrors `PrepMaterial`, which already does this for a preparation. Deliberately
+    without an `extractedText` column: `PrepMaterial` has one because preparation topics
+    are extracted from material, and nothing reads a plan's files that way. A column for
+    a use that does not exist is how `Course.progress` came to be written by nothing.
+    """
+
+    __tablename__ = "StudyPlanMaterial"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    plan_id: Mapped[str] = mapped_column(
+        "planId", String, ForeignKey("StudyPlan.id", ondelete="CASCADE"), index=True
+    )
+    filename: Mapped[str] = mapped_column(String, nullable=False)
+    url: Mapped[str] = mapped_column(String, nullable=False)
+    file_type: Mapped[str | None] = mapped_column("fileType", String, nullable=True)
+    size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    plan: Mapped["StudyPlan"] = relationship("StudyPlan", back_populates="materials")
+
+    __table_args__ = (Index("StudyPlanMaterial_planId_idx", "planId"),)
+
+    def __repr__(self) -> str:
+        return f"<StudyPlanMaterial id={self.id} filename={self.filename}>"
 
 
 # ---------------------------------------------------------------------------

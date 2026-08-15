@@ -49,7 +49,9 @@ from .db_models import (
     Reflection,
     SavedResource,
     StudyPlan,
+    StudyPlanCourse,
     StudyPlanItem,
+    StudyPlanMaterial,
 )
 
 logger = logging.getLogger(__name__)
@@ -3373,6 +3375,192 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return list(result.scalars().all())
 
+    # -----------------------------------------------------------------------
+    # Study Plan — connected learning (linked courses, reference materials)
+    # -----------------------------------------------------------------------
+
+    async def link_plan_courses(
+        self,
+        plan_id: str,
+        course_ids: list[str],
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
+        """Link courses to a plan, ignoring ones already linked.
+
+        Existing links are read first and skipped rather than relying on the unique
+        constraint to reject them, because a constraint violation aborts the whole
+        transaction — so re-sending a selection that overlaps what is already linked
+        would fail the request instead of being the no-op the learner expects.
+        """
+        if not course_ids:
+            return 0
+        async with self._use_session(session) as s:
+            existing = set(
+                (
+                    await s.execute(
+                        select(StudyPlanCourse.course_id).where(
+                            StudyPlanCourse.plan_id == plan_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            added = 0
+            for course_id in dict.fromkeys(course_ids):
+                if course_id in existing:
+                    continue
+                s.add(StudyPlanCourse(plan_id=plan_id, course_id=course_id))
+                added += 1
+            return added
+
+    async def unlink_plan_course(
+        self, plan_id: str, course_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._use_session(session) as s:
+            result = await s.execute(
+                delete(StudyPlanCourse).where(
+                    StudyPlanCourse.plan_id == plan_id,
+                    StudyPlanCourse.course_id == course_id,
+                )
+            )
+            return result.rowcount > 0
+
+    async def list_plan_courses(
+        self, plan_id: str, *, session: AsyncSession | None = None
+    ) -> list[dict[str, Any]]:
+        """Linked courses with their titles, in one join.
+
+        The title comes from `Course` rather than being copied onto the link row, so a
+        renamed course is renamed here too. One query rather than one per link.
+        """
+        from src.domains.knowledge.db_models import Course
+
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(
+                    StudyPlanCourse.course_id,
+                    Course.title,
+                    Course.difficulty,
+                    StudyPlanCourse.created_at,
+                )
+                .join(Course, Course.id == StudyPlanCourse.course_id)
+                .where(StudyPlanCourse.plan_id == plan_id)
+                .order_by(StudyPlanCourse.created_at.asc())
+            )
+            return [
+                {
+                    "course_id": row[0],
+                    "title": row[1],
+                    "difficulty": row[2],
+                    "linked_at": row[3],
+                }
+                for row in rows.all()
+            ]
+
+    async def find_courses_owned_by(
+        self, user_id: str, course_ids: list[str], *, session: AsyncSession | None = None
+    ) -> set[str]:
+        """Which of these course ids the learner can actually link.
+
+        Checked before writing, because the foreign key only proves a course exists —
+        without this a learner could attach someone else's course to their plan and read
+        its title off the detail page. Same hole that let cards be filed into another
+        learner's deck.
+        """
+        if not course_ids:
+            return set()
+        from src.domains.knowledge.db_models import Course
+
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(Course.id).where(Course.id.in_(course_ids), Course.user_id == user_id)
+            )
+            return set(rows.scalars().all())
+
+    async def create_plan_material(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> StudyPlanMaterial:
+        async with self._use_session(session) as s:
+            material = StudyPlanMaterial(
+                plan_id=data["planId"],
+                filename=data["filename"],
+                url=data["url"],
+                file_type=data.get("fileType"),
+                size=data.get("size"),
+            )
+            s.add(material)
+            await s.flush()
+            await s.refresh(material)
+            return material
+
+    async def list_plan_materials(
+        self, plan_id: str, *, session: AsyncSession | None = None
+    ) -> list[StudyPlanMaterial]:
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(StudyPlanMaterial)
+                .where(StudyPlanMaterial.plan_id == plan_id)
+                .order_by(StudyPlanMaterial.created_at.asc())
+            )
+            return list(rows.scalars().all())
+
+    async def get_plan_material(
+        self, material_id: str, *, plan_id: str, session: AsyncSession | None = None
+    ) -> StudyPlanMaterial | None:
+        """Scoped to the plan, so a material id from another plan cannot be reached."""
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(StudyPlanMaterial).where(
+                    StudyPlanMaterial.id == material_id,
+                    StudyPlanMaterial.plan_id == plan_id,
+                )
+            )
+            return rows.scalar_one_or_none()
+
+    async def delete_plan_material(
+        self, material_id: str, *, plan_id: str, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._use_session(session) as s:
+            result = await s.execute(
+                delete(StudyPlanMaterial).where(
+                    StudyPlanMaterial.id == material_id,
+                    StudyPlanMaterial.plan_id == plan_id,
+                )
+            )
+            return result.rowcount > 0
+
+    async def list_plans_due_check_in(
+        self,
+        *,
+        before: datetime,
+        limit: int = 500,
+        session: AsyncSession | None = None,
+    ) -> list[StudyPlan]:
+        """Active plans that opted into the weekly check-in and are due one.
+
+        Due means never checked in, or last checked in before ``before``. Comparing
+        against a stored timestamp rather than assuming the schedule fired on time is
+        what makes the task idempotent: a retry inside the same week finds nothing, and a
+        missed week sends one notification rather than catching up with several.
+        """
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(StudyPlan)
+                .where(
+                    StudyPlan.weekly_check_in.is_(True),
+                    StudyPlan.status == "ACTIVE",
+                    or_(
+                        StudyPlan.last_check_in_at.is_(None),
+                        StudyPlan.last_check_in_at < before,
+                    ),
+                )
+                .order_by(StudyPlan.last_check_in_at.asc().nullsfirst())
+                .limit(limit)
+            )
+            return list(rows.scalars().all())
+
     async def get_plan_metrics(
         self, plan_id: str, *, session: AsyncSession | None = None
     ) -> dict[str, Any]:
@@ -3485,6 +3673,10 @@ class PersonalLearningRepository:
             "strategy": "strategy",
             "weeklyGoalMinutes": "weekly_goal_minutes",
             "skills": "skills",
+            "generateReviewCards": "generate_review_cards",
+            "weeklyCheckIn": "weekly_check_in",
+            "reviewDeckId": "review_deck_id",
+            "lastCheckInAt": "last_check_in_at",
             "totalItems": "total_items",
             "completedItems": "completed_items",
         }

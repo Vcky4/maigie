@@ -232,6 +232,61 @@ async def generate_from_topic(
     return created_cards
 
 
+async def generate_from_plan_item(
+    *,
+    user_id: str,
+    deck_id: str,
+    title: str,
+    description: str | None = None,
+    source_id: str | None = None,
+) -> list[Any]:
+    """Generate review cards for a study-plan item the learner just completed.
+
+    Backs the create wizard's "Generate review cards" option. The item's own title and
+    description are the only description of what was studied — a plan item is not a
+    course topic and has no material behind it — so they are what the cards come from.
+
+    Returns an empty list when generation produces nothing usable. The caller is a
+    background task reacting to a completion, and a failure here must not make the
+    completion look unsuccessful: the learner finished the task either way.
+    """
+    from .llm_resilient import generate_content_json
+
+    await _require_own_deck(user_id, deck_id)
+
+    prompt = (
+        "A learner has just finished this study task. Write flashcards that test what it "
+        "covered, so they can review it later.\n"
+        f"Task: {title}\n"
+        f"Details: {description or 'none given'}\n\n"
+        "Each card must test one specific idea from the task, not ask about the task "
+        "itself.\n"
+        "Return ONLY a JSON array of 3-6 objects with 'front' and 'back' fields."
+    )
+    cards_data = await generate_content_json(prompt, max_tokens=1500, fallback=[], user_id=user_id)
+    if not cards_data:
+        return []
+
+    created: list[Any] = []
+    for card in cards_data[:6]:
+        if isinstance(card, dict) and card.get("front") and card.get("back"):
+            created.append(
+                await create_flashcard(
+                    user_id=user_id,
+                    data={
+                        "front": card["front"],
+                        "back": card["back"],
+                        "deckId": deck_id,
+                        # Provenance set by the server, so a generated card is
+                        # distinguishable from one the learner wrote.
+                        "sourceType": "study_plan_item",
+                        "sourceId": source_id,
+                    },
+                )
+            )
+    return created
+
+
 async def generate_deck_starter_cards(*, user_id: str, deck_id: str) -> list[Any]:
     """Generate a deck's first cards from the intent the learner already described.
 

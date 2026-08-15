@@ -1551,6 +1551,15 @@ class StudyPlanCreate(BaseModel):
     # session-length choices. Optional, because it is an intention: with none set, a
     # surface reports minutes planned without a target instead of inventing one.
     weeklyGoalMinutes: int | None = Field(default=None, ge=15, le=10_080)
+    # Courses the learner chose to link in step 3 of the wizard. Ids they do not own are
+    # rejected rather than silently dropped, so a selection that cannot be honoured is
+    # reported instead of disappearing.
+    courseIds: list[str] = Field(default_factory=list, max_length=50)
+    # The wizard's two toggles. Both drive real behaviour: completing an item generates
+    # review cards into a deck owned by the plan, and a daily sweep sends a check-in
+    # notification seven days after the last one.
+    generateReviewCards: bool = False
+    weeklyCheckIn: bool = False
 
 
 class StudyPlanUpdate(BaseModel):
@@ -1565,6 +1574,12 @@ class StudyPlanUpdate(BaseModel):
     deadline: datetime | None = None
     status: SettableStudyPlanStatus | None = None
     weeklyGoalMinutes: int | None = Field(default=None, ge=15, le=10_080)
+    generateReviewCards: bool | None = None
+    weeklyCheckIn: bool | None = None
+
+
+class StudyPlanCourseLinkRequest(BaseModel):
+    courseIds: list[str] = Field(min_length=1, max_length=50)
 
 
 class StudyPlanItemCreate(BaseModel):
@@ -1607,6 +1622,32 @@ class StudyPlanItemResponse(CamelModel):
     completed_at: datetime | None = None
 
 
+class StudyPlanCourseLink(CamelModel):
+    """A course linked to a plan.
+
+    The title is read from `Course` on every request rather than copied onto the link
+    row, so a renamed course reads correctly here instead of showing the name it had when
+    it was linked.
+    """
+
+    course_id: str
+    title: str
+    difficulty: str | None = None
+    linked_at: datetime
+
+
+class StudyPlanMaterialResponse(CamelModel):
+    """A reference file attached to a plan."""
+
+    id: str
+    plan_id: str
+    filename: str
+    url: str
+    file_type: str | None = None
+    size: int | None = None
+    created_at: datetime
+
+
 class StudyPlanSummaryResponse(CamelModel):
     """A plan without its items, for list views.
 
@@ -1628,6 +1669,13 @@ class StudyPlanSummaryResponse(CamelModel):
     strategy: str | None = None
     weekly_goal_minutes: int | None = None
     skills: list[str] | None = None
+    # The wizard's toggles, each backed by behaviour rather than stored intent.
+    generate_review_cards: bool
+    weekly_check_in: bool
+    # The deck this plan generates review cards into. Null until the first card is
+    # generated, or if that deck was later deleted.
+    review_deck_id: str | None = None
+    last_check_in_at: datetime | None = None
     total_items: int
     completed_items: int
     created_at: datetime
@@ -1635,13 +1683,19 @@ class StudyPlanSummaryResponse(CamelModel):
 
 
 class StudyPlanResponse(StudyPlanSummaryResponse):
-    """A plan with its items.
+    """A plan with its items, linked courses and reference files.
 
     `deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan
     queries eagerly load `items`, so these are always serialized.
+
+    `linkedCourses` and `materials` are on the detail response and not the summary, for
+    the same reason `items` is: a list card shows neither, and loading them for every
+    plan on an all-plans page would be work nothing renders.
     """
 
     items: list[StudyPlanItemResponse]
+    linked_courses: list[StudyPlanCourseLink] = Field(default_factory=list)
+    materials: list[StudyPlanMaterialResponse] = Field(default_factory=list)
 
 
 class StudyPlanMetricsResponse(CamelModel):
