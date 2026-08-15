@@ -95,7 +95,7 @@ async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]
         "url": resource.url,
         "description": resource.description,
         "type": resource.type,
-        "createdAt": resource.createdAt.isoformat(),
+        "createdAt": resource.created_at.isoformat(),
     }
 
 
@@ -172,22 +172,35 @@ async def recommend_resources(
 
 
 def _format_resource(r) -> dict[str, Any]:
-    """Format a Prisma resource record for API response."""
+    """Format a `Resource` row for an API response.
+
+    Keys are camelCase for the wire; reads are snake_case because that is what the ORM
+    exposes. This was written against the Prisma client, whose records carried camelCase
+    attributes, and never adjusted when the model moved to SQLAlchemy — so every read
+    here raised `AttributeError` and the resource listing answered `500`.
+
+    Two of them were worse than an exception. `r.metadata` resolves on any declarative
+    class to SQLAlchemy's own `MetaData` object, so it returned something plausible-looking
+    instead of failing; the column is mapped as `metadata_json` precisely because
+    `metadata` is reserved. And the `getattr(..., default)` calls swallowed the mistake
+    silently, reporting `bookmarkCount: 0` and `recommendationSource: None` for every
+    resource regardless of what was stored — a wrong answer rather than a loud one.
+    """
     return {
         "id": r.id,
-        "userId": r.userId,
+        "userId": r.user_id,
         "title": r.title,
         "url": r.url,
         "description": r.description,
         "type": r.type,
-        "metadata": r.metadata,
-        "isRecommended": r.isRecommended,
-        "recommendationScore": r.recommendationScore,
-        "recommendationSource": getattr(r, "recommendationSource", None),
-        "clickCount": r.clickCount,
-        "bookmarkCount": getattr(r, "bookmarkCount", 0),
-        "spaceId": getattr(r, "space_id", None),
-        "lastAccessedAt": r.lastAccessedAt.isoformat() if r.lastAccessedAt else None,
-        "createdAt": r.createdAt.isoformat(),
-        "updatedAt": r.updatedAt.isoformat(),
+        "metadata": r.metadata_json,
+        "isRecommended": r.is_recommended,
+        "recommendationScore": r.recommendation_score,
+        "recommendationSource": r.recommendation_source,
+        "clickCount": r.click_count,
+        "bookmarkCount": r.bookmark_count,
+        "spaceId": r.space_id,
+        "lastAccessedAt": r.last_accessed_at.isoformat() if r.last_accessed_at else None,
+        "createdAt": r.created_at.isoformat(),
+        "updatedAt": r.updated_at.isoformat(),
     }

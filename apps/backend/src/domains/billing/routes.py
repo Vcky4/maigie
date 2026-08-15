@@ -72,7 +72,7 @@ async def sync_checkout(body: models.SyncCheckoutRequest, current_user: CurrentU
     )
     if not updated:
         raise HTTPException(status_code=400, detail="Could not sync subscription")
-    return {"tier": updated.tier, "stripe_subscription_id": updated.stripeSubscriptionId}
+    return {"tier": updated.tier, "stripe_subscription_id": updated.stripe_subscription_id}
 
 
 @router.post("/subscriptions/portal", response_model=models.PortalResponse)
@@ -82,7 +82,7 @@ async def create_portal(
     settings: Settings = Depends(get_settings),
 ):
     """Create a Stripe customer portal session."""
-    if not current_user.stripeCustomerId:
+    if not current_user.stripe_customer_id:
         raise HTTPException(status_code=400, detail="No Stripe customer account")
 
     base_url = settings.FRONTEND_URL or str(http_request.base_url).rstrip("/")
@@ -95,11 +95,13 @@ async def create_portal(
 @router.post("/subscriptions/cancel", response_model=models.CancelSubscriptionResponse)
 async def cancel_subscription(current_user: CurrentUser):
     """Cancel the active subscription (Stripe or Paystack)."""
-    provider = current_user.paymentProvider
+    # current_user is the SQLAlchemy User model: attributes are snake_case even
+    # though the underlying columns are camelCase.
+    provider = current_user.payment_provider
     if not provider:
-        if current_user.paystackSubscriptionCode:
+        if current_user.paystack_subscription_code:
             provider = "paystack"
-        elif current_user.stripeSubscriptionId:
+        elif current_user.stripe_subscription_id:
             provider = "stripe"
 
     if not provider:
@@ -156,7 +158,7 @@ async def paystack_verify(reference: str, current_user: CurrentUser):
         raise HTTPException(status_code=400, detail="Could not verify transaction")
     return models.PaystackVerifyResponse(
         tier=str(updated.tier),
-        paystack_subscription_code=updated.paystackSubscriptionCode,
+        paystack_subscription_code=updated.paystack_subscription_code,
     )
 
 
@@ -258,7 +260,7 @@ async def admin_adjust_credits(body: models.AdminCreditAdjustRequest, admin_user
         )
         return models.AdminCreditAdjustResponse(
             userId=updated.id,
-            newBalance=updated.purchasedCreditsBalance or 0,
+            newBalance=updated.purchased_credits_balance or 0,
             adjustmentAmount=body.amount,
         )
     except Exception as e:

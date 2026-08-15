@@ -65,12 +65,13 @@ async def create_portal_session(*, user: User, return_url: str) -> dict[str, str
 
 async def cancel_subscription(*, user: User) -> dict[str, Any]:
     """Cancel the user's active subscription (provider-aware)."""
-    provider = user.paymentProvider
+    # User is the SQLAlchemy model: attributes are snake_case, columns camelCase.
+    provider = user.payment_provider
 
     if not provider:
-        if user.paystackSubscriptionCode:
+        if user.paystack_subscription_code:
             provider = "paystack"
-        elif user.stripeSubscriptionId:
+        elif user.stripe_subscription_id:
             provider = "stripe"
 
     if provider == "paystack":

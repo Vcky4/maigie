@@ -80,9 +80,12 @@ def calculate_module_progress(module) -> dict[str, Any]:
     total = len(topics)
     completed = sum(1 for t in topics if t.completed)
     progress = (completed / total * 100) if total > 0 else 0.0
+    # Keys are camelCase because this dict feeds a Pydantic response model; the reads
+    # are snake_case because that is what the ORM exposes. Mixing them up is what made
+    # every course route answer `500`.
     return {
         "id": module.id,
-        "courseId": module.courseId,
+        "courseId": module.course_id,
         "title": module.title,
         "order": module.order,
         "description": module.description,
@@ -91,8 +94,8 @@ def calculate_module_progress(module) -> dict[str, Any]:
         "topicCount": total,
         "completedTopicCount": completed,
         "topics": topics,
-        "createdAt": module.createdAt,
-        "updatedAt": module.updatedAt,
+        "createdAt": module.created_at,
+        "updatedAt": module.updated_at,
     }
 
 

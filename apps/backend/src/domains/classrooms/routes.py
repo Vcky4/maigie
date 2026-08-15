@@ -187,31 +187,41 @@ async def unassign_course(space_id: str, course_id: str, current_user: CurrentUs
 
 
 def _to_classroom_response(group, space_id: str) -> models.ClassroomResponse:
+    # snake_case ORM attributes, camelCase response fields. Read the wrong way these
+    # raised `AttributeError`, so every classroom route answered `500`.
+    #
+    # The `getattr(..., default)` calls were worse than the exceptions: `chatSessionId`
+    # is not an attribute either, so that one silently reported `None` for every
+    # classroom no matter what was stored. Defaults are gone — a column that exists
+    # should be read directly, and one that does not should fail loudly.
     return models.ClassroomResponse(
         id=group.id,
         spaceId=space_id,
         name=group.name,
-        description=getattr(group, "description", None),
-        visibility=getattr(group, "visibility", "PUBLIC"),
-        chatSessionId=getattr(group, "chatSessionId", None),
-        createdAt=group.createdAt,
-        updatedAt=group.updatedAt,
+        description=group.description,
+        visibility=group.visibility,
+        chatSessionId=group.chat_session_id,
+        createdAt=group.created_at,
+        updatedAt=group.updated_at,
     )
 
 
 def _to_session_response(session) -> models.SessionResponse:
+    # Same correction as above. `classroomId`, `topicId` and `goalId` were read through
+    # `getattr` defaults and so reported `None` for every session — a wrong answer rather
+    # than a loud one, which is why this went unnoticed alongside the outright failures.
     return models.SessionResponse(
         id=session.id,
         spaceId=session.space_id,
-        classroomId=getattr(session, "chatGroupId", None),
+        classroomId=session.chat_group_id,
         title=session.title,
         description=session.description,
-        scheduledAt=session.scheduledAt,
+        scheduledAt=session.scheduled_at,
         duration=session.duration,
         status=session.status,
-        topicId=getattr(session, "topicId", None),
-        goalId=getattr(session, "goalId", None),
-        createdById=session.createdById,
-        createdAt=session.createdAt,
-        updatedAt=session.updatedAt,
+        topicId=session.topic_id,
+        goalId=session.goal_id,
+        createdById=session.created_by_id,
+        createdAt=session.created_at,
+        updatedAt=session.updated_at,
     )
