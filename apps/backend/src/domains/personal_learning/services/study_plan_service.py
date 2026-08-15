@@ -10,9 +10,10 @@ import logging
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import NotFoundError, ValidationError
 from src.shared.time.learner_timezone import to_learner_local
 
+from .. import plan_shapes
 from ..repository import personal_learning_repo as repo
 from . import prep_intent, prep_plan_adaptive
 
@@ -36,6 +37,33 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     goal_description = data.get("goalDescription")
     deadline_raw = data.get("deadline")
     prep_id = data.get("prepId")
+
+    # The rhythm the create wizard asks for in steps 1 and 2. Until migration 023 all four
+    # were collected and discarded, so a learner who chose "35 minutes, 5x a week,
+    # Mon/Wed/Fri/Sat" got a plan sized from their observed behaviour and scheduled on
+    # consecutive days.
+    sessions_per_week = data.get("sessionsPerWeek")
+    session_minutes = data.get("sessionMinutes")
+    preferred_days = data.get("preferredDays")
+
+    # An unknown shape is refused rather than stored and ignored. The value is not a label:
+    # its phases are the structure the generator is told to follow, so accepting an id with
+    # no catalogue entry would build an ungrouped plan while the wizard had just shown the
+    # learner a four-phase roadmap.
+    shape = data.get("shape")
+    if shape is not None and shape not in plan_shapes.SHAPE_IDS:
+        raise ValidationError(
+            "Unknown plan shape",
+            detail=f"'{shape}' is not one of: {', '.join(sorted(plan_shapes.SHAPE_IDS))}",
+        )
+
+    # Derived here rather than trusted from the client, so the printed weekly goal and the
+    # printed session design cannot disagree. An explicitly supplied goal still wins when
+    # the pace was not given — a plan can state a weekly target without describing how it
+    # is broken up.
+    weekly_goal_minutes = data.get("weeklyGoalMinutes")
+    if sessions_per_week and session_minutes:
+        weekly_goal_minutes = int(sessions_per_week) * int(session_minutes)
 
     # Determine quality tier for plan generation
     quality_tier = await feature_tier_service.get_quality_tier(user_id)
@@ -78,7 +106,11 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
         target = getattr(prep_for_pace, "target_readiness", None) if prep_for_pace else None
         prep_target_mastery = float(target) if target else None
 
-    if prep_pace:
+    if session_minutes:
+        # The learner typed a session length in the wizard. See `_daily_minute_budget` for
+        # why this is taken at face value rather than clamped by observed behaviour.
+        max_daily_minutes = float(session_minutes)
+    elif prep_pace:
         max_daily_minutes = prep_intent.daily_minute_budget(
             prep_pace, behaviour_minutes=avg_session_minutes
         )
@@ -120,7 +152,11 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     if not topics_to_plan:
         # Generate generic plan items from goal description via LLM
         topics_to_plan, skills = await _generate_topics_from_goal(
-            title, goal_description, user_id=user_id
+            title,
+            goal_description,
+            user_id=user_id,
+            shape=shape,
+            session_minutes=session_minutes,
         )
 
     # Calculate available days
@@ -160,8 +196,16 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
     if not all_items:
         # The even walk, unchanged. This is what Free gets, and what a goal-only
         # plan gets whether or not the learner is on Plus.
-        plan_items = _distribute_items(topics_to_plan, days_available, now, max_daily_minutes)
-        review_items = _add_review_items(plan_items, days_available, now)
+        plan_items = _distribute_items(
+            topics_to_plan,
+            days_available,
+            now,
+            max_daily_minutes,
+            preferred_days=preferred_days,
+        )
+        review_items = _add_review_items(
+            plan_items, days_available, now, preferred_days=preferred_days
+        )
         all_items = sorted(plan_items + review_items, key=lambda x: x["scheduledDate"])
 
     # Create plan
@@ -176,7 +220,14 @@ async def generate_plan(*, user_id: str, data: dict[str, Any]) -> Any:
             # The learner's stated weekly intent, from the create wizard. Left null
             # when they set none, so a surface shows minutes planned without a target
             # rather than inventing one.
-            "weeklyGoalMinutes": data.get("weeklyGoalMinutes"),
+            "weeklyGoalMinutes": weekly_goal_minutes,
+            # The rhythm itself, kept alongside its product so the plan can be described
+            # the way the learner chose it — "35 min, 5x week" — and so a later
+            # redistribution schedules onto the same days as the first one.
+            "sessionsPerWeek": sessions_per_week,
+            "sessionMinutes": session_minutes,
+            "preferredDays": preferred_days or None,
+            "shape": shape,
             # The wizard's toggles, stored because they are acted on: see
             # `set_item_status` for review cards and the daily check-in task.
             "generateReviewCards": bool(data.get("generateReviewCards")),
@@ -247,19 +298,107 @@ async def list_plans_page(
     search: str | None = None,
     page: int = 1,
     page_size: int = 20,
-) -> tuple[list[Any], int]:
+) -> tuple[list[dict[str, Any]], int]:
     """A page of plans without their items, for a plan library view.
 
     Items are omitted because the card only needs the counts, which live on the plan.
     Embedding them meant an "all plans" page loaded every item of every plan.
+
+    The card also names the phase in progress and the next thing to do, and both come from
+    the items. They are added here as two grouped queries over the page's plans — a handful
+    of rows each — rather than by loading the items after all.
     """
-    return await repo.list_plans_paginated(
+    plans, total = await repo.list_plans_paginated(
         user_id,
         status=status,
         search=search,
         skip=(page - 1) * page_size,
         take=page_size,
     )
+    if not plans:
+        return [], total
+
+    plan_ids = [plan.id for plan in plans]
+    phases_by_plan, next_items = await asyncio.gather(
+        repo.summarise_plan_phases(plan_ids),
+        repo.next_pending_items(plan_ids),
+    )
+
+    summaries: list[dict[str, Any]] = []
+    for plan in plans:
+        phases = phases_by_plan.get(plan.id, [])
+        next_item = next_items.get(plan.id)
+        summaries.append(
+            {
+                **_summary_columns(plan),
+                "currentPhase": _current_phase(phases, next_item),
+                "totalPhases": len(phases),
+                "nextItem": next_item,
+            }
+        )
+    return summaries, total
+
+
+def _current_phase(
+    phases: list[dict[str, Any]], next_item: Any | None
+) -> dict[str, Any] | None:
+    """The phase a plan is in.
+
+    The phase holding the next pending item, because that is where the work is. With
+    nothing pending the plan is finished or entirely skipped, and the last phase is the one
+    it ended in — reporting the first would say a completed plan is at its beginning.
+
+    Matched by label rather than by position: an item's phase is the only link it has to
+    one, and positions are assigned here from the same rows, so comparing them would be
+    comparing a derived value to itself.
+
+    An item can be pending and carry no phase, on a plan whose other items do — the label is
+    nullable per item. The fallback is then the earliest phase with work left in it, which is
+    what "current" means anyway and does not depend on any one item.
+    """
+    if not phases:
+        return None
+    label = getattr(next_item, "phase", None) if next_item else None
+    if label:
+        matched = next((phase for phase in phases if phase["label"] == label), None)
+        if matched:
+            return matched
+    unfinished = next(
+        (phase for phase in phases if phase["completed_items"] < phase["total_items"]), None
+    )
+    return unfinished or phases[-1]
+
+
+def _summary_columns(plan: Any) -> dict[str, Any]:
+    """The plan's own columns, as the summary response names them.
+
+    Spelled out rather than passing the ORM row through, because the two derived fields
+    have to be added alongside them and a mapping cannot be part row and part dict.
+    """
+    return {
+        "id": plan.id,
+        "userId": plan.user_id,
+        "title": plan.title,
+        "goalDescription": plan.goal_description,
+        "deadline": plan.deadline,
+        "prepId": plan.prep_id,
+        "status": plan.status,
+        "strategy": plan.strategy,
+        "weeklyGoalMinutes": plan.weekly_goal_minutes,
+        "sessionsPerWeek": plan.sessions_per_week,
+        "sessionMinutes": plan.session_minutes,
+        "preferredDays": plan.preferred_days,
+        "shape": plan.shape,
+        "skills": plan.skills,
+        "generateReviewCards": plan.generate_review_cards,
+        "weeklyCheckIn": plan.weekly_check_in,
+        "reviewDeckId": plan.review_deck_id,
+        "lastCheckInAt": plan.last_check_in_at,
+        "totalItems": plan.total_items,
+        "completedItems": plan.completed_items,
+        "createdAt": plan.created_at,
+        "updatedAt": plan.updated_at,
+    }
 
 
 async def _detail(plan: Any, user_id: str) -> dict[str, Any]:
@@ -272,10 +411,17 @@ async def _detail(plan: Any, user_id: str) -> dict[str, Any]:
     one return the bare row would serialize empty lists for a plan that has links, which
     reads as "no courses linked" rather than "not loaded".
     """
-    linked_courses, materials = await asyncio.gather(
+    linked_courses, materials, phases_by_plan, next_items = await asyncio.gather(
         repo.list_plan_courses(plan.id),
         repo.list_plan_materials(plan.id),
+        # Derived through the same queries the list uses rather than recomputed from the
+        # items loaded here. Two derivations of one figure eventually disagree, and this one
+        # would disagree between the card and the page showing the same plan.
+        repo.summarise_plan_phases([plan.id]),
+        repo.next_pending_items([plan.id]),
     )
+    phases = phases_by_plan.get(plan.id, [])
+    next_item = next_items.get(plan.id)
     return {
         "id": plan.id,
         "userId": plan.user_id,
@@ -286,6 +432,10 @@ async def _detail(plan: Any, user_id: str) -> dict[str, Any]:
         "status": plan.status,
         "strategy": plan.strategy,
         "weeklyGoalMinutes": plan.weekly_goal_minutes,
+        "sessionsPerWeek": plan.sessions_per_week,
+        "sessionMinutes": plan.session_minutes,
+        "preferredDays": plan.preferred_days,
+        "shape": plan.shape,
         "skills": plan.skills,
         "generateReviewCards": plan.generate_review_cards,
         "weeklyCheckIn": plan.weekly_check_in,
@@ -293,6 +443,12 @@ async def _detail(plan: Any, user_id: str) -> dict[str, Any]:
         "lastCheckInAt": plan.last_check_in_at,
         "totalItems": plan.total_items,
         "completedItems": plan.completed_items,
+        # Populated here as well as on the list, so the detail response does not serialize a
+        # null phase for a plan that has phases — which reads as "not grouped" rather than
+        # "not loaded", the same trap as the linked courses above.
+        "currentPhase": _current_phase(phases, next_item),
+        "totalPhases": len(phases),
+        "nextItem": next_item,
         "items": plan.items,
         "linkedCourses": [
             {
@@ -350,6 +506,72 @@ async def get_plan_metrics(*, user_id: str, plan_id: str) -> dict[str, Any]:
     }
 
 
+async def get_dashboard(*, user_id: str) -> dict[str, Any]:
+    """Everything the plan library page shows above its grid, in one request.
+
+    Composed rather than left to the client for the reason recorded on
+    `StudyPlansDashboardResponse`: from the endpoints that already existed this page was six
+    requests and still could not produce its weekly figure, because the per-plan metrics are
+    all-time.
+
+    The week runs from Monday in the learner's own timezone. When that timezone was never
+    captured the boundaries fall back to UTC and `timezoneKnown` says so, rather than the
+    response presenting a UTC week as the learner's week — `UserPreferences.timezone` is
+    `NOT NULL` defaulting to `"UTC"`, so reading it without checking the source makes
+    everyone look like they are in London.
+    """
+    from src.shared.time.learner_timezone import resolve_learner_timezone
+
+    learner_timezone = await resolve_learner_timezone(user_id)
+    now_local = to_learner_local(datetime.now(UTC), learner_timezone)
+    week_start_local = (now_local - timedelta(days=now_local.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    week_end_local = week_start_local + timedelta(days=7)
+    # Back to instants for the query: the columns are `timestamptz` and comparing them to a
+    # local wall clock would shift the window by the learner's offset.
+    week_start = week_start_local.astimezone(UTC)
+    week_end = week_end_local.astimezone(UTC)
+
+    counts, weekly_minutes, due_today, active_page = await asyncio.gather(
+        repo.count_plans_by_status(user_id),
+        repo.completed_minutes_between(user_id, week_start, week_end),
+        list_items_due_today(user_id=user_id),
+        # The nearest deadline first, which is what `list_plans_paginated` already orders by,
+        # so "featured" is a page of one rather than a sort done here over everything.
+        list_plans_page(user_id=user_id, status="ACTIVE", page=1, page_size=1),
+    )
+
+    featured_summaries, _ = active_page
+    featured = featured_summaries[0] if featured_summaries else None
+
+    featured_streak = 0
+    featured_week: list[Any] = []
+    if featured:
+        plan_id = featured["id"]
+        metrics, featured_week = await asyncio.gather(
+            repo.get_plan_metrics(plan_id),
+            repo.list_plan_items_between(plan_id, week_start, week_end),
+        )
+        featured_streak = _streak_from_dates(
+            set(metrics["active_dates"]), now_local.date()
+        )
+
+    goal_total = counts.get("weeklyGoalTotal") or 0
+    return {
+        "weeklyMinutes": weekly_minutes,
+        "weeklyGoalMinutes": goal_total or None,
+        "tasksDue": len(due_today),
+        "activeCount": counts.get("ACTIVE", 0),
+        "pausedCount": counts.get("PAUSED", 0),
+        "completedCount": counts.get("COMPLETED", 0),
+        "featured": featured,
+        "featuredStreakDays": featured_streak,
+        "featuredWeek": featured_week,
+        "timezoneKnown": learner_timezone.is_known,
+    }
+
+
 def _streak_from_dates(active_dates: set[date], today: date) -> int:
     """Consecutive days ending today, or ending yesterday if today is unused.
 
@@ -395,6 +617,11 @@ async def update_plan(*, user_id: str, plan_id: str, data: dict[str, Any]) -> An
     redistribution the completion path uses. Leaving the dates alone would produce a
     plan whose items sit past its own deadline — a schedule that contradicts the date
     printed above it.
+
+    Changing the session length or the available days redistributes for the same reason.
+    Both decide which day an item lands on, so a plan that kept its old dates would show a
+    rhythm in its header that its own schedule contradicts. The weekly goal is left out of
+    that: it is a target the learner is measured against, not an input to placement.
     """
     if "status" in data and data["status"] not in SETTABLE_PLAN_STATUSES:
         raise ValueError(f"Unsupported plan status: {data['status']}")
@@ -405,13 +632,25 @@ async def update_plan(*, user_id: str, plan_id: str, data: dict[str, Any]) -> An
     if not existing:
         raise NotFoundError("StudyPlan", plan_id)
 
-    deadline_changed = "deadline" in data and data["deadline"] != existing.deadline
+    # Kept in step with `weeklyGoalMinutes` the same way creation does it, so a learner who
+    # changes their pace does not end up with a stated weekly total describing the old one.
+    sessions = data.get("sessionsPerWeek", existing.sessions_per_week)
+    minutes = data.get("sessionMinutes", existing.session_minutes)
+    if ("sessionsPerWeek" in data or "sessionMinutes" in data) and sessions and minutes:
+        data["weeklyGoalMinutes"] = int(sessions) * int(minutes)
+
+    reschedules = (
+        ("deadline", existing.deadline),
+        ("sessionMinutes", existing.session_minutes),
+        ("preferredDays", existing.preferred_days),
+    )
+    schedule_changed = any(key in data and data[key] != current for key, current in reschedules)
 
     plan = await repo.update_study_plan(plan_id, user_id, data)
     if plan is None:
         raise NotFoundError("StudyPlan", plan_id)
 
-    if deadline_changed:
+    if schedule_changed:
         await _redistribute_plan(plan_id, user_id)
 
     return await _detail_by_id(plan_id, user_id)
@@ -864,12 +1103,11 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     deadline = plan.deadline
     days_remaining = max(1, (deadline - now).days)
 
-    # Get behaviour profile for sustainable session limit
-    profile = await repo.get_profile_by_user(user_id)
-    avg_session_minutes = 60
-    if profile and profile.avg_session_minutes:
-        avg_session_minutes = profile.avg_session_minutes
-    max_daily_minutes = min(avg_session_minutes * 1.5, 120)
+    # The learner's own stated session length is the daily budget when they gave one;
+    # otherwise fall back to what they have been observed to sustain. Same order of
+    # preference as the first distribution, so a redistribution cannot quietly rewrite
+    # the plan to a rhythm the learner never chose.
+    max_daily_minutes = await _daily_minute_budget(user_id, plan.session_minutes)
 
     # Get pending items
     items = await repo.list_plan_items(plan_id)
@@ -878,9 +1116,15 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     if not pending_items:
         return
 
-    # Redistribute respecting max_daily_minutes per day
+    # Redistribute respecting max_daily_minutes per day, onto the days the learner
+    # studies. Starts tomorrow rather than today: redistribution runs in response to
+    # something that just happened, and moving pending work onto the day already in
+    # progress would put it behind before the learner saw it.
     day_index = 0
     daily_minutes_used = 0.0
+    candidates = _available_dates(
+        now + timedelta(days=1), days_remaining, plan.preferred_days
+    )
 
     for item in pending_items:
         item_minutes = getattr(item, "estimated_minutes", 30) or 30
@@ -890,9 +1134,9 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
             day_index += 1
             daily_minutes_used = 0.0
 
-        # Cap at deadline — if we run out of days, pack remaining into last day
-        actual_day = min(day_index, days_remaining - 1)
-        new_date = now + timedelta(days=actual_day + 1)
+        # Cap at the last available day — if we run out, pack the remainder into it
+        # rather than scheduling past the deadline.
+        new_date = candidates[min(day_index, len(candidates) - 1)]
         await repo.update_plan_item(item.id, {"scheduledDate": new_date}, plan_id=plan_id)
 
         daily_minutes_used += item_minutes
@@ -903,16 +1147,87 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
             daily_minutes_used = 0.0
 
 
+#: ISO weekday numbers, 1 = Monday ... 7 = Sunday. Every day, which is what a plan whose
+#: learner was never asked about availability gets.
+_ALL_WEEKDAYS = (1, 2, 3, 4, 5, 6, 7)
+
+
+async def _daily_minute_budget(user_id: str, session_minutes: int | None) -> float:
+    """How many minutes of work one day of this plan may hold.
+
+    The learner's stated session length wins when they gave one, and is **not** clamped
+    by observed behaviour. That differs from `prep_intent.daily_minute_budget`, which
+    takes the smaller of intent and behaviour, and the difference is deliberate: a
+    preparation's pace is a word — "Intensive" — that has to be interpreted into minutes,
+    and behaviour is the honest way to interpret it. A session length is a number the
+    learner typed in answer to "focused time per session". Overriding that with an
+    inference would discard the answer while appearing to honour it.
+
+    With no stated length this is the previous behaviour unchanged: one and a half average
+    sessions, capped at two hours.
+    """
+    if session_minutes and session_minutes > 0:
+        return float(session_minutes)
+    profile = await repo.get_profile_by_user(user_id)
+    avg_session_minutes = 60
+    if profile and profile.avg_session_minutes:
+        avg_session_minutes = profile.avg_session_minutes
+    return min(avg_session_minutes * 1.5, 120)
+
+
+def _normalise_preferred_days(preferred_days: Any) -> tuple[int, ...]:
+    """The learner's available weekdays as a sorted tuple of ISO weekday numbers.
+
+    Anything unusable — null, an empty list, a list of values outside 1-7 — becomes every
+    day. The contract rejects an empty list, so reaching here with one means a plan
+    predates the column or a caller bypassed the route, and refusing to schedule would
+    turn that into a plan with no items rather than a plan with a forgotten preference.
+    """
+    if not preferred_days:
+        return _ALL_WEEKDAYS
+    days = sorted({int(d) for d in preferred_days if isinstance(d, int | float) and 1 <= d <= 7})
+    return tuple(days) if days else _ALL_WEEKDAYS
+
+
+def _available_dates(
+    start: datetime, days_available: int, preferred_days: Any
+) -> list[datetime]:
+    """The dates inside the window that the learner said they study on, in order.
+
+    The two schedulers used to index days by offset from today — day 0, day 1, day 2 —
+    which is why a learner who chose Monday, Wednesday, Friday and Saturday got work on
+    the Tuesday. They now index into this list instead, so an excluded weekday is not a
+    date either of them can produce.
+
+    Falls back to the whole window when no preferred day falls inside it. A four-day
+    deadline and a Saturday-only learner is a real combination, and honouring it exactly
+    would mean a plan with nowhere to put its items; the deadline is the harder
+    constraint, so availability yields to it rather than the reverse.
+    """
+    allowed = _normalise_preferred_days(preferred_days)
+    window = [start + timedelta(days=offset) for offset in range(max(1, days_available))]
+    if allowed == _ALL_WEEKDAYS:
+        return window
+    matching = [day for day in window if day.isoweekday() in allowed]
+    return matching or window
+
+
 def _distribute_items(
     topics: list[dict[str, Any]],
     days_available: int,
     start: datetime,
     max_daily_minutes: float,
+    preferred_days: Any = None,
 ) -> list[dict[str, Any]]:
-    """Distribute study items across available days respecting daily limit."""
+    """Distribute study items across the learner's available days, respecting the daily
+    limit."""
     items: list[dict[str, Any]] = []
     day_index = 0
     daily_minutes_used = 0.0
+    # Start on the first available day so a fresh plan gives the learner something to do
+    # the moment it is created — which is today, unless today is a day they said they do
+    # not study.
+    candidates = _available_dates(start, days_available, preferred_days)
 
     for topic in topics:
         est_minutes = topic.get("estimatedMinutes", 30)
@@ -922,11 +1237,9 @@ def _distribute_items(
             day_index += 1
             daily_minutes_used = 0.0
 
-        # Wrap around if we exceed available days.
-        # Start on day 0 (today) so a fresh plan gives the learner
-        # something to do the moment it's created.
-        actual_day = day_index % days_available
-        scheduled = start + timedelta(days=actual_day)
+        # Wrap around if we run out of available days rather than overflowing the
+        # deadline, unchanged in behaviour from indexing the raw window.
+        scheduled = candidates[day_index % len(candidates)]
 
         items.append(
             {
@@ -952,20 +1265,26 @@ def _add_review_items(
     plan_items: list[dict[str, Any]],
     days_available: int,
     start: datetime,
+    preferred_days: Any = None,
 ) -> list[dict[str, Any]]:
     """Add spaced repetition review items (every 3-4 days after first study)."""
     reviews: list[dict[str, Any]] = []
     # Review first third of topics for spaced repetition
     items_to_review = plan_items[: len(plan_items) // 3]
+    candidates = _available_dates(start, days_available, preferred_days)
 
     for item in items_to_review:
-        # Schedule review 3 days after initial study
+        # Three days after the study item, then forward to the next day the learner
+        # actually studies. Without the snap a review lands on an excluded weekday even
+        # though every study item respects the preference, which is the more confusing
+        # half-honoured version of the same bug.
         study_date = item["scheduledDate"]
-        review_date = study_date + timedelta(days=3)
+        target = study_date + timedelta(days=3)
+        review_date = next((day for day in candidates if day >= target), None)
 
         # Don't schedule reviews past the plan end
         plan_end = start + timedelta(days=days_available)
-        if review_date <= plan_end:
+        if review_date is not None and review_date <= plan_end:
             reviews.append(
                 {
                     "title": f"Review: {item['title']}",
@@ -980,8 +1299,56 @@ def _add_review_items(
     return reviews
 
 
+def _conform_phases(
+    topics: list[dict[str, Any]], shape_phases: list[str]
+) -> list[dict[str, Any]]:
+    """Make the topics' phase labels the ones the learner was shown.
+
+    Asking for the labels in the prompt is not the same as getting them: a model that
+    returns "Fundamentals" where the shape says "Close the foundations gap" leaves the plan
+    grouped by headings the learner never saw, which is the defect this was meant to fix,
+    only harder to spot.
+
+    So a returned label is kept when it is one of the shape's, matched case- and
+    space-insensitively, and otherwise every topic is relabelled by its position: the
+    ordered topics are cut into as many contiguous runs as the shape has phases. Position
+    is a real signal rather than a guess here, because both sequences are ordered the same
+    way — the prompt asks for basics through to application, and that is how the shape's
+    phases read.
+
+    All-or-nothing per plan, not per topic. Mixing the model's labels with positional ones
+    would produce more phases than the shape has, and a roadmap with five headings where
+    the preview showed four is worse than one that is uniformly positional.
+
+    No shape means no expectation to meet, and the labels are returned untouched.
+    """
+    if not shape_phases or not topics:
+        return topics
+
+    def canonical(value: Any) -> str:
+        return " ".join(str(value or "").lower().split())
+
+    allowed = {canonical(p): p for p in shape_phases}
+    if all(canonical(t.get("phase")) in allowed for t in topics):
+        for topic in topics:
+            topic["phase"] = allowed[canonical(topic["phase"])]
+        return topics
+
+    count = len(shape_phases)
+    for index, topic in enumerate(topics):
+        # Cut into contiguous runs; integer maths keeps the last topic inside the last
+        # phase rather than one past it.
+        topic["phase"] = shape_phases[min(index * count // len(topics), count - 1)]
+    return topics
+
+
 async def _generate_topics_from_goal(
-    title: str, goal_description: str | None, *, user_id: str | None = None
+    title: str,
+    goal_description: str | None,
+    *,
+    user_id: str | None = None,
+    shape: str | None = None,
+    session_minutes: int | None = None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Generate study topics from a goal description using AI.
 
@@ -991,19 +1358,47 @@ async def _generate_topics_from_goal(
     structure the model already had in mind. Skills are the same: derivable from the
     goal, not from the items.
 
+    ``shape`` names a path shape from the wizard's catalogue. Its phases are given to the
+    model as the spine to fill rather than left to invent, because step 4 of the wizard
+    shows the learner those exact phase titles before they accept the plan. Unknown or
+    absent shape means the model chooses its own phases, which is what every plan did
+    before shapes existed.
+
+    ``session_minutes`` bounds each topic's estimate. Without it the model returns 15-90
+    minute topics and the distributor then puts one 90-minute topic on a day the learner
+    said was 20 minutes long — the plan still fits the deadline, but no single day is
+    doable as described.
+
     Returns ``(topics, skills)``. Either can be empty, and the caller stores nothing
     rather than inventing a stand-in.
     """
+    from ..plan_shapes import phase_titles
     from .llm_resilient import generate_content_json
+
+    phases = phase_titles(shape)
+    if phases:
+        phase_instruction = (
+            '  "phase": one of these exact labels, in this order, each used by at least\n'
+            "            one consecutive run of topics: " + ", ".join(f'"{p}"' for p in phases)
+        )
+    else:
+        phase_instruction = (
+            '  "phase": a short grouping label shared by consecutive topics that belong\n'
+            '            together, e.g. "Foundations", "Core patterns".'
+        )
+
+    # A ceiling, not a target: a topic may be shorter than one session, but a topic longer
+    # than one cannot be done in the session the learner described.
+    upper_minutes = max(15, min(90, session_minutes)) if session_minutes else 90
 
     prompt = (
         "Break this learning goal into a study plan.\n"
         f"Goal: {title}\n"
         f"Description: {goal_description or ''}\n\n"
         "Return ONLY a JSON object with two keys:\n"
-        '  "topics": an array of objects with "title", "estimatedMinutes" (15-90), and\n'
-        '            "phase" — a short grouping label shared by consecutive topics that\n'
-        "            belong together, e.g. \"Foundations\", \"Core patterns\".\n"
+        '  "topics": an array of objects with "title", "estimatedMinutes"\n'
+        f"            (15-{upper_minutes}), and\n"
+        f"{phase_instruction}\n"
         '  "skills": an array of 3-6 short skill names this plan builds.\n'
         "Generate 5-15 topics, ordered so phases progress from basics to application."
     )
@@ -1032,12 +1427,25 @@ async def _generate_topics_from_goal(
         ]
         skills = [s for s in raw_skills if isinstance(s, str) and s.strip()][:6]
         if topics:
-            return topics, skills
+            return _conform_phases(topics, phases), skills
         logger.warning("Goal breakdown returned no usable topics")
     except Exception as e:
         logger.warning(f"Failed to generate topics from goal: {e}")
 
-    # Fallback: a single topic from the title, with no phase and no skills. Both are
-    # left empty rather than filled with the title, which would present a placeholder
-    # as a structure the learner can act on.
-    return [{"title": title, "estimatedMinutes": 60, "phase": None, "type": "STUDY"}], []
+    # Fallback: a single topic from the title, with no skills. Skills are left empty rather
+    # than filled with the title, which would present a placeholder as a structure the
+    # learner can act on.
+    #
+    # The phase is the shape's first label when there is a shape, and null otherwise. That
+    # is not inventing structure: the learner chose that shape and its first phase is where
+    # any plan following it starts. Leaving it null would render the one item outside the
+    # roadmap the wizard had just shown them.
+    fallback_minutes = max(15, min(60, session_minutes)) if session_minutes else 60
+    return [
+        {
+            "title": title,
+            "estimatedMinutes": fallback_minutes,
+            "phase": phases[0] if phases else None,
+            "type": "STUDY",
+        }
+    ], []

@@ -1171,6 +1171,36 @@ async def list_study_plan_items_due_today(current_user: CurrentUser):
     return await study_plan_service.list_items_due_today(user_id=current_user.id)
 
 
+@router.get("/study-plans/dashboard", response_model=models.StudyPlansDashboardResponse)
+async def get_study_plans_dashboard(current_user: CurrentUser):
+    """Everything the plan library page shows above its grid, in one request.
+
+    Declared before `/study-plans/{plan_id}` so FastAPI does not read "dashboard" as a plan
+    id. Composed for the reason the flashcards dashboard was: from the endpoints that already
+    existed the page was six requests, and the weekly figure was not among what they could
+    answer.
+    """
+    return await study_plan_service.get_dashboard(user_id=current_user.id)
+
+
+@router.get("/study-plans/shapes", response_model=list[models.PlanShapeResponse])
+async def list_plan_shapes():
+    """The path shapes the create wizard offers, with the phases each one is built from.
+
+    Declared before `/study-plans/{plan_id}` so FastAPI does not read "shapes" as a plan
+    id, and unauthenticated because it is a fixed catalogue with nothing learner-specific
+    in it — the same reasoning as `/billing/plans/catalog`.
+
+    The wizard used to carry this list itself, which made step 4's "Generated roadmap"
+    heading untrue: it previewed the client's phases while the plan was built with
+    whatever the model returned. `generate_plan` now hands these titles to the generator,
+    so both sides read from here.
+    """
+    from ..plan_shapes import PLAN_SHAPES
+
+    return PLAN_SHAPES
+
+
 @router.get("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
 async def get_study_plan(plan_id: str, current_user: CurrentUser):
     """Get a study plan with items."""

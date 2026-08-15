@@ -19,7 +19,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from src.shared.database import get_session_factory
 
@@ -3626,6 +3626,203 @@ class PersonalLearningRepository:
                 "active_dates": [value for value in (_as_date(d) for d in days) if value],
             }
 
+    async def count_plans_by_status(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> dict[str, int]:
+        """How many plans the learner has in each status, and the active weekly target.
+
+        One grouped query rather than a `COUNT` per tab. The plan library shows an active
+        count, a completed count and a weekly goal at the same time, and reading each from a
+        separate filtered list request would make three page-sized queries to produce three
+        integers.
+
+        The `"weeklyGoalTotal"` key is the sum of `weeklyGoalMinutes` over **active** plans
+        only: a paused plan's target is not something the learner is working towards this
+        week, and a completed plan's certainly is not.
+        """
+        async with self._read_session(session) as s:
+            rows = (
+                await s.execute(
+                    select(StudyPlan.status, func.count(StudyPlan.id))
+                    .where(StudyPlan.user_id == user_id)
+                    .group_by(StudyPlan.status)
+                )
+            ).all()
+            goal = (
+                await s.execute(
+                    select(func.sum(StudyPlan.weekly_goal_minutes)).where(
+                        StudyPlan.user_id == user_id, StudyPlan.status == "ACTIVE"
+                    )
+                )
+            ).scalar()
+
+        counts = {str(status): int(count or 0) for status, count in rows}
+        # `None`, not `0`, when no active plan states a target. Zero would render as a goal
+        # of nothing and make any percentage against it a division by zero.
+        counts["weeklyGoalTotal"] = int(goal) if goal else 0
+        return counts
+
+    async def completed_minutes_between(
+        self,
+        user_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
+        """Planned minutes on items the learner completed in a window, across their plans.
+
+        Planned, not measured. `estimatedMinutes` is what the item was scheduled to take;
+        nothing records how long it actually took, so a caller must not label this as time
+        spent. Named for the window rather than "this week" because the caller decides where
+        the learner's week begins — that depends on their timezone, which this does not know.
+        """
+        async with self._read_session(session) as s:
+            total = (
+                await s.execute(
+                    select(func.sum(StudyPlanItem.estimated_minutes))
+                    .join(StudyPlan, StudyPlan.id == StudyPlanItem.plan_id)
+                    .where(
+                        StudyPlan.user_id == user_id,
+                        StudyPlanItem.status == "COMPLETED",
+                        StudyPlanItem.completed_at.is_not(None),
+                        StudyPlanItem.completed_at >= start,
+                        StudyPlanItem.completed_at < end,
+                    )
+                )
+            ).scalar()
+        return int(total or 0)
+
+    async def list_plan_items_between(
+        self,
+        plan_id: str,
+        start: datetime,
+        end: datetime,
+        *,
+        session: AsyncSession | None = None,
+    ) -> list[StudyPlanItem]:
+        """A plan's items scheduled inside a window, in schedule order."""
+        async with self._read_session(session) as s:
+            rows = await s.execute(
+                select(StudyPlanItem)
+                .where(
+                    StudyPlanItem.plan_id == plan_id,
+                    StudyPlanItem.scheduled_date >= start,
+                    StudyPlanItem.scheduled_date < end,
+                )
+                .order_by(StudyPlanItem.scheduled_date.asc(), StudyPlanItem.id.asc())
+            )
+            return list(rows.scalars().all())
+
+    async def summarise_plan_phases(
+        self, plan_ids: list[str], *, session: AsyncSession | None = None
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Each plan's phases, in schedule order, with their span and their counts.
+
+        Aggregated in SQL rather than by loading the items and grouping in Python. The
+        whole reason the list response omits items is that a page of ten 40-item plans is
+        400 rows to render ten cards; fetching them here to derive a phase label would
+        reintroduce exactly that cost behind a different name. This is one row per plan
+        per phase — four or five per plan.
+
+        A phase's ordinal, span and progress are all derived, which is why `phase` is a
+        label on the item and not a table: there is nothing to store that these rows do
+        not already say.
+
+        Plans whose items carry no phase are absent from the result rather than present
+        with an empty list, so a caller reads "not grouped" from the plan being missing.
+        """
+        if not plan_ids:
+            return {}
+
+        async with self._read_session(session) as s:
+            rows = (
+                await s.execute(
+                    select(
+                        StudyPlanItem.plan_id,
+                        StudyPlanItem.phase,
+                        func.min(StudyPlanItem.scheduled_date),
+                        func.max(StudyPlanItem.scheduled_date),
+                        func.count(StudyPlanItem.id),
+                        func.count(StudyPlanItem.id).filter(
+                            StudyPlanItem.status == "COMPLETED"
+                        ),
+                    )
+                    .where(
+                        StudyPlanItem.plan_id.in_(plan_ids),
+                        StudyPlanItem.phase.is_not(None),
+                    )
+                    .group_by(StudyPlanItem.plan_id, StudyPlanItem.phase)
+                    # Ordered by when the phase starts, which is the order a roadmap reads
+                    # in. Tie-broken by label so two phases beginning on the same day do
+                    # not swap places between requests and renumber themselves.
+                    .order_by(
+                        StudyPlanItem.plan_id.asc(),
+                        func.min(StudyPlanItem.scheduled_date).asc(),
+                        StudyPlanItem.phase.asc(),
+                    )
+                )
+            ).all()
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for plan_id, phase, start, end, total, completed in rows:
+            phases = grouped.setdefault(plan_id, [])
+            phases.append(
+                {
+                    "label": phase,
+                    # Position in the plan, 1-based. Assigned from the list length before
+                    # the append, which the query's ordering makes the schedule order.
+                    "number": len(phases) + 1,
+                    "start": start,
+                    "end": end,
+                    "total_items": int(total or 0),
+                    "completed_items": int(completed or 0),
+                }
+            )
+        return grouped
+
+    async def next_pending_items(
+        self, plan_ids: list[str], *, session: AsyncSession | None = None
+    ) -> dict[str, StudyPlanItem]:
+        """The earliest still-pending item of each plan.
+
+        What a plan card means by "Up next". One row per plan via a window function rather
+        than a query per plan, because a page of twenty plans would otherwise be twenty
+        round trips to print twenty lines of text.
+
+        Plans with nothing pending are absent: the work is done, or all of it was skipped,
+        and both cases want a different label rather than a blank one.
+        """
+        if not plan_ids:
+            return {}
+
+        ranked = (
+            select(
+                StudyPlanItem,
+                func.row_number()
+                .over(
+                    partition_by=StudyPlanItem.plan_id,
+                    # Tie-broken by id so a plan with two items on one day does not change
+                    # its "Up next" between requests.
+                    order_by=(StudyPlanItem.scheduled_date.asc(), StudyPlanItem.id.asc()),
+                )
+                .label("rank"),
+            )
+            .where(
+                StudyPlanItem.plan_id.in_(plan_ids),
+                StudyPlanItem.status == "PENDING",
+            )
+            .subquery()
+        )
+        entity = aliased(StudyPlanItem, ranked)
+
+        async with self._read_session(session) as s:
+            rows = (
+                await s.execute(select(entity).where(ranked.c.rank == 1))
+            ).scalars().all()
+
+        return {item.plan_id: item for item in rows}
+
     async def recount_plan_progress(
         self, plan_id: str, *, session: AsyncSession | None = None
     ) -> tuple[int, int]:
@@ -3672,6 +3869,10 @@ class PersonalLearningRepository:
             "status": "status",
             "strategy": "strategy",
             "weeklyGoalMinutes": "weekly_goal_minutes",
+            "sessionsPerWeek": "sessions_per_week",
+            "sessionMinutes": "session_minutes",
+            "preferredDays": "preferred_days",
+            "shape": "shape",
             "skills": "skills",
             "generateReviewCards": "generate_review_cards",
             "weeklyCheckIn": "weekly_check_in",

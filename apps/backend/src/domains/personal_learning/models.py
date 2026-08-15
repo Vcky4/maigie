@@ -6,7 +6,7 @@ These are the learner's private artifacts.
 """
 
 from datetime import date, datetime
-from typing import Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -1542,6 +1542,11 @@ StudyPlanItemStatus = Literal["PENDING", "COMPLETED", "SKIPPED"]
 SettableStudyPlanStatus = Literal["ACTIVE", "PAUSED", "COMPLETED"]
 
 
+#: An ISO weekday: 1 = Monday ... 7 = Sunday. Bounded in the type so an out-of-range day
+#: is a `400` naming the field, rather than a value the scheduler quietly never matches.
+IsoWeekday = Annotated[int, Field(ge=1, le=7)]
+
+
 class StudyPlanCreate(BaseModel):
     title: str = Field(min_length=1)
     goalDescription: str | None = None
@@ -1551,6 +1556,26 @@ class StudyPlanCreate(BaseModel):
     # session-length choices. Optional, because it is an intention: with none set, a
     # surface reports minutes planned without a target instead of inventing one.
     weeklyGoalMinutes: int | None = Field(default=None, ge=15, le=10_080)
+    # --- The rhythm, from steps 1 and 2 of the wizard ---
+    #
+    # Sent as well as `weeklyGoalMinutes`, not instead of it: when both of these are
+    # present the server derives the weekly goal from them, so the "35 min - 5x week" line
+    # and the weekly total cannot disagree. Kept separate because their product cannot be
+    # factorised back.
+    sessionsPerWeek: int | None = Field(default=None, ge=1, le=7)
+    sessionMinutes: int | None = Field(default=None, ge=5, le=600)
+    # ISO weekday numbers the learner is available: 1 = Monday ... 7 = Sunday.
+    #
+    # `min_length=1`, so omitting the field means "did not say" and the schedule uses every
+    # day, while sending `[]` is refused. An empty list would mean no day is acceptable,
+    # which is not a plan that can be built, and storing it would leave the scheduler to
+    # silently ignore it — the discard this whole change is closing.
+    preferredDays: list[IsoWeekday] | None = Field(default=None, min_length=1, max_length=7)
+    # The path shape chosen in step 1. Validated against the catalogue because the value
+    # is not merely recorded: its phases are given to the generator as the structure to
+    # follow, so an id with no catalogue entry would silently produce an ungrouped plan
+    # under a heading promising the opposite.
+    shape: str | None = None
     # Courses the learner chose to link in step 3 of the wizard. Ids they do not own are
     # rejected rather than silently dropped, so a selection that cannot be honoured is
     # reported instead of disappearing.
@@ -1566,7 +1591,14 @@ class StudyPlanUpdate(BaseModel):
     """Partial update of a plan. Read with ``exclude_unset=True``.
 
     Changing `deadline` redistributes pending items, because leaving them put would
-    produce a schedule with work sitting past the plan's own deadline.
+    produce a schedule with work sitting past the plan's own deadline. Changing
+    `sessionMinutes` or `preferredDays` redistributes for the same reason: both decide
+    which day an item lands on, so a plan that kept its old dates would contradict the
+    rhythm it now says it has.
+
+    `shape` is absent deliberately. It is the structure the plan's phases were generated
+    against, so changing it later would leave a plan labelled with one shape and grouped
+    by another's phases. Re-shaping means regenerating.
     """
 
     title: str | None = Field(default=None, min_length=1)
@@ -1574,6 +1606,9 @@ class StudyPlanUpdate(BaseModel):
     deadline: datetime | None = None
     status: SettableStudyPlanStatus | None = None
     weeklyGoalMinutes: int | None = Field(default=None, ge=15, le=10_080)
+    sessionsPerWeek: int | None = Field(default=None, ge=1, le=7)
+    sessionMinutes: int | None = Field(default=None, ge=5, le=600)
+    preferredDays: list[IsoWeekday] | None = Field(default=None, min_length=1, max_length=7)
     generateReviewCards: bool | None = None
     weeklyCheckIn: bool | None = None
 
@@ -1648,6 +1683,43 @@ class StudyPlanMaterialResponse(CamelModel):
     created_at: datetime
 
 
+class StudyPlanPhaseSummary(CamelModel):
+    """One phase of a plan, with everything about it that its items imply.
+
+    Nothing here is stored. A phase is a nullable label on `StudyPlanItem`, and its
+    ordinal, span and progress are all derived from the items carrying that label — which
+    is the argument for the label over a `StudyPlanPhase` table: a table would hold a name
+    and a foreign key and compute the rest from these same rows, while adding a second
+    thing that can disagree with them about order.
+    """
+
+    label: str
+    #: Position in the plan, 1-based, ordered by when the phase's work starts.
+    number: int
+    #: The first and last scheduled dates of the phase's items. A week range is presentation
+    #: — "Week 3-5" depends on where the reader thinks week one began — so the dates are
+    #: returned and the client words them.
+    start: datetime
+    end: datetime
+    total_items: int
+    completed_items: int
+
+
+class StudyPlanNextItem(CamelModel):
+    """The earliest still-pending item of a plan: what "Up next" means.
+
+    Absent when nothing is pending, rather than a blank line, because "finished" and
+    "everything was skipped" both want saying and neither is "up next: nothing".
+    """
+
+    id: str
+    title: str
+    scheduled_date: datetime
+    item_type: str
+    estimated_minutes: int
+    phase: str | None = None
+
+
 class StudyPlanSummaryResponse(CamelModel):
     """A plan without its items, for list views.
 
@@ -1668,6 +1740,15 @@ class StudyPlanSummaryResponse(CamelModel):
     # tell the learner which one they got. Null for plans predating the column.
     strategy: str | None = None
     weekly_goal_minutes: int | None = None
+    # The rhythm the learner chose, all null for plans created before it was stored. On the
+    # summary rather than only the detail response because the plan card prints the session
+    # design, and a card that had to fetch the plan to render it would defeat the point of
+    # a summary.
+    sessions_per_week: int | None = None
+    session_minutes: int | None = None
+    preferred_days: list[int] | None = None
+    # The path shape this plan's phases were generated against, e.g. `skill-mastery`.
+    shape: str | None = None
     skills: list[str] | None = None
     # The wizard's toggles, each backed by behaviour rather than stored intent.
     generate_review_cards: bool
@@ -1678,6 +1759,15 @@ class StudyPlanSummaryResponse(CamelModel):
     last_check_in_at: datetime | None = None
     total_items: int
     completed_items: int
+    # Derived from the plan's items, aggregated in SQL rather than by loading them — the
+    # point of this response is that it does not carry the items, and a card that had to
+    # fetch them to print its phase label would undo that.
+    #
+    # Both are null for a plan with nothing to say: `currentPhase` when the generator did
+    # not group the plan, `nextItem` when nothing is pending.
+    current_phase: StudyPlanPhaseSummary | None = None
+    total_phases: int = 0
+    next_item: StudyPlanNextItem | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1696,6 +1786,92 @@ class StudyPlanResponse(StudyPlanSummaryResponse):
     items: list[StudyPlanItemResponse]
     linked_courses: list[StudyPlanCourseLink] = Field(default_factory=list)
     materials: list[StudyPlanMaterialResponse] = Field(default_factory=list)
+
+
+class PlanShapePhase(CamelModel):
+    """One phase of a path shape, as previewed in the wizard before the plan exists.
+
+    `duration` is a human week range for the preview and is not used for scheduling: real
+    dates come from the deadline and the learner's available days, so a shape is not in a
+    position to promise a timetable.
+    """
+
+    id: str
+    title: str
+    description: str
+    duration: str
+    outcomes: list[str]
+
+
+class PlanShapeResponse(CamelModel):
+    """A path shape offered by the create wizard.
+
+    Served from the backend rather than held in the client because the generator is given
+    these phase titles as the structure to fill. While the catalogue lived only in the web
+    bundle, step 4 previewed one roadmap and the plan was built with another.
+    """
+
+    id: str
+    title: str
+    category: str
+    description: str
+    default_title: str
+    default_outcome: str
+    phases: list[PlanShapePhase]
+
+
+class StudyPlanWeekItem(CamelModel):
+    """One of the featured plan's items falling in the current week.
+
+    The raw item, not a formatted day card. Whether a day reads as done, today or still to
+    come follows from `status` and `scheduledDate`, and the weekday name is a locale
+    decision — both belong to whoever is drawing it.
+    """
+
+    id: str
+    plan_id: str
+    title: str
+    scheduled_date: datetime
+    estimated_minutes: int
+    item_type: str
+    status: str
+
+
+class StudyPlansDashboardResponse(CamelModel):
+    """Everything the plan library page shows above its grid, in one request.
+
+    Composed for the same reason as the flashcards dashboard: assembled from the endpoints
+    that already existed, this page was six requests — the list, the list again filtered to
+    active, again to completed, the due-today list, the featured plan, and its metrics — and
+    it still could not produce the weekly figure, because `StudyPlanMetrics.completedMinutes`
+    is all-time.
+
+    `weeklyMinutes` is **planned** minutes on work completed since the start of the learner's
+    week, in their own timezone. Planned, because nothing measures time at a desk; theirs,
+    because a week that begins at UTC midnight is the wrong week for most of the world.
+    """
+
+    #: Planned minutes on items completed since the learner's week began.
+    weekly_minutes: int
+    #: Summed target across active plans. Null when no active plan states one, rather than
+    #: zero, so a client shows minutes done without a target instead of dividing by nothing.
+    weekly_goal_minutes: int | None = None
+    #: Pending items due today or earlier, across active plans. Overdue work is work waiting.
+    tasks_due: int
+    active_count: int
+    paused_count: int
+    completed_count: int
+    #: The active plan with the nearest deadline, or null when there is no active plan.
+    featured: StudyPlanSummaryResponse | None = None
+    #: The featured plan's own streak: consecutive days it had an item completed, in the
+    #: learner's timezone. Not the flashcard review streak, which counts a different activity.
+    featured_streak_days: int = 0
+    #: The featured plan's items for the current week.
+    featured_week: list[StudyPlanWeekItem] = Field(default_factory=list)
+    #: False when the learner's timezone was never captured, so the weekly boundaries above
+    #: are a UTC assumption rather than their actual week. Surfaced rather than hidden,
+    #: because a "this week" figure computed in the wrong week is wrong silently.
+    timezone_known: bool = False
 
 
 class StudyPlanMetricsResponse(CamelModel):

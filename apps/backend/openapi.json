@@ -4900,6 +4900,90 @@
         "title": "PendingInviteResponse",
         "type": "object"
       },
+      "PlanShapePhase": {
+        "description": "One phase of a path shape, as previewed in the wizard before the plan exists.\n\n`duration` is a human week range for the preview and is not used for scheduling: real\ndates come from the deadline and the learner's available days, so a shape is not in a\nposition to promise a timetable.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "duration": {
+            "title": "Duration",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "duration",
+          "outcomes"
+        ],
+        "title": "PlanShapePhase",
+        "type": "object"
+      },
+      "PlanShapeResponse": {
+        "description": "A path shape offered by the create wizard.\n\nServed from the backend rather than held in the client because the generator is given\nthese phase titles as the structure to fill. While the catalogue lived only in the web\nbundle, step 4 previewed one roadmap and the plan was built with another.",
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "defaultOutcome": {
+            "title": "Defaultoutcome",
+            "type": "string"
+          },
+          "defaultTitle": {
+            "title": "Defaulttitle",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/PlanShapePhase"
+            },
+            "title": "Phases",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "category",
+          "description",
+          "defaultTitle",
+          "defaultOutcome",
+          "phases"
+        ],
+        "title": "PlanShapeResponse",
+        "type": "object"
+      },
       "PreferencesUpdateRequest": {
         "description": "Update user preferences (all fields optional).\n\nA `timezone` set through here is recorded as `MANUAL`: it came from the\nlearner, so it outranks anything a device reports later.",
         "properties": {
@@ -9613,6 +9697,24 @@
             ],
             "title": "Goaldescription"
           },
+          "preferredDays": {
+            "anyOf": [
+              {
+                "items": {
+                  "maximum": 7.0,
+                  "minimum": 1.0,
+                  "type": "integer"
+                },
+                "maxItems": 7,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferreddays"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -9623,6 +9725,43 @@
               }
             ],
             "title": "Prepid"
+          },
+          "sessionMinutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 5.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionminutes"
+          },
+          "sessionsPerWeek": {
+            "anyOf": [
+              {
+                "maximum": 7.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionsperweek"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shape"
           },
           "title": {
             "minLength": 1,
@@ -9988,6 +10127,93 @@
         "title": "StudyPlanMetricsResponse",
         "type": "object"
       },
+      "StudyPlanNextItem": {
+        "description": "The earliest still-pending item of a plan: what \"Up next\" means.\n\nAbsent when nothing is pending, rather than a blank line, because \"finished\" and\n\"everything was skipped\" both want saying and neither is \"up next: nothing\".",
+        "properties": {
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "itemType": {
+            "title": "Itemtype",
+            "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "scheduledDate": {
+            "format": "date-time",
+            "title": "Scheduleddate",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "scheduledDate",
+          "itemType",
+          "estimatedMinutes"
+        ],
+        "title": "StudyPlanNextItem",
+        "type": "object"
+      },
+      "StudyPlanPhaseSummary": {
+        "description": "One phase of a plan, with everything about it that its items imply.\n\nNothing here is stored. A phase is a nullable label on `StudyPlanItem`, and its\nordinal, span and progress are all derived from the items carrying that label — which\nis the argument for the label over a `StudyPlanPhase` table: a table would hold a name\nand a foreign key and compute the rest from these same rows, while adding a second\nthing that can disagree with them about order.",
+        "properties": {
+          "completedItems": {
+            "title": "Completeditems",
+            "type": "integer"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "totalItems": {
+            "title": "Totalitems",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "number",
+          "start",
+          "end",
+          "totalItems",
+          "completedItems"
+        ],
+        "title": "StudyPlanPhaseSummary",
+        "type": "object"
+      },
       "StudyPlanResponse": {
         "description": "A plan with its items, linked courses and reference files.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan\nqueries eagerly load `items`, so these are always serialized.\n\n`linkedCourses` and `materials` are on the detail response and not the summary, for\nthe same reason `items` is: a list card shows neither, and loading them for every\nplan on an all-plans page would be work nothing renders.",
         "properties": {
@@ -9999,6 +10225,16 @@
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
+          },
+          "currentPhase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyPlanPhaseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "deadline": {
             "format": "date-time",
@@ -10057,6 +10293,30 @@
             "title": "Materials",
             "type": "array"
           },
+          "nextItem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyPlanNextItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preferredDays": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferreddays"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -10078,6 +10338,39 @@
               }
             ],
             "title": "Reviewdeckid"
+          },
+          "sessionMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionminutes"
+          },
+          "sessionsPerWeek": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionsperweek"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shape"
           },
           "skills": {
             "anyOf": [
@@ -10114,6 +10407,11 @@
           },
           "totalItems": {
             "title": "Totalitems",
+            "type": "integer"
+          },
+          "totalPhases": {
+            "default": 0,
+            "title": "Totalphases",
             "type": "integer"
           },
           "updatedAt": {
@@ -10170,6 +10468,16 @@
             "title": "Createdat",
             "type": "string"
           },
+          "currentPhase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyPlanPhaseSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "deadline": {
             "format": "date-time",
             "title": "Deadline",
@@ -10206,6 +10514,30 @@
             ],
             "title": "Lastcheckinat"
           },
+          "nextItem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyPlanNextItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preferredDays": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferreddays"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -10227,6 +10559,39 @@
               }
             ],
             "title": "Reviewdeckid"
+          },
+          "sessionMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionminutes"
+          },
+          "sessionsPerWeek": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionsperweek"
+          },
+          "shape": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shape"
           },
           "skills": {
             "anyOf": [
@@ -10263,6 +10628,11 @@
           },
           "totalItems": {
             "title": "Totalitems",
+            "type": "integer"
+          },
+          "totalPhases": {
+            "default": 0,
+            "title": "Totalphases",
             "type": "integer"
           },
           "updatedAt": {
@@ -10336,7 +10706,7 @@
         "type": "object"
       },
       "StudyPlanUpdate": {
-        "description": "Partial update of a plan. Read with ``exclude_unset=True``.\n\nChanging `deadline` redistributes pending items, because leaving them put would\nproduce a schedule with work sitting past the plan's own deadline.",
+        "description": "Partial update of a plan. Read with ``exclude_unset=True``.\n\nChanging `deadline` redistributes pending items, because leaving them put would\nproduce a schedule with work sitting past the plan's own deadline. Changing\n`sessionMinutes` or `preferredDays` redistributes for the same reason: both decide\nwhich day an item lands on, so a plan that kept its old dates would contradict the\nrhythm it now says it has.\n\n`shape` is absent deliberately. It is the structure the plan's phases were generated\nagainst, so changing it later would leave a plan labelled with one shape and grouped\nby another's phases. Re-shaping means regenerating.",
         "properties": {
           "deadline": {
             "anyOf": [
@@ -10371,6 +10741,50 @@
               }
             ],
             "title": "Goaldescription"
+          },
+          "preferredDays": {
+            "anyOf": [
+              {
+                "items": {
+                  "maximum": 7.0,
+                  "minimum": 1.0,
+                  "type": "integer"
+                },
+                "maxItems": 7,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferreddays"
+          },
+          "sessionMinutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 5.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionminutes"
+          },
+          "sessionsPerWeek": {
+            "anyOf": [
+              {
+                "maximum": 7.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionsperweek"
           },
           "status": {
             "anyOf": [
@@ -10426,6 +10840,123 @@
           }
         },
         "title": "StudyPlanUpdate",
+        "type": "object"
+      },
+      "StudyPlanWeekItem": {
+        "description": "One of the featured plan's items falling in the current week.\n\nThe raw item, not a formatted day card. Whether a day reads as done, today or still to\ncome follows from `status` and `scheduledDate`, and the weekday name is a locale\ndecision — both belong to whoever is drawing it.",
+        "properties": {
+          "estimatedMinutes": {
+            "title": "Estimatedminutes",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "itemType": {
+            "title": "Itemtype",
+            "type": "string"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "scheduledDate": {
+            "format": "date-time",
+            "title": "Scheduleddate",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "planId",
+          "title",
+          "scheduledDate",
+          "estimatedMinutes",
+          "itemType",
+          "status"
+        ],
+        "title": "StudyPlanWeekItem",
+        "type": "object"
+      },
+      "StudyPlansDashboardResponse": {
+        "description": "Everything the plan library page shows above its grid, in one request.\n\nComposed for the same reason as the flashcards dashboard: assembled from the endpoints\nthat already existed, this page was six requests — the list, the list again filtered to\nactive, again to completed, the due-today list, the featured plan, and its metrics — and\nit still could not produce the weekly figure, because `StudyPlanMetrics.completedMinutes`\nis all-time.\n\n`weeklyMinutes` is **planned** minutes on work completed since the start of the learner's\nweek, in their own timezone. Planned, because nothing measures time at a desk; theirs,\nbecause a week that begins at UTC midnight is the wrong week for most of the world.",
+        "properties": {
+          "activeCount": {
+            "title": "Activecount",
+            "type": "integer"
+          },
+          "completedCount": {
+            "title": "Completedcount",
+            "type": "integer"
+          },
+          "featured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StudyPlanSummaryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "featuredStreakDays": {
+            "default": 0,
+            "title": "Featuredstreakdays",
+            "type": "integer"
+          },
+          "featuredWeek": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanWeekItem"
+            },
+            "title": "Featuredweek",
+            "type": "array"
+          },
+          "pausedCount": {
+            "title": "Pausedcount",
+            "type": "integer"
+          },
+          "tasksDue": {
+            "title": "Tasksdue",
+            "type": "integer"
+          },
+          "timezoneKnown": {
+            "default": false,
+            "title": "Timezoneknown",
+            "type": "boolean"
+          },
+          "weeklyGoalMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklygoalminutes"
+          },
+          "weeklyMinutes": {
+            "title": "Weeklyminutes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "weeklyMinutes",
+          "tasksDue",
+          "activeCount",
+          "pausedCount",
+          "completedCount"
+        ],
+        "title": "StudyPlansDashboardResponse",
         "type": "object"
       },
       "SubjectsSetRequest": {
@@ -18783,6 +19314,61 @@
           }
         ],
         "summary": "Create Study Plan",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/dashboard": {
+      "get": {
+        "description": "Everything the plan library page shows above its grid, in one request.\n\nDeclared before `/study-plans/{plan_id}` so FastAPI does not read \"dashboard\" as a plan\nid. Composed for the reason the flashcards dashboard was: from the endpoints that already\nexisted the page was six requests, and the weekly figure was not among what they could\nanswer.",
+        "operationId": "get_study_plans_dashboard_api_v1_learning_study_plans_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlansDashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Study Plans Dashboard",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/shapes": {
+      "get": {
+        "description": "The path shapes the create wizard offers, with the phases each one is built from.\n\nDeclared before `/study-plans/{plan_id}` so FastAPI does not read \"shapes\" as a plan\nid, and unauthenticated because it is a fixed catalogue with nothing learner-specific\nin it — the same reasoning as `/billing/plans/catalog`.\n\nThe wizard used to carry this list itself, which made step 4's \"Generated roadmap\"\nheading untrue: it previewed the client's phases while the plan was built with\nwhatever the model returned. `generate_plan` now hands these titles to the generator,\nso both sides read from here.",
+        "operationId": "list_plan_shapes_api_v1_learning_study_plans_shapes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PlanShapeResponse"
+                  },
+                  "title": "Response List Plan Shapes Api V1 Learning Study Plans Shapes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Plan Shapes",
         "tags": [
           "personal-learning",
           "personal-learning"

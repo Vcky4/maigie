@@ -1088,6 +1088,30 @@ class StudyPlan(Base, TimestampMixin):
     weekly_goal_minutes: Mapped[int | None] = mapped_column(
         "weeklyGoalMinutes", Integer, nullable=True
     )
+
+    # --- Rhythm, from steps 1 and 2 of the create wizard ---
+    #
+    # The two facts behind the pace, kept separately as well as multiplied into
+    # `weeklyGoalMinutes`, because the product cannot be taken apart again: 175 minutes a
+    # week is 5x35 or 7x25, and the detail page prints "35 min - 5x week".
+    sessions_per_week: Mapped[int | None] = mapped_column(
+        "sessionsPerWeek", Integer, nullable=True
+    )
+    session_minutes: Mapped[int | None] = mapped_column("sessionMinutes", Integer, nullable=True)
+    # ISO weekday numbers the learner is available: 1 = Monday ... 7 = Sunday. Numbers
+    # rather than the wizard's "Mon"/"Tue" labels, which are English and would have to be
+    # parsed back before comparing against `date.isoweekday()`.
+    #
+    # Null means never asked, and the scheduler treats every day as available. An empty
+    # list would mean no day is acceptable, which is not a schedulable plan, so the
+    # contract refuses it rather than storing a row nothing can distribute.
+    preferred_days: Mapped[list | None] = mapped_column("preferredDays", JSON, nullable=True)
+    # The template the learner chose, e.g. `skill-mastery`. Stored so the generator can be
+    # told which phase structure to follow: step 4 of the wizard previews the template's
+    # phases under "Generated roadmap", so a plan grouped by different phases would
+    # contradict the screen the learner accepted.
+    shape: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # What this plan builds, as a JSON array of strings, named by the generator
     # alongside the items. Not derivable from item titles after the fact without
     # guessing. Follows `LearningProfile.subjects`.

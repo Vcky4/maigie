@@ -605,3 +605,181 @@ class TestPlanWrites:
         plan, _ = plan_with_items
         assert await repo.delete_study_plan(plan.id, OTHER_USER) is False
         assert await repo.get_study_plan(plan.id, USER) is not None
+
+
+# ---------------------------------------------------------------------------
+# What a plan card needs without loading the plan's items
+# ---------------------------------------------------------------------------
+#
+# These two are aggregates rather than reads, which is the whole point: the list response
+# omits items so an all-plans page does not pay for hundreds of rows, and deriving a phase
+# label by loading them would reintroduce that cost under another name.
+
+
+async def test_summarise_plan_phases_numbers_phases_in_schedule_order(repo, plan_with_items):
+    plan, _ = plan_with_items
+
+    phases = (await repo.summarise_plan_phases([plan.id]))[plan.id]
+
+    assert [(p["number"], p["label"]) for p in phases] == [
+        (1, "Foundations"),
+        (2, "Core patterns"),
+        (3, "Interview practice"),
+    ]
+
+
+async def test_summarise_plan_phases_spans_and_counts_come_from_the_items(repo):
+    plan = await _plan(repo)
+    await _item(repo, plan, title="A", day_offset=0, phase="Foundations", status="COMPLETED")
+    await _item(repo, plan, title="B", day_offset=4, phase="Foundations")
+    await _item(repo, plan, title="C", day_offset=6, phase="Practice")
+
+    phases = (await repo.summarise_plan_phases([plan.id]))[plan.id]
+
+    foundations = phases[0]
+    assert foundations["completed_items"] == 1
+    assert foundations["total_items"] == 2
+    # The span is the first and last scheduled dates of the phase's own items, which is what
+    # makes a phase table unnecessary: its week range is not a fact anyone has to store.
+    assert (foundations["end"] - foundations["start"]).days == 4
+
+
+async def test_summarise_plan_phases_omits_a_plan_with_no_phases(repo):
+    """Absent, not present with an empty list, so a caller reads "not grouped" from that."""
+    plan = await _plan(repo)
+    await _item(repo, plan, title="Unlabelled", day_offset=0)
+
+    assert await repo.summarise_plan_phases([plan.id]) == {}
+
+
+async def test_summarise_plan_phases_keeps_plans_apart(repo):
+    first = await _plan(repo, title="One")
+    second = await _plan(repo, title="Two")
+    await _item(repo, first, title="A", phase="Alpha")
+    await _item(repo, second, title="B", phase="Beta")
+
+    phases = await repo.summarise_plan_phases([first.id, second.id])
+
+    assert [p["label"] for p in phases[first.id]] == ["Alpha"]
+    assert [p["label"] for p in phases[second.id]] == ["Beta"]
+
+
+async def test_next_pending_item_is_the_earliest_still_pending(repo):
+    plan = await _plan(repo)
+    await _item(repo, plan, title="Done already", day_offset=0, status="COMPLETED")
+    await _item(repo, plan, title="Next up", day_offset=1)
+    await _item(repo, plan, title="Later", day_offset=2)
+
+    found = await repo.next_pending_items([plan.id])
+
+    assert found[plan.id].title == "Next up"
+
+
+async def test_next_pending_item_skips_skipped_items(repo):
+    plan = await _plan(repo)
+    await _item(repo, plan, title="Not doing this", day_offset=0, status="SKIPPED")
+    await _item(repo, plan, title="Actually next", day_offset=1)
+
+    assert (await repo.next_pending_items([plan.id]))[plan.id].title == "Actually next"
+
+
+async def test_next_pending_item_absent_when_nothing_is_pending(repo):
+    """A finished plan and an entirely skipped one both want a different label, not a blank."""
+    plan = await _plan(repo)
+    await _item(repo, plan, title="Done", day_offset=0, status="COMPLETED")
+
+    assert await repo.next_pending_items([plan.id]) == {}
+
+
+async def test_next_pending_item_returns_one_row_per_plan(repo):
+    first = await _plan(repo, title="One")
+    second = await _plan(repo, title="Two")
+    for plan in (first, second):
+        await _item(repo, plan, title=f"{plan.title} a", day_offset=1)
+        await _item(repo, plan, title=f"{plan.title} b", day_offset=2)
+
+    found = await repo.next_pending_items([first.id, second.id])
+
+    assert set(found) == {first.id, second.id}
+    assert found[first.id].title == "One a"
+    assert found[second.id].title == "Two a"
+
+
+async def test_phase_and_next_item_aggregates_short_circuit_on_no_plans(repo):
+    assert await repo.summarise_plan_phases([]) == {}
+    assert await repo.next_pending_items([]) == {}
+
+
+# ---------------------------------------------------------------------------
+# The plan library's above-the-grid figures
+# ---------------------------------------------------------------------------
+
+
+async def test_count_plans_by_status_groups_and_sums_the_active_target(repo):
+    await _plan(repo, title="Active one", weeklyGoalMinutes=180)
+    await _plan(repo, title="Active two", weeklyGoalMinutes=120)
+    await _plan(repo, title="Paused", status="PAUSED", weeklyGoalMinutes=999)
+    await _plan(repo, title="Done", status="COMPLETED", weeklyGoalMinutes=999)
+
+    counts = await repo.count_plans_by_status(USER)
+
+    assert counts["ACTIVE"] == 2
+    assert counts["PAUSED"] == 1
+    assert counts["COMPLETED"] == 1
+    # Active plans only. A paused plan's target is not something the learner is working
+    # towards this week, and a completed plan's certainly is not.
+    assert counts["weeklyGoalTotal"] == 300
+
+
+async def test_count_plans_by_status_is_scoped_to_the_learner(repo):
+    await _plan(repo, title="Mine")
+    await _plan(repo, user_id=OTHER_USER, title="Theirs")
+
+    assert (await repo.count_plans_by_status(USER))["ACTIVE"] == 1
+
+
+async def test_completed_minutes_between_counts_only_completions_in_the_window(repo):
+    plan = await _plan(repo)
+    inside = await _item(repo, plan, title="In", minutes=45, status="COMPLETED")
+    outside = await _item(repo, plan, title="Out", minutes=90, status="COMPLETED")
+    pending = await _item(repo, plan, title="Pending", minutes=60)
+
+    now = datetime.now(UTC)
+    await repo.update_plan_item(inside.id, {"completedAt": now}, plan_id=plan.id)
+    await repo.update_plan_item(
+        outside.id, {"completedAt": now - timedelta(days=30)}, plan_id=plan.id
+    )
+
+    total = await repo.completed_minutes_between(
+        USER, now - timedelta(days=7), now + timedelta(days=1)
+    )
+
+    # Only the one completed inside the window. The pending item contributes nothing even
+    # though it is scheduled in it — this counts work done, not work planned.
+    assert total == 45
+    assert pending.status == "PENDING"
+
+
+async def test_completed_minutes_between_is_scoped_to_the_learner(repo):
+    theirs = await _plan(repo, user_id=OTHER_USER, title="Theirs")
+    item = await _item(repo, theirs, title="Their work", minutes=45, status="COMPLETED")
+    now = datetime.now(UTC)
+    await repo.update_plan_item(item.id, {"completedAt": now}, plan_id=theirs.id)
+
+    assert await repo.completed_minutes_between(
+        USER, now - timedelta(days=7), now + timedelta(days=1)
+    ) == 0
+
+
+async def test_list_plan_items_between_returns_the_window_in_schedule_order(repo):
+    plan = await _plan(repo)
+    await _item(repo, plan, title="Yesterday", day_offset=-1)
+    await _item(repo, plan, title="Today", day_offset=0)
+    await _item(repo, plan, title="Next month", day_offset=30)
+
+    now = datetime.now(UTC)
+    items = await repo.list_plan_items_between(
+        plan.id, now - timedelta(days=2), now + timedelta(days=7)
+    )
+
+    assert [item.title for item in items] == ["Yesterday", "Today"]
