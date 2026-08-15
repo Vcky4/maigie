@@ -365,6 +365,20 @@
         "title": "BehaviourProfileResponse",
         "type": "object"
       },
+      "Body_add_study_plan_material_api_v1_learning_study_plans__plan_id__materials_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_add_study_plan_material_api_v1_learning_study_plans__plan_id__materials_post",
+        "type": "object"
+      },
       "Body_login_form_api_v1_auth_login_post": {
         "properties": {
           "client_id": {
@@ -9515,11 +9529,78 @@
         "title": "StudyBlockUpdate",
         "type": "object"
       },
+      "StudyPlanCourseLink": {
+        "description": "A course linked to a plan.\n\nThe title is read from `Course` on every request rather than copied onto the link\nrow, so a renamed course reads correctly here instead of showing the name it had when\nit was linked.",
+        "properties": {
+          "courseId": {
+            "title": "Courseid",
+            "type": "string"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Difficulty"
+          },
+          "linkedAt": {
+            "format": "date-time",
+            "title": "Linkedat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "courseId",
+          "title",
+          "linkedAt"
+        ],
+        "title": "StudyPlanCourseLink",
+        "type": "object"
+      },
+      "StudyPlanCourseLinkRequest": {
+        "properties": {
+          "courseIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Courseids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "courseIds"
+        ],
+        "title": "StudyPlanCourseLinkRequest",
+        "type": "object"
+      },
       "StudyPlanCreate": {
         "properties": {
+          "courseIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Courseids",
+            "type": "array"
+          },
           "deadline": {
             "title": "Deadline",
             "type": "string"
+          },
+          "generateReviewCards": {
+            "default": false,
+            "title": "Generatereviewcards",
+            "type": "boolean"
           },
           "goalDescription": {
             "anyOf": [
@@ -9547,6 +9628,11 @@
             "minLength": 1,
             "title": "Title",
             "type": "string"
+          },
+          "weeklyCheckIn": {
+            "default": false,
+            "title": "Weeklycheckin",
+            "type": "boolean"
           },
           "weeklyGoalMinutes": {
             "anyOf": [
@@ -9806,6 +9892,63 @@
         "title": "StudyPlanItemUpdate",
         "type": "object"
       },
+      "StudyPlanMaterialResponse": {
+        "description": "A reference file attached to a plan.",
+        "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "fileType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filetype"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "planId": {
+            "title": "Planid",
+            "type": "string"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "planId",
+          "filename",
+          "url",
+          "createdAt"
+        ],
+        "title": "StudyPlanMaterialResponse",
+        "type": "object"
+      },
       "StudyPlanMetricsResponse": {
         "description": "Plan-scoped progress figures, derived from the plan's own items.\n\n`completedMinutes` is **planned** effort on completed work, not measured time — no\npart of this observes how long a learner actually spent, and a client must not label\nit as focus or time-at-desk. Measured session time lives in `/analytics/sessions`.\n\nThere is no retention figure. Retention is flashcard recall, a different domain, and\na plan with no flashcards has none; the honest options are to omit it or to show\nlibrary recall from `GET /flashcards/stats` under a heading that says so.",
         "properties": {
@@ -9846,7 +9989,7 @@
         "type": "object"
       },
       "StudyPlanResponse": {
-        "description": "A plan with its items.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan\nqueries eagerly load `items`, so these are always serialized.",
+        "description": "A plan with its items, linked courses and reference files.\n\n`deadline`, `totalItems`, and `completedItems` are NOT NULL columns, and plan\nqueries eagerly load `items`, so these are always serialized.\n\n`linkedCourses` and `materials` are on the detail response and not the summary, for\nthe same reason `items` is: a list card shows neither, and loading them for every\nplan on an all-plans page would be work nothing renders.",
         "properties": {
           "completedItems": {
             "title": "Completeditems",
@@ -9861,6 +10004,10 @@
             "format": "date-time",
             "title": "Deadline",
             "type": "string"
+          },
+          "generateReviewCards": {
+            "title": "Generatereviewcards",
+            "type": "boolean"
           },
           "goalDescription": {
             "anyOf": [
@@ -9884,6 +10031,32 @@
             "title": "Items",
             "type": "array"
           },
+          "lastCheckInAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastcheckinat"
+          },
+          "linkedCourses": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanCourseLink"
+            },
+            "title": "Linkedcourses",
+            "type": "array"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanMaterialResponse"
+            },
+            "title": "Materials",
+            "type": "array"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -9894,6 +10067,17 @@
               }
             ],
             "title": "Prepid"
+          },
+          "reviewDeckId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewdeckid"
           },
           "skills": {
             "anyOf": [
@@ -9941,6 +10125,10 @@
             "title": "Userid",
             "type": "string"
           },
+          "weeklyCheckIn": {
+            "title": "Weeklycheckin",
+            "type": "boolean"
+          },
           "weeklyGoalMinutes": {
             "anyOf": [
               {
@@ -9959,6 +10147,8 @@
           "title",
           "deadline",
           "status",
+          "generateReviewCards",
+          "weeklyCheckIn",
           "totalItems",
           "completedItems",
           "createdAt",
@@ -9985,6 +10175,10 @@
             "title": "Deadline",
             "type": "string"
           },
+          "generateReviewCards": {
+            "title": "Generatereviewcards",
+            "type": "boolean"
+          },
           "goalDescription": {
             "anyOf": [
               {
@@ -10000,6 +10194,18 @@
             "title": "Id",
             "type": "string"
           },
+          "lastCheckInAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastcheckinat"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -10010,6 +10216,17 @@
               }
             ],
             "title": "Prepid"
+          },
+          "reviewDeckId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewdeckid"
           },
           "skills": {
             "anyOf": [
@@ -10057,6 +10274,10 @@
             "title": "Userid",
             "type": "string"
           },
+          "weeklyCheckIn": {
+            "title": "Weeklycheckin",
+            "type": "boolean"
+          },
           "weeklyGoalMinutes": {
             "anyOf": [
               {
@@ -10075,6 +10296,8 @@
           "title",
           "deadline",
           "status",
+          "generateReviewCards",
+          "weeklyCheckIn",
           "totalItems",
           "completedItems",
           "createdAt",
@@ -10127,6 +10350,17 @@
             ],
             "title": "Deadline"
           },
+          "generateReviewCards": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generatereviewcards"
+          },
           "goalDescription": {
             "anyOf": [
               {
@@ -10165,6 +10399,17 @@
               }
             ],
             "title": "Title"
+          },
+          "weeklyCheckIn": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weeklycheckin"
           },
           "weeklyGoalMinutes": {
             "anyOf": [
@@ -18722,6 +18967,123 @@
         ]
       }
     },
+    "/api/v1/learning/study-plans/{plan_id}/courses": {
+      "post": {
+        "description": "Link courses to a plan.\n\nCourses the caller does not own are rejected with `404` rather than skipped, so a\nselection that cannot be honoured is reported instead of quietly disappearing.\nAlready-linked courses are ignored, which makes re-sending a selection a no-op.",
+        "operationId": "link_study_plan_courses_api_v1_learning_study_plans__plan_id__courses_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyPlanCourseLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Link Study Plan Courses",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/courses/{course_id}": {
+      "delete": {
+        "description": "Remove a course link. The course itself is untouched.",
+        "operationId": "unlink_study_plan_course_api_v1_learning_study_plans__plan_id__courses__course_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unlink Study Plan Course",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/study-plans/{plan_id}/items": {
       "post": {
         "description": "Add an item to a plan by hand.\n\nReturns the whole plan, because adding an item changes its counts and a client that\nonly received the item would have to recompute them.",
@@ -19015,6 +19377,123 @@
           }
         ],
         "summary": "Uncomplete Plan Item",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/materials": {
+      "post": {
+        "description": "Attach a reference file to a plan.\n\nMultipart, and stored through the same storage service notes and generated documents\nuse. The wizard's file drop previously kept filenames in browser memory only; this is\nwhere they go now.",
+        "operationId": "add_study_plan_material_api_v1_learning_study_plans__plan_id__materials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_study_plan_material_api_v1_learning_study_plans__plan_id__materials_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Study Plan Material",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/study-plans/{plan_id}/materials/{material_id}": {
+      "delete": {
+        "description": "Remove a reference file from a plan, and from storage.",
+        "operationId": "delete_study_plan_material_api_v1_learning_study_plans__plan_id__materials__material_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "material_id",
+            "required": true,
+            "schema": {
+              "title": "Material Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Study Plan Material",
         "tags": [
           "personal-learning",
           "personal-learning"

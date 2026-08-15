@@ -86,21 +86,23 @@ async def list_courses(
             c.id
         )
         items.append(
+            # snake_case ORM attributes, camelCase columns. Every course route read these
+            # the wrong way and answered `500`; see the note in `get_course`.
             models.CourseListItem(
                 id=c.id,
-                userId=c.userId,
+                userId=c.user_id,
                 title=c.title,
                 description=c.description,
                 difficulty=c.difficulty,
-                targetDate=c.targetDate,
-                isAIGenerated=c.isAIGenerated,
+                targetDate=c.target_date,
+                isAIGenerated=c.is_ai_generated,
                 archived=c.archived,
                 progress=progress,
                 totalTopics=total_topics,
                 completedTopics=completed_topics,
                 moduleCount=len(c.modules) if c.modules else 0,
-                createdAt=c.createdAt,
-                updatedAt=c.updatedAt,
+                createdAt=c.created_at,
+                updatedAt=c.updated_at,
             )
         )
 
@@ -115,21 +117,22 @@ async def create_course(body: models.CourseCreate, current_user: CurrentUser):
     course = await course_service.create_course(
         user=current_user, data=body.model_dump(exclude_unset=True)
     )
+    # snake_case ORM attributes, camelCase columns. See the note in `get_course`.
     return models.CourseResponse(
         id=course.id,
-        userId=course.userId,
+        userId=course.user_id,
         title=course.title,
         description=course.description,
         difficulty=course.difficulty,
-        targetDate=course.targetDate,
-        isAIGenerated=course.isAIGenerated,
+        targetDate=course.target_date,
+        isAIGenerated=course.is_ai_generated,
         archived=course.archived,
         progress=0.0,
         totalTopics=0,
         completedTopics=0,
         modules=[],
-        createdAt=course.createdAt,
-        updatedAt=course.updatedAt,
+        createdAt=course.created_at,
+        updatedAt=course.updated_at,
     )
 
 
@@ -150,21 +153,26 @@ async def get_course(course_id: str, current_user: CurrentUser):
     )
     outline_recorded = await knowledge_repo.has_outline_satisfaction(current_user.id, course_id)
 
+    # The ORM attributes are snake_case even though the columns are camelCase — the
+    # mapping is declared per column, e.g. `user_id: Mapped[str] = mapped_column("userId", ...)`.
+    # Reading `course.userId` here raised `AttributeError`, so this route answered `500`
+    # for every request. It went unnoticed because no client calls it: the web course
+    # pages are still fixture-backed, so course detail has never been fetched.
     return models.CourseResponse(
         id=course.id,
-        userId=course.userId,
+        userId=course.user_id,
         title=course.title,
         description=course.description,
         difficulty=course.difficulty,
-        targetDate=course.targetDate,
-        isAIGenerated=course.isAIGenerated,
+        targetDate=course.target_date,
+        isAIGenerated=course.is_ai_generated,
         archived=course.archived,
         progress=progress,
         totalTopics=total_topics,
         completedTopics=completed_topics,
         modules=modules,
-        createdAt=course.createdAt,
-        updatedAt=course.updatedAt,
+        createdAt=course.created_at,
+        updatedAt=course.updated_at,
         outlineSatisfactionRecorded=outline_recorded,
     )
 
@@ -235,7 +243,7 @@ async def update_module(
 ):
     """Update a module."""
     module, _ = await course_service.check_module_ownership(module_id, current_user.id)
-    if module.courseId != course_id:
+    if module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Module does not belong to this course")
     data = body.model_dump(exclude_unset=True)
     if data:
@@ -248,7 +256,7 @@ async def update_module(
 async def delete_module(course_id: str, module_id: str, current_user: CurrentUser):
     """Delete a module and its topics."""
     module, _ = await course_service.check_module_ownership(module_id, current_user.id)
-    if module.courseId != course_id:
+    if module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Module does not belong to this course")
     await knowledge_repo.delete_module(module_id)
 
@@ -268,7 +276,7 @@ async def create_topic(
 ):
     """Add a topic to a module."""
     module, _ = await course_service.check_module_ownership(module_id, current_user.id)
-    if module.courseId != course_id:
+    if module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Module does not belong to this course")
     topic = await knowledge_repo.create_topic(
         {
@@ -295,7 +303,7 @@ async def update_topic(
 ):
     """Update a topic."""
     topic, module, _ = await course_service.check_topic_ownership(topic_id, current_user.id)
-    if topic.moduleId != module_id or module.courseId != course_id:
+    if topic.module_id != module_id or module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Topic path mismatch")
     data = body.model_dump(exclude_unset=True)
     if not data:
@@ -320,7 +328,7 @@ async def update_topic(
 async def delete_topic(course_id: str, module_id: str, topic_id: str, current_user: CurrentUser):
     """Delete a topic."""
     topic, module, _ = await course_service.check_topic_ownership(topic_id, current_user.id)
-    if topic.moduleId != module_id or module.courseId != course_id:
+    if topic.module_id != module_id or module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Topic path mismatch")
     await knowledge_repo.delete_topic(topic_id)
 
@@ -360,7 +368,7 @@ async def generate_topic_content(
 ):
     """Generate AI learning content for a topic (explain, quiz, summary, flashcards)."""
     topic, module, _ = await course_service.check_topic_ownership(topic_id, current_user.id)
-    if topic.moduleId != module_id or module.courseId != course_id:
+    if topic.module_id != module_id or module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Topic path mismatch")
 
     # Delegate to Intelligence layer (LLM)

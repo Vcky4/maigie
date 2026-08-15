@@ -36,7 +36,12 @@ async def check_module_ownership(module_id: str, user_id: str):
     module = await knowledge_repo.find_module(module_id)
     if not module or not module.course:
         raise NotFoundError("Module", module_id)
-    if module.course.userId != user_id:
+    # `user_id`, not `userId`: the column is camelCase but the mapped attribute is not.
+    # Written the wrong way, this raised `AttributeError` before it could compare — so
+    # the check neither allowed nor forbade, it answered `500`. It failed closed by
+    # accident rather than by design, which is why it was not a security hole and also
+    # why no module route has ever worked.
+    if module.course.user_id != user_id:
         raise ForbiddenError("You do not own this module")
     return module, module.course
 
@@ -46,7 +51,7 @@ async def check_topic_ownership(topic_id: str, user_id: str):
     topic = await knowledge_repo.find_topic(topic_id)
     if not topic or not topic.module or not topic.module.course:
         raise NotFoundError("Topic", topic_id)
-    if topic.module.course.userId != user_id:
+    if topic.module.course.user_id != user_id:
         raise ForbiddenError("You do not own this topic")
     return topic, topic.module, topic.module.course
 
@@ -160,7 +165,7 @@ async def toggle_topic_completion(
     """Mark/unmark a topic as completed. Emits domain events."""
     topic, module, course = await check_topic_ownership(topic_id, user_id)
 
-    if topic.moduleId != module_id or module.courseId != course_id:
+    if topic.module_id != module_id or module.course_id != course_id:
         raise ValidationError("Topic does not belong to the specified module/course")
 
     updated = await knowledge_repo.update_topic(topic_id, {"completed": completed})
