@@ -68,6 +68,22 @@ class Course(Base, TimestampMixin):
     # Authoring credit, nullable because most courses have none. A learner who generated a course for
     # themselves has no instructor, and crediting them as the teacher of their own course — or
     # crediting "Maigie" — would state something untrue. Null means the panel does not render.
+    #: How this course should be explained: Visual, Hands-on, Concept first or Mixed.
+    #:
+    #: Deliberately **not** written to `LearningProfile.preferredExplanationStyle`, which exists and uses
+    #: the same words. That field is a global preference read for every subject; this is a choice about
+    #: one course. Writing the wizard's answer to the profile would let a style picked for a geometry
+    #: course silently change how an unrelated writing course is explained, with nothing on screen
+    #: saying so. The generator applies a precedence instead: the course's own style wins, and the
+    #: profile supplies the default when the course has none.
+    teaching_style: Mapped[str | None] = mapped_column("teachingStyle", String, nullable=True)
+    #: The learner's own brief: what they asked for in the create wizard, in their words.
+    #:
+    #: Named `sourcePrompt`, not `prompt`, because it is the brief rather than the text sent to the
+    #: model. The sent prompt is composed from this plus the topic title and existing content; storing
+    #: the composed version would freeze prompt wording into the data, so improving it later would not
+    #: reach any existing course.
+    source_prompt: Mapped[str | None] = mapped_column("sourcePrompt", Text, nullable=True)
     instructor_name: Mapped[str | None] = mapped_column("instructorName", String, nullable=True)
     instructor_role: Mapped[str | None] = mapped_column("instructorRole", String, nullable=True)
 
@@ -135,6 +151,17 @@ class Topic(Base, TimestampMixin):
     # rather than defaulting to an empty list: a topic written before this existed has no objectives,
     # which is a different thing from having none, and the page renders no block rather than an empty
     # one.
+    #: What kind of work this sitting is: Lesson, Practice, Project or Check. The create wizard labels
+    #: every lesson in its outline preview, and without this the label is lost on save.
+    #:
+    #: **Distinct from `TopicSection.kind`**, and the two are easy to confuse. A section's kind is how
+    #: one passage explains something — concept, example, algorithm. A topic's kind is what the whole
+    #: sitting asks of the learner: reading, practising, building, or being tested. A project made of
+    #: three explanatory sections is coherent; one field serving both would make it contradictory.
+    #:
+    #: Nullable with no default: a topic written before this has no kind, which is not the same as being
+    #: a Lesson, so the outline shows no label rather than a guessed one.
+    kind: Mapped[str | None] = mapped_column(String, nullable=True)
     #: The lesson header's one-line description. Nullable, and deliberately not derived: the first
     #: section's summary describes that section, and the first paragraph of `content` is the opening of
     #: the material rather than a description of it — either would put a line under the heading saying

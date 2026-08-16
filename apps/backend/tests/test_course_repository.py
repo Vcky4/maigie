@@ -714,3 +714,103 @@ async def test_updating_a_section_leaves_omitted_fields_alone(repo):
     updated = await repo.update_topic_section(section.id, {"title": "after"})
     assert updated.title == "after"
     assert updated.paragraphs == ["kept"]
+
+
+# ---------------------------------------------------------------------------
+# Authoring: bulk create and reorder
+# ---------------------------------------------------------------------------
+
+
+async def test_bulk_create_writes_every_topic_in_one_go(repo):
+    course = await _course(repo)
+    module = await _module(repo, course)
+
+    created = await repo.create_topics(
+        module.id,
+        [
+            {"title": "One", "order": 10, "kind": "Lesson"},
+            {"title": "Two", "order": 20, "kind": "Practice", "estimatedHours": 1.5},
+            {"title": "Three", "order": 30},
+        ],
+    )
+
+    assert [t.title for t in created] == ["One", "Two", "Three"]
+    assert [t.kind for t in created] == ["Lesson", "Practice", None]
+    assert created[1].estimated_hours == 1.5
+    # Returned rather than re-queried, but the rows must really be there.
+    assert len((await repo.find_module(module.id)).topics) == 3
+
+
+async def test_bulk_topic_create_of_nothing_writes_nothing(repo):
+    course = await _course(repo)
+    module = await _module(repo, course)
+    assert await repo.create_topics(module.id, []) == []
+
+
+async def test_reorder_modules_sets_order_from_the_id_sequence(repo):
+    """Positions come from the sequence, not from numbers the client sends — a client that picks its own
+    floats can hand two items the same one."""
+    course = await _course(repo)
+    first = await _module(repo, course, title="first", order=10)
+    second = await _module(repo, course, title="second", order=20)
+    third = await _module(repo, course, title="third", order=30)
+
+    moved = await repo.reorder_modules(course.id, [third.id, first.id, second.id])
+    assert moved == 3
+
+    reloaded = await repo.find_course_with_modules(course.id, USER)
+    assert [m.title for m in reloaded.modules] == ["third", "first", "second"]
+
+
+async def test_reorder_spaces_positions_so_a_later_insert_fits_between(repo):
+    """Spaced by ten, which is what lets one item be dropped between two others without renumbering the
+    rest — the reason `order` is a float."""
+    course = await _course(repo)
+    first = await _module(repo, course, title="a", order=1)
+    second = await _module(repo, course, title="b", order=2)
+
+    await repo.reorder_modules(course.id, [first.id, second.id])
+    reloaded = await repo.find_course_with_modules(course.id, USER)
+    orders = [m.order for m in reloaded.modules]
+    assert orders == [10.0, 20.0]
+    # Room for at least one insert between them without touching either.
+    assert orders[1] - orders[0] > 1
+
+
+async def test_reorder_ignores_ids_from_another_course(repo):
+    """The update carries the course id, so a stale or hostile id moves nothing. The count is what
+    actually moved, which is how the caller notices it sent something wrong."""
+    mine = await _course(repo, title="mine")
+    theirs = await _course(repo, user_id=OTHER_USER, title="theirs")
+    my_module = await _module(repo, mine, title="mine", order=10)
+    their_module = await _module(repo, theirs, title="theirs", order=10)
+
+    moved = await repo.reorder_modules(mine.id, [their_module.id, my_module.id])
+
+    assert moved == 1
+    # Their module keeps the position it had; nothing reached across the boundary.
+    assert (await repo.find_module(their_module.id)).order == 10
+
+
+async def test_reorder_topics_sets_order_within_its_module(repo):
+    course = await _course(repo)
+    module = await _module(repo, course)
+    first = await _topic(repo, module, title="first", order=10)
+    second = await _topic(repo, module, title="second", order=20)
+
+    moved = await repo.reorder_topics(module.id, [second.id, first.id])
+    assert moved == 2
+    assert [t.title for t in (await repo.find_module(module.id)).topics] == ["second", "first"]
+
+
+async def test_reorder_topics_ignores_a_topic_from_another_module(repo):
+    course = await _course(repo)
+    module = await _module(repo, course, title="one", order=1)
+    other = await _module(repo, course, title="two", order=2)
+    mine = await _topic(repo, module, title="mine", order=10)
+    elsewhere = await _topic(repo, other, title="elsewhere", order=10)
+
+    moved = await repo.reorder_topics(module.id, [elsewhere.id, mine.id])
+
+    assert moved == 1
+    assert (await repo.find_topic(elsewhere.id)).order == 10

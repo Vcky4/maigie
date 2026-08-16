@@ -43,6 +43,8 @@ _COURSE_CREATE_FIELDS = frozenset(
         "outcomes",
         "instructorName",
         "instructorRole",
+        "sourcePrompt",
+        "teachingStyle",
     }
 )
 
@@ -304,6 +306,56 @@ async def archive_course(*, course_id: str, user_id: str) -> Any:
     """Archive a course (soft delete)."""
     await check_course_ownership(course_id, user_id)
     await knowledge_repo.update_course(course_id, {"archived": True})
+    return await knowledge_repo.find_course_with_modules(course_id, user_id)
+
+
+async def add_course_material(*, user_id: str, course_id: str, file: Any) -> Any:
+    """Store a reference file against a course, as a resource.
+
+    The create wizard has a file drop whose own caption reads "names only in prototype": filenames were
+    held in browser memory and thrown away on submit. This is where they go.
+
+    Stored as a `Resource` with a `courseId` rather than in a new `CourseMaterial` table. A resource is
+    already "a thing worth reading, attached to a course or a topic", it already has a url, a type and a
+    title, and it is already listed by the resource endpoints the course page reads. A second table would
+    duplicate all of that and give the course page two lists to merge.
+
+    The row is written only after the upload succeeds, so a failed upload leaves no resource pointing at
+    a URL that holds nothing — the same ordering `study_plan_service.add_material` uses.
+    """
+    from src.shared.infrastructure.storage import StorageError, storage_service
+
+    await check_course_ownership(course_id, user_id)
+
+    try:
+        # Scoped by learner and course, so two courses can hold files of the same name and one learner's
+        # upload cannot overwrite another's.
+        stored = await storage_service.upload_upload_file(
+            file, path_prefix=f"courses/{user_id}/{course_id}"
+        )
+    except StorageError as error:
+        raise ValueError(f"Upload failed: {error}") from error
+
+    return await knowledge_repo.create_resource(
+        {
+            "userId": user_id,
+            "title": stored["filename"],
+            "url": stored["url"],
+            "type": "DOCUMENT",
+            "courseId": course_id,
+        }
+    )
+
+
+async def unarchive_course(*, course_id: str, user_id: str) -> Any:
+    """Return an archived course to the library.
+
+    The mirror of `archive_course`. Written as its own function rather than a boolean parameter on that
+    one, because a call site reading `unarchive_course(...)` says what it does, whereas
+    `archive_course(archived=False)` reads as its own opposite.
+    """
+    await check_course_ownership(course_id, user_id)
+    await knowledge_repo.update_course(course_id, {"archived": False})
     return await knowledge_repo.find_course_with_modules(course_id, user_id)
 
 

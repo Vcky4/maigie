@@ -135,11 +135,17 @@ class KnowledgeCheck(CamelModel):
     choices: list[KnowledgeCheckChoice] = []
 
 
+#: What kind of work a sitting is. Distinct from `SectionKind`, which is how one passage within a
+#: lesson explains something — see the note on `Topic.kind`.
+TopicKind = Literal["Lesson", "Practice", "Project", "Check"]
+
+
 class TopicCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     order: float = Field(..., ge=0)
     content: str | None = None
     estimatedHours: float | None = Field(None, ge=0)
+    kind: TopicKind | None = None
     summary: str | None = None
     objectives: list[str] | None = None
     knowledgeCheck: KnowledgeCheck | None = None
@@ -151,6 +157,7 @@ class TopicUpdate(BaseModel):
     content: str | None = None
     estimatedHours: float | None = Field(None, ge=0)
     completed: bool | None = None
+    kind: TopicKind | None = None
     summary: str | None = None
     objectives: list[str] | None = None
     knowledgeCheck: KnowledgeCheck | None = None
@@ -176,6 +183,9 @@ class TopicResponse(CamelModel):
     # from any history rather than given a date nothing observed.
     completed_at: datetime | None = None
     estimated_hours: float | None = None
+    #: Lesson, Practice, Project or Check. Null on topics written before the column existed, and the
+    #: outline shows no label rather than assuming Lesson.
+    kind: str | None = None
     #: The lesson header's one-line description. Null rather than derived: the first section's summary
     #: describes that section, and the opening of `content` is the material rather than a description
     #: of it, so either substitute would say something other than what the header claims.
@@ -213,6 +223,34 @@ class TopicGenerateResponse(BaseModel):
 # ===========================================================================
 # Modules
 # ===========================================================================
+
+
+class TopicBulkCreate(BaseModel):
+    """A whole module's worth of topics in one request.
+
+    The create wizard saves an outline of a dozen or more topics. Sent one at a time, a failure halfway
+    leaves a course that is half an outline, and the learner is the one who has to work out which half
+    and finish it by hand. One request either writes the outline or writes none of it.
+    """
+
+    topics: list[TopicCreate] = Field(..., min_length=1, max_length=100)
+
+
+class ReorderRequest(BaseModel):
+    """The new order, as ids from first to last.
+
+    Ids rather than `{id, order}` pairs, because the caller knows the sequence it wants and not the
+    float values that encode it. Letting a client send the numbers means two clients can disagree about
+    the spacing, and a dragged item can be given an order that collides with another.
+    """
+
+    ids: list[str] = Field(..., min_length=1, max_length=500)
+
+
+class ReorderResponse(CamelModel):
+    """What the reorder wrote, so the caller can tell a no-op from a partial write."""
+
+    reordered: int
 
 
 class ModuleCreate(BaseModel):
@@ -306,6 +344,12 @@ class CourseCreate(BaseModel):
     outcomes: list[str] | None = None
     instructorName: str | None = Field(None, max_length=200)
     instructorRole: str | None = Field(None, max_length=200)
+    #: The learner's brief, in their words — what the create wizard's description box collects. Stored
+    #: because it drives generation and because a learner should be able to see what they asked for.
+    sourcePrompt: str | None = None
+    #: Visual, Hands-on, Concept first or Mixed. Scoped to this course, overriding the learner's global
+    #: `preferredExplanationStyle` rather than replacing it.
+    teachingStyle: str | None = Field(None, max_length=60)
 
 
 class CourseUpdate(BaseModel):
@@ -320,6 +364,8 @@ class CourseUpdate(BaseModel):
     outcomes: list[str] | None = None
     instructorName: str | None = Field(None, max_length=200)
     instructorRole: str | None = Field(None, max_length=200)
+    sourcePrompt: str | None = None
+    teachingStyle: str | None = Field(None, max_length=60)
 
 
 class CourseResponse(CamelModel):
@@ -354,6 +400,11 @@ class CourseResponse(CamelModel):
     #: "What you'll be able to do" — the promise the course makes, separate from the objectives of any
     #: one topic within it.
     outcomes: list[str] | None = None
+    #: What the learner asked for, kept so the request that produced the course is visible and
+    #: regeneration has something to work from.
+    source_prompt: str | None = None
+    #: How this course should be explained. Null means fall through to the learner's global preference.
+    teaching_style: str | None = None
     #: Null when nobody is credited, which is the normal case for a self-generated course.
     instructor: CourseInstructor | None = None
     rating: CourseRatingSummary | None = None

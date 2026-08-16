@@ -502,6 +502,7 @@ class KnowledgeRepository:
                 content=data.get("content"),
                 estimated_hours=data.get("estimatedHours"),
                 summary=data.get("summary"),
+                kind=data.get("kind"),
                 objectives=data.get("objectives"),
                 knowledge_check=data.get("knowledgeCheck"),
             )
@@ -529,6 +530,8 @@ class KnowledgeRepository:
                 mapped["completed_at"] = data["completedAt"]
             # Same `in data` reasoning: an explicit null clears the objectives or the check, and a
             # truthiness test would silently ignore the clear and leave the old value on the page.
+            if "kind" in data:
+                mapped["kind"] = data["kind"]
             if "summary" in data:
                 mapped["summary"] = data["summary"]
             if "objectives" in data:
@@ -541,6 +544,80 @@ class KnowledgeRepository:
                 await session.commit()
             # Refetch
             return await self.find_topic(topic_id)
+
+    async def create_topics(self, module_id: str, items: list[dict[str, Any]]) -> list[Topic]:
+        """Insert a module's topics in one transaction, and return them in order.
+
+        The create wizard saves a whole outline. One request at a time, a failure partway leaves half an
+        outline for the learner to finish by hand — and worse, they cannot tell which half is missing
+        without comparing against what they typed. All or nothing is the only honest option.
+
+        Returns the rows rather than a count, because the caller's next act is to render the outline it
+        just saved, and re-querying would be a second round trip for data this transaction already has.
+        """
+        if not items:
+            return []
+
+        async with await self._session() as session:
+            topics = [
+                Topic(
+                    module_id=module_id,
+                    title=item["title"],
+                    order=item.get("order", 0),
+                    content=item.get("content"),
+                    estimated_hours=item.get("estimatedHours"),
+                    kind=item.get("kind"),
+                    summary=item.get("summary"),
+                    objectives=item.get("objectives"),
+                    knowledge_check=item.get("knowledgeCheck"),
+                )
+                for item in items
+            ]
+            session.add_all(topics)
+            await session.commit()
+            for topic in topics:
+                await session.refresh(topic)
+        return topics
+
+    async def reorder_modules(self, course_id: str, ids: list[str]) -> int:
+        """Set module order from a sequence of ids. Returns how many rows moved.
+
+        One transaction, because a partial reorder is worse than none: two modules would claim the same
+        position and the outline would render in an order that depends on the tie-break rather than on
+        anything the learner chose.
+
+        Ids not belonging to this course are ignored rather than rejected — the `WHERE` clause carries
+        the course id, so a stale or hostile id moves nothing. The returned count is what actually moved,
+        which is how the caller notices it sent something wrong.
+
+        Positions are spaced by ten so a later single insert has room between two neighbours without
+        renumbering the rest, which is the reason `order` is a float.
+        """
+        async with await self._session() as session:
+            moved = 0
+            for position, module_id in enumerate(ids, start=1):
+                result = await session.execute(
+                    update(Module)
+                    .where(Module.id == module_id, Module.course_id == course_id)
+                    .values(order=float(position * 10))
+                )
+                moved += result.rowcount or 0
+            await session.commit()
+        return moved
+
+    async def reorder_topics(self, module_id: str, ids: list[str]) -> int:
+        """Set topic order within a module. Same contract as `reorder_modules`."""
+        async with await self._session() as session:
+            moved = 0
+            for position, topic_id in enumerate(ids, start=1):
+                result = await session.execute(
+                    update(Topic)
+                    .where(Topic.id == topic_id, Topic.module_id == module_id)
+                    .values(order=float(position * 10))
+                )
+                moved += result.rowcount or 0
+            await session.commit()
+        return moved
 
     async def delete_topic(self, topic_id: str) -> None:
         async with await self._session() as session:
@@ -891,6 +968,8 @@ class KnowledgeRepository:
             "spaceId": "space_id",
             "instructorName": "instructor_name",
             "instructorRole": "instructor_role",
+            "sourcePrompt": "source_prompt",
+            "teachingStyle": "teaching_style",
         }
         # `category`, `tags` and `outcomes` are absent from the map on purpose: their column names and
         # their attribute names are the same word, so the passthrough below is already correct for

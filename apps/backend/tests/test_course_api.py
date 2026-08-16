@@ -895,3 +895,201 @@ async def test_every_field_sent_to_course_create_is_stored(client: AsyncClient, 
         "name": "Noah Williams",
         "role": "Principal systems engineer",
     }
+
+
+# ---------------------------------------------------------------------------
+# Authoring: bulk create, reorder, unarchive, and the wizard's own fields
+# ---------------------------------------------------------------------------
+
+
+async def _module_of(client: AsyncClient, headers: dict[str, str], course_id: str, **overrides) -> dict:
+    body = {"title": "Module", "order": 1, **overrides}
+    response = await client.post(
+        f"{BASE}/courses/{course_id}/modules", json=body, headers=headers
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def test_bulk_create_saves_a_whole_outline_in_one_request(client: AsyncClient, auth_headers):
+    course = await _create_course(client, auth_headers)
+    module = await _module_of(client, auth_headers, course["id"])
+
+    response = await client.post(
+        f"{BASE}/courses/{course['id']}/modules/{module['id']}/topics/bulk",
+        json={
+            "topics": [
+                {"title": "Read", "order": 10, "kind": "Lesson", "estimatedHours": 0.5},
+                {"title": "Drill", "order": 20, "kind": "Practice"},
+                {"title": "Build", "order": 30, "kind": "Project"},
+            ]
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    created = response.json()
+
+    assert [t["title"] for t in created] == ["Read", "Drill", "Build"]
+    assert [t["kind"] for t in created] == ["Lesson", "Practice", "Project"]
+    assert created[0]["estimatedHours"] == 0.5
+
+    # And really stored, not just echoed: the detail response counts them.
+    detail = await client.get(f"{BASE}/courses/{course['id']}", headers=auth_headers)
+    assert detail.json()["totalTopics"] == 3
+
+
+async def test_bulk_create_refuses_an_empty_list(client: AsyncClient, auth_headers):
+    """An empty outline is a caller mistake rather than a no-op worth pretending to honour."""
+    course = await _create_course(client, auth_headers)
+    module = await _module_of(client, auth_headers, course["id"])
+
+    response = await client.post(
+        f"{BASE}/courses/{course['id']}/modules/{module['id']}/topics/bulk",
+        json={"topics": []},
+        headers=auth_headers,
+    )
+    assert response.status_code in (400, 422), response.text
+
+
+async def test_bulk_create_into_another_learners_module_is_refused(
+    client: AsyncClient, auth_headers
+):
+    course = await _create_course(client, auth_headers)
+    module = await _module_of(client, auth_headers, course["id"])
+    intruder = await _login(client)
+
+    response = await client.post(
+        f"{BASE}/courses/{course['id']}/modules/{module['id']}/topics/bulk",
+        json={"topics": [{"title": "Theirs", "order": 10}]},
+        headers=intruder,
+    )
+    assert response.status_code in (403, 404), response.text
+
+
+async def test_reordering_modules_changes_the_outline_order(client: AsyncClient, auth_headers):
+    course = await _create_course(client, auth_headers)
+    first = await _module_of(client, auth_headers, course["id"], title="first", order=1)
+    second = await _module_of(client, auth_headers, course["id"], title="second", order=2)
+    third = await _module_of(client, auth_headers, course["id"], title="third", order=3)
+
+    response = await client.patch(
+        f"{BASE}/courses/{course['id']}/modules/reorder",
+        json={"ids": [third["id"], first["id"], second["id"]]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["reordered"] == 3
+
+    detail = await client.get(f"{BASE}/courses/{course['id']}", headers=auth_headers)
+    assert [m["title"] for m in detail.json()["modules"]] == ["third", "first", "second"]
+
+
+async def test_reorder_is_not_shadowed_by_the_module_id_route(client: AsyncClient, auth_headers):
+    """`/modules/reorder` sits under the same prefix as `/modules/{module_id}`.
+
+    They coexist because the methods differ, but that is exactly the kind of thing that breaks silently
+    when a route is added or moved — a `PATCH` to `reorder` reaching the `{module_id}` handler would try
+    to load a module called "reorder" and answer `404`. This test fails if the ordering regresses.
+    """
+    course = await _create_course(client, auth_headers)
+    module = await _module_of(client, auth_headers, course["id"])
+
+    response = await client.patch(
+        f"{BASE}/courses/{course['id']}/modules/reorder",
+        json={"ids": [module["id"]]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"reordered": 1}
+
+
+async def test_reordering_topics_changes_their_order_within_a_module(
+    client: AsyncClient, auth_headers
+):
+    course = await _create_course(client, auth_headers)
+    module = await _module_of(client, auth_headers, course["id"])
+    created = await client.post(
+        f"{BASE}/courses/{course['id']}/modules/{module['id']}/topics/bulk",
+        json={
+            "topics": [
+                {"title": "one", "order": 10},
+                {"title": "two", "order": 20},
+            ]
+        },
+        headers=auth_headers,
+    )
+    ids = [t["id"] for t in created.json()]
+
+    response = await client.patch(
+        f"{BASE}/courses/{course['id']}/modules/{module['id']}/topics/reorder",
+        json={"ids": [ids[1], ids[0]]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200, response.text
+
+    detail = await client.get(f"{BASE}/courses/{course['id']}", headers=auth_headers)
+    titles = [t["title"] for t in detail.json()["modules"][0]["topics"]]
+    assert titles == ["two", "one"]
+
+
+async def test_reorder_ignores_ids_from_another_course(client: AsyncClient, auth_headers):
+    """The count reports what moved, so a caller that sent something stale can tell."""
+    mine = await _create_course(client, auth_headers)
+    other = await _create_course(client, auth_headers)
+    my_module = await _module_of(client, auth_headers, mine["id"])
+    other_module = await _module_of(client, auth_headers, other["id"])
+
+    response = await client.patch(
+        f"{BASE}/courses/{mine['id']}/modules/reorder",
+        json={"ids": [other_module["id"], my_module["id"]]},
+        headers=auth_headers,
+    )
+    assert response.json()["reordered"] == 1
+
+
+async def test_archive_then_unarchive_returns_a_course_to_the_library(
+    client: AsyncClient, auth_headers
+):
+    """The two endpoints mirror each other, which is why unarchive is a named action rather than a field
+    write: an area where one direction is an action and the other a convention invites clients to
+    diverge."""
+    created = await _create_course(client, auth_headers)
+
+    archived = await client.post(
+        f"{BASE}/courses/{created['id']}/archive", headers=auth_headers
+    )
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["archived"] is True
+
+    restored = await client.post(
+        f"{BASE}/courses/{created['id']}/unarchive", headers=auth_headers
+    )
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["archived"] is False
+
+    # And it is back in the default library listing, which filters archived out.
+    listed = await client.get(f"{BASE}/courses?search={created['title']}", headers=auth_headers)
+    assert created["id"] in [c["id"] for c in listed.json()["items"]]
+
+
+async def test_unarchiving_another_learners_course_is_refused(client: AsyncClient, auth_headers):
+    created = await _create_course(client, auth_headers)
+    intruder = await _login(client)
+    response = await client.post(f"{BASE}/courses/{created['id']}/unarchive", headers=intruder)
+    assert response.status_code in (403, 404), response.text
+
+
+async def test_the_wizards_brief_and_style_round_trip(client: AsyncClient, auth_headers):
+    """`sourcePrompt` is the wizard's largest input and was discarded; `teachingStyle` is scoped to the
+    course rather than written to the learner's global preference."""
+    created = await _create_course(
+        client,
+        auth_headers,
+        sourcePrompt="Teach me graph algorithms with lots of diagrams",
+        teachingStyle="Visual",
+    )
+
+    fetched = await client.get(f"{BASE}/courses/{created['id']}", headers=auth_headers)
+    payload = fetched.json()
+    assert payload["sourcePrompt"] == "Teach me graph algorithms with lots of diagrams"
+    assert payload["teachingStyle"] == "Visual"

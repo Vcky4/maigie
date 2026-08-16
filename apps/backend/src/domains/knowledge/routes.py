@@ -11,7 +11,16 @@ import asyncio
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 
 from src.shared.auth import CurrentUser
 
@@ -457,6 +466,8 @@ async def create_course(body: models.CourseCreate, current_user: CurrentUser):
         category=course.category,
         tags=course.tags,
         outcomes=course.outcomes,
+        sourcePrompt=course.source_prompt,
+        teachingStyle=course.teaching_style,
         instructor=(
             models.CourseInstructor(name=course.instructor_name, role=course.instructor_role)
             if course.instructor_name
@@ -512,6 +523,8 @@ async def get_course(course_id: str, current_user: CurrentUser):
         category=course.category,
         tags=course.tags,
         outcomes=course.outcomes,
+        sourcePrompt=course.source_prompt,
+        teachingStyle=course.teaching_style,
         # The whole object is null when no name is stored, rather than an object with null fields. A
         # panel keyed on "is there an instructor" is a single check that way; the alternative asks
         # every reader to know that a nameless instructor means none.
@@ -545,6 +558,52 @@ async def delete_course(course_id: str, current_user: CurrentUser):
 async def archive_course(course_id: str, current_user: CurrentUser):
     """Archive a course."""
     await course_service.archive_course(course_id=course_id, user_id=current_user.id)
+    return await get_course(course_id, current_user)
+
+
+@router.post(
+    "/courses/{course_id}/materials",
+    response_model=models.ResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_course_material(
+    course_id: str,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Attach a reference file to a course.
+
+    Multipart, through the same storage service notes, generated documents and study-plan materials use,
+    rather than a second upload mechanism. The create wizard's file drop kept filenames in browser memory
+    and its own caption said so; this is where they go now.
+
+    Stored as a `Resource` with a `courseId`, not in a new table — a resource already means "something
+    worth reading, attached to a course", and the course page already lists them.
+    """
+    try:
+        resource = await course_service.add_course_material(
+            user_id=current_user.id, course_id=course_id, file=file
+        )
+    except ValueError as error:
+        # A 502 rather than a 400: storage refused the object, the request itself was fine, and the
+        # learner can do nothing differently.
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return resource
+
+
+@router.post("/courses/{course_id}/unarchive", response_model=models.CourseResponse)
+async def unarchive_course(course_id: str, current_user: CurrentUser):
+    """Return an archived course to the library.
+
+    A dedicated endpoint rather than documenting `PUT` with `archived: false`, for one reason:
+    `POST .../archive` already exists, and an area where archiving is a named action while unarchiving is
+    a field write invites each client to pick a different one. Two endpoints that mirror each other are
+    easier to keep honest than one endpoint and one convention.
+
+    `PUT` with `archived: false` does also work — clearing and setting fields through `PUT` was fixed
+    along with the null-filtering defect — so this is the preferred path, not the only one.
+    """
+    await course_service.unarchive_course(course_id=course_id, user_id=current_user.id)
     return await get_course(course_id, current_user)
 
 
@@ -644,6 +703,72 @@ async def create_topic(
     # which is exactly how a derived-but-persisted column drifts.
     await knowledge_repo.recount_course_progress(course_id)
     return models.TopicResponse.model_validate(topic, from_attributes=True)
+
+
+@router.post(
+    "/courses/{course_id}/modules/{module_id}/topics/bulk",
+    response_model=list[models.TopicResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_topics_bulk(
+    course_id: str, module_id: str, body: models.TopicBulkCreate, current_user: CurrentUser
+):
+    """Save a module's whole outline in one request.
+
+    The create wizard produces a dozen or more topics at once. Sent one at a time, a failure partway
+    leaves half an outline that the learner then has to reconcile against what they typed — and they
+    cannot see which half is missing. This writes all of them or none.
+
+    Returns the created topics in the order they were written, because the caller renders the outline it
+    just saved and should render what the server stored rather than what it hoped to store.
+    """
+    module, course = await course_service.check_module_ownership(module_id, current_user.id)
+    if course.id != course_id:
+        raise HTTPException(status_code=400, detail="Module path mismatch")
+
+    topics = await knowledge_repo.create_topics(
+        module_id, [topic.model_dump(exclude_unset=True) for topic in body.topics]
+    )
+    # A course's stored progress is derived from its topic set, so adding topics moves it. Recounted
+    # here for the same reason single topic creation recounts: a stored derived value drifts the moment
+    # the thing it derives from changes.
+    await knowledge_repo.recount_course_progress(course_id)
+    return [models.TopicResponse.model_validate(topic, from_attributes=True) for topic in topics]
+
+
+@router.patch(
+    "/courses/{course_id}/modules/reorder",
+    response_model=models.ReorderResponse,
+)
+async def reorder_modules(course_id: str, body: models.ReorderRequest, current_user: CurrentUser):
+    """Set module order from a sequence of ids, first to last.
+
+    Ids rather than explicit order numbers: the caller knows the sequence it wants, not the float values
+    that encode it, and letting a client send the numbers means a dragged item can be given an order
+    that collides with another's.
+
+    Ids that do not belong to this course move nothing — the update carries the course id — and the
+    returned count is what actually moved, so a caller that sent something stale can tell.
+    """
+    await course_service.check_course_ownership(course_id, current_user.id)
+    moved = await knowledge_repo.reorder_modules(course_id, body.ids)
+    return models.ReorderResponse(reordered=moved)
+
+
+@router.patch(
+    "/courses/{course_id}/modules/{module_id}/topics/reorder",
+    response_model=models.ReorderResponse,
+)
+async def reorder_topics(
+    course_id: str, module_id: str, body: models.ReorderRequest, current_user: CurrentUser
+):
+    """Set topic order within a module. Same contract as module reorder."""
+    module, course = await course_service.check_module_ownership(module_id, current_user.id)
+    if course.id != course_id:
+        raise HTTPException(status_code=400, detail="Module path mismatch")
+
+    moved = await knowledge_repo.reorder_topics(module_id, body.ids)
+    return models.ReorderResponse(reordered=moved)
 
 
 @router.put(

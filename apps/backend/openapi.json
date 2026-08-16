@@ -365,6 +365,20 @@
         "title": "BehaviourProfileResponse",
         "type": "object"
       },
+      "Body_add_course_material_api_v1_knowledge_courses__course_id__materials_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_add_course_material_api_v1_knowledge_courses__course_id__materials_post",
+        "type": "object"
+      },
       "Body_add_study_plan_material_api_v1_learning_study_plans__plan_id__materials_post": {
         "properties": {
           "file": {
@@ -641,6 +655,17 @@
             ],
             "title": "Outcomes"
           },
+          "sourcePrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceprompt"
+          },
           "spaceId": {
             "anyOf": [
               {
@@ -677,6 +702,18 @@
               }
             ],
             "title": "Targetdate"
+          },
+          "teachingStyle": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachingstyle"
           },
           "title": {
             "maxLength": 255,
@@ -1137,6 +1174,17 @@
               }
             ]
           },
+          "sourcePrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceprompt"
+          },
           "tags": {
             "anyOf": [
               {
@@ -1162,6 +1210,17 @@
               }
             ],
             "title": "Targetdate"
+          },
+          "teachingStyle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachingstyle"
           },
           "title": {
             "title": "Title",
@@ -1276,6 +1335,17 @@
             ],
             "title": "Outcomes"
           },
+          "sourcePrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceprompt"
+          },
           "spaceId": {
             "anyOf": [
               {
@@ -1312,6 +1382,18 @@
               }
             ],
             "title": "Targetdate"
+          },
+          "teachingStyle": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachingstyle"
           },
           "title": {
             "anyOf": [
@@ -8801,6 +8883,39 @@
         "title": "RefreshTokenRequest",
         "type": "object"
       },
+      "ReorderRequest": {
+        "description": "The new order, as ids from first to last.\n\nIds rather than `{id, order}` pairs, because the caller knows the sequence it wants and not the\nfloat values that encode it. Letting a client send the numbers means two clients can disagree about\nthe spacing, and a dragged item can be given an order that collides with another.",
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "ReorderRequest",
+        "type": "object"
+      },
+      "ReorderResponse": {
+        "description": "What the reorder wrote, so the caller can tell a no-op from a partial write.",
+        "properties": {
+          "reordered": {
+            "title": "Reordered",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reordered"
+        ],
+        "title": "ReorderResponse",
+        "type": "object"
+      },
       "ResendOtpRequest": {
         "description": "Resend verification OTP.",
         "properties": {
@@ -11771,6 +11886,25 @@
         "title": "TokenResponse",
         "type": "object"
       },
+      "TopicBulkCreate": {
+        "description": "A whole module's worth of topics in one request.\n\nThe create wizard saves an outline of a dozen or more topics. Sent one at a time, a failure halfway\nleaves a course that is half an outline, and the learner is the one who has to work out which half\nand finish it by hand. One request either writes the outline or writes none of it.",
+        "properties": {
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TopicCreate"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "topics"
+        ],
+        "title": "TopicBulkCreate",
+        "type": "object"
+      },
       "TopicCreate": {
         "properties": {
           "content": {
@@ -11795,6 +11929,23 @@
               }
             ],
             "title": "Estimatedhours"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "Lesson",
+                  "Practice",
+                  "Project",
+                  "Check"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
           },
           "knowledgeCheck": {
             "anyOf": [
@@ -12013,6 +12164,17 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
           },
           "knowledgeCheck": {
             "anyOf": [
@@ -12583,6 +12745,23 @@
               }
             ],
             "title": "Estimatedhours"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "Lesson",
+                  "Practice",
+                  "Project",
+                  "Check"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
           },
           "knowledgeCheck": {
             "anyOf": [
@@ -14357,6 +14536,65 @@
         ]
       }
     },
+    "/api/v1/knowledge/courses/{course_id}/materials": {
+      "post": {
+        "description": "Attach a reference file to a course.\n\nMultipart, through the same storage service notes, generated documents and study-plan materials use,\nrather than a second upload mechanism. The create wizard's file drop kept filenames in browser memory\nand its own caption said so; this is where they go now.\n\nStored as a `Resource` with a `courseId`, not in a new table — a resource already means \"something\nworth reading, attached to a course\", and the course page already lists them.",
+        "operationId": "add_course_material_api_v1_knowledge_courses__course_id__materials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_course_material_api_v1_knowledge_courses__course_id__materials_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Course Material",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/knowledge/courses/{course_id}/modules": {
       "post": {
         "description": "Add a module to a course.",
@@ -14410,6 +14648,65 @@
           }
         ],
         "summary": "Create Module",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/courses/{course_id}/modules/reorder": {
+      "patch": {
+        "description": "Set module order from a sequence of ids, first to last.\n\nIds rather than explicit order numbers: the caller knows the sequence it wants, not the float values\nthat encode it, and letting a client send the numbers means a dragged item can be given an order\nthat collides with another's.\n\nIds that do not belong to this course move nothing — the update carries the course id — and the\nreturned count is what actually moved, so a caller that sent something stale can tell.",
+        "operationId": "reorder_modules_api_v1_knowledge_courses__course_id__modules_reorder_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReorderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reorder Modules",
         "tags": [
           "knowledge",
           "knowledge"
@@ -14595,6 +14892,146 @@
           }
         ],
         "summary": "Create Topic",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/courses/{course_id}/modules/{module_id}/topics/bulk": {
+      "post": {
+        "description": "Save a module's whole outline in one request.\n\nThe create wizard produces a dozen or more topics at once. Sent one at a time, a failure partway\nleaves half an outline that the learner then has to reconcile against what they typed — and they\ncannot see which half is missing. This writes all of them or none.\n\nReturns the created topics in the order they were written, because the caller renders the outline it\njust saved and should render what the server stored rather than what it hoped to store.",
+        "operationId": "create_topics_bulk_api_v1_knowledge_courses__course_id__modules__module_id__topics_bulk_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "title": "Module Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicBulkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TopicResponse"
+                  },
+                  "title": "Response Create Topics Bulk Api V1 Knowledge Courses  Course Id  Modules  Module Id  Topics Bulk Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Topics Bulk",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/courses/{course_id}/modules/{module_id}/topics/reorder": {
+      "patch": {
+        "description": "Set topic order within a module. Same contract as module reorder.",
+        "operationId": "reorder_topics_api_v1_knowledge_courses__course_id__modules__module_id__topics_reorder_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "module_id",
+            "required": true,
+            "schema": {
+              "title": "Module Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReorderResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reorder Topics",
         "tags": [
           "knowledge",
           "knowledge"
@@ -15046,6 +15483,55 @@
           }
         ],
         "summary": "Rate Course",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/courses/{course_id}/unarchive": {
+      "post": {
+        "description": "Return an archived course to the library.\n\nA dedicated endpoint rather than documenting `PUT` with `archived: false`, for one reason:\n`POST .../archive` already exists, and an area where archiving is a named action while unarchiving is\na field write invites each client to pick a different one. Two endpoints that mirror each other are\neasier to keep honest than one endpoint and one convention.\n\n`PUT` with `archived: false` does also work — clearing and setting fields through `PUT` was fixed\nalong with the null-filtering defect — so this is the preferred path, not the only one.",
+        "operationId": "unarchive_course_api_v1_knowledge_courses__course_id__unarchive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unarchive Course",
         "tags": [
           "knowledge",
           "knowledge"

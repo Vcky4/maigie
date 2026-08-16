@@ -243,3 +243,56 @@ class TestRequestModelsAreFullyMappable:
             "These request fields are accepted by a model but named nowhere in their domain, so they "
             "are almost certainly being discarded:\n  " + "\n  ".join(sorted(unmapped))
         )
+
+
+class TestResponseModelsAreFullyPopulated:
+    """A response field no route populates comes back null, silently.
+
+    The mirror of the request-side defect, and it bit immediately after that one was guarded:
+    `Course.sourcePrompt` and `Course.teachingStyle` were accepted, mapped, and **stored** correctly, then
+    omitted from the two places that construct `CourseResponse` with explicit keyword arguments. The
+    endpoint answered `200` with `null` for a value the database held, and only a Postgres test that read
+    the row back caught it — a test asserting on the create response alone would have passed.
+
+    Why this shape of check: a response model validated with `model_validate(obj, from_attributes=True)`
+    cannot have this problem, because the fields are read off the object. It only appears where a route
+    builds the model by hand, which some do because they compose derived figures alongside stored ones.
+    So the check is against the routes that do that.
+    """
+
+    #: Response models built by hand in a route, paired with the module that builds them.
+    HAND_BUILT = {
+        "CourseResponse": "domains/knowledge/routes.py",
+        "CourseListItem": "domains/knowledge/routes.py",
+        "TopicLocationResponse": "domains/knowledge/routes.py",
+    }
+
+    #: Fields a route legitimately never names, with the reason.
+    EXEMPT = {
+        # Derived per request under a different local name, or carried by a nested model.
+        "createdAt", "updatedAt", "id", "userId", "title", "description",
+    }
+
+    def test_every_hand_built_response_field_is_named_by_its_route(self):
+        from importlib import import_module
+
+        missing: list[str] = []
+        for model_name, route_path in self.HAND_BUILT.items():
+            source = (SRC / route_path).read_text()
+            module = import_module("src.domains.knowledge.models")
+            model = getattr(module, model_name)
+
+            for field_name, field in model.model_fields.items():
+                wire_name = field.alias or field_name
+                if wire_name in self.EXEMPT:
+                    continue
+                # Named as a keyword argument, or read off an object. Either proves the route knows about
+                # it; neither proves it is correct, which is what the API tests are for.
+                if f"{wire_name}=" in source or f".{field_name}" in source:
+                    continue
+                missing.append(f"{model_name}.{wire_name}")
+
+        assert missing == [], (
+            "These response fields are declared but never populated by the route that builds the model, so "
+            "they return null regardless of what is stored:\n  " + "\n  ".join(sorted(missing))
+        )
