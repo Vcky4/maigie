@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.shared.database import get_session_factory
+from src.shared.field_mapping import map_fields
 
 from .db_models import (
     AIActionLog,
@@ -533,52 +534,34 @@ class IntelligenceRepository:
     }
 
     def _map_chat_session(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._CHAT_SESSION_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._CHAT_SESSION_MAP
-        }
+        return map_fields(data, self._CHAT_SESSION_MAP, entity="_map_chat_session")
 
     def _map_message(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._MESSAGE_MAP.get(k, k): v for k, v in data.items() if k in self._MESSAGE_MAP}
+        return map_fields(data, self._MESSAGE_MAP, entity="_map_message")
 
     def _map_action_log(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._ACTION_LOG_MAP.get(k, k): v for k, v in data.items() if k in self._ACTION_LOG_MAP
-        }
+        return map_fields(data, self._ACTION_LOG_MAP, entity="_map_action_log")
 
     def _map_summary(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._SUMMARY_MAP.get(k, k): v for k, v in data.items() if k in self._SUMMARY_MAP}
+        return map_fields(data, self._SUMMARY_MAP, entity="_map_summary")
 
     def _map_user_fact(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._USER_FACT_MAP.get(k, k): v for k, v in data.items() if k in self._USER_FACT_MAP
-        }
+        return map_fields(data, self._USER_FACT_MAP, entity="_map_user_fact")
 
     def _map_insight(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._INSIGHT_MAP.get(k, k): v for k, v in data.items() if k in self._INSIGHT_MAP}
+        return map_fields(data, self._INSIGHT_MAP, entity="_map_insight")
 
     def _map_interaction(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._INTERACTION_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._INTERACTION_MAP
-        }
+        return map_fields(data, self._INTERACTION_MAP, entity="_map_interaction")
 
     def _map_agent_task(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._AGENT_TASK_MAP.get(k, k): v for k, v in data.items() if k in self._AGENT_TASK_MAP
-        }
+        return map_fields(data, self._AGENT_TASK_MAP, entity="_map_agent_task")
 
     def _map_cost_record(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._COST_RECORD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._COST_RECORD_MAP
-        }
+        return map_fields(data, self._COST_RECORD_MAP, entity="_map_cost_record")
 
     def _map_upload(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._UPLOAD_MAP.get(k, k): v for k, v in data.items() if k in self._UPLOAD_MAP}
+        return map_fields(data, self._UPLOAD_MAP, entity="_map_upload")
 
 
 # Singleton

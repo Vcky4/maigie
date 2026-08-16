@@ -7,7 +7,9 @@ Handles CRUD, archiving, attachments, tags, AI retake/summary, and import to spa
 import logging
 from typing import Any
 
-from src.shared.exceptions import NotFoundError
+from src.domains.personal_learning.db_models import Note
+from src.shared.exceptions import NotFoundError, ValidationError
+from src.shared.field_mapping import reject_unclearable
 
 from ..repository import personal_learning_repo as repo
 
@@ -91,7 +93,17 @@ async def update_note(*, user_id: str, note_id: str, data: dict[str, Any]) -> An
         raise NotFoundError("Note", note_id)
 
     tags = data.pop("tags", None)
-    update_data = {k: v for k, v in data.items() if v is not None}
+    # An explicit null clears the field; an omitted key leaves it alone. This used to be
+    # `{k: v for k, v in data.items() if v is not None}`, which — given the route dumps the body with
+    # `exclude_unset=True` — made clearing any field impossible while still returning success.
+    #
+    # Nullability is read from the mapped columns, so a null aimed at a NOT NULL column is refused with
+    # a message the client can act on instead of a database constraint error.
+    try:
+        reject_unclearable(data, Note)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    update_data = data
 
     if update_data:
         await repo.update_note(note_id, update_data)

@@ -805,3 +805,93 @@ async def test_an_explicit_instructor_survives_ai_generation(client: AsyncClient
         client, auth_headers, isAIGenerated=True, instructorName="Amara Okafor"
     )
     assert created["instructor"]["name"] == "Amara Okafor"
+
+
+# ---------------------------------------------------------------------------
+# Nothing is accepted and discarded
+#
+# These cover the defect class rather than one defect: a request field that the API accepts, reports
+# success for, and never stores. `tests/test_field_mapping_completeness.py` guards it statically; these
+# prove the behaviour end to end, through the routes, against Postgres.
+# ---------------------------------------------------------------------------
+
+
+async def test_an_explicit_null_clears_a_course_field(client: AsyncClient, auth_headers):
+    """Clearing used to be impossible and to report success anyway.
+
+    `update_course` filtered out every null, so `{"category": null}` returned `200` with the old
+    category still in place. The route reads the body with `exclude_unset=True`, so a key only arrives
+    when the client sent it, and that filter was the only thing collapsing "not sent" into "sent as
+    null".
+    """
+    created = await _create_course(client, auth_headers, category="Computer Science")
+    assert created["category"] == "Computer Science"
+
+    cleared = await client.put(
+        f"{BASE}/courses/{created['id']}", json={"category": None}, headers=auth_headers
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["category"] is None
+
+
+async def test_omitting_a_field_leaves_it_alone(client: AsyncClient, auth_headers):
+    """The other half of the same contract: an absent key must not be read as a clear, or every partial
+    update would wipe everything it did not mention."""
+    created = await _create_course(
+        client, auth_headers, category="Mathematics", tags=["probability"]
+    )
+
+    updated = await client.put(
+        f"{BASE}/courses/{created['id']}", json={"title": "Renamed"}, headers=auth_headers
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["title"] == "Renamed"
+    assert updated.json()["category"] == "Mathematics"
+    assert updated.json()["tags"] == ["probability"]
+
+
+async def test_clearing_a_required_field_is_refused_not_attempted(
+    client: AsyncClient, auth_headers
+):
+    """`title` is NOT NULL. Letting the write through would surface a database constraint name, which
+    tells the client nothing it can act on."""
+    created = await _create_course(client, auth_headers)
+    response = await client.put(
+        f"{BASE}/courses/{created['id']}", json={"title": None}, headers=auth_headers
+    )
+    assert response.status_code in (400, 422), response.text
+
+    unchanged = await client.get(f"{BASE}/courses/{created['id']}", headers=auth_headers)
+    assert unchanged.json()["title"] == created["title"]
+
+
+async def test_every_field_sent_to_course_create_is_stored(client: AsyncClient, auth_headers):
+    """Read back from the row rather than trusting the create response.
+
+    This is what the original defect could hide: the create response was assembled from the ORM object,
+    but a field dropped by the service allowlist never reached it, so asserting on the response alone
+    would have passed while the database held nothing.
+    """
+    created = await _create_course(
+        client,
+        auth_headers,
+        description="Every field",
+        category="Engineering",
+        tags=["systems", "scale"],
+        outcomes=["Design for failure"],
+        instructorName="Noah Williams",
+        instructorRole="Principal systems engineer",
+    )
+
+    fetched = await client.get(f"{BASE}/courses/{created['id']}", headers=auth_headers)
+    assert fetched.status_code == 200, fetched.text
+    payload = fetched.json()
+
+    assert payload["description"] == "Every field"
+    assert payload["category"] == "Engineering"
+    assert payload["tags"] == ["systems", "scale"]
+    assert payload["outcomes"] == ["Design for failure"]
+    assert payload["instructor"] == {
+        "name": "Noah Williams",
+        "role": "Principal systems engineer",
+    }

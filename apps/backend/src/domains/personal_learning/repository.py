@@ -1789,7 +1789,7 @@ class PersonalLearningRepository:
             "bestDayOfWeek": "best_day_of_week",
             "dropoutRisk": "dropout_risk",
         }
-        mapped = {behaviour_fields[k]: v for k, v in data.items() if k in behaviour_fields}
+        mapped = map_fields(data, behaviour_fields, entity="update_profile_behaviour")
         if not mapped:
             return
 

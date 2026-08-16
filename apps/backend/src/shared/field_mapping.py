@@ -94,3 +94,63 @@ def map_fields(
         raise UnmappedFieldError(entity, unknown, list(field_map))
 
     return {field_map[key]: value for key, value in data.items() if key in field_map}
+
+
+def reject_unclearable(
+    data: dict[str, Any],
+    model: type,
+    *,
+    field_map: dict[str, str] | None = None,
+) -> None:
+    """Refuse an explicit null for a column that cannot hold one.
+
+    The companion to the other half of this defect class. Several services filtered nulls out of an
+    update — `{k: v for k, v in data.items() if v is not None}` — while their route dumped the body
+    with `exclude_unset=True`. The combination made **clearing any field impossible while reporting
+    success**: sending `{"category": null}` returned `200` and changed nothing, because a key only
+    arrives when the client sent it and the filter then removed exactly the ones sent as null.
+
+    Dropping the filter restores clearing, but exposes the case it was accidentally covering: a null
+    aimed at a `NOT NULL` column. Left alone that surfaces as an integrity error naming a database
+    constraint, which the client cannot act on.
+
+    Nullability is read from the mapped columns rather than listed by hand, so the rule cannot drift
+    from the schema. A column made non-nullable in a later migration starts being enforced here without
+    anyone remembering to update a list.
+
+    Args:
+        data: Incoming values keyed by wire name.
+        model: The SQLAlchemy model the update targets.
+        field_map: Wire name to attribute name, when they differ. Unmapped keys are looked up by their
+            own name, which covers the common case where the two match.
+
+    Raises:
+        ValueError: If any key holds an explicit null for a non-nullable column. The caller converts
+            this into its domain's validation error, so the message reaches the client as a 400.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    mapper = sa_inspect(model)
+    field_map = field_map or {}
+
+    unclearable = []
+    for wire_name, value in data.items():
+        if value is not None:
+            continue
+        attr_name = field_map.get(wire_name, wire_name)
+        attr = mapper.attrs.get(attr_name)
+        # Not a mapped column — a relationship, or a field this model does not own. Whether it may be
+        # cleared is not this function's business.
+        if attr is None or not hasattr(attr, "columns") or not attr.columns:
+            continue
+        column = attr.columns[0]
+        # Primary keys are non-nullable but are never in an update body; excluding them keeps the error
+        # message about fields the caller actually chose.
+        if not column.nullable and not column.primary_key:
+            unclearable.append(wire_name)
+
+    if unclearable:
+        raise ValueError(
+            f"These fields cannot be cleared because they must always hold a value: "
+            f"{sorted(unclearable)}"
+        )

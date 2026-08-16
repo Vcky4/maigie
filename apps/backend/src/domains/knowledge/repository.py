@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from src.shared.database import get_session_factory
+from src.shared.field_mapping import map_fields
 
 from .db_models import (
     Course,
@@ -653,29 +654,20 @@ class KnowledgeRepository:
         """
         field_map = {
             "topicId": "topic_id",
+            "order": "order",
+            "kind": "kind",
+            "title": "title",
+            "eyebrow": "eyebrow",
+            "summary": "summary",
             "durationMinutes": "duration_minutes",
+            "paragraphs": "paragraphs",
             "keyIdea": "key_idea",
+            "steps": "steps",
+            "bullets": "bullets",
+            "code": "code",
+            "completed": "completed",
         }
-        allowed = {
-            "topicId",
-            "order",
-            "kind",
-            "title",
-            "eyebrow",
-            "summary",
-            "durationMinutes",
-            "paragraphs",
-            "keyIdea",
-            "steps",
-            "bullets",
-            "code",
-            "completed",
-        }
-        mapped: dict[str, Any] = {}
-        for key in allowed:
-            if key in data:
-                mapped[field_map.get(key, key)] = data[key]
-        return mapped
+        return map_fields(data, field_map, entity="_map_section_data")
 
     # -----------------------------------------------------------------------
     # Course ratings
@@ -904,11 +896,13 @@ class KnowledgeRepository:
         # their attribute names are the same word, so the passthrough below is already correct for
         # them. Anything whose wire name differs from its attribute name must be listed, or it
         # arrives here as an unknown keyword and fails at the constructor.
-        result = {}
-        for key, value in data.items():
-            attr = field_map.get(key, key)
-            result[attr] = value
-        return result
+        # Previously a passthrough: an unknown key became an ORM keyword argument and failed with a
+        # `TypeError` naming SQLAlchemy internals rather than the field the caller sent. Strict mapping
+        # names the field instead, and refuses rather than guessing.
+        for own_name in ("title", "description", "difficulty", "archived", "progress",
+                         "category", "tags", "outcomes"):
+            field_map.setdefault(own_name, own_name)
+        return map_fields(data, field_map, entity="_map_course_data")
 
     @staticmethod
     def _escape_like(term: str) -> str:

@@ -10,11 +10,17 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domains.knowledge.db_models import Course
-from src.domains.learning_spaces.db_models import SpaceChatGroup, SpaceSession
+from src.domains.learning_spaces.db_models import (
+    SpaceChatGroup,
+    SpaceChatGroupMember,
+    SpaceSession,
+)
 from src.shared.database import get_session_factory
+from src.shared.field_mapping import map_fields
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +58,53 @@ class ClassroomRepository:
             await session.commit()
             await session.refresh(classroom)
             return classroom
+
+    async def add_members(self, classroom_id: str, user_ids: list[str]) -> int:
+        """Add learners to a classroom. Returns how many rows were written.
+
+        Exists because `ClassroomCreate.memberIds` was accepted and discarded: the field was declared,
+        documented as "For PRIVATE: initial member IDs", and named nowhere else in the domain — so
+        creating a private classroom with a member list returned `201` and added nobody. The table it
+        needed, `SpaceChatGroupMember`, already existed.
+
+        `ON CONFLICT DO NOTHING` against the `(chatGroupId, userId)` unique index, so adding somebody
+        who is already in the classroom is a no-op rather than an aborted transaction — otherwise
+        re-sending an overlapping list would fail the whole request.
+        """
+        if not user_ids:
+            return 0
+
+        async with await self._session() as session:
+            stmt = (
+                pg_insert(SpaceChatGroupMember)
+                .values(
+                    [
+                        {"chat_group_id": classroom_id, "user_id": user_id}
+                        # De-duplicated here as well as in the database: one statement carrying the same
+                        # pair twice raises rather than conflicting, since `ON CONFLICT` cannot resolve a
+                        # row against another row in its own insert.
+                        for user_id in dict.fromkeys(user_ids)
+                    ]
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        SpaceChatGroupMember.chat_group_id,
+                        SpaceChatGroupMember.user_id,
+                    ]
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+    async def list_member_ids(self, classroom_id: str) -> list[str]:
+        async with await self._session() as session:
+            rows = await session.execute(
+                select(SpaceChatGroupMember.user_id).where(
+                    SpaceChatGroupMember.chat_group_id == classroom_id
+                )
+            )
+            return [row[0] for row in rows]
 
     async def update_classroom(self, classroom_id: str, data: dict[str, Any]) -> None:
         async with await self._session() as session:
@@ -178,12 +231,10 @@ class ClassroomRepository:
     }
 
     def _map_classroom(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._CLASSROOM_MAP.get(k, k): v for k, v in data.items() if k in self._CLASSROOM_MAP
-        }
+        return map_fields(data, self._CLASSROOM_MAP, entity="_map_classroom")
 
     def _map_session(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._SESSION_MAP.get(k, k): v for k, v in data.items() if k in self._SESSION_MAP}
+        return map_fields(data, self._SESSION_MAP, entity="_map_session")
 
 
 # Singleton

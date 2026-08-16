@@ -5,8 +5,10 @@ Classroom lifecycle — create, update, delete, list.
 import logging
 from typing import Any
 
+from src.domains.learning_spaces.db_models import SpaceChatGroup
 from src.shared.events import emit
-from src.shared.exceptions import ForbiddenError, NotFoundError
+from src.shared.exceptions import ForbiddenError, NotFoundError, ValidationError
+from src.shared.field_mapping import reject_unclearable
 
 from ..repository import classroom_repo
 
@@ -27,6 +29,17 @@ async def create_classroom(*, space_id: str, user_id: str, data: dict[str, Any])
             "description": data.get("description"),
         }
     )
+
+    # `memberIds` used to be accepted and dropped. The field was declared on `ClassroomCreate` and
+    # documented as the initial member list for a private classroom, but was named nowhere else in the
+    # domain — so creating a private classroom with members returned `201` and added none of them.
+    #
+    # Members are added after the classroom exists rather than in the same statement, because the rows
+    # need its id. A failure here leaves an empty classroom rather than no classroom, which is the
+    # recoverable half: the educator can add members, whereas a rolled-back create loses the name,
+    # the description and the visibility they chose.
+    if data.get("memberIds"):
+        await classroom_repo.add_members(classroom.id, data["memberIds"])
 
     await emit(
         "classroom.created",
@@ -58,7 +71,17 @@ async def update_classroom(*, classroom_id: str, user_id: str, data: dict[str, A
 
     await _require_role(None, classroom.space_id, user_id, min_role="TUTOR")
 
-    update_data = {k: v for k, v in data.items() if v is not None}
+    # An explicit null clears the field; an omitted key leaves it alone. This used to be
+    # `{k: v for k, v in data.items() if v is not None}`, which — given the route dumps the body with
+    # `exclude_unset=True` — made clearing any field impossible while still returning success.
+    #
+    # Nullability is read from the mapped columns, so a null aimed at a NOT NULL column is refused with
+    # a message the client can act on instead of a database constraint error.
+    try:
+        reject_unclearable(data, SpaceChatGroup)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    update_data = data
     if update_data:
         await classroom_repo.update_classroom(classroom_id, update_data)
     return await classroom_repo.find_classroom(classroom_id)

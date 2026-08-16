@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.shared.database import get_session_factory
+from src.shared.field_mapping import map_fields
 
 from .db_models import (
     Achievement,
@@ -476,51 +477,25 @@ class ProgressRepository:
     }
 
     def _map_goal_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._GOAL_FIELD_MAP.get(k, k): v for k, v in data.items() if k in self._GOAL_FIELD_MAP
-        }
+        return map_fields(data, self._GOAL_FIELD_MAP, entity="_map_goal_data")
 
     def _map_block_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._BLOCK_FIELD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._BLOCK_FIELD_MAP
-        }
+        return map_fields(data, self._BLOCK_FIELD_MAP, entity="_map_block_data")
 
     def _map_session_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._SESSION_FIELD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._SESSION_FIELD_MAP
-        }
+        return map_fields(data, self._SESSION_FIELD_MAP, entity="_map_session_data")
 
     def _map_streak_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._STREAK_FIELD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._STREAK_FIELD_MAP
-        }
+        return map_fields(data, self._STREAK_FIELD_MAP, entity="_map_streak_data")
 
     def _map_review_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._REVIEW_FIELD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._REVIEW_FIELD_MAP
-        }
+        return map_fields(data, self._REVIEW_FIELD_MAP, entity="_map_review_data")
 
     def _map_achievement_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._ACHIEVEMENT_FIELD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._ACHIEVEMENT_FIELD_MAP
-        }
+        return map_fields(data, self._ACHIEVEMENT_FIELD_MAP, entity="_map_achievement_data")
 
     def _map_behaviour_data(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._BEHAVIOUR_FIELD_MAP.get(k, k): v
-            for k, v in data.items()
-            if k in self._BEHAVIOUR_FIELD_MAP
-        }
+        return map_fields(data, self._BEHAVIOUR_FIELD_MAP, entity="_map_behaviour_data")
 
     def _to_goal_attr(self, col_name: str) -> str:
         return self._GOAL_FIELD_MAP.get(col_name, col_name)

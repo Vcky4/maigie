@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from src.domains.personal_learning.repository import PersonalLearningRepository
+from src.shared.field_mapping import UnmappedFieldError, map_fields
 
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_generation_latency.py"
 _spec = importlib.util.spec_from_file_location("check_generation_latency", _SCRIPT)
@@ -75,10 +76,31 @@ class TestSessionFieldMapping:
         assert mapped["status"] == "FAILED"
         assert mapped["generation_ms"] == 40_000
 
-    def test_an_unknown_key_is_still_dropped(self):
-        """The permissiveness that hid the `type` defect is unchanged — this test
-        exists so the mapping's behaviour is stated rather than assumed."""
-        assert PersonalLearningRepository._map_quiz_session({"notAColumn": 1}) == {}
+    def test_an_unknown_key_is_refused_rather_than_dropped(self):
+        """The permissiveness that hid the `type` defect is now an error.
+
+        This test previously asserted the opposite: that an unmapped key was silently discarded, with
+        a docstring noting that the same permissiveness had already hidden a defect. Pinning that
+        behaviour in place made the hazard permanent — a field added to a request model and not to the
+        mapper was accepted, dropped, and reported as success.
+
+        Three more instances were found later, each costing real data: `search` on the course list,
+        five fields on the course create form, and the three flashcard review aids. So the mapper now
+        refuses, and this test guards the refusal.
+        """
+        with pytest.raises(UnmappedFieldError, match="notAColumn"):
+            PersonalLearningRepository._map_quiz_session({"notAColumn": 1})
+
+    def test_a_field_can_be_ignored_deliberately(self):
+        """The escape hatch, so strictness does not force a fake column.
+
+        A field handled somewhere other than this mapper is passed in `ignore` at the call site, which
+        keeps the decision visible. Silence and an explicit exemption look different in a diff.
+        """
+        assert (
+            map_fields({"notAColumn": 1}, {"status": "status"}, entity="t", ignore={"notAColumn"})
+            == {}
+        )
 
     def test_the_column_is_nullable_with_no_default(self):
         """Sessions predating `018` must read as unknown, not as instantaneous.

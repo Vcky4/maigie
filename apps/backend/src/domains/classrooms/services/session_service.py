@@ -5,8 +5,10 @@ Learning Session management — schedule, start, complete, cancel.
 import logging
 from typing import Any
 
+from src.domains.learning_spaces.db_models import SpaceSession
 from src.shared.events import emit
-from src.shared.exceptions import NotFoundError
+from src.shared.exceptions import NotFoundError, ValidationError
+from src.shared.field_mapping import reject_unclearable
 
 from ..repository import classroom_repo
 
@@ -65,7 +67,17 @@ async def update_session(*, session_id: str, user_id: str, data: dict[str, Any])
 
     await _require_role(None, session.space_id, user_id, min_role="TUTOR")
 
-    update_data = {k: v for k, v in data.items() if v is not None}
+    # An explicit null clears the field; an omitted key leaves it alone. This used to be
+    # `{k: v for k, v in data.items() if v is not None}`, which — given the route dumps the body with
+    # `exclude_unset=True` — made clearing any field impossible while still returning success.
+    #
+    # Nullability is read from the mapped columns, so a null aimed at a NOT NULL column is refused with
+    # a message the client can act on instead of a database constraint error.
+    try:
+        reject_unclearable(data, SpaceSession)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    update_data = data
     if update_data:
         await classroom_repo.update_session(session_id, update_data)
     return await classroom_repo.find_session(session_id)

@@ -23,6 +23,29 @@ logger = logging.getLogger(__name__)
 AI_INSTRUCTOR_NAME = "Maigie"
 AI_INSTRUCTOR_ROLE = "AI learning designer"
 
+#: Course fields that must always hold a value, so an explicit null is refused rather than attempted.
+#: Everything else on `CourseUpdate` is nullable in the schema and can therefore be cleared.
+_COURSE_REQUIRED_FIELDS = frozenset({"title"})
+
+#: What a client may set when creating a course. Anything outside this set is refused rather than
+#: dropped — see the note in `create_course`. `userId` and `progress` are deliberately absent: the
+#: first is the caller's identity and the second is derived.
+_COURSE_CREATE_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "difficulty",
+        "targetDate",
+        "isAIGenerated",
+        "spaceId",
+        "category",
+        "tags",
+        "outcomes",
+        "instructorName",
+        "instructorRole",
+    }
+)
+
 #: The role given to a learner who takes a course into a space they own. They are not credited with
 #: writing it — Maigie may have generated the material — but they are the person answering for it in
 #: that space, which is what the panel is stating.
@@ -207,23 +230,33 @@ async def create_course(*, user: User, data: dict[str, Any]) -> Any:
                 "Start a free trial for unlimited courses."
             )
 
-    create_data = {
-        "userId": user.id,
-        "title": data["title"],
-        "description": data.get("description"),
-        "difficulty": data.get("difficulty"),
-        "targetDate": data.get("targetDate"),
-        "isAIGenerated": data.get("isAIGenerated", False),
-    }
-    if data.get("spaceId"):
-        create_data["spaceId"] = data["spaceId"]
-    # Named one by one rather than by spreading `data`, because this dict is the allowlist that keeps
-    # a client from setting `progress` or `userId` directly. The cost of that safety is that a field
-    # added to `CourseCreate` and not added here is accepted and silently discarded, which is how
-    # `search` was lost on the list endpoint — so each of these is listed explicitly.
-    for optional in ("category", "tags", "outcomes", "instructorName", "instructorRole"):
-        if data.get(optional) is not None:
-            create_data[optional] = data[optional]
+    # The fields a client may set when creating a course.
+    #
+    # Previously this was assembled by naming each field, which made every addition to `CourseCreate`
+    # a chance to lose data: a field the client sent and this dict did not name was accepted, dropped,
+    # and reported as created. That happened — `category`, `tags`, `outcomes` and both instructor
+    # fields were all silently discarded on their first day.
+    #
+    # It is still an allowlist, because that job is real: without it a client could set `progress`,
+    # `userId` or `archived` by naming them in a request body. What changed is that an unrecognised
+    # field is now a refusal rather than a silent drop, so the failure lands on the developer who
+    # added the field instead of on the learner whose input vanished.
+    unknown = set(data) - _COURSE_CREATE_FIELDS
+    if unknown:
+        raise ValidationError(
+            f"create_course received fields it cannot persist: {sorted(unknown)}. "
+            f"Add them to _COURSE_CREATE_FIELDS if a client may set them."
+        )
+
+    create_data: dict[str, Any] = {"userId": user.id, "title": data["title"]}
+    for field in _COURSE_CREATE_FIELDS:
+        if field == "title":
+            continue
+        if data.get(field) is not None:
+            create_data[field] = data[field]
+    # Explicit rather than inferred from absence, because the repository default and this default must
+    # not be able to disagree about what an unspecified course is.
+    create_data.setdefault("isAIGenerated", False)
 
     # A generated course is taught by Maigie, and the credit is written at creation rather than
     # inferred at read time. Inferring it would mean every reader repeating the rule "if AI-generated
@@ -242,12 +275,28 @@ async def create_course(*, user: User, data: dict[str, Any]) -> Any:
 
 
 async def update_course(*, course_id: str, user_id: str, data: dict[str, Any]) -> Any:
-    """Update course metadata."""
+    """Update course metadata. An explicit null clears the field; an omitted key leaves it alone.
+
+    This used to filter out every null — `{k: v for k, v in data.items() if v is not None}` — which
+    made **clearing any course field impossible**. Sending `{"category": null}` to remove a category
+    returned `200` with the old category still in place, so the request reported success and did
+    nothing. The route reads the body with `exclude_unset=True`, so a key only reaches here if the
+    client actually sent it, and that filter was the sole reason the two cases could not be told apart.
+
+    Same contract as `PATCH /learning/flashcards/{id}`, where an explicit `"deckId": null` unfiles a
+    card while omitting the key leaves its deck alone.
+    """
     await check_course_ownership(course_id, user_id)
-    update_data = {k: v for k, v in data.items() if v is not None}
-    if not update_data:
+
+    # `title` is NOT NULL. Without this the database would reject the write with an integrity error
+    # naming a constraint, which tells the client nothing it can act on.
+    nulled_required = [field for field in _COURSE_REQUIRED_FIELDS if field in data and data[field] is None]
+    if nulled_required:
+        raise ValidationError(f"These fields cannot be cleared: {sorted(nulled_required)}")
+
+    if not data:
         return await knowledge_repo.find_course_with_modules(course_id, user_id)
-    await knowledge_repo.update_course(course_id, update_data)
+    await knowledge_repo.update_course(course_id, data)
     return await knowledge_repo.find_course_with_modules(course_id, user_id)
 
 

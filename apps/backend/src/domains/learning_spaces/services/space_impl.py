@@ -674,6 +674,27 @@ async def create_chat_group(db: Any, space_id: str, user_id: str, data: ChatGrou
         }
     )
 
+    # `memberIds` used to be accepted and dropped: declared on `ChatGroupCreate`, named nowhere else in
+    # the domain, so creating a group with members created an empty group and reported success. Written
+    # after the group exists, because the rows need its id.
+    #
+    # Verified against the space first. Reading a room is authorised by group membership, so an
+    # unchecked list would be a way to admit somebody to a room inside a space they were never invited
+    # to — the list is refused as a whole rather than filtered, because silently dropping the names that
+    # did not qualify is the defect this whole change is about.
+    if data.memberIds:
+        space_member_ids = await space_repo.list_member_ids(space_id)
+        outsiders = [uid for uid in data.memberIds if uid not in space_member_ids]
+        if outsiders:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "These users are not members of this space and cannot be added to a group "
+                    f"inside it: {sorted(outsiders)}"
+                ),
+            )
+        await space_repo.add_chat_group_members(group.id, data.memberIds)
+
     return group
 
 

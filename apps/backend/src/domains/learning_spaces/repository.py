@@ -10,10 +10,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.shared.database import get_session_factory
+from src.shared.field_mapping import map_fields
 
 from .db_models import (
     Space,
@@ -227,6 +229,55 @@ class LearningSpaceRepository:
             await session.refresh(group)
             return group
 
+    async def add_chat_group_members(self, group_id: str, user_ids: list[str]) -> int:
+        """Add members to a chat group. Returns how many rows were written.
+
+        Exists because `ChatGroupCreate.memberIds` was accepted and discarded: the field was declared on
+        the request model and named nowhere else in the domain, so creating a group with members created
+        an empty one and reported success. `SpaceChatGroupMember` already existed.
+
+        `ON CONFLICT DO NOTHING` on the `(chatGroupId, userId)` unique index, so re-adding an existing
+        member is a no-op rather than an aborted transaction.
+        """
+        if not user_ids:
+            return 0
+
+        async with await self._session() as session:
+            stmt = (
+                pg_insert(SpaceChatGroupMember)
+                .values(
+                    [
+                        {"chat_group_id": group_id, "user_id": user_id}
+                        # De-duplicated in Python too: `ON CONFLICT` cannot resolve a row against
+                        # another row inside its own insert, so a list containing the same id twice
+                        # would raise rather than conflict.
+                        for user_id in dict.fromkeys(user_ids)
+                    ]
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        SpaceChatGroupMember.chat_group_id,
+                        SpaceChatGroupMember.user_id,
+                    ]
+                )
+            )
+            result = await session.execute(stmt)
+            await session.commit()
+            return result.rowcount or 0
+
+    async def list_member_ids(self, space_id: str) -> set[str]:
+        """The user ids in a space, for checking a submitted member list against.
+
+        A set of ids rather than the `SpaceMember` rows, because the one caller is asking "are these
+        people in this space" and loading full rows to answer it would fetch roles and stats nobody
+        reads.
+        """
+        async with await self._session() as session:
+            rows = await session.execute(
+                select(SpaceMember.user_id).where(SpaceMember.space_id == space_id)
+            )
+            return {row[0] for row in rows}
+
     async def find_chat_group(self, group_id: str) -> SpaceChatGroup | None:
         async with await self._session() as session:
             stmt = select(SpaceChatGroup).where(SpaceChatGroup.id == group_id)
@@ -391,21 +442,19 @@ class LearningSpaceRepository:
     }
 
     def _map_space(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._SPACE_MAP.get(k, k): v for k, v in data.items() if k in self._SPACE_MAP}
+        return map_fields(data, self._SPACE_MAP, entity="_map_space")
 
     def _map_member(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._MEMBER_MAP.get(k, k): v for k, v in data.items() if k in self._MEMBER_MAP}
+        return map_fields(data, self._MEMBER_MAP, entity="_map_member")
 
     def _map_invite(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._INVITE_MAP.get(k, k): v for k, v in data.items() if k in self._INVITE_MAP}
+        return map_fields(data, self._INVITE_MAP, entity="_map_invite")
 
     def _map_chat_group(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {
-            self._CHAT_GROUP_MAP.get(k, k): v for k, v in data.items() if k in self._CHAT_GROUP_MAP
-        }
+        return map_fields(data, self._CHAT_GROUP_MAP, entity="_map_chat_group")
 
     def _map_space_session(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {self._SESSION_MAP.get(k, k): v for k, v in data.items() if k in self._SESSION_MAP}
+        return map_fields(data, self._SESSION_MAP, entity="_map_space_session")
 
 
 # Singleton

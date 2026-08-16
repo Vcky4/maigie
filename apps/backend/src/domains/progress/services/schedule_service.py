@@ -5,7 +5,9 @@ Study Block (schedule) management â€” CRUD with Google Calendar sync.
 import logging
 from typing import Any
 
-from src.shared.exceptions import NotFoundError
+from src.domains.progress.db_models import ScheduleBlock
+from src.shared.exceptions import NotFoundError, ValidationError
+from src.shared.field_mapping import reject_unclearable
 
 from ..repository import progress_repo
 
@@ -53,7 +55,17 @@ async def update_block(*, block_id: str, user_id: str, data: dict[str, Any]) -> 
     block = await progress_repo.find_block(block_id, user_id)
     if not block:
         raise NotFoundError("StudyBlock", block_id)
-    update_data = {k: v for k, v in data.items() if v is not None}
+    # An explicit null clears the field; an omitted key leaves it alone. This used to be
+    # `{k: v for k, v in data.items() if v is not None}`, which — given the route dumps the body with
+    # `exclude_unset=True` — made clearing any field impossible while still returning success.
+    #
+    # Nullability is read from the mapped columns, so a null aimed at a NOT NULL column is refused with
+    # a message the client can act on instead of a database constraint error.
+    try:
+        reject_unclearable(data, ScheduleBlock)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+    update_data = data
     if update_data:
         return await progress_repo.update_block(block_id, update_data)
     return block
