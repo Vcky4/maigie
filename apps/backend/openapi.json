@@ -582,6 +582,7 @@
         "type": "object"
       },
       "CourseListItem": {
+        "description": "A course as it appears in the library, without its modules or topics.\n\n`moduleCount` rather than the modules themselves: a library card shows a count, and the client\ntype comment already records that this is not named `totalModules`.",
         "properties": {
           "archived": {
             "default": false,
@@ -680,17 +681,14 @@
         "type": "object"
       },
       "CourseListResponse": {
+        "description": "The course library, one page at a time.\n\nMigrated onto the shared envelope: `items` rather than `courses`, and `pages` rather than\n`hasMore`. Done now because the only consumer is being rewritten from scratch in the same change,\nwhich is the cheapest this migration will ever be — every later moment costs a client rewrite as\nwell.\n\n`pages` replaces `hasMore` because it answers strictly more: a pager needs to know how many pages\nthere are, and \"is there another one\" is `page < pages`. `hasMore` could not be derived the other\nway round.",
         "properties": {
-          "courses": {
+          "items": {
             "items": {
               "$ref": "#/components/schemas/CourseListItem"
             },
-            "title": "Courses",
+            "title": "Items",
             "type": "array"
-          },
-          "hasMore": {
-            "title": "Hasmore",
-            "type": "boolean"
           },
           "page": {
             "title": "Page",
@@ -700,17 +698,21 @@
             "title": "Pagesize",
             "type": "integer"
           },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
           }
         },
         "required": [
-          "courses",
+          "items",
           "total",
           "page",
           "pageSize",
-          "hasMore"
+          "pages"
         ],
         "title": "CourseListResponse",
         "type": "object"
@@ -747,6 +749,7 @@
         "type": "object"
       },
       "CourseResponse": {
+        "description": "A course with its modules, topics and derived progress.\n\n`progress`, `totalTopics` and `completedTopics` are computed per request from the topics rather\nthan read from `Course.progress`, which nothing writes — see the note on that column.",
         "properties": {
           "archived": {
             "default": false,
@@ -3812,6 +3815,7 @@
         "type": "object"
       },
       "ModuleResponse": {
+        "description": "A module with its topics and derived progress.\n\nBuilt from `course_service.calculate_module_progress`, whose keys are camelCase and reach these\nsnake_case fields as aliases. `topics` holds raw ORM rows, validated through `TopicResponse`.",
         "properties": {
           "completed": {
             "default": false,
@@ -11223,6 +11227,7 @@
         "type": "object"
       },
       "TopicResponse": {
+        "description": "A topic as returned to the client.\n\nFields are snake_case and the wire format stays camelCase, which is not cosmetic here: this model\nis validated straight off a SQLAlchemy `Topic`, and while the fields were declared camelCase that\nvalidation could not find `module_id`, `created_at` or `updated_at` at all — `POST .../topics`\nanswered `500`. `estimatedHours` was worse: it has a default, so it silently came back null\nrather than failing, and the endpoint looked like it worked.",
         "properties": {
           "completed": {
             "default": false,
@@ -12584,7 +12589,7 @@
     },
     "/api/v1/knowledge/courses": {
       "get": {
-        "description": "List courses with pagination and filtering.",
+        "description": "List courses with pagination and filtering.\n\nThree things this used to get wrong, all of which the library page depends on.\n\n`search` was accepted and thrown away. It was translated into a Prisma-style `where[\"OR\"]`, and\nthe SQLAlchemy translator has no `OR` branch, so the parameter was silently dropped and the\ncaller was handed the unfiltered library while believing it had searched.\n\n`archived` defaulted to *no filter*, so a shelved course still appeared in the default library.\nArchiving is the learner saying \"not now\"; a list that ignores that has ignored the only thing\narchiving does. It now defaults to unarchived, and `archived=true` is the archive view.\n\n`spaceId` was forced to `None` whenever it was absent, which is not the same as being unset: a\ncourse belonging to a space could not be listed at all, and there was no way to ask for\neverything. Absent now means \"no filter\"; `spaceId=\"\"` asks for personal courses specifically.",
         "operationId": "list_courses_api_v1_knowledge_courses_get",
         "parameters": [
           {

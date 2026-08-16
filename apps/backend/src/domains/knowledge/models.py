@@ -11,6 +11,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.shared.schemas import CamelModel, PaginatedResponse
+
 # ===========================================================================
 # Enums
 # ===========================================================================
@@ -54,18 +56,25 @@ class TopicUpdate(BaseModel):
     completed: bool | None = None
 
 
-class TopicResponse(BaseModel):
+class TopicResponse(CamelModel):
+    """A topic as returned to the client.
+
+    Fields are snake_case and the wire format stays camelCase, which is not cosmetic here: this model
+    is validated straight off a SQLAlchemy `Topic`, and while the fields were declared camelCase that
+    validation could not find `module_id`, `created_at` or `updated_at` at all — `POST .../topics`
+    answered `500`. `estimatedHours` was worse: it has a default, so it silently came back null
+    rather than failing, and the endpoint looked like it worked.
+    """
+
     id: str
-    moduleId: str
+    module_id: str
     title: str
     order: float
     content: str | None = None
     completed: bool = False
-    estimatedHours: float | None = None
-    createdAt: datetime
-    updatedAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    estimated_hours: float | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class TopicGenerateRequest(BaseModel):
@@ -97,21 +106,25 @@ class ModuleUpdate(BaseModel):
     description: str | None = None
 
 
-class ModuleResponse(BaseModel):
+class ModuleResponse(CamelModel):
+    """A module with its topics and derived progress.
+
+    Built from `course_service.calculate_module_progress`, whose keys are camelCase and reach these
+    snake_case fields as aliases. `topics` holds raw ORM rows, validated through `TopicResponse`.
+    """
+
     id: str
-    courseId: str
+    course_id: str
     title: str
     order: float
     description: str | None = None
     completed: bool = False
     progress: float = 0.0
-    topicCount: int = 0
-    completedTopicCount: int = 0
+    topic_count: int = 0
+    completed_topic_count: int = 0
     topics: list[TopicResponse] = []
-    createdAt: datetime
-    updatedAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
+    updated_at: datetime
 
 
 # ===========================================================================
@@ -137,51 +150,71 @@ class CourseUpdate(BaseModel):
     spaceId: str | None = None
 
 
-class CourseResponse(BaseModel):
+class CourseResponse(CamelModel):
+    """A course with its modules, topics and derived progress.
+
+    `progress`, `totalTopics` and `completedTopics` are computed per request from the topics rather
+    than read from `Course.progress`, which nothing writes — see the note on that column.
+    """
+
     id: str
-    userId: str
+    user_id: str
     title: str
     description: str | None = None
     difficulty: DifficultyLevel | None = None
-    targetDate: datetime | None = None
-    isAIGenerated: bool = False
+    target_date: datetime | None = None
+    # Explicit alias: the generator would produce `isAiGenerated`, and the published contract
+    # — and every client reading it — says `isAIGenerated`. An acronym is where a camelCase
+    # generator and a hand-named field disagree, so this one is pinned rather than derived.
+    is_ai_generated: bool = Field(default=False, alias="isAIGenerated")
     archived: bool = False
     progress: float = 0.0
-    totalTopics: int = 0
-    completedTopics: int = 0
+    total_topics: int = 0
+    completed_topics: int = 0
     modules: list[ModuleResponse] = []
-    createdAt: datetime
-    updatedAt: datetime
-    outlineSatisfactionRecorded: bool = False
-
-    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime
+    updated_at: datetime
+    outline_satisfaction_recorded: bool = False
 
 
-class CourseListItem(BaseModel):
+class CourseListItem(CamelModel):
+    """A course as it appears in the library, without its modules or topics.
+
+    `moduleCount` rather than the modules themselves: a library card shows a count, and the client
+    type comment already records that this is not named `totalModules`.
+    """
+
     id: str
-    userId: str
+    user_id: str
     title: str
     description: str | None = None
     difficulty: DifficultyLevel | None = None
-    targetDate: datetime | None = None
-    isAIGenerated: bool = False
+    target_date: datetime | None = None
+    # Explicit alias: the generator would produce `isAiGenerated`, and the published contract
+    # — and every client reading it — says `isAIGenerated`. An acronym is where a camelCase
+    # generator and a hand-named field disagree, so this one is pinned rather than derived.
+    is_ai_generated: bool = Field(default=False, alias="isAIGenerated")
     archived: bool = False
     progress: float = 0.0
-    totalTopics: int = 0
-    completedTopics: int = 0
-    moduleCount: int = 0
-    createdAt: datetime
-    updatedAt: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    total_topics: int = 0
+    completed_topics: int = 0
+    module_count: int = 0
+    created_at: datetime
+    updated_at: datetime
 
 
-class CourseListResponse(BaseModel):
-    courses: list[CourseListItem]
-    total: int
-    page: int
-    pageSize: int
-    hasMore: bool
+class CourseListResponse(PaginatedResponse[CourseListItem]):
+    """The course library, one page at a time.
+
+    Migrated onto the shared envelope: `items` rather than `courses`, and `pages` rather than
+    `hasMore`. Done now because the only consumer is being rewritten from scratch in the same change,
+    which is the cheapest this migration will ever be — every later moment costs a client rewrite as
+    well.
+
+    `pages` replaces `hasMore` because it answers strictly more: a pager needs to know how many pages
+    there are, and "is there another one" is `page < pages`. `hasMore` could not be derived the other
+    way round.
+    """
 
 
 class AICourseRequest(BaseModel):

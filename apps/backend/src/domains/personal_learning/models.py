@@ -9,36 +9,14 @@ from datetime import date, datetime
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
-from pydantic.alias_generators import to_camel
 
+# Imported rather than defined here: the knowledge domain needs the same base, and a second copy is
+# how the two would drift. See `src/shared/schemas.py` for the two failure modes it prevents.
+from src.shared.schemas import CamelModel, PaginatedResponse
 
-class CamelModel(BaseModel):
-    """Base model for response schemas that read from SQLAlchemy ORM objects.
-
-    Automatically converts snake_case Python attributes (from SQLAlchemy models)
-    to camelCase JSON fields. Supports both:
-    - Direct construction with camelCase kwargs: CamelModel(userId="abc")
-    - ORM attribute reading: CamelModel.model_validate(orm_object)
-    """
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel,
-        populate_by_name=True,
-    )
-
-
-ResponseT = TypeVar("ResponseT")
-
-
-class PaginatedResponse(CamelModel, Generic[ResponseT]):
-    """Canonical pagination envelope for personal-learning list endpoints."""
-
-    items: list[ResponseT]
-    total: int
-    page: int
-    page_size: int
-    pages: int
+# `PaginatedResponse` moved to `src/shared/schemas.py` when the knowledge domain needed it too. Still
+# re-exported here so the many `models.PaginatedResponse[...]` references keep working.
+__all__ = ["CamelModel", "PaginatedResponse"]
 
 
 # ===========================================================================

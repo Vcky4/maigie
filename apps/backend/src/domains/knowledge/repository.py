@@ -7,7 +7,7 @@ Encapsulates all queries for Course, Module, Topic, Resource.
 import logging
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -84,14 +84,10 @@ class KnowledgeRepository:
             count_stmt = select(func.count()).select_from(Course).where(*conditions)
             total = (await session.execute(count_stmt)).scalar() or 0
 
-            # Fetch
-            stmt = (
-                select(Course)
-                .options(selectinload(Course.modules).selectinload(Module.topics))
-                .where(*conditions)
-                .offset(skip)
-                .limit(take)
-            )
+            # Fetch. Deliberately without the modules and topics: the list response carries counts,
+            # not rows, and `course_progress_totals` produces them in one grouped query. Loading
+            # every topic of every course on the page to call `len()` on them is what this replaces.
+            stmt = select(Course).where(*conditions).offset(skip).limit(take)
             if order:
                 col_name, direction = next(iter(order.items()))
                 col = getattr(Course, self._to_attr(col_name), Course.created_at)
@@ -99,6 +95,47 @@ class KnowledgeRepository:
 
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
+
+    async def course_progress_totals(
+        self, course_ids: list[str]
+    ) -> dict[str, tuple[int, int, int]]:
+        """``(module_count, total_topics, completed_topics)`` per course, in one query.
+
+        The library used to get these by calling `calculate_course_progress` for each course on the
+        page, which issues its own `list_modules` query — so a page of twenty courses was twenty-one
+        round trips to print sixty numbers. Worse, the page query *also* eager-loaded every module
+        and every topic to count them, so the rows were fetched twice and thrown away both times.
+
+        A `LEFT JOIN`, so a module with no topics still counts towards `module_count`; and
+        `COUNT(DISTINCT)` on the module id, or a module with three topics would count three times.
+
+        Courses with no modules are absent from the result rather than present as zeros — the caller
+        already has to handle a course that is not in the map, and inventing rows for them here would
+        mean two places deciding what "no modules" looks like.
+        """
+        if not course_ids:
+            return {}
+
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        Module.course_id,
+                        func.count(func.distinct(Module.id)),
+                        func.count(Topic.id),
+                        func.count(Topic.id).filter(Topic.completed.is_(True)),
+                    )
+                    .select_from(Module)
+                    .outerjoin(Topic, Topic.module_id == Module.id)
+                    .where(Module.course_id.in_(course_ids))
+                    .group_by(Module.course_id)
+                )
+            ).all()
+
+        return {
+            course_id: (int(modules or 0), int(total or 0), int(completed or 0))
+            for course_id, modules, total, completed in rows
+        }
 
     async def create_course(self, data: dict[str, Any]) -> Course:
         async with await self._session() as session:
@@ -362,6 +399,20 @@ class KnowledgeRepository:
             conditions.append(Course.difficulty == where["difficulty"])
         if "isAIGenerated" in where:
             conditions.append(Course.is_ai_generated == where["isAIGenerated"])
+        if where.get("search"):
+            # A plain term matched against title and description, rather than the Prisma-shaped
+            # `{"OR": [{"title": {"contains": ...}}]}` the route used to build — which nothing here
+            # understood, so `search` was accepted and dropped without a trace.
+            #
+            # `ilike` with the term escaped, so a title containing `%` or `_` is searched for
+            # literally instead of turning into a wildcard that matches most of the library.
+            pattern = f"%{self._escape_like(where['search'])}%"
+            conditions.append(
+                or_(
+                    Course.title.ilike(pattern, escape="\\"),
+                    Course.description.ilike(pattern, escape="\\"),
+                )
+            )
         if "createdAt" in where and isinstance(where["createdAt"], dict):
             gte = where["createdAt"].get("gte")
             if gte:
@@ -397,6 +448,17 @@ class KnowledgeRepository:
             attr = field_map.get(key, key)
             result[attr] = value
         return result
+
+    @staticmethod
+    def _escape_like(term: str) -> str:
+        """Escape the wildcards `LIKE` treats as syntax.
+
+        Without this, a learner searching for `100%` matches everything, and one searching for `a_b`
+        matches `axb` — the search silently returns the wrong rows rather than failing, which is the
+        harder kind of wrong to notice. The backslash is escaped first, or it would double-escape
+        the escapes added after it.
+        """
+        return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     def _to_attr(self, col_name: str) -> str:
         mapping = {

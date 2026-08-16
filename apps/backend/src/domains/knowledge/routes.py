@@ -44,6 +44,18 @@ async def generate_ai_course(
 # ===========================================================================
 
 
+def _progress_percent(completed: int, total: int) -> float:
+    """Completion as a percentage, to one decimal place.
+
+    Rounded the same way and to the same precision as `course_service.calculate_course_progress`, so
+    a course's figure does not change depending on whether it was read from the library or the detail
+    page. A course with no topics is 0%, not a division by zero.
+    """
+    if not total:
+        return 0.0
+    return round(completed / total * 100, 1)
+
+
 @router.get("/courses", response_model=models.CourseListResponse)
 async def list_courses(
     current_user: CurrentUser,
@@ -57,37 +69,51 @@ async def list_courses(
     sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
     spaceId: str | None = Query(None),
 ):
-    """List courses with pagination and filtering."""
+    """List courses with pagination and filtering.
+
+    Three things this used to get wrong, all of which the library page depends on.
+
+    `search` was accepted and thrown away. It was translated into a Prisma-style `where["OR"]`, and
+    the SQLAlchemy translator has no `OR` branch, so the parameter was silently dropped and the
+    caller was handed the unfiltered library while believing it had searched.
+
+    `archived` defaulted to *no filter*, so a shelved course still appeared in the default library.
+    Archiving is the learner saying "not now"; a list that ignores that has ignored the only thing
+    archiving does. It now defaults to unarchived, and `archived=true` is the archive view.
+
+    `spaceId` was forced to `None` whenever it was absent, which is not the same as being unset: a
+    course belonging to a space could not be listed at all, and there was no way to ask for
+    everything. Absent now means "no filter"; `spaceId=""` asks for personal courses specifically.
+    """
     where: dict[str, Any] = {}
-    if spaceId:
-        where["spaceId"] = spaceId
-    else:
-        where["spaceId"] = None
-    if archived is not None:
-        where["archived"] = archived
+    if spaceId is not None:
+        # An empty string is how a caller asks for courses that belong to no space, since a query
+        # parameter cannot carry a null. Left out entirely, both personal and space courses match.
+        where["spaceId"] = spaceId or None
+    # Defaults to the unarchived library rather than everything.
+    where["archived"] = False if archived is None else archived
     if difficulty:
         where["difficulty"] = difficulty.upper()
     if isAIGenerated is not None:
         where["isAIGenerated"] = isAIGenerated
     if search:
-        where["OR"] = [
-            {"title": {"contains": search, "mode": "insensitive"}},
-            {"description": {"contains": search, "mode": "insensitive"}},
-        ]
+        where["search"] = search
 
     skip = (page - 1) * pageSize
     courses, total = await knowledge_repo.list_courses(
         current_user.id, where=where, skip=skip, take=pageSize, order={sortBy: sortOrder}
     )
 
+    # One grouped query for the whole page, rather than a progress call per course that issued its
+    # own module query underneath. Courses with no modules are absent from the map and read as zeros.
+    totals = await knowledge_repo.course_progress_totals([c.id for c in courses])
+
     items = []
     for c in courses:
-        progress, total_topics, completed_topics = await course_service.calculate_course_progress(
-            c.id
-        )
+        module_count, total_topics, completed_topics = totals.get(c.id, (0, 0, 0))
+        # snake_case ORM attributes, camelCase columns. Every course route read these
+        # the wrong way and answered `500`; see the note in `get_course`.
         items.append(
-            # snake_case ORM attributes, camelCase columns. Every course route read these
-            # the wrong way and answered `500`; see the note in `get_course`.
             models.CourseListItem(
                 id=c.id,
                 userId=c.user_id,
@@ -97,17 +123,18 @@ async def list_courses(
                 targetDate=c.target_date,
                 isAIGenerated=c.is_ai_generated,
                 archived=c.archived,
-                progress=progress,
+                progress=_progress_percent(completed_topics, total_topics),
                 totalTopics=total_topics,
                 completedTopics=completed_topics,
-                moduleCount=len(c.modules) if c.modules else 0,
+                moduleCount=module_count,
                 createdAt=c.created_at,
                 updatedAt=c.updated_at,
             )
         )
 
+    pages = (total + pageSize - 1) // pageSize if total else 0
     return models.CourseListResponse(
-        courses=items, total=total, page=page, pageSize=pageSize, hasMore=(skip + pageSize) < total
+        items=items, total=total, page=page, pageSize=pageSize, pages=pages
     )
 
 
