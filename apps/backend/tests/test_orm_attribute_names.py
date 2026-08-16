@@ -21,11 +21,15 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 # Pydantic contracts legitimately use camelCase field names for the wire format.
 SKIP_FILENAMES = {"models.py"}
 
-# Variables that are never a mapped ORM instance: Pydantic bodies, the models
-# module itself, SQLAlchemy Column objects, settings, dicts.
+# Variables that are never a mapped ORM instance: Pydantic bodies, the models module itself,
+# settings, dicts.
+#
+# `c` used to be here, on the reasoning that `x.c.name` is SQLAlchemy's column accessor. It is also
+# the commonest loop variable for a course, and excluding the name hid a real `500` in
+# `classrooms/routes.py` for as long as this guard has existed. The accessor is matched precisely
+# below instead, so the letter is no longer a blanket exemption.
 NON_ORM_VARS = {
     "models",
-    "c",
     "body",
     "data",
     "payload",
@@ -34,6 +38,10 @@ NON_ORM_VARS = {
     "settings",
     "self",
 }
+
+#: Matches SQLAlchemy's column accessor — `subquery.c.someColumn` — where a camelCase name is the
+#: correct key. Requires something before the `.c.`, which a loop variable named `c` never has.
+_COLUMN_ACCESSOR = re.compile(r"\w\.c\.$")
 
 # Modules that still speak the removed Prisma client and fail via the
 # PrismaClientRemoved sentinel before any of this could matter. They are dead
@@ -90,6 +98,9 @@ def test_no_source_file_reads_a_column_only_attribute():
         for number, stripped in _code_lines(text):
             for match in pattern.finditer(stripped):
                 if match.group(1) in allowed_vars:
+                    continue
+                # `table.c.someColumn` is the column accessor, not an instance attribute.
+                if _COLUMN_ACCESSOR.search(stripped[: match.start(2)]):
                     continue
                 offenders.append(f"src/{relative}:{number}  {match.group(0)}  |  {stripped[:100]}")
 

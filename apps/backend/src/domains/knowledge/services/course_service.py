@@ -258,6 +258,12 @@ async def toggle_topic_completion(
         {"completed": completed, "completedAt": datetime.now(UTC) if completed else None},
     )
 
+    # `Course.progress` is stored as well as computed, and this is what keeps it true. It used to be
+    # written by nothing, so it read `0` for every course — and two readers outside this domain took
+    # that at face value: the classroom's assigned-course list, and the course summary given to the
+    # model as memory context. Both told their reader that nothing had been completed.
+    await knowledge_repo.recount_course_progress(course_id)
+
     if completed:
         await emit_topic_completed(user_id, topic_id, course_id)
         # Spaced repetition: Progress domain listens to topic.completed event

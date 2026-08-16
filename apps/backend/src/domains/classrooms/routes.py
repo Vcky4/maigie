@@ -162,7 +162,9 @@ async def list_assigned_courses(space_id: str, current_user: CurrentUser):
             "courseId": c.id,
             "courseTitle": c.title,
             "progress": c.progress or 0.0,
-            "assignedAt": c.createdAt.isoformat(),
+            # `created_at`, not `createdAt`: the column is camelCase and the mapped attribute is not,
+            # so this raised `AttributeError` and the endpoint answered `500`.
+            "assignedAt": c.created_at.isoformat(),
         }
         for c in courses
     ]

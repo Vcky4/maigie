@@ -33,6 +33,14 @@ class Course(Base, TimestampMixin):
         "isAIGenerated", Boolean, default=False, server_default="false"
     )
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Completion as a percentage, derived from the topics and **stored**. Kept true by
+    # `repository.recount_course_progress`, which runs whenever a topic is completed, reopened, added
+    # or removed — a stored derived value drifts the moment the thing it derives from changes.
+    #
+    # It is stored rather than always computed because readers outside this domain want it cheaply:
+    # the assigned-course list a classroom shows, and the course summary handed to the model as memory
+    # context. Both read this column, and until it was written both reported every course as 0%
+    # complete — a column nothing writes is not unused, it is wrong.
     progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
 

@@ -11399,6 +11399,49 @@
         "title": "TopicGenerateResponse",
         "type": "object"
       },
+      "TopicLocationResponse": {
+        "description": "A topic, plus enough of its module and course to open it.\n\nExists because every caller that holds a topic id needs its course before it can show the topic,\nand nothing could get from one to the other. Two surfaces were blocked on that:\n\n- The lesson route, `/learn/lessons/{id}`, which had no backend concept behind it at all.\n- A study plan item carrying a `topicId`, which could be completed but not opened.\n\nReturns the ids and titles of the ancestors rather than the whole `CourseResponse`. A caller that\nwants the full outline asks for the course; a caller opening one topic wants a breadcrumb, and\nembedding every module and topic of the course to supply it would make opening one topic cost the\nwhole curriculum.",
+        "properties": {
+          "courseId": {
+            "title": "Courseid",
+            "type": "string"
+          },
+          "courseTitle": {
+            "title": "Coursetitle",
+            "type": "string"
+          },
+          "moduleId": {
+            "title": "Moduleid",
+            "type": "string"
+          },
+          "moduleTitle": {
+            "title": "Moduletitle",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          },
+          "topic": {
+            "$ref": "#/components/schemas/TopicResponse"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "topic",
+          "moduleId",
+          "moduleTitle",
+          "courseId",
+          "courseTitle",
+          "position",
+          "totalTopics"
+        ],
+        "title": "TopicLocationResponse",
+        "type": "object"
+      },
       "TopicResponse": {
         "description": "A topic as returned to the client.\n\nFields are snake_case and the wire format stays camelCase, which is not cosmetic here: this model\nis validated straight off a SQLAlchemy `Topic`, and while the fields were declared camelCase that\nvalidation could not find `module_id`, `created_at` or `updated_at` at all — `POST .../topics`\nanswered `500`. `estimatedHours` was worse: it has a default, so it silently came back null\nrather than failing, and the endpoint looked like it worked.",
         "properties": {
@@ -14195,6 +14238,55 @@
           }
         ],
         "summary": "Record Interaction",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}": {
+      "get": {
+        "description": "One topic, with the module and course it belongs to.\n\nAdded because a topic id was a dead end. Ownership is checked through the course, so another\nlearner's topic is a `403` from `check_topic_ownership` — and a topic that does not exist is a\n`404`, which is the same answer as one in a course the caller cannot see.\n\nThis is what lets a caller holding only a topic id open it: the study surface needs the course as\nwell as the topic, and until now nothing could get from one to the other.",
+        "operationId": "get_topic_api_v1_knowledge_topics__topic_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicLocationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Topic",
         "tags": [
           "knowledge",
           "knowledge"

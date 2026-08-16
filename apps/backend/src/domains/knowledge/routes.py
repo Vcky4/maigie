@@ -171,6 +171,31 @@ async def list_courses(
     )
 
 
+@router.get("/topics/{topic_id}", response_model=models.TopicLocationResponse)
+async def get_topic(topic_id: str, current_user: CurrentUser):
+    """One topic, with the module and course it belongs to.
+
+    Added because a topic id was a dead end. Ownership is checked through the course, so another
+    learner's topic is a `403` from `check_topic_ownership` — and a topic that does not exist is a
+    `404`, which is the same answer as one in a course the caller cannot see.
+
+    This is what lets a caller holding only a topic id open it: the study surface needs the course as
+    well as the topic, and until now nothing could get from one to the other.
+    """
+    topic, module, course = await course_service.check_topic_ownership(topic_id, current_user.id)
+    position, total = await knowledge_repo.topic_position(course.id, topic_id)
+
+    return models.TopicLocationResponse(
+        topic=models.TopicResponse.model_validate(topic, from_attributes=True),
+        moduleId=module.id,
+        moduleTitle=module.title,
+        courseId=course.id,
+        courseTitle=course.title,
+        position=position,
+        totalTopics=total,
+    )
+
+
 @router.get("/courses/dashboard", response_model=models.CoursesDashboardResponse)
 async def get_courses_dashboard(current_user: CurrentUser):
     """Everything the course library shows above its grid, in one request.
@@ -379,6 +404,9 @@ async def delete_module(course_id: str, module_id: str, current_user: CurrentUse
     if module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Module does not belong to this course")
     await knowledge_repo.delete_module(module_id)
+    # The topic set shrank, so the stored progress figure has to be recomputed or it keeps the
+    # old denominator. Deleting the last incomplete topic makes a course 100% complete.
+    await knowledge_repo.recount_course_progress(course_id)
 
 
 # ===========================================================================
@@ -407,6 +435,10 @@ async def create_topic(
             "estimatedHours": body.estimatedHours,
         }
     )
+    # Recounted because the topic set changed. `Course.progress` is stored, so adding or
+    # removing a topic moves the denominator and the stored figure would otherwise be stale —
+    # which is exactly how a derived-but-persisted column drifts.
+    await knowledge_repo.recount_course_progress(course_id)
     return models.TopicResponse.model_validate(topic, from_attributes=True)
 
 
@@ -451,6 +483,9 @@ async def delete_topic(course_id: str, module_id: str, topic_id: str, current_us
     if topic.module_id != module_id or module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Topic path mismatch")
     await knowledge_repo.delete_topic(topic_id)
+    # The topic set shrank, so the stored progress figure has to be recomputed or it keeps the
+    # old denominator. Deleting the last incomplete topic makes a course 100% complete.
+    await knowledge_repo.recount_course_progress(course_id)
 
 
 @router.patch(

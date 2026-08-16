@@ -180,6 +180,32 @@ class CourseResponse(CamelModel):
     outline_satisfaction_recorded: bool = False
 
 
+class TopicLocationResponse(CamelModel):
+    """A topic, plus enough of its module and course to open it.
+
+    Exists because every caller that holds a topic id needs its course before it can show the topic,
+    and nothing could get from one to the other. Two surfaces were blocked on that:
+
+    - The lesson route, `/learn/lessons/{id}`, which had no backend concept behind it at all.
+    - A study plan item carrying a `topicId`, which could be completed but not opened.
+
+    Returns the ids and titles of the ancestors rather than the whole `CourseResponse`. A caller that
+    wants the full outline asks for the course; a caller opening one topic wants a breadcrumb, and
+    embedding every module and topic of the course to supply it would make opening one topic cost the
+    whole curriculum.
+    """
+
+    topic: TopicResponse
+    module_id: str
+    module_title: str
+    course_id: str
+    course_title: str
+    #: Position among the course's topics in outline order, 1-based, and how many there are. What a
+    #: "Topic 4 of 12" line needs, and not derivable by a caller holding only this topic.
+    position: int
+    total_topics: int
+
+
 class CourseNextTopic(CamelModel):
     """The next incomplete topic of a course, in outline order.
 
@@ -312,115 +338,24 @@ class CourseOutlineSatisfactionCreate(BaseModel):
 
 
 # ===========================================================================
-# Course Detail (rich view)
+# Course detail, progress and analytics: deliberately absent
 # ===========================================================================
-
-
-class ContributionDay(BaseModel):
-    date: str
-    minutes: float
-
-
-class CourseFootprint(BaseModel):
-    last7DaysMinutes: float = 0.0
-    last30DaysMinutes: float = 0.0
-    daily: list[ContributionDay] = []
-
-
-class StreakSummary(BaseModel):
-    currentStreak: int = 0
-    longestStreak: int = 0
-
-
-class ModuleProgress(BaseModel):
-    moduleId: str
-    title: str
-    order: float
-    progress: float
-    totalTopics: int
-    completedTopics: int
-    completed: bool
-
-
-class ScheduleItem(BaseModel):
-    id: str
-    title: str
-    startAt: str
-    endAt: str
-    courseId: str | None = None
-    topicId: str | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class CourseDetailResponse(BaseModel):
-    course: CourseResponse
-    userStreak: StreakSummary
-    courseStreak: StreakSummary
-    footprint: CourseFootprint
-    schedules: list[ScheduleItem] = []
-    completedTopics: int = 0
-    totalModules: int = 0
-    completedModules: int = 0
-    totalEstimatedHours: float = 0.0
-    completedEstimatedHours: float = 0.0
-    modules: list[ModuleProgress] = []
-
-
-# ===========================================================================
-# Progress
-# ===========================================================================
-
-
-class ProgressResponse(BaseModel):
-    courseId: str
-    overallProgress: float
-    totalTopics: int
-    completedTopics: int = 0
-    totalModules: int = 0
-    completedModules: int = 0
-    totalEstimatedHours: float = 0.0
-    completedEstimatedHours: float = 0.0
-    modules: list[ModuleProgress] = []
-
-
-# ===========================================================================
-# User Analytics (cross-course)
-# ===========================================================================
-
-
-class CourseProgressItem(BaseModel):
-    courseId: str
-    title: str
-    progress: float
-    totalTopics: int
-    completedTopics: int
-    totalModules: int
-    completedModules: int
-    isArchived: bool
-    createdAt: str
-
-
-class UserProgressSummary(BaseModel):
-    userId: str
-    totalCourses: int
-    activeCourses: int
-    completedCourses: int
-    archivedCourses: int
-    totalModules: int
-    completedModules: int
-    totalTopics: int
-    completedTopics: int
-    overallProgress: float
-    totalEstimatedHours: float
-    completedEstimatedHours: float
-    averageCourseProgress: float
-
-
-class UserAnalyticsResponse(BaseModel):
-    summary: UserProgressSummary
-    courses: list[CourseProgressItem]
-
+#
+# `CourseDetailResponse`, `ProgressResponse` and `UserAnalyticsResponse` lived here with no route
+# attached, along with the eight helper models only they referenced. A response model nothing returns
+# is worse than nothing: it describes a shape, so a client author reasonably assumes an endpoint
+# exists — which is why `coursesApi.getCourseDetailView` and `getUserAnalytics` were written, and why
+# both throw.
+#
+# They are not being routed, either. Between them they carried a study streak, a contribution
+# footprint and a schedule list, none of which are facts about a course: the first two belong to the
+# progress domain and the third to scheduling, and composing them here would put a second
+# implementation of each beside the one that owns it. The detail page is served by
+# `GET /knowledge/courses/{id}` plus the endpoints that already own those figures.
+#
+# Deleted rather than commented out, because a commented-out model is the same claim in a quieter
+# voice. Nothing referenced them: FastAPI emits schemas reachable from routes, so they never reached
+# the published contract or the generated client types.
 
 # ===========================================================================
 # Resources

@@ -302,3 +302,118 @@ async def test_difficulty_filter_is_case_insensitive_on_input(client: AsyncClien
 
     assert course["id"] in [item["id"] for item in payload["items"]]
     assert all(item["difficulty"] == "ADVANCED" for item in payload["items"])
+
+
+# ---------------------------------------------------------------------------
+# Locating a topic, and what completion writes
+# ---------------------------------------------------------------------------
+
+
+async def _course_with_topic(client: AsyncClient, headers: dict[str, str]) -> tuple[dict, str, str]:
+    """A course with one module and one topic. Returns ``(course, module_id, topic_id)``."""
+    course = await _create_course(client, headers)
+    module_id = (
+        await client.post(
+            f"{BASE}/courses/{course['id']}/modules",
+            json={"title": "Module", "order": 1},
+            headers=headers,
+        )
+    ).json()["id"]
+    topic_id = (
+        await client.post(
+            f"{BASE}/courses/{course['id']}/modules/{module_id}/topics",
+            json={"title": "Topic", "order": 1, "estimatedHours": 1.5},
+            headers=headers,
+        )
+    ).json()["id"]
+    return course, module_id, topic_id
+
+
+async def test_a_topic_id_resolves_to_its_course(client: AsyncClient, auth_headers):
+    """The endpoint that makes a topic id openable.
+
+    A topic id used to be a dead end: the study surface needs the course as well as the topic, and
+    nothing could get from one to the other. That blocked the lesson route and any deep link from a
+    study plan item carrying a `topicId`.
+    """
+    course, module_id, topic_id = await _course_with_topic(client, auth_headers)
+
+    response = await client.get(f"{BASE}/topics/{topic_id}", headers=auth_headers)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["topic"]["id"] == topic_id
+    assert payload["moduleId"] == module_id
+    assert payload["courseId"] == course["id"]
+    assert payload["courseTitle"] == course["title"]
+    assert payload["position"] == 1
+    assert payload["totalTopics"] == 1
+    # A default-bearing field, so a broken alias returns null here rather than failing.
+    assert payload["topic"]["estimatedHours"] == 1.5
+
+
+async def test_another_learners_topic_cannot_be_resolved(client: AsyncClient, auth_headers):
+    other = await _login(client)
+    _course, _module_id, topic_id = await _course_with_topic(client, other)
+
+    response = await client.get(f"{BASE}/topics/{topic_id}", headers=auth_headers)
+
+    assert response.status_code in (403, 404), response.text
+
+
+async def test_an_unknown_topic_is_a_404(client: AsyncClient, auth_headers):
+    response = await client.get(f"{BASE}/topics/does-not-exist", headers=auth_headers)
+
+    assert response.status_code == 404, response.text
+
+
+async def test_completing_a_topic_records_when(client: AsyncClient, auth_headers):
+    """`Topic.completedAt` is what the streak and the activity feed read.
+
+    Before it existed, `completed` was a boolean with no "when" — and `updatedAt` is not a substitute,
+    because it moves when a topic is renamed or has content generated into it.
+    """
+    course, module_id, topic_id = await _course_with_topic(client, auth_headers)
+    path = f"{BASE}/courses/{course['id']}/modules/{module_id}/topics/{topic_id}/complete"
+
+    completed = await client.patch(path, params={"completed": True}, headers=auth_headers)
+
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["completed"] is True
+    assert completed.json()["completedAt"] is not None
+
+
+async def test_reopening_a_topic_clears_when(client: AsyncClient, auth_headers):
+    """A pending topic carrying a completion time is a row that contradicts itself."""
+    course, module_id, topic_id = await _course_with_topic(client, auth_headers)
+    path = f"{BASE}/courses/{course['id']}/modules/{module_id}/topics/{topic_id}/complete"
+    await client.patch(path, params={"completed": True}, headers=auth_headers)
+
+    reopened = await client.patch(path, params={"completed": False}, headers=auth_headers)
+
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["completed"] is False
+    assert reopened.json()["completedAt"] is None
+
+
+async def test_completion_shows_up_on_the_courses_dashboard(client: AsyncClient, auth_headers):
+    """End to end: completing a topic feeds the library's activity feed and weekly figures."""
+    course, module_id, topic_id = await _course_with_topic(client, auth_headers)
+    await client.patch(
+        f"{BASE}/courses/{course['id']}/modules/{module_id}/topics/{topic_id}/complete",
+        params={"completed": True},
+        headers=auth_headers,
+    )
+
+    dashboard = await client.get(f"{BASE}/courses/dashboard", headers=auth_headers)
+
+    assert dashboard.status_code == 200, dashboard.text
+    payload = dashboard.json()
+    assert payload["completedTopics"] >= 1
+    # Estimated, not measured: the planned hours of the topic that got completed.
+    assert payload["weeklyHours"] >= 1.5
+    assert payload["weeklyTopicsCompleted"] >= 1
+    titles = [entry["topicTitle"] for entry in payload["recentActivity"]]
+    assert "Topic" in titles
+    # The course to resume is the one whose newest completion this is.
+    assert payload["featured"] is not None

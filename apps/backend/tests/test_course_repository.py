@@ -437,3 +437,99 @@ async def test_reopening_a_topic_clears_its_completion_time(repo):
     await repo.update_topic(topic.id, {"completed": False, "completedAt": None})
 
     assert await repo.completed_topic_dates(USER) == []
+
+
+# ---------------------------------------------------------------------------
+# Course.progress, which nothing used to write
+# ---------------------------------------------------------------------------
+
+
+async def test_recount_course_progress_stores_the_derived_figure(repo):
+    """The column read `0` for every course while the true value was recomputed per request.
+
+    Two readers outside this domain took that at face value: the assigned-course list a classroom
+    shows, and the course summary handed to the model as memory context.
+    """
+    course = await _course(repo)
+    module = await _module(repo, course)
+    await _topic(repo, module, title="a", order=1, completed=True)
+    await _topic(repo, module, title="b", order=2)
+
+    stored = await repo.recount_course_progress(course.id)
+
+    assert stored == 50.0
+    reread = await repo.find_course(course.id, USER)
+    assert reread.progress == 50.0
+
+
+async def test_recount_course_progress_of_an_empty_course_is_zero(repo):
+    course = await _course(repo)
+
+    assert await repo.recount_course_progress(course.id) == 0.0
+
+
+async def test_recount_course_progress_rounds_like_the_read_paths(repo):
+    """One decimal place, matching `calculate_course_progress` and the list endpoint.
+
+    A stored figure that rounds differently from the computed one disagrees in the last digit, which
+    is the hardest kind of disagreement to notice.
+    """
+    course = await _course(repo)
+    module = await _module(repo, course)
+    for index in range(3):
+        await _topic(repo, module, title=str(index), order=index, completed=index == 0)
+
+    assert await repo.recount_course_progress(course.id) == 33.3
+
+
+async def test_recount_course_progress_reaches_zero_again_when_reopened(repo):
+    course = await _course(repo)
+    topic = await _topic(repo, await _module(repo, course), title="only", completed=True)
+    assert await repo.recount_course_progress(course.id) == 100.0
+
+    await repo.update_topic(topic.id, {"completed": False, "completedAt": None})
+
+    assert await repo.recount_course_progress(course.id) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Locating a topic
+# ---------------------------------------------------------------------------
+
+
+async def test_topic_position_counts_across_modules_in_outline_order(repo):
+    course = await _course(repo)
+    first = await _module(repo, course, title="One", order=1)
+    second = await _module(repo, course, title="Two", order=2)
+    await _topic(repo, first, title="a", order=1)
+    b = await _topic(repo, first, title="b", order=2)
+    c = await _topic(repo, second, title="c", order=1)
+
+    assert await repo.topic_position(course.id, b.id) == (2, 3)
+    assert await repo.topic_position(course.id, c.id) == (3, 3)
+
+
+async def test_topic_position_reports_zero_for_a_topic_in_another_course(repo):
+    """Reported, not raised: a numbering quirk should not 500 a page that had everything else."""
+    course = await _course(repo, title="Mine")
+    other = await _course(repo, title="Elsewhere")
+    await _topic(repo, await _module(repo, course), title="a")
+    stranger = await _topic(repo, await _module(repo, other), title="b")
+
+    assert await repo.topic_position(course.id, stranger.id) == (0, 1)
+
+
+async def test_topic_position_is_stable_when_two_topics_share_an_order(repo):
+    """Tie-broken by id, so the same topic does not renumber itself between requests."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    first = await _topic(repo, module, title="a", order=1)
+    second = await _topic(repo, module, title="b", order=1)
+
+    positions = {
+        first.id: (await repo.topic_position(course.id, first.id))[0],
+        second.id: (await repo.topic_position(course.id, second.id))[0],
+    }
+
+    assert sorted(positions.values()) == [1, 2]
+    assert (await repo.topic_position(course.id, first.id))[0] == positions[first.id]

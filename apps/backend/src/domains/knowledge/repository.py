@@ -97,6 +97,67 @@ class KnowledgeRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
 
+    async def topic_position(self, course_id: str, topic_id: str) -> tuple[int, int]:
+        """``(position, total)`` of a topic among its course's topics, in outline order.
+
+        Ordered by module then topic order, which is how the outline reads, and tie-broken by id so a
+        course with two topics sharing an order does not renumber itself between requests.
+
+        `(0, total)` when the topic is not in the course, which the caller has already ruled out by
+        ownership — reported rather than raised, so a numbering quirk cannot 500 a page that had
+        everything else it needed.
+        """
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(Topic.id)
+                    .join(Module, Topic.module_id == Module.id)
+                    .where(Module.course_id == course_id)
+                    .order_by(Module.order.asc(), Topic.order.asc(), Topic.id.asc())
+                )
+            ).scalars().all()
+
+        ids = list(rows)
+        return (ids.index(topic_id) + 1 if topic_id in ids else 0), len(ids)
+
+    async def recount_course_progress(self, course_id: str) -> float:
+        """Recompute a course's progress from its topics, and store it.
+
+        `Course.progress` existed and **nothing wrote it**, so it was `0` for every course ever
+        created while the true figure was recomputed per request by whoever needed it. That is not a
+        harmless unused column: two readers outside this domain took it at face value — the assigned
+        courses list a classroom shows, and the course summary handed to the model as memory context.
+        Both reported every course as 0% complete.
+
+        Derived and stored, rather than incremented on completion, for the reason
+        `recount_plan_progress` gives: an increment cannot express uncompleting, and it drifts the
+        moment a topic is added or removed. Recomputing removes the class of bug rather than the
+        instance, so whatever happened to the topics, the stored figure is what they say.
+
+        Returns the stored percentage.
+        """
+        async with await self._session() as session:
+            row = (
+                await session.execute(
+                    select(
+                        func.count(Topic.id),
+                        func.count(Topic.id).filter(Topic.completed.is_(True)),
+                    )
+                    .select_from(Topic)
+                    .join(Module, Topic.module_id == Module.id)
+                    .where(Module.course_id == course_id)
+                )
+            ).one()
+            total, completed = int(row[0] or 0), int(row[1] or 0)
+            # Rounded to one decimal place, matching `calculate_course_progress` and the list
+            # endpoint, so the stored value and the computed one cannot disagree in the last digit.
+            progress = round(completed / total * 100, 1) if total else 0.0
+            await session.execute(
+                update(Course).where(Course.id == course_id).values(progress=progress)
+            )
+            await session.commit()
+            return progress
+
     async def library_topic_totals(self, user_id: str) -> tuple[int, int]:
         """``(total_topics, completed_topics)`` across all of the learner's unarchived courses.
 
