@@ -82,6 +82,16 @@ class Topic(Base, TimestampMixin):
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     order: Mapped[float] = mapped_column(Float, default=0, server_default="0")
     completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # When the learner completed it. Cleared when they reopen it, so a pending topic never carries a
+    # completion time — a row that says both would be counted by anything building a history.
+    #
+    # Without this, `completed` was a boolean with no "when", and every recent-activity question the
+    # course library asks was unanswerable. `updatedAt` is not a substitute: it moves when a topic is
+    # renamed or has content generated into it, so reading it as study activity reports an edit as
+    # learning. Mirrors `StudyPlanItem.completedAt`, so both areas answer "when" the same way.
+    completed_at: Mapped[datetime | None] = mapped_column(
+        "completedAt", DateTime(timezone=True), nullable=True
+    )
     estimated_hours: Mapped[float | None] = mapped_column("estimatedHours", Float, nullable=True)
 
     # Relationships

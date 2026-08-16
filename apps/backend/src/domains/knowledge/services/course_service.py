@@ -4,8 +4,9 @@ Course lifecycle — create, update, delete, list, progress calculation.
 Delegates AI generation to the Intelligence domain (via background tasks).
 """
 
+import asyncio
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from src.domains.identity.db_models import User
@@ -104,6 +105,84 @@ def calculate_module_progress(module) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _streak_from_dates(active_dates: set[date], today: date) -> int:
+    """Consecutive days ending today, or ending yesterday if today is unused.
+
+    Same rule as the flashcard and study-plan streaks: a learner who studied six days straight and has
+    not started this morning is on a six-day run, not a broken one. Duplicated rather than shared,
+    deliberately — this counts completed topics, the others count graded cards and finished plan tasks,
+    and a future change to one must not silently move the others.
+    """
+    if not active_dates:
+        return 0
+    cursor = today
+    if cursor not in active_dates:
+        cursor = today - timedelta(days=1)
+        if cursor not in active_dates:
+            return 0
+    length = 0
+    while cursor in active_dates:
+        length += 1
+        cursor -= timedelta(days=1)
+    return length
+
+
+async def get_dashboard(*, user_id: str) -> dict[str, Any]:
+    """Everything the course library shows above its grid, in one request.
+
+    The week runs from Monday in the learner's own timezone, and `timezoneKnown` says so when that
+    zone was never captured — `UserPreferences.timezone` is `NOT NULL` defaulting to `"UTC"`, so
+    reading it without checking the source makes every learner look like they are in London.
+
+    The featured course is the one whose most recent topic completion is newest, which is what
+    "resume" means. Not the most recently *updated* course: renaming a course would promote it above
+    the one the learner is actually working through.
+    """
+    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+
+    learner_timezone = await resolve_learner_timezone(user_id)
+    now_local = to_learner_local(datetime.now(UTC), learner_timezone)
+    week_start_local = (now_local - timedelta(days=now_local.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    # Back to instants for the query: the columns are `timestamptz`, and comparing them to a local
+    # wall clock would shift the window by the learner's offset.
+    week_start = week_start_local.astimezone(UTC)
+    week_end = (week_start_local + timedelta(days=7)).astimezone(UTC)
+
+    active, archived, topic_totals, completion_dates, weekly_hours, recent = await asyncio.gather(
+        # `take=1` because only the count is wanted; the rows are discarded. A dedicated count query
+        # would be one more method for the same number the list already returns.
+        knowledge_repo.list_courses(user_id, where={"archived": False}, skip=0, take=1),
+        knowledge_repo.list_courses(user_id, where={"archived": True}, skip=0, take=1),
+        knowledge_repo.library_topic_totals(user_id),
+        knowledge_repo.completed_topic_dates(user_id),
+        knowledge_repo.completed_hours_between(user_id, week_start, week_end),
+        knowledge_repo.recently_completed_topics(user_id, limit=5),
+    )
+
+    _, active_count = active
+    _, archived_count = archived
+    total_topics, completed_topics = topic_totals
+
+    # Converted to the learner's local dates before being made a set, so two completions on the same
+    # local evening count as one day even when they straddle UTC midnight.
+    local_dates = {to_learner_local(when, learner_timezone).date() for when in completion_dates}
+    weekly_completed = sum(1 for when in completion_dates if week_start <= when < week_end)
+
+    return {
+        "activeCourses": active_count,
+        "archivedCourses": archived_count,
+        "totalTopics": total_topics,
+        "completedTopics": completed_topics,
+        "weeklyHours": round(weekly_hours, 1),
+        "weeklyTopicsCompleted": weekly_completed,
+        "currentStreakDays": _streak_from_dates(local_dates, now_local.date()),
+        "recent": recent,
+        "timezoneKnown": learner_timezone.is_known,
+    }
+
+
 async def create_course(*, user: User, data: dict[str, Any]) -> Any:
     """Create a course manually."""
     # Free tier limit: 2 courses per month
@@ -171,7 +250,13 @@ async def toggle_topic_completion(
     if topic.module_id != module_id or module.course_id != course_id:
         raise ValidationError("Topic does not belong to the specified module/course")
 
-    updated = await knowledge_repo.update_topic(topic_id, {"completed": completed})
+    # `completedAt` is set here and cleared on reopen, rather than left to a database default. A
+    # pending topic carrying a completion time is a row that contradicts itself, and the activity feed
+    # and streak both read this column — they would count a reopened topic as still done.
+    updated = await knowledge_repo.update_topic(
+        topic_id,
+        {"completed": completed, "completedAt": datetime.now(UTC) if completed else None},
+    )
 
     if completed:
         await emit_topic_completed(user_id, topic_id, course_id)

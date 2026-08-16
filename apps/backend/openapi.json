@@ -517,6 +517,52 @@
         "title": "ChangePasswordRequest",
         "type": "object"
       },
+      "CourseActivityEntry": {
+        "description": "A topic the learner completed, with the course it belongs to.\n\nBuilt from `Topic.completedAt`, not from a stored activity log. Topics completed before that\ncolumn existed are absent rather than dated from `updatedAt`, which moves on any edit.",
+        "properties": {
+          "completedAt": {
+            "format": "date-time",
+            "title": "Completedat",
+            "type": "string"
+          },
+          "courseId": {
+            "title": "Courseid",
+            "type": "string"
+          },
+          "courseTitle": {
+            "title": "Coursetitle",
+            "type": "string"
+          },
+          "estimatedHours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedhours"
+          },
+          "topicId": {
+            "title": "Topicid",
+            "type": "string"
+          },
+          "topicTitle": {
+            "title": "Topictitle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topicId",
+          "topicTitle",
+          "courseId",
+          "courseTitle",
+          "completedAt"
+        ],
+        "title": "CourseActivityEntry",
+        "type": "object"
+      },
       "CourseCreate": {
         "properties": {
           "description": {
@@ -634,10 +680,31 @@
             "title": "Modulecount",
             "type": "integer"
           },
+          "nextTopic": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourseNextTopic"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "progress": {
             "default": 0.0,
             "title": "Progress",
             "type": "number"
+          },
+          "remainingHours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaininghours"
           },
           "targetDate": {
             "anyOf": [
@@ -715,6 +782,41 @@
           "pages"
         ],
         "title": "CourseListResponse",
+        "type": "object"
+      },
+      "CourseNextTopic": {
+        "description": "The next incomplete topic of a course, in outline order.\n\nDeliberately not the whole `TopicResponse`: a card prints a title and needs the ids to link, and\n`content` on a topic can be a page of markdown that no library view renders.",
+        "properties": {
+          "estimatedHours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedhours"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "moduleId": {
+            "title": "Moduleid",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "moduleId",
+          "title"
+        ],
+        "title": "CourseNextTopic",
         "type": "object"
       },
       "CourseOutlineSatisfactionCreate": {
@@ -927,6 +1029,77 @@
           }
         },
         "title": "CourseUpdate",
+        "type": "object"
+      },
+      "CoursesDashboardResponse": {
+        "description": "Everything the course library shows above its grid, in one request.\n\nComposed for the same reason as the flashcards and study-plan dashboards: assembled from the\nendpoints that already existed this was several requests, and the recent-activity list could not\nbe produced at all.\n\n**`weeklyHours` is estimated, not measured.** It sums the estimates on the topics completed since\nthe learner's week began. Nothing anywhere records how long a topic actually took, and a column\nfor it would not make the measurement exist — so the figure is named for what it is, exactly as\n`completedMinutes` is on a study plan.\n\nThere is deliberately **no weekly goal**. A learner sets a weekly target on a study plan, where it\nis asked for; nothing asks for one against their course library, and dividing by a number nobody\nchose would put an invented target on screen.",
+        "properties": {
+          "activeCourses": {
+            "title": "Activecourses",
+            "type": "integer"
+          },
+          "archivedCourses": {
+            "title": "Archivedcourses",
+            "type": "integer"
+          },
+          "completedTopics": {
+            "title": "Completedtopics",
+            "type": "integer"
+          },
+          "currentStreakDays": {
+            "title": "Currentstreakdays",
+            "type": "integer"
+          },
+          "featured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourseListItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "flashcardsDue": {
+            "title": "Flashcardsdue",
+            "type": "integer"
+          },
+          "recentActivity": {
+            "items": {
+              "$ref": "#/components/schemas/CourseActivityEntry"
+            },
+            "title": "Recentactivity",
+            "type": "array"
+          },
+          "timezoneKnown": {
+            "default": false,
+            "title": "Timezoneknown",
+            "type": "boolean"
+          },
+          "totalTopics": {
+            "title": "Totaltopics",
+            "type": "integer"
+          },
+          "weeklyHours": {
+            "title": "Weeklyhours",
+            "type": "number"
+          },
+          "weeklyTopicsCompleted": {
+            "title": "Weeklytopicscompleted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "activeCourses",
+          "archivedCourses",
+          "totalTopics",
+          "completedTopics",
+          "weeklyHours",
+          "weeklyTopicsCompleted",
+          "currentStreakDays",
+          "flashcardsDue"
+        ],
+        "title": "CoursesDashboardResponse",
         "type": "object"
       },
       "DeckCreate": {
@@ -11234,6 +11407,18 @@
             "title": "Completed",
             "type": "boolean"
           },
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
           "content": {
             "anyOf": [
               {
@@ -12793,6 +12978,34 @@
           }
         ],
         "summary": "Create Course",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/courses/dashboard": {
+      "get": {
+        "description": "Everything the course library shows above its grid, in one request.\n\nDeclared before `/courses/{course_id}` so FastAPI does not read \"dashboard\" as a course id.\n\nTwo figures come from outside this domain and are labelled as such rather than folded in silently:\n`flashcardsDue` is the review queue, and it is named for that. The rest is derived from the\nlearner's own topics.",
+        "operationId": "get_courses_dashboard_api_v1_knowledge_courses_dashboard_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CoursesDashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Courses Dashboard",
         "tags": [
           "knowledge",
           "knowledge"

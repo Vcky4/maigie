@@ -72,6 +72,9 @@ class TopicResponse(CamelModel):
     order: float
     content: str | None = None
     completed: bool = False
+    # Null for a pending topic, and for one completed before the column existed — those are absent
+    # from any history rather than given a date nothing observed.
+    completed_at: datetime | None = None
     estimated_hours: float | None = None
     created_at: datetime
     updated_at: datetime
@@ -177,6 +180,19 @@ class CourseResponse(CamelModel):
     outline_satisfaction_recorded: bool = False
 
 
+class CourseNextTopic(CamelModel):
+    """The next incomplete topic of a course, in outline order.
+
+    Deliberately not the whole `TopicResponse`: a card prints a title and needs the ids to link, and
+    `content` on a topic can be a page of markdown that no library view renders.
+    """
+
+    id: str
+    module_id: str
+    title: str
+    estimated_hours: float | None = None
+
+
 class CourseListItem(CamelModel):
     """A course as it appears in the library, without its modules or topics.
 
@@ -199,6 +215,16 @@ class CourseListItem(CamelModel):
     total_topics: int = 0
     completed_topics: int = 0
     module_count: int = 0
+    # Both derived from the topics the list response does not carry, aggregated in SQL. A card names
+    # the next thing to do and how much is left, and loading every topic of every course to work that
+    # out is what the counts above exist to avoid.
+    #
+    # `nextTopic` is null when nothing is incomplete — the course is finished, which wants a different
+    # label rather than a blank one. `remainingHours` is null when no remaining topic carries an
+    # estimate, so a client says "no estimate" instead of printing a confident `0h` for work that has
+    # never been sized.
+    next_topic: CourseNextTopic | None = None
+    remaining_hours: float | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -215,6 +241,60 @@ class CourseListResponse(PaginatedResponse[CourseListItem]):
     there are, and "is there another one" is `page < pages`. `hasMore` could not be derived the other
     way round.
     """
+
+
+class CourseActivityEntry(CamelModel):
+    """A topic the learner completed, with the course it belongs to.
+
+    Built from `Topic.completedAt`, not from a stored activity log. Topics completed before that
+    column existed are absent rather than dated from `updatedAt`, which moves on any edit.
+    """
+
+    topic_id: str
+    topic_title: str
+    course_id: str
+    course_title: str
+    completed_at: datetime
+    estimated_hours: float | None = None
+
+
+class CoursesDashboardResponse(CamelModel):
+    """Everything the course library shows above its grid, in one request.
+
+    Composed for the same reason as the flashcards and study-plan dashboards: assembled from the
+    endpoints that already existed this was several requests, and the recent-activity list could not
+    be produced at all.
+
+    **`weeklyHours` is estimated, not measured.** It sums the estimates on the topics completed since
+    the learner's week began. Nothing anywhere records how long a topic actually took, and a column
+    for it would not make the measurement exist — so the figure is named for what it is, exactly as
+    `completedMinutes` is on a study plan.
+
+    There is deliberately **no weekly goal**. A learner sets a weekly target on a study plan, where it
+    is asked for; nothing asks for one against their course library, and dividing by a number nobody
+    chose would put an invented target on screen.
+    """
+
+    active_courses: int
+    archived_courses: int
+    total_topics: int
+    completed_topics: int
+    #: Estimated hours on topics completed since the learner's week began. Planned effort, not time.
+    weekly_hours: float
+    #: Topics completed this week, which unlike the hours above is a count of real events.
+    weekly_topics_completed: int
+    #: Consecutive days with a completed topic, in the learner's timezone. Distinct from the flashcard
+    #: and study-plan streaks: this one counts topics, and they count graded cards and finished tasks.
+    current_streak_days: int
+    #: Flashcards due now, so the library can point at review work without inventing a figure. From
+    #: the flashcard domain, and labelled as such on screen rather than presented as course progress.
+    flashcards_due: int
+    #: The course to resume: the one whose most recent topic completion is newest.
+    featured: CourseListItem | None = None
+    recent_activity: list[CourseActivityEntry] = Field(default_factory=list)
+    #: False when the learner's timezone was never captured, so "this week" and the streak are a UTC
+    #: assumption rather than their actual week.
+    timezone_known: bool = False
 
 
 class AICourseRequest(BaseModel):

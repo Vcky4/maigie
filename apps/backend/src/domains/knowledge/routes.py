@@ -7,6 +7,7 @@ modules, topics, and resources.
 Mounted at: /api/v1/knowledge
 """
 
+import asyncio
 import logging
 from typing import Annotated, Any
 
@@ -54,6 +55,65 @@ def _progress_percent(completed: int, total: int) -> float:
     if not total:
         return 0.0
     return round(completed / total * 100, 1)
+
+
+async def _to_list_items(courses: list[Any]) -> list[models.CourseListItem]:
+    """Build library cards for a set of courses, with their derived figures.
+
+    One function, used by both the list and the dashboard's featured card, so the same course cannot
+    show one progress figure in the grid and a different one in the hero.
+
+    Three grouped queries for the whole set, rather than a progress call per course that issued its own
+    module query underneath. A course missing from one of the maps reads as "nothing to say" rather
+    than as zero, which the card draws differently: no next topic means finished, and no remaining
+    hours means the work was never sized.
+    """
+    if not courses:
+        return []
+
+    course_ids = [c.id for c in courses]
+    totals, next_topics, remaining = await asyncio.gather(
+        knowledge_repo.course_progress_totals(course_ids),
+        knowledge_repo.next_topics(course_ids),
+        knowledge_repo.remaining_hours(course_ids),
+    )
+
+    items: list[models.CourseListItem] = []
+    for c in courses:
+        module_count, total_topics, completed_topics = totals.get(c.id, (0, 0, 0))
+        next_topic = next_topics.get(c.id)
+        # snake_case ORM attributes, camelCase columns. Every course route read these
+        # the wrong way and answered `500`; see the note in `get_course`.
+        items.append(
+            models.CourseListItem(
+                id=c.id,
+                userId=c.user_id,
+                title=c.title,
+                description=c.description,
+                difficulty=c.difficulty,
+                targetDate=c.target_date,
+                isAIGenerated=c.is_ai_generated,
+                archived=c.archived,
+                progress=_progress_percent(completed_topics, total_topics),
+                totalTopics=total_topics,
+                completedTopics=completed_topics,
+                moduleCount=module_count,
+                nextTopic=(
+                    models.CourseNextTopic(
+                        id=next_topic.id,
+                        moduleId=next_topic.module_id,
+                        title=next_topic.title,
+                        estimatedHours=next_topic.estimated_hours,
+                    )
+                    if next_topic
+                    else None
+                ),
+                remainingHours=remaining.get(c.id),
+                createdAt=c.created_at,
+                updatedAt=c.updated_at,
+            )
+        )
+    return items
 
 
 @router.get("/courses", response_model=models.CourseListResponse)
@@ -104,37 +164,70 @@ async def list_courses(
         current_user.id, where=where, skip=skip, take=pageSize, order={sortBy: sortOrder}
     )
 
-    # One grouped query for the whole page, rather than a progress call per course that issued its
-    # own module query underneath. Courses with no modules are absent from the map and read as zeros.
-    totals = await knowledge_repo.course_progress_totals([c.id for c in courses])
-
-    items = []
-    for c in courses:
-        module_count, total_topics, completed_topics = totals.get(c.id, (0, 0, 0))
-        # snake_case ORM attributes, camelCase columns. Every course route read these
-        # the wrong way and answered `500`; see the note in `get_course`.
-        items.append(
-            models.CourseListItem(
-                id=c.id,
-                userId=c.user_id,
-                title=c.title,
-                description=c.description,
-                difficulty=c.difficulty,
-                targetDate=c.target_date,
-                isAIGenerated=c.is_ai_generated,
-                archived=c.archived,
-                progress=_progress_percent(completed_topics, total_topics),
-                totalTopics=total_topics,
-                completedTopics=completed_topics,
-                moduleCount=module_count,
-                createdAt=c.created_at,
-                updatedAt=c.updated_at,
-            )
-        )
-
+    items = await _to_list_items(courses)
     pages = (total + pageSize - 1) // pageSize if total else 0
     return models.CourseListResponse(
         items=items, total=total, page=page, pageSize=pageSize, pages=pages
+    )
+
+
+@router.get("/courses/dashboard", response_model=models.CoursesDashboardResponse)
+async def get_courses_dashboard(current_user: CurrentUser):
+    """Everything the course library shows above its grid, in one request.
+
+    Declared before `/courses/{course_id}` so FastAPI does not read "dashboard" as a course id.
+
+    Two figures come from outside this domain and are labelled as such rather than folded in silently:
+    `flashcardsDue` is the review queue, and it is named for that. The rest is derived from the
+    learner's own topics.
+    """
+    from src.domains.personal_learning.services import flashcard_service
+
+    summary = await course_service.get_dashboard(user_id=current_user.id)
+
+    # The course to resume: the one whose most recent topic completion is newest. Read from the
+    # activity list rather than by a separate query, since that list is already ordered by exactly
+    # that. A learner with no completions has no course to resume, and gets no featured card rather
+    # than an arbitrary one.
+    recent = summary.pop("recent")
+    featured_item = None
+    if recent:
+        featured_course = await knowledge_repo.find_course(recent[0][1], current_user.id)
+        if featured_course:
+            featured_item = (await _to_list_items([featured_course]))[0]
+
+    try:
+        stats = await flashcard_service.get_statistics(user_id=current_user.id)
+        flashcards_due = int(stats.get("dueToday") or 0)
+    except Exception:
+        # A failing review queue must not take the course library down with it. The count is a
+        # pointer to other work, not a fact about courses, so zero is a tolerable fallback here in a
+        # way it would not be for the figures above.
+        logger.warning("Flashcard stats unavailable for courses dashboard", exc_info=True)
+        flashcards_due = 0
+
+    return models.CoursesDashboardResponse(
+        activeCourses=summary["activeCourses"],
+        archivedCourses=summary["archivedCourses"],
+        totalTopics=summary["totalTopics"],
+        completedTopics=summary["completedTopics"],
+        weeklyHours=summary["weeklyHours"],
+        weeklyTopicsCompleted=summary["weeklyTopicsCompleted"],
+        currentStreakDays=summary["currentStreakDays"],
+        flashcardsDue=flashcards_due,
+        featured=featured_item,
+        recentActivity=[
+            models.CourseActivityEntry(
+                topicId=topic.id,
+                topicTitle=topic.title,
+                courseId=course_id,
+                courseTitle=course_title,
+                completedAt=topic.completed_at,
+                estimatedHours=topic.estimated_hours,
+            )
+            for topic, course_id, course_title in recent
+        ],
+        timezoneKnown=summary["timezoneKnown"],
     )
 
 

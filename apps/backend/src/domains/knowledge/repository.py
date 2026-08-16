@@ -5,11 +5,12 @@ Encapsulates all queries for Course, Module, Topic, Resource.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from src.shared.database import get_session_factory
 
@@ -95,6 +96,180 @@ class KnowledgeRepository:
 
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
+
+    async def library_topic_totals(self, user_id: str) -> tuple[int, int]:
+        """``(total_topics, completed_topics)`` across all of the learner's unarchived courses.
+
+        Library-wide, so the figure describes what the learner is working through rather than the page
+        that happens to be loaded. Archived courses are excluded for the same reason they are excluded
+        from the default list: archiving is the learner saying "not now", and counting shelved work
+        towards their progress ignores that.
+        """
+        async with await self._session() as session:
+            row = (
+                await session.execute(
+                    select(
+                        func.count(Topic.id),
+                        func.count(Topic.id).filter(Topic.completed.is_(True)),
+                    )
+                    .select_from(Topic)
+                    .join(Module, Topic.module_id == Module.id)
+                    .join(Course, Module.course_id == Course.id)
+                    .where(Course.user_id == user_id, Course.archived.is_(False))
+                )
+            ).one()
+        return int(row[0] or 0), int(row[1] or 0)
+
+    async def completed_topic_dates(
+        self, user_id: str, *, since: datetime | None = None
+    ) -> list[datetime]:
+        """When this learner completed topics, newest first.
+
+        The source for a course streak and for "this week". Topics completed before `completedAt`
+        existed have no time and are excluded — they count towards progress, which is all that is
+        actually known about them.
+        """
+        conditions = [
+            Course.user_id == user_id,
+            Topic.completed.is_(True),
+            Topic.completed_at.is_not(None),
+        ]
+        if since is not None:
+            conditions.append(Topic.completed_at >= since)
+
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(Topic.completed_at)
+                    .join(Module, Topic.module_id == Module.id)
+                    .join(Course, Module.course_id == Course.id)
+                    .where(*conditions)
+                    .order_by(Topic.completed_at.desc())
+                )
+            ).scalars().all()
+        return [row for row in rows if row is not None]
+
+    async def completed_hours_between(
+        self, user_id: str, start: datetime, end: datetime
+    ) -> float:
+        """Estimated hours on the topics this learner completed in a window.
+
+        Estimated, not measured. Nothing observes how long a topic actually took, so a caller must
+        label this as planned effort — the same wording study plans use for the same reason. Topics
+        with no estimate contribute nothing rather than a guess.
+        """
+        async with await self._session() as session:
+            total = (
+                await session.execute(
+                    select(func.sum(Topic.estimated_hours))
+                    .join(Module, Topic.module_id == Module.id)
+                    .join(Course, Module.course_id == Course.id)
+                    .where(
+                        Course.user_id == user_id,
+                        Topic.completed.is_(True),
+                        Topic.completed_at.is_not(None),
+                        Topic.completed_at >= start,
+                        Topic.completed_at < end,
+                    )
+                )
+            ).scalar()
+        return float(total or 0.0)
+
+    async def recently_completed_topics(
+        self, user_id: str, *, limit: int = 5
+    ) -> list[tuple[Topic, str, str]]:
+        """The learner's most recently completed topics as ``(topic, course_id, course_title)``.
+
+        The course is joined in rather than fetched per row, which is what "recently active" needs to
+        say where each item came from — a list of topic titles with no course beside them is not
+        readable.
+        """
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(Topic, Course.id, Course.title)
+                    .join(Module, Topic.module_id == Module.id)
+                    .join(Course, Module.course_id == Course.id)
+                    .where(
+                        Course.user_id == user_id,
+                        Topic.completed.is_(True),
+                        Topic.completed_at.is_not(None),
+                    )
+                    .order_by(Topic.completed_at.desc(), Topic.id.desc())
+                    .limit(limit)
+                )
+            ).all()
+        return [(topic, course_id, title) for topic, course_id, title in rows]
+
+    async def next_topics(self, course_ids: list[str]) -> dict[str, Topic]:
+        """The next incomplete topic of each course, in outline order.
+
+        What a library card means by "Up next". One row per course through a window function rather
+        than a query per course, because a page of twenty courses would otherwise be twenty round
+        trips to print twenty lines of text.
+
+        Ordered by module then topic order, which is the order the outline reads in, and tie-broken by
+        id so a course with two topics sharing an order does not change its "Up next" between
+        requests. Courses with nothing incomplete are absent: the course is finished, and that wants
+        a different label rather than a blank one.
+        """
+        if not course_ids:
+            return {}
+
+        ranked = (
+            select(
+                Topic,
+                Module.course_id.label("course_id"),
+                func.row_number()
+                .over(
+                    partition_by=Module.course_id,
+                    order_by=(Module.order.asc(), Topic.order.asc(), Topic.id.asc()),
+                )
+                .label("rank"),
+            )
+            .join(Module, Topic.module_id == Module.id)
+            .where(Module.course_id.in_(course_ids), Topic.completed.is_(False))
+            .subquery()
+        )
+        entity = aliased(Topic, ranked)
+
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(entity, ranked.c.course_id).where(ranked.c.rank == 1)
+                )
+            ).all()
+
+        return {course_id: topic for topic, course_id in rows}
+
+    async def remaining_hours(self, course_ids: list[str]) -> dict[str, float]:
+        """Estimated hours left on each course: the sum over its incomplete topics.
+
+        Separate from `course_progress_totals` because it sums a nullable column and that one counts
+        rows — folding them together would make a course whose topics carry no estimate
+        indistinguishable from one with nothing left, since `SUM` over no rows is null either way.
+
+        Courses with no estimate on any remaining topic are absent, so the caller can say "no estimate"
+        rather than printing a confident `0h` for work that has simply never been sized.
+        """
+        if not course_ids:
+            return {}
+
+        async with await self._session() as session:
+            rows = (
+                await session.execute(
+                    select(Module.course_id, func.sum(Topic.estimated_hours))
+                    .join(Topic, Topic.module_id == Module.id)
+                    .where(
+                        Module.course_id.in_(course_ids),
+                        Topic.completed.is_(False),
+                        Topic.estimated_hours.is_not(None),
+                    )
+                    .group_by(Module.course_id)
+                )
+            ).all()
+
+        return {course_id: float(total) for course_id, total in rows if total is not None}
 
     async def course_progress_totals(
         self, course_ids: list[str]
@@ -274,6 +449,10 @@ class KnowledgeRepository:
                 mapped["estimated_hours"] = data["estimatedHours"]
             if "completed" in data:
                 mapped["completed"] = data["completed"]
+            # `in data`, not truthiness: clearing this on reopen means writing `None`, and a
+            # truthiness check would skip that and leave a pending topic looking completed.
+            if "completedAt" in data:
+                mapped["completed_at"] = data["completedAt"]
             if mapped:
                 stmt = update(Topic).where(Topic.id == topic_id).values(**mapped)
                 await session.execute(stmt)
