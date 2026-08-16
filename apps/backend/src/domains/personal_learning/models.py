@@ -8,7 +8,7 @@ These are the learner's private artifacts.
 from datetime import date, datetime
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 # Imported rather than defined here: the knowledge domain needs the same base, and a second copy is
 # how the two would drift. See `src/shared/schemas.py` for the two failure modes it prevents.
@@ -286,6 +286,13 @@ class FlashcardCreate(BaseModel):
     deckId: str | None = None
     sourceType: str | None = None
     sourceId: str | None = None
+    # The three review aids, each restored with migration 026 because each backed a piece of the
+    # review page that was deleted for having no column: a hint revealed on demand, an explanation
+    # shown with the answer, and a mnemonic beside it. Null means the card has none, and the reader
+    # omits the control rather than offering a blank one.
+    hint: str | None = None
+    explanation: str | None = None
+    memoryHook: str | None = None
 
 
 class FlashcardResponse(CamelModel):
@@ -305,8 +312,40 @@ class FlashcardResponse(CamelModel):
     lapse_count: int
     source_type: str | None = None
     source_id: str | None = None
+    # The three review aids, each restored with migration 026 because each backed a piece of the
+    # review page that was deleted for having no column: a hint revealed on demand, an explanation
+    # shown with the answer, and a mnemonic beside it. Null means the card has none, and the reader
+    # omits the control rather than offering a blank one.
+    hint: str | None = None
+    explanation: str | None = None
+    memory_hook: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def interval_previews(self) -> dict[str, int]:
+        """What each of the four review buttons would do to this card, in days.
+
+        A computed field rather than a column, because there is nothing to store: SM-2 is a
+        deterministic function of `intervalDays`, `repetitionCount` and `easeFactor`, which this
+        response already carries. The review page showed these under each button and they were deleted
+        as "unbacked by any persisted field" — the wrong conclusion, since the arithmetic needed no
+        field at all.
+
+        Derived here rather than in the client for one reason: a preview computed by a second
+        implementation is a second scheduler, and the moment the two disagree the page promises an
+        interval the card will not get. `flashcard_service.project_review` is the only place the rule
+        lives, and both the preview and the grade that follows it go through it.
+        """
+        from .services.flashcard_service import review_interval_previews
+
+        return review_interval_previews(
+            interval_days=self.interval_days,
+            repetition_count=self.repetition_count,
+            ease_factor=self.ease_factor,
+            lapse_count=self.lapse_count,
+        )
 
 
 class FlashcardUpdate(BaseModel):
@@ -322,6 +361,11 @@ class FlashcardUpdate(BaseModel):
     front: str | None = Field(default=None, min_length=1)
     back: str | None = Field(default=None, min_length=1)
     deckId: str | None = None
+    # Editable, and an explicit null clears one — same `exclude_unset` contract as `deckId`, so
+    # "leave the hint alone" stays distinguishable from "remove the hint".
+    hint: str | None = None
+    explanation: str | None = None
+    memoryHook: str | None = None
 
 
 class FlashcardReviewRequest(CamelModel):

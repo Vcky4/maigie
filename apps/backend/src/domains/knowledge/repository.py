@@ -9,12 +9,21 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from src.shared.database import get_session_factory
 
-from .db_models import Course, CourseOutlineSatisfaction, Module, Resource, Topic
+from .db_models import (
+    Course,
+    CourseOutlineSatisfaction,
+    CourseRating,
+    Module,
+    Resource,
+    Topic,
+    TopicSection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -491,6 +500,9 @@ class KnowledgeRepository:
                 order=data.get("order", 0),
                 content=data.get("content"),
                 estimated_hours=data.get("estimatedHours"),
+                summary=data.get("summary"),
+                objectives=data.get("objectives"),
+                knowledge_check=data.get("knowledgeCheck"),
             )
             session.add(topic)
             await session.commit()
@@ -514,6 +526,14 @@ class KnowledgeRepository:
             # truthiness check would skip that and leave a pending topic looking completed.
             if "completedAt" in data:
                 mapped["completed_at"] = data["completedAt"]
+            # Same `in data` reasoning: an explicit null clears the objectives or the check, and a
+            # truthiness test would silently ignore the clear and leave the old value on the page.
+            if "summary" in data:
+                mapped["summary"] = data["summary"]
+            if "objectives" in data:
+                mapped["objectives"] = data["objectives"]
+            if "knowledgeCheck" in data:
+                mapped["knowledge_check"] = data["knowledgeCheck"]
             if mapped:
                 stmt = update(Topic).where(Topic.id == topic_id).values(**mapped)
                 await session.execute(stmt)
@@ -526,6 +546,201 @@ class KnowledgeRepository:
             stmt = delete(Topic).where(Topic.id == topic_id)
             await session.execute(stmt)
             await session.commit()
+
+    # -----------------------------------------------------------------------
+    # Topic sections
+    # -----------------------------------------------------------------------
+
+    async def list_topic_sections(self, topic_id: str) -> list[TopicSection]:
+        """The sections of one topic in reading order.
+
+        Ordered by `order` then `id`, not `order` alone: two sections can legitimately share an order
+        after a bulk insert that did not spread them, and an unstable sort would let the lesson
+        reshuffle itself between two loads of the same page.
+        """
+        async with await self._session() as session:
+            rows = await session.execute(
+                select(TopicSection)
+                .where(TopicSection.topic_id == topic_id)
+                .order_by(TopicSection.order, TopicSection.id)
+            )
+            return list(rows.scalars().all())
+
+    async def find_topic_section(self, section_id: str) -> TopicSection | None:
+        async with await self._session() as session:
+            rows = await session.execute(
+                select(TopicSection).where(TopicSection.id == section_id)
+            )
+            return rows.scalar_one_or_none()
+
+    async def create_topic_section(self, data: dict[str, Any]) -> TopicSection:
+        async with await self._session() as session:
+            section = TopicSection(**self._map_section_data(data))
+            session.add(section)
+            await session.commit()
+            await session.refresh(section)
+            return section
+
+    async def create_topic_sections(self, topic_id: str, items: list[dict[str, Any]]) -> int:
+        """Insert a whole lesson's sections in one transaction.
+
+        Generation produces every section of a topic at once, and inserting them one request at a time
+        would leave a half-written lesson on screen if any single insert failed. Returns the count so
+        the caller reports what it wrote rather than assuming.
+        """
+        if not items:
+            return 0
+
+        async with await self._session() as session:
+            session.add_all(
+                [
+                    TopicSection(**self._map_section_data({**item, "topicId": topic_id}))
+                    for item in items
+                ]
+            )
+            await session.commit()
+        return len(items)
+
+    async def update_topic_section(self, section_id: str, data: dict[str, Any]) -> TopicSection | None:
+        async with await self._session() as session:
+            mapped = self._map_section_data(data)
+            if mapped:
+                await session.execute(
+                    update(TopicSection).where(TopicSection.id == section_id).values(**mapped)
+                )
+                await session.commit()
+        return await self.find_topic_section(section_id)
+
+    async def delete_topic_section(self, section_id: str) -> None:
+        async with await self._session() as session:
+            await session.execute(delete(TopicSection).where(TopicSection.id == section_id))
+            await session.commit()
+
+    async def delete_topic_sections(self, topic_id: str) -> None:
+        """Clear a topic's sections. Used when regeneration replaces a lesson wholesale, so the new
+        body cannot end up appended to the old one."""
+        async with await self._session() as session:
+            await session.execute(delete(TopicSection).where(TopicSection.topic_id == topic_id))
+            await session.commit()
+
+    async def set_topic_section_completed(
+        self, section_id: str, completed: bool
+    ) -> TopicSection | None:
+        """Mark a section done or reopen it, writing the timestamp in the same statement.
+
+        `completedAt` is set from the database clock on completion and cleared on reopen, so a pending
+        section can never carry a completion time — the same contract as `Topic.completedAt`.
+        """
+        async with await self._session() as session:
+            await session.execute(
+                update(TopicSection)
+                .where(TopicSection.id == section_id)
+                .values(
+                    completed=completed,
+                    completed_at=func.now() if completed else None,
+                )
+            )
+            await session.commit()
+        return await self.find_topic_section(section_id)
+
+    def _map_section_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Translate wire names to attribute names for the three that differ.
+
+        An explicit allowlist rather than a passthrough: a section has ten optional content fields and
+        a typo in any of them would otherwise reach the constructor as an unknown keyword — or, on the
+        update path, be silently dropped. Membership is tested with `in`, so an explicit null clears a
+        field instead of being mistaken for "not sent".
+        """
+        field_map = {
+            "topicId": "topic_id",
+            "durationMinutes": "duration_minutes",
+            "keyIdea": "key_idea",
+        }
+        allowed = {
+            "topicId",
+            "order",
+            "kind",
+            "title",
+            "eyebrow",
+            "summary",
+            "durationMinutes",
+            "paragraphs",
+            "keyIdea",
+            "steps",
+            "bullets",
+            "code",
+            "completed",
+        }
+        mapped: dict[str, Any] = {}
+        for key in allowed:
+            if key in data:
+                mapped[field_map.get(key, key)] = data[key]
+        return mapped
+
+    # -----------------------------------------------------------------------
+    # Course ratings
+    # -----------------------------------------------------------------------
+
+    async def rate_course(
+        self, course_id: str, user_id: str, value: int, comment: str | None = None
+    ) -> CourseRating:
+        """Record or change one learner's rating of a course.
+
+        An upsert on the `(courseId, userId)` unique constraint rather than a read-then-write: two
+        submissions racing would both find no existing row and the second insert would abort the
+        transaction, so the learner would see a failure for having clicked twice.
+        """
+        async with await self._session() as session:
+            stmt = (
+                pg_insert(CourseRating)
+                .values(
+                    course_id=course_id,
+                    user_id=user_id,
+                    value=value,
+                    comment=comment,
+                )
+                .on_conflict_do_update(
+                    constraint="CourseRating_courseId_userId_key",
+                    set_={"value": value, "comment": comment, "updatedAt": func.now()},
+                )
+                .returning(CourseRating)
+            )
+            row = (await session.execute(stmt)).scalar_one()
+            await session.commit()
+            return row
+
+    async def course_rating_summary(
+        self, course_id: str, user_id: str | None = None
+    ) -> tuple[float | None, int, int | None]:
+        """`(average, count, this learner's rating)` for one course.
+
+        The average is null rather than zero when nobody has rated it, because the page distinguishes
+        "unrated" from "rated badly" and only one of those is ever true of a new course. Rounded to
+        one decimal place, matching how the figure is printed, so the stored aggregate cannot disagree
+        with the rendered one in the last digit.
+        """
+        async with await self._session() as session:
+            row = (
+                await session.execute(
+                    select(func.avg(CourseRating.value), func.count(CourseRating.id)).where(
+                        CourseRating.course_id == course_id
+                    )
+                )
+            ).one()
+            average, count = row[0], int(row[1] or 0)
+
+            mine: int | None = None
+            if user_id is not None:
+                mine = (
+                    await session.execute(
+                        select(CourseRating.value).where(
+                            CourseRating.course_id == course_id,
+                            CourseRating.user_id == user_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+
+        return (round(float(average), 1) if average is not None else None, count, mine)
 
     # -----------------------------------------------------------------------
     # Resources
@@ -682,7 +897,13 @@ class KnowledgeRepository:
             "isAIGenerated": "is_ai_generated",
             "targetDate": "target_date",
             "spaceId": "space_id",
+            "instructorName": "instructor_name",
+            "instructorRole": "instructor_role",
         }
+        # `category`, `tags` and `outcomes` are absent from the map on purpose: their column names and
+        # their attribute names are the same word, so the passthrough below is already correct for
+        # them. Anything whose wire name differs from its attribute name must be listed, or it
+        # arrives here as an unknown keyword and fails at the constructor.
         result = {}
         for key, value in data.items():
             attr = field_map.get(key, key)

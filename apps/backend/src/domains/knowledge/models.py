@@ -41,11 +41,108 @@ class ResourceType(str, Enum):
 # ===========================================================================
 
 
+SectionKind = Literal["concept", "example", "algorithm", "comparison", "check"]
+
+
+class TopicSectionStep(CamelModel):
+    """One step of a walkthrough. Kept as a title and a detail rather than a single string, because
+    the reader renders the title as a heading and the detail as prose beneath it."""
+
+    title: str
+    detail: str
+
+
+class TopicSectionCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+    order: float = Field(..., ge=0)
+    kind: SectionKind = "concept"
+    eyebrow: str | None = Field(None, max_length=120)
+    summary: str | None = None
+    durationMinutes: int | None = Field(None, ge=0, le=600)
+    paragraphs: list[str] | None = None
+    keyIdea: str | None = None
+    steps: list[TopicSectionStep] | None = None
+    bullets: list[str] | None = None
+    code: str | None = None
+
+
+class TopicSectionUpdate(BaseModel):
+    """Every field optional, and read with `exclude_unset=True` so omitting a key leaves it alone
+    while sending an explicit null clears it."""
+
+    title: str | None = Field(None, min_length=1, max_length=255)
+    order: float | None = Field(None, ge=0)
+    kind: SectionKind | None = None
+    eyebrow: str | None = Field(None, max_length=120)
+    summary: str | None = None
+    durationMinutes: int | None = Field(None, ge=0, le=600)
+    paragraphs: list[str] | None = None
+    keyIdea: str | None = None
+    steps: list[TopicSectionStep] | None = None
+    bullets: list[str] | None = None
+    code: str | None = None
+
+
+class TopicSectionResponse(CamelModel):
+    """One step of a lesson.
+
+    `completed` is per section and lives beside `Topic.completed` rather than replacing it. The two
+    answer different questions — whether the learner has worked through this step, and whether they
+    consider the topic done — and the topic's flag is not derived from the sections', because a
+    learner may mark a topic complete without clicking through every section of it.
+    """
+
+    id: str
+    topic_id: str
+    order: float
+    kind: str
+    title: str
+    eyebrow: str | None = None
+    summary: str | None = None
+    #: Minutes, not a formatted string: the lesson header sums these into a total, which a
+    #: pre-formatted "6 min" could not be added up.
+    duration_minutes: int | None = None
+    paragraphs: list[str] | None = None
+    key_idea: str | None = None
+    steps: list[TopicSectionStep] | None = None
+    bullets: list[str] | None = None
+    code: str | None = None
+    completed: bool = False
+    completed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class KnowledgeCheckChoice(CamelModel):
+    """One option of a topic's knowledge check.
+
+    `correct` is sent to the client deliberately. The check is a self-test at the end of a lesson in
+    a course the learner owns — it gates nothing, is not scored, and no attempt is recorded — so the
+    page grades the answer and shows the explanation without a round trip. An assessment whose result
+    matters belongs in the preparation domain, where the correct answer is not published.
+    """
+
+    id: str
+    label: str
+    correct: bool = False
+
+
+class KnowledgeCheck(CamelModel):
+    """The end-of-lesson check: one question, its choices, and why the answer is what it is."""
+
+    question: str
+    explanation: str
+    choices: list[KnowledgeCheckChoice] = []
+
+
 class TopicCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     order: float = Field(..., ge=0)
     content: str | None = None
     estimatedHours: float | None = Field(None, ge=0)
+    summary: str | None = None
+    objectives: list[str] | None = None
+    knowledgeCheck: KnowledgeCheck | None = None
 
 
 class TopicUpdate(BaseModel):
@@ -54,6 +151,9 @@ class TopicUpdate(BaseModel):
     content: str | None = None
     estimatedHours: float | None = Field(None, ge=0)
     completed: bool | None = None
+    summary: str | None = None
+    objectives: list[str] | None = None
+    knowledgeCheck: KnowledgeCheck | None = None
 
 
 class TopicResponse(CamelModel):
@@ -76,6 +176,17 @@ class TopicResponse(CamelModel):
     # from any history rather than given a date nothing observed.
     completed_at: datetime | None = None
     estimated_hours: float | None = None
+    #: The lesson header's one-line description. Null rather than derived: the first section's summary
+    #: describes that section, and the opening of `content` is the material rather than a description
+    #: of it, so either substitute would say something other than what the header claims.
+    summary: str | None = None
+    #: What the learner will be able to do after this topic. Null means none were written, which is
+    #: not the same as an empty list — the reader shows no objectives block rather than an empty one.
+    objectives: list[str] | None = None
+    knowledge_check: KnowledgeCheck | None = None
+    #: The lesson body as an ordered sequence of steps. Empty for a topic whose content is a single
+    #: markdown blob in `content`, which the reader falls back to rather than showing nothing.
+    sections: list[TopicSectionResponse] = []
     created_at: datetime
     updated_at: datetime
 
@@ -84,12 +195,19 @@ class TopicGenerateRequest(BaseModel):
     """AI content generation type for a topic."""
 
     type: Literal["explain", "quiz", "summary", "flashcards"]
+    #: Required for `flashcards`, ignored otherwise. Generated cards have to land in a deck: an
+    #: unfiled card is invisible to the deck pages and only reachable through the flat card list.
+    deckId: str | None = None
 
 
 class TopicGenerateResponse(BaseModel):
     type: str
     topicId: str
     content: str
+    #: What was stored, in words — "7 sections", "5 flashcards" — or null when the type deliberately
+    #: stores nothing. Stated rather than implied by the type, so a caller can report the outcome
+    #: without encoding the rule about which types persist.
+    persisted: str | None = None
 
 
 # ===========================================================================
@@ -135,6 +253,45 @@ class ModuleResponse(CamelModel):
 # ===========================================================================
 
 
+class CourseInstructor(CamelModel):
+    """Who authored or teaches the course, when anyone did.
+
+    Absent — the whole object null — for a course the learner generated for themselves, which is most
+    of them. Crediting the owner as the instructor of their own course, or crediting "Maigie", would
+    put a claim on the page that nothing supports.
+
+    Initials are not stored or returned: they are the first letters of the name, which is formatting,
+    and a stored copy is one more thing that can disagree with the name beside it.
+    """
+
+    name: str
+    role: str | None = None
+
+
+class CourseRatingSummary(CamelModel):
+    """The aggregate of a course's ratings, plus this learner's own.
+
+    `average` and `count` are null and zero for an unrated course, so the page can show no rating
+    rather than a zero — "nobody has rated this" and "everybody rated it 0" are different statements
+    and only one of them is ever true here.
+
+    `yourRating` is included so the control can show the learner what they already gave without a
+    second request, and so re-rating updates rather than adds.
+    """
+
+    average: float | None = None
+    count: int = 0
+    your_rating: int | None = None
+
+
+class CourseRatingCreate(BaseModel):
+    """Rating a course. Re-rating updates the existing row, so the average cannot be weighted by
+    submitting repeatedly."""
+
+    value: int = Field(..., ge=1, le=5)
+    comment: str | None = Field(None, max_length=2000)
+
+
 class CourseCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     description: str | None = None
@@ -142,6 +299,13 @@ class CourseCreate(BaseModel):
     targetDate: datetime | None = None
     isAIGenerated: bool = False
     spaceId: str | None = None
+    #: What the course is about. Distinct from `difficulty`, which says how hard it is — one cannot
+    #: answer for the other, and using difficulty as the badge put the wrong word on the card.
+    category: str | None = Field(None, max_length=120)
+    tags: list[str] | None = None
+    outcomes: list[str] | None = None
+    instructorName: str | None = Field(None, max_length=200)
+    instructorRole: str | None = Field(None, max_length=200)
 
 
 class CourseUpdate(BaseModel):
@@ -151,6 +315,11 @@ class CourseUpdate(BaseModel):
     targetDate: datetime | None = None
     archived: bool | None = None
     spaceId: str | None = None
+    category: str | None = Field(None, max_length=120)
+    tags: list[str] | None = None
+    outcomes: list[str] | None = None
+    instructorName: str | None = Field(None, max_length=200)
+    instructorRole: str | None = Field(None, max_length=200)
 
 
 class CourseResponse(CamelModel):
@@ -178,6 +347,16 @@ class CourseResponse(CamelModel):
     created_at: datetime
     updated_at: datetime
     outline_satisfaction_recorded: bool = False
+    #: What the course is about, as a subject label — the badge on the detail page. Null for courses
+    #: created before it existed; the badge is omitted rather than guessed from the difficulty.
+    category: str | None = None
+    tags: list[str] | None = None
+    #: "What you'll be able to do" — the promise the course makes, separate from the objectives of any
+    #: one topic within it.
+    outcomes: list[str] | None = None
+    #: Null when nobody is credited, which is the normal case for a self-generated course.
+    instructor: CourseInstructor | None = None
+    rating: CourseRatingSummary | None = None
 
 
 class TopicLocationResponse(CamelModel):
@@ -204,6 +383,10 @@ class TopicLocationResponse(CamelModel):
     #: "Topic 4 of 12" line needs, and not derivable by a caller holding only this topic.
     position: int
     total_topics: int
+    #: Completion of the whole course as a percentage. The lesson header shows the learner where this
+    #: sitting sits in the course, so without it the surface would have to fetch the entire course to
+    #: print one number.
+    course_progress: float = 0.0
 
 
 class CourseNextTopic(CamelModel):
@@ -251,6 +434,10 @@ class CourseListItem(CamelModel):
     # never been sized.
     next_topic: CourseNextTopic | None = None
     remaining_hours: float | None = None
+    #: The card's own fields, restored. `difficulty` was briefly used as the category badge and a
+    #: module count as the tags, which put facts on the card that were not the ones it was showing.
+    category: str | None = None
+    tags: list[str] | None = None
     created_at: datetime
     updated_at: datetime
 

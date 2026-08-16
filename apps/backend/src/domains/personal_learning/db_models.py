@@ -318,6 +318,17 @@ class Flashcard(Base, TimestampMixin):
     front: Mapped[str] = mapped_column(Text, nullable=False)
     back: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # The three review aids. Each backs a piece of the review page that was deleted for having no
+    # column: a hint revealed on demand, an explanation shown with the answer, and a mnemonic beside
+    # it. Nullable, and the reader omits the control rather than offering a blank one — a card with no
+    # hint is different from a card whose hint is empty.
+    #
+    # Three columns rather than one JSON blob: they are read and edited individually, and packing them
+    # together would make a partial update a read-modify-write, so two concurrent edits lose one.
+    hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memory_hook: Mapped[str | None] = mapped_column("memoryHook", Text, nullable=True)
+
     # SM-2 spaced repetition fields
     interval_days: Mapped[int] = mapped_column("intervalDays", Integer, default=1)
     repetition_count: Mapped[int] = mapped_column("repetitionCount", Integer, default=0)

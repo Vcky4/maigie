@@ -417,3 +417,391 @@ async def test_completion_shows_up_on_the_courses_dashboard(client: AsyncClient,
     assert "Topic" in titles
     # The course to resume is the one whose newest completion this is.
     assert payload["featured"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Lesson sections, and the course facts the detail page states
+#
+# These back the lesson workspace and the four course panels that were removed and restored. The
+# rating path in particular can only be tested here: it is an upsert on a named unique constraint, so
+# it is Postgres-only and the SQLite repository suite cannot reach it.
+# ---------------------------------------------------------------------------
+
+
+async def _course_with_lesson(client: AsyncClient, headers: dict[str, str]) -> tuple[dict, dict]:
+    """A course, a module and a topic, returning the topic as its full response body.
+
+    Deliberately **not** named `_course_with_topic`: that helper already exists above and returns
+    `(course, moduleId, topicId)`. Defining a second function of the same name shadowed it — Python
+    keeps the last definition — and broke five passing tests in this file that unpacked three values.
+    These tests want the topic body itself, for `sections` and `moduleId`, so they get their own
+    helper under a name that cannot collide.
+    """
+    course = await _create_course(client, headers)
+    module = await client.post(
+        f"{BASE}/courses/{course['id']}/modules",
+        json={"title": "Module one", "order": 1},
+        headers=headers,
+    )
+    assert module.status_code == 201, module.text
+    topic = await client.post(
+        f"{BASE}/courses/{course['id']}/modules/{module.json()['id']}/topics",
+        json={"title": "Graph traversal", "order": 1},
+        headers=headers,
+    )
+    assert topic.status_code == 201, topic.text
+    return course, topic.json()
+
+
+async def test_a_new_topic_reports_no_sections_rather_than_failing(
+    client: AsyncClient, auth_headers
+):
+    """The reader falls back to `content` when a topic has no sections, so an empty list is a normal
+    state and not an error."""
+    _, topic = await _course_with_lesson(client, auth_headers)
+    response = await client.get(f"{BASE}/topics/{topic['id']}/sections", headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == []
+
+
+async def test_a_section_round_trips_every_structured_field(client: AsyncClient, auth_headers):
+    """The whole point of the section table: a title with no body, or steps that arrive as bare
+    strings, is a lesson the learner cannot read."""
+    _, topic = await _course_with_lesson(client, auth_headers)
+    created = await client.post(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json={
+            "title": "Breadth-first search",
+            "order": 10,
+            "kind": "algorithm",
+            "eyebrow": "Core idea",
+            "summary": "How the queue advances",
+            "durationMinutes": 6,
+            "paragraphs": ["A queue explores in layers.", "The oldest discovery leaves first."],
+            "keyIdea": "Broad before deep",
+            "steps": [{"title": "Enqueue", "detail": "Add the start node"}],
+            "bullets": ["Use a queue"],
+            "code": "queue.push(start)",
+        },
+        headers=auth_headers,
+    )
+    assert created.status_code == 201, created.text
+    section = created.json()
+
+    assert section["kind"] == "algorithm"
+    assert section["eyebrow"] == "Core idea"
+    assert section["durationMinutes"] == 6
+    assert len(section["paragraphs"]) == 2
+    assert section["keyIdea"] == "Broad before deep"
+    assert section["steps"] == [{"title": "Enqueue", "detail": "Add the start node"}]
+    assert section["bullets"] == ["Use a queue"]
+    assert section["code"] == "queue.push(start)"
+    assert section["completed"] is False
+    assert section["completedAt"] is None
+
+
+async def test_sections_list_in_reading_order(client: AsyncClient, auth_headers):
+    _, topic = await _course_with_lesson(client, auth_headers)
+    for title, order in (("third", 30), ("first", 10), ("second", 20)):
+        await client.post(
+            f"{BASE}/topics/{topic['id']}/sections",
+            json={"title": title, "order": order, "paragraphs": ["body"]},
+            headers=auth_headers,
+        )
+
+    listed = await client.get(f"{BASE}/topics/{topic['id']}/sections", headers=auth_headers)
+    assert [s["title"] for s in listed.json()] == ["first", "second", "third"]
+
+
+async def test_completing_a_section_records_when_and_reopening_clears_it(
+    client: AsyncClient, auth_headers
+):
+    _, topic = await _course_with_lesson(client, auth_headers)
+    created = await client.post(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json={"title": "Section", "order": 10, "paragraphs": ["body"]},
+        headers=auth_headers,
+    )
+    section_id = created.json()["id"]
+    path = f"{BASE}/topics/{topic['id']}/sections/{section_id}/complete"
+
+    # No query parameter: completion is the default, because the reader sends this on every Continue.
+    done = await client.patch(path, headers=auth_headers)
+    assert done.status_code == 200, done.text
+    assert done.json()["completed"] is True
+    assert done.json()["completedAt"] is not None
+
+    reopened = await client.patch(f"{path}?completed=false", headers=auth_headers)
+    assert reopened.json()["completed"] is False
+    assert reopened.json()["completedAt"] is None
+
+
+async def test_completing_every_section_leaves_the_topic_and_course_untouched(
+    client: AsyncClient, auth_headers
+):
+    """Reading a lesson through is not the same claim as finishing the topic, so course progress must
+    not move here. If it did, scrolling to the end of a lesson would advance the course before the
+    learner answered the check."""
+    course, topic = await _course_with_lesson(client, auth_headers)
+    created = await client.post(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json={"title": "Only section", "order": 10, "paragraphs": ["body"]},
+        headers=auth_headers,
+    )
+    await client.patch(
+        f"{BASE}/topics/{topic['id']}/sections/{created.json()['id']}/complete",
+        headers=auth_headers,
+    )
+
+    detail = await client.get(f"{BASE}/courses/{course['id']}", headers=auth_headers)
+    assert detail.json()["progress"] == 0
+    assert detail.json()["completedTopics"] == 0
+
+
+async def test_replacing_sections_leaves_only_the_new_ones(client: AsyncClient, auth_headers):
+    _, topic = await _course_with_lesson(client, auth_headers)
+    await client.post(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json={"title": "old", "order": 10, "paragraphs": ["old body"]},
+        headers=auth_headers,
+    )
+
+    replaced = await client.put(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json=[
+            {"title": "new one", "order": 10, "paragraphs": ["a"]},
+            {"title": "new two", "order": 20, "paragraphs": ["b"]},
+        ],
+        headers=auth_headers,
+    )
+    assert replaced.status_code == 200, replaced.text
+    assert [s["title"] for s in replaced.json()] == ["new one", "new two"]
+
+
+async def test_editing_a_section_does_not_blank_the_fields_it_omits(
+    client: AsyncClient, auth_headers
+):
+    _, topic = await _course_with_lesson(client, auth_headers)
+    created = await client.post(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json={"title": "before", "order": 10, "paragraphs": ["kept"], "keyIdea": "also kept"},
+        headers=auth_headers,
+    )
+
+    updated = await client.put(
+        f"{BASE}/topics/{topic['id']}/sections/{created.json()['id']}",
+        json={"title": "after"},
+        headers=auth_headers,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["title"] == "after"
+    assert updated.json()["paragraphs"] == ["kept"]
+    assert updated.json()["keyIdea"] == "also kept"
+
+
+async def test_another_learners_sections_are_refused(client: AsyncClient, auth_headers):
+    """Ownership runs through the topic, so a section in someone else's course is refused by the same
+    check that refuses the topic."""
+    _, topic = await _course_with_lesson(client, auth_headers)
+    intruder = await _login(client)
+
+    listed = await client.get(f"{BASE}/topics/{topic['id']}/sections", headers=intruder)
+    assert listed.status_code in (403, 404), listed.text
+
+    created = await client.post(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json={"title": "theirs", "order": 10, "paragraphs": ["body"]},
+        headers=intruder,
+    )
+    assert created.status_code in (403, 404), created.text
+
+
+async def test_a_section_addressed_through_the_wrong_topic_is_rejected(
+    client: AsyncClient, auth_headers
+):
+    """Both ids are in the path, so they can disagree. Accepting the mismatch would let a caller edit
+    a section by naming any topic they own."""
+    _, first = await _course_with_lesson(client, auth_headers)
+    _, second = await _course_with_lesson(client, auth_headers)
+    created = await client.post(
+        f"{BASE}/topics/{first['id']}/sections",
+        json={"title": "belongs to first", "order": 10, "paragraphs": ["body"]},
+        headers=auth_headers,
+    )
+
+    response = await client.put(
+        f"{BASE}/topics/{second['id']}/sections/{created.json()['id']}",
+        json={"title": "moved"},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400, response.text
+
+
+async def test_topic_resolution_carries_the_lesson_and_the_course_progress(
+    client: AsyncClient, auth_headers
+):
+    """What `/learn/lessons/:id` needs in one request: the topic with its sections, the breadcrumb, the
+    position, and how far the course has got."""
+    _, topic = await _course_with_lesson(client, auth_headers)
+    await client.put(
+        f"{BASE}/topics/{topic['id']}/sections",
+        json=[{"title": "Section one", "order": 10, "paragraphs": ["body"]}],
+        headers=auth_headers,
+    )
+
+    response = await client.get(f"{BASE}/topics/{topic['id']}", headers=auth_headers)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload["courseTitle"]
+    assert payload["moduleTitle"] == "Module one"
+    assert payload["position"] == 1
+    assert payload["totalTopics"] == 1
+    assert payload["courseProgress"] == 0
+    assert [s["title"] for s in payload["topic"]["sections"]] == ["Section one"]
+
+
+async def test_objectives_and_the_knowledge_check_round_trip_on_a_topic(
+    client: AsyncClient, auth_headers
+):
+    course, topic = await _course_with_lesson(client, auth_headers)
+    module_id = topic["moduleId"]
+
+    updated = await client.put(
+        f"{BASE}/courses/{course['id']}/modules/{module_id}/topics/{topic['id']}",
+        json={
+            "objectives": ["Trace a traversal by hand"],
+            "knowledgeCheck": {
+                "question": "Which traversal finds the fewest edges?",
+                "explanation": "BFS explores in distance layers.",
+                "choices": [
+                    {"id": "dfs", "label": "Depth-first", "correct": False},
+                    {"id": "bfs", "label": "Breadth-first", "correct": True},
+                ],
+            },
+        },
+        headers=auth_headers,
+    )
+    assert updated.status_code == 200, updated.text
+    payload = updated.json()
+
+    assert payload["objectives"] == ["Trace a traversal by hand"]
+    check = payload["knowledgeCheck"]
+    assert check["question"].startswith("Which traversal")
+    # The correct answer is published on purpose: the check is an unscored self-test on a course the
+    # learner owns, and the page grades it without a round trip.
+    assert [c["id"] for c in check["choices"] if c["correct"]] == ["bfs"]
+
+
+# ---------------------------------------------------------------------------
+# Course facts: category, tags, outcomes, instructor, rating
+# ---------------------------------------------------------------------------
+
+
+async def test_the_course_panels_round_trip_on_create(client: AsyncClient, auth_headers):
+    """Each of these was a panel that got deleted for having no column. `create_course` builds an
+    explicit allowlist, so a field added to the request model and not to that dict is accepted and
+    silently discarded — which is what this asserts against."""
+    created = await _create_course(
+        client,
+        auth_headers,
+        category="Computer Science",
+        tags=["graphs", "algorithms"],
+        outcomes=["Reason about traversal order"],
+        instructorName="Dr Maya Chen",
+        instructorRole="Computer science educator",
+    )
+
+    assert created["category"] == "Computer Science"
+    assert created["tags"] == ["graphs", "algorithms"]
+    assert created["outcomes"] == ["Reason about traversal order"]
+    assert created["instructor"] == {"name": "Dr Maya Chen", "role": "Computer science educator"}
+
+
+async def test_a_course_with_no_instructor_returns_null_not_an_empty_object(
+    client: AsyncClient, auth_headers
+):
+    """A panel keyed on "is there an instructor" is then a single check, rather than every reader
+    having to know that a nameless instructor means none."""
+    created = await _create_course(client, auth_headers)
+    assert created["instructor"] is None
+
+
+async def test_the_library_card_carries_category_and_tags(client: AsyncClient, auth_headers):
+    created = await _create_course(
+        client, auth_headers, category="Mathematics", tags=["probability"]
+    )
+    listed = await client.get(f"{BASE}/courses?search={created['title']}", headers=auth_headers)
+    card = next(c for c in listed.json()["items"] if c["id"] == created["id"])
+    assert card["category"] == "Mathematics"
+    assert card["tags"] == ["probability"]
+
+
+async def test_an_unrated_course_reports_null_rather_than_zero(client: AsyncClient, auth_headers):
+    """"Nobody has rated this" and "everybody rated it zero" are different statements, and only one is
+    ever true of a new course."""
+    created = await _create_course(client, auth_headers)
+    detail = await client.get(f"{BASE}/courses/{created['id']}", headers=auth_headers)
+    rating = detail.json()["rating"]
+    assert rating["average"] is None
+    assert rating["count"] == 0
+    assert rating["yourRating"] is None
+
+
+async def test_rating_a_course_then_changing_it_updates_rather_than_adds(
+    client: AsyncClient, auth_headers
+):
+    """The upsert. A read-then-write would let two submissions race into a duplicate-key failure, and
+    a plain insert would let one learner weight the average by clicking repeatedly."""
+    created = await _create_course(client, auth_headers)
+    path = f"{BASE}/courses/{created['id']}/rating"
+
+    first = await client.put(path, json={"value": 5}, headers=auth_headers)
+    assert first.status_code == 200, first.text
+    assert first.json() == {"average": 5.0, "count": 1, "yourRating": 5}
+
+    changed = await client.put(path, json={"value": 3, "comment": "on reflection"}, headers=auth_headers)
+    assert changed.json() == {"average": 3.0, "count": 1, "yourRating": 3}
+
+    fetched = await client.get(path, headers=auth_headers)
+    assert fetched.json()["yourRating"] == 3
+
+
+async def test_a_rating_outside_one_to_five_is_refused(client: AsyncClient, auth_headers):
+    """Bounded in the request model and again by a CHECK constraint, because the average the page
+    prints has no way to notice a 40 that arrived by another path."""
+    created = await _create_course(client, auth_headers)
+    path = f"{BASE}/courses/{created['id']}/rating"
+
+    for value in (0, 6, -1):
+        response = await client.put(path, json={"value": value}, headers=auth_headers)
+        # 400, not 422: this app installs a validation handler that reports request-model failures
+        # as VALIDATION_ERROR with a 400, which the rest of this file already asserts.
+        assert response.status_code == 400, f"{value} was accepted: {response.text}"
+
+
+async def test_another_learner_cannot_rate_or_read_your_course_rating(
+    client: AsyncClient, auth_headers
+):
+    created = await _create_course(client, auth_headers)
+    intruder = await _login(client)
+    path = f"{BASE}/courses/{created['id']}/rating"
+
+    assert (await client.put(path, json={"value": 5}, headers=intruder)).status_code in (403, 404)
+    assert (await client.get(path, headers=intruder)).status_code in (403, 404)
+
+
+async def test_a_generated_course_is_credited_to_maigie(client: AsyncClient, auth_headers):
+    """Written at creation rather than inferred at read time. Inferring it would mean every reader
+    repeating the rule, and the first reader that forgot would show an instructor on one page and none
+    on another."""
+    created = await _create_course(client, auth_headers, isAIGenerated=True)
+    assert created["instructor"]["name"] == "Maigie"
+
+
+async def test_an_explicit_instructor_survives_ai_generation(client: AsyncClient, auth_headers):
+    """The default only fills a gap. A course authored for a space keeps its author."""
+    created = await _create_course(
+        client, auth_headers, isAIGenerated=True, instructorName="Amara Okafor"
+    )
+    assert created["instructor"]["name"] == "Amara Okafor"

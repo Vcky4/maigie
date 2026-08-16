@@ -1,13 +1,25 @@
 """
 Knowledge domain — SQLAlchemy models.
 
-Course, Module, Topic, Resource, Embedding, CourseOutlineSatisfaction, UserTopicProgress.
+Course, Module, Topic, TopicSection, CourseRating, Resource, Embedding,
+CourseOutlineSatisfaction, UserTopicProgress.
 """
 
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,10 +55,28 @@ class Course(Base, TimestampMixin):
     # complete — a column nothing writes is not unused, it is wrong.
     progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    # What the course is about, as a subject label. Distinct from `difficulty`: how hard a course is
+    # and what it covers are two different facts, and difficulty was briefly used to stand in for
+    # this, which put the wrong word on the badge.
+    category: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Free-form labels for the library card. JSON array of strings.
+    tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # "What you'll be able to do" — the promise the whole course makes. Deliberately separate from
+    # `Topic.objectives`, which is what one sitting delivers; deriving one from the other would
+    # flatten a curriculum into a list of lessons.
+    outcomes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # Authoring credit, nullable because most courses have none. A learner who generated a course for
+    # themselves has no instructor, and crediting them as the teacher of their own course — or
+    # crediting "Maigie" — would state something untrue. Null means the panel does not render.
+    instructor_name: Mapped[str | None] = mapped_column("instructorName", String, nullable=True)
+    instructor_role: Mapped[str | None] = mapped_column("instructorRole", String, nullable=True)
 
     # Relationships
     modules: Mapped[list["Module"]] = relationship(
         "Module", back_populates="course", lazy="selectin", order_by="Module.order"
+    )
+    ratings: Mapped[list["CourseRating"]] = relationship(
+        "CourseRating", back_populates="course", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:
@@ -101,12 +131,130 @@ class Topic(Base, TimestampMixin):
         "completedAt", DateTime(timezone=True), nullable=True
     )
     estimated_hours: Mapped[float | None] = mapped_column("estimatedHours", Float, nullable=True)
+    # What the learner will be able to do after this topic, shown above the first section. Nullable
+    # rather than defaulting to an empty list: a topic written before this existed has no objectives,
+    # which is a different thing from having none, and the page renders no block rather than an empty
+    # one.
+    #: The lesson header's one-line description. Nullable, and deliberately not derived: the first
+    #: section's summary describes that section, and the first paragraph of `content` is the opening of
+    #: the material rather than a description of it — either would put a line under the heading saying
+    #: something other than what it claims to.
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    objectives: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    # The end-of-lesson check: {question, explanation, choices: [{id, label, correct}]}. JSON because
+    # it is one value object per topic, always read whole with its topic, never queried on its own
+    # and never listed across topics. Deliberately not a `QuizSession`: that models a timed, scored,
+    # multi-question attempt feeding readiness scoring, and borrowing it would leave an abandoned
+    # scored session in preparation analytics for every lesson opened.
+    knowledge_check: Mapped[dict | None] = mapped_column("knowledgeCheck", JSON, nullable=True)
 
     # Relationships
     module: Mapped["Module"] = relationship("Module", back_populates="topics")
+    sections: Mapped[list["TopicSection"]] = relationship(
+        "TopicSection",
+        back_populates="topic",
+        lazy="selectin",
+        order_by="TopicSection.order",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<Topic id={self.id} title={self.title}>"
+
+
+class TopicSection(Base, TimestampMixin):
+    """One step of a lesson: a titled, typed, separately completable piece of a topic.
+
+    A row rather than a heading inside `Topic.content`. Treating section boundaries as markdown
+    headings was the first design and it fails on one requirement: each section is separately
+    completable, so completion needs an identity to write against and a heading in a text blob has
+    none. Locating a section by "the third `##`" would make renaming a heading silently reassign the
+    learner's progress.
+
+    `completed` sits on the row rather than in a per-learner join table, matching `Topic.completed`
+    and `Module.completed`. A course has one owner, so the row and the learner are the same thing
+    today; per-learner section progress is what `UserTopicProgress` would grow into.
+    """
+
+    __tablename__ = "TopicSection"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    topic_id: Mapped[str] = mapped_column(
+        "topicId", String, ForeignKey("Topic.id", ondelete="CASCADE"), index=True
+    )
+    order: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    # concept | example | algorithm | comparison | check. A plain string, not a native enum: migration
+    # 001 dropped the Prisma-era enums because extending one needed a migration and a deploy in
+    # lockstep, and the set of ways to explain something is not closed.
+    kind: Mapped[str] = mapped_column(String, default="concept", server_default="concept")
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    eyebrow: Mapped[str | None] = mapped_column(String, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Minutes as an integer, not the "6 min" string the fixture carried. A number sums into a lesson
+    # total and formats per locale; a formatted string does neither, and the page needs the total.
+    duration_minutes: Mapped[int | None] = mapped_column("durationMinutes", Integer, nullable=True)
+    paragraphs: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    key_idea: Mapped[str | None] = mapped_column("keyIdea", Text, nullable=True)
+    # [{title, detail}] — kept structured because a step is not a numbered paragraph, and flattening
+    # it into prose only to parse it back out loses that.
+    steps: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    bullets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Cleared on reopen, so a pending section never carries a completion time. Same contract as
+    # `Topic.completedAt`.
+    completed_at: Mapped[datetime | None] = mapped_column(
+        "completedAt", DateTime(timezone=True), nullable=True
+    )
+
+    # Relationships
+    topic: Mapped["Topic"] = relationship("Topic", back_populates="sections")
+
+    def __repr__(self) -> str:
+        return f"<TopicSection id={self.id} kind={self.kind} title={self.title}>"
+
+
+class CourseRating(Base, TimestampMixin):
+    """One learner's rating of one course.
+
+    A table rather than a `Course.rating` float. A float is a number with nothing behind it: any
+    value can be written, a learner cannot change their mind, and the "4.9 learner rating" the page
+    prints would be as invented as the fixture it replaces. One row per learner per course, unique on
+    the pair, means the aggregate is computed from ratings that were actually given.
+
+    Several raters is a real case, not a hypothetical: classrooms assign courses to their members, so
+    an assigned course accumulates ratings from everyone who took it. A course with none aggregates to
+    null, and the page shows no rating rather than a zero — those are different statements.
+    """
+
+    __tablename__ = "CourseRating"
+    __table_args__ = (
+        CheckConstraint("value >= 1 AND value <= 5", name="CourseRating_value_range"),
+        UniqueConstraint("courseId", "userId", name="CourseRating_courseId_userId_key"),
+        Index("CourseRating_courseId_idx", "courseId"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    course_id: Mapped[str] = mapped_column(
+        "courseId", String, ForeignKey("Course.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE")
+    )
+    # 1 to 5, constrained in the database as well as in the request model — the aggregate the page
+    # prints has no way to notice a 40 that arrived by some other path.
+    value: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    course: Mapped["Course"] = relationship("Course", back_populates="ratings")
+
+    def __repr__(self) -> str:
+        return f"<CourseRating course={self.course_id} value={self.value}>"
 
 
 class UserTopicProgress(Base, TimestampMixin):

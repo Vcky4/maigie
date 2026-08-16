@@ -87,6 +87,9 @@ async def create_flashcard(*, user_id: str, data: dict[str, Any]) -> Any:
         "deckId": data.get("deckId"),
         "sourceType": data.get("sourceType"),
         "sourceId": data.get("sourceId"),
+        "hint": data.get("hint"),
+        "explanation": data.get("explanation"),
+        "memoryHook": data.get("memoryHook"),
         # SM-2 initialization
         "intervalDays": 1,
         "repetitionCount": 0,
@@ -204,7 +207,11 @@ async def generate_from_topic(
     prompt = (
         f"Create flashcards for studying this topic:\n"
         f"Topic: {topic.title}\n"
-        f"Description: {getattr(topic, 'description', '') or ''}\n\n"
+        # `Topic` has no `description` column. This read used to be
+        # `getattr(topic, 'description', '')`, which always returned the empty default, so every
+        # topic-sourced card was generated from the title alone and the omission was invisible —
+        # `getattr` with a default cannot fail. `content` is the topic's actual body.
+        f"Material: {(topic.content or '')[:2000]}\n\n"
         f"Return a JSON array of objects with 'front' (question/concept) and 'back' (answer/explanation).\n"
         f"Generate 5-10 flashcards covering key concepts, definitions, and important details.\n"
         f"Return ONLY the JSON array, no other text."
@@ -338,6 +345,76 @@ async def generate_deck_starter_cards(*, user_id: str, deck_id: str) -> list[Any
     return created_cards
 
 
+def project_review(
+    *,
+    interval_days: int,
+    repetition_count: int,
+    ease_factor: float,
+    lapse_count: int,
+    quality: int,
+) -> dict[str, Any]:
+    """What one grade would do to a card, without doing it.
+
+    Extracted from `review_flashcard` so that the two callers cannot drift: the write, and the preview
+    each rating button shows. Previously the arithmetic lived only inside the write, and the preview
+    was deleted from the review page as "unbacked by any persisted field" — which was wrong. SM-2 is a
+    deterministic function of `intervalDays`, `repetitionCount` and `easeFactor`, all of which the card
+    already stores, so what each grade *would* produce is computable without applying anything and
+    without a new column.
+
+    Duplicating the formula in a second function, or in the client, would be the real hazard: a
+    scheduler the learner can see must be the scheduler that runs, or the preview promises an interval
+    the card does not get.
+
+    Pure: takes numbers, returns numbers, touches no clock and no database.
+    """
+    new_ease = max(ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)), 1.3)
+
+    if quality < LAPSE_QUALITY_THRESHOLD:
+        # Lapse: back to a day, and the repetition streak restarts.
+        new_interval = 1
+        new_repetition = 0
+        new_lapse = lapse_count + 1
+    else:
+        new_lapse = lapse_count
+        if repetition_count == 0:
+            new_interval = 1
+        elif repetition_count == 1:
+            new_interval = 6
+        else:
+            new_interval = round(interval_days * new_ease)
+        new_repetition = repetition_count + 1
+
+    return {
+        "intervalDays": new_interval,
+        "repetitionCount": new_repetition,
+        "easeFactor": round(new_ease, 4),
+        "lapseCount": new_lapse,
+    }
+
+
+#: The four buttons the review page shows, and the quality each posts. Defined here beside the
+#: scheduler rather than in the route, so the previews and the grades that follow them agree by
+#: construction.
+REVIEW_RATING_QUALITY: dict[str, int] = {"again": 1, "hard": 3, "good": 4, "easy": 5}
+
+
+def review_interval_previews(
+    *, interval_days: int, repetition_count: int, ease_factor: float, lapse_count: int
+) -> dict[str, int]:
+    """The interval, in days, that each of the four ratings would produce for this card."""
+    return {
+        rating: project_review(
+            interval_days=interval_days,
+            repetition_count=repetition_count,
+            ease_factor=ease_factor,
+            lapse_count=lapse_count,
+            quality=quality,
+        )["intervalDays"]
+        for rating, quality in REVIEW_RATING_QUALITY.items()
+    }
+
+
 async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
     """
     Review a flashcard using SM-2 algorithm.
@@ -356,35 +433,24 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
         return None
 
     now = datetime.now(UTC)
-    new_ease = card.ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-    new_ease = max(new_ease, 1.3)  # Minimum ease factor
-
-    if quality < LAPSE_QUALITY_THRESHOLD:
-        # Lapse: reset interval, increment lapse count
-        new_interval = 1
-        new_repetition = 0
-        new_lapse = card.lapse_count + 1
-    else:
-        # Graduate: increase interval
-        new_lapse = card.lapse_count
-        if card.repetition_count == 0:
-            new_interval = 1
-        elif card.repetition_count == 1:
-            new_interval = 6
-        else:
-            new_interval = round(card.interval_days * new_ease)
-        new_repetition = card.repetition_count + 1
-
+    projected = project_review(
+        interval_days=card.interval_days,
+        repetition_count=card.repetition_count,
+        ease_factor=card.ease_factor,
+        lapse_count=card.lapse_count,
+        quality=quality,
+    )
+    new_interval = projected["intervalDays"]
     next_review = now + timedelta(days=new_interval)
 
     update_data = {
         "intervalDays": new_interval,
-        "repetitionCount": new_repetition,
-        "easeFactor": round(new_ease, 4),
+        "repetitionCount": projected["repetitionCount"],
+        "easeFactor": projected["easeFactor"],
         "nextReviewAt": next_review,
         "lastReviewedAt": now,
         "lastQuality": quality,
-        "lapseCount": new_lapse,
+        "lapseCount": projected["lapseCount"],
     }
 
     # The schedule change and its log row share one transaction. The card row keeps
@@ -401,8 +467,8 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
             "deckId": card.deck_id,
             "quality": quality,
             "intervalDays": new_interval,
-            "easeFactor": round(new_ease, 4),
-            "repetitionCount": new_repetition,
+            "easeFactor": projected["easeFactor"],
+            "repetitionCount": projected["repetitionCount"],
             "wasLapse": quality < LAPSE_QUALITY_THRESHOLD,
             "reviewedAt": now,
         },

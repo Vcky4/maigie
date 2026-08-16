@@ -18,6 +18,16 @@ from ..repository import knowledge_repo
 
 logger = logging.getLogger(__name__)
 
+#: Who a generated course is taught by. A constant rather than a literal at each write site, because
+#: the name appears on the course page and the two places that set it must not drift apart.
+AI_INSTRUCTOR_NAME = "Maigie"
+AI_INSTRUCTOR_ROLE = "AI learning designer"
+
+#: The role given to a learner who takes a course into a space they own. They are not credited with
+#: writing it — Maigie may have generated the material — but they are the person answering for it in
+#: that space, which is what the panel is stating.
+SPACE_OWNER_INSTRUCTOR_ROLE = "Space lead"
+
 
 # ---------------------------------------------------------------------------
 # Ownership checks
@@ -207,6 +217,24 @@ async def create_course(*, user: User, data: dict[str, Any]) -> Any:
     }
     if data.get("spaceId"):
         create_data["spaceId"] = data["spaceId"]
+    # Named one by one rather than by spreading `data`, because this dict is the allowlist that keeps
+    # a client from setting `progress` or `userId` directly. The cost of that safety is that a field
+    # added to `CourseCreate` and not added here is accepted and silently discarded, which is how
+    # `search` was lost on the list endpoint — so each of these is listed explicitly.
+    for optional in ("category", "tags", "outcomes", "instructorName", "instructorRole"):
+        if data.get(optional) is not None:
+            create_data[optional] = data[optional]
+
+    # A generated course is taught by Maigie, and the credit is written at creation rather than
+    # inferred at read time. Inferring it would mean every reader repeating the rule "if AI-generated
+    # and nobody named, say Maigie", and the moment one reader forgot, the same course would show an
+    # instructor on one page and none on another.
+    #
+    # Only when the caller named nobody: an explicit instructor always wins, which is what lets a
+    # course authored for a space keep its author after being generated from a syllabus.
+    if create_data["isAIGenerated"] and not create_data.get("instructorName"):
+        create_data["instructorName"] = AI_INSTRUCTOR_NAME
+        create_data["instructorRole"] = AI_INSTRUCTOR_ROLE
 
     course = await knowledge_repo.create_course(create_data)
     await emit_course_created(user.id, course.id, is_ai_generated=create_data["isAIGenerated"])

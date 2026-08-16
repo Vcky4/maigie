@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from src.shared.database import get_session_factory
+from src.shared.field_mapping import map_fields
 
 from .db_models import (
     ActivityFeedEntry,
@@ -690,7 +691,7 @@ class PersonalLearningRepository:
             "archived": "archived",
             "voiceRecordingUrl": "voice_recording_url",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_note")
 
     @staticmethod
     def _map_attachment(data: dict[str, Any]) -> dict[str, Any]:
@@ -700,7 +701,7 @@ class PersonalLearningRepository:
             "url": "url",
             "size": "size",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_attachment")
 
     @staticmethod
     def _map_exam_prep(data: dict[str, Any]) -> dict[str, Any]:
@@ -716,7 +717,7 @@ class PersonalLearningRepository:
             "status": "status",
             "spaceId": "space_id",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_exam_prep")
 
     @staticmethod
     def _map_document(data: dict[str, Any]) -> dict[str, Any]:
@@ -733,7 +734,7 @@ class PersonalLearningRepository:
             "isPublic": "is_public",
             "shareId": "share_id",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_document")
 
     @staticmethod
     def _build_note_conditions(where: dict[str, Any]) -> list:
@@ -1604,8 +1605,14 @@ class PersonalLearningRepository:
             "lapseCount": "lapse_count",
             "sourceType": "source_type",
             "sourceId": "source_id",
+            # The three review aids. This mapper is an allowlist — `if k in field_map` — so a key
+            # missing from it is accepted by the request model and silently dropped here, which is how
+            # a field can appear in the contract and never reach the database.
+            "hint": "hint",
+            "explanation": "explanation",
+            "memoryHook": "memory_hook",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_flashcard")
 
     @staticmethod
     def _map_deck(data: dict[str, Any]) -> dict[str, Any]:
@@ -1620,7 +1627,7 @@ class PersonalLearningRepository:
             "topicId": "topic_id",
             "prepId": "prep_id",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_deck")
 
     # -----------------------------------------------------------------------
     # Saved Resources
@@ -1733,7 +1740,7 @@ class PersonalLearningRepository:
             "sourceId": "source_id",
             "tags": "tags",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_resource")
 
     # -----------------------------------------------------------------------
     # Learning Profiles
@@ -1829,7 +1836,7 @@ class PersonalLearningRepository:
             "lastValueSummaryAt": "last_value_summary_at",
             "plusFeaturesUsedThisPeriod": "plus_features_used_this_period",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_profile")
 
     # -----------------------------------------------------------------------
     # Notifications
@@ -1954,7 +1961,7 @@ class PersonalLearningRepository:
             "scheduledAt": "scheduled_at",
             "status": "status",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_notification")
 
     # -----------------------------------------------------------------------
     # Prep Topics
@@ -3040,7 +3047,7 @@ class PersonalLearningRepository:
             "targetMastery": "target_mastery",
             "status": "status",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_prep_topic")
 
     @staticmethod
     def _map_prep_material(data: dict[str, Any]) -> dict[str, Any]:
@@ -3054,7 +3061,7 @@ class PersonalLearningRepository:
             "category": "category",
             "label": "label",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_prep_material")
 
     @staticmethod
     def _map_quiz_session(data: dict[str, Any]) -> dict[str, Any]:
@@ -3072,7 +3079,7 @@ class PersonalLearningRepository:
             "generationStage": "generation_stage",
             "completedAt": "completed_at",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_quiz_session")
 
     @staticmethod
     def _map_prep_question(data: dict[str, Any]) -> dict[str, Any]:
@@ -3090,7 +3097,7 @@ class PersonalLearningRepository:
             "examTip": "exam_tip",
             "hintNudge": "hint_nudge",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_prep_question")
 
     @staticmethod
     def _map_practice_observation(data: dict[str, Any]) -> dict[str, Any]:
@@ -3107,7 +3114,7 @@ class PersonalLearningRepository:
             "difficulty": "difficulty",
             "observedAt": "observed_at",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_practice_observation")
 
     @staticmethod
     def _map_quiz_answer(data: dict[str, Any]) -> dict[str, Any]:
@@ -3118,7 +3125,7 @@ class PersonalLearningRepository:
             "isCorrect": "is_correct",
             "timeTakenSeconds": "time_taken_seconds",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_quiz_answer")
 
     # -----------------------------------------------------------------------
     # Study Plans
@@ -3881,7 +3888,7 @@ class PersonalLearningRepository:
             "totalItems": "total_items",
             "completedItems": "completed_items",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_study_plan")
 
     @staticmethod
     def _map_plan_item(data: dict[str, Any]) -> dict[str, Any]:
@@ -3898,7 +3905,7 @@ class PersonalLearningRepository:
             "status": "status",
             "completedAt": "completed_at",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_plan_item")
 
     # -----------------------------------------------------------------------
     # Reflections
@@ -3973,7 +3980,7 @@ class PersonalLearningRepository:
             "achievementsLayer": "achievements_layer",
             "recommendations": "recommendations",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_reflection")
 
     # -----------------------------------------------------------------------
     # Discovery Recommendations
@@ -4060,7 +4067,7 @@ class PersonalLearningRepository:
             "relevanceScore": "relevance_score",
             "status": "status",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_recommendation")
 
     # -----------------------------------------------------------------------
     # Activity Feed
@@ -4117,7 +4124,7 @@ class PersonalLearningRepository:
             "context": "context",
             "occurredAt": "occurred_at",
         }
-        return {field_map[k]: v for k, v in data.items() if k in field_map}
+        return map_fields(data, field_map, entity="_map_feed_entry")
 
     # -----------------------------------------------------------------------
     # Background task helpers

@@ -17,7 +17,7 @@ from src.shared.auth import CurrentUser
 
 from . import models
 from .repository import knowledge_repo
-from .services import course_service, resource_service
+from .services import course_service, lesson_service, resource_service
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,8 @@ async def _to_list_items(courses: list[Any]) -> list[models.CourseListItem]:
                     else None
                 ),
                 remainingHours=remaining.get(c.id),
+                category=c.category,
+                tags=c.tags,
                 createdAt=c.created_at,
                 updatedAt=c.updated_at,
             )
@@ -193,7 +195,181 @@ async def get_topic(topic_id: str, current_user: CurrentUser):
         courseTitle=course.title,
         position=position,
         totalTopics=total,
+        # Read from the stored column rather than recomputed here. It is kept true by
+        # `recount_course_progress` on every event that can change it, and recomputing would mean two
+        # expressions for one number that can disagree in the last digit.
+        courseProgress=course.progress or 0.0,
     )
+
+
+# ---------------------------------------------------------------------------
+# Topic sections
+#
+# A lesson is a topic read one section at a time, and these are what make that possible. They sit
+# under the topic rather than under the course path used by module and topic writes, because a
+# section is only ever addressed through the topic that owns it and repeating the course and module
+# ids in the path would let a caller send three ids that disagree.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/topics/{topic_id}/sections", response_model=list[models.TopicSectionResponse])
+async def list_topic_sections(topic_id: str, current_user: CurrentUser):
+    """The sections of a topic, in reading order.
+
+    A bare list rather than a pagination envelope: a lesson has a handful of sections, every caller
+    wants all of them, and the reader cannot render a partial lesson — paging it would let the
+    next/previous controls run off the end of a page.
+    """
+    await course_service.check_topic_ownership(topic_id, current_user.id)
+    sections = await knowledge_repo.list_topic_sections(topic_id)
+    return [
+        models.TopicSectionResponse.model_validate(section, from_attributes=True)
+        for section in sections
+    ]
+
+
+@router.post(
+    "/topics/{topic_id}/sections",
+    response_model=models.TopicSectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_topic_section(
+    topic_id: str, body: models.TopicSectionCreate, current_user: CurrentUser
+):
+    """Add one section to a topic."""
+    await course_service.check_topic_ownership(topic_id, current_user.id)
+    section = await knowledge_repo.create_topic_section(
+        {**body.model_dump(mode="json", exclude_unset=True), "topicId": topic_id}
+    )
+    return models.TopicSectionResponse.model_validate(section, from_attributes=True)
+
+
+@router.put(
+    "/topics/{topic_id}/sections",
+    response_model=list[models.TopicSectionResponse],
+)
+async def replace_topic_sections(
+    topic_id: str, body: list[models.TopicSectionCreate], current_user: CurrentUser
+):
+    """Replace a topic's sections wholesale.
+
+    A replace rather than an append, because the caller is generation rewriting a lesson, and
+    appending would leave the new body after the old one with the learner scrolling through two
+    versions. Deleting and inserting in that order means a failed insert leaves no sections rather
+    than a mixture of both, which is the more obvious failure and the one the reader already handles
+    by falling back to `Topic.content`.
+
+    **This discards per-section completion for the topic**, because the sections it belonged to no
+    longer exist. That is the honest outcome of replacing the body: progress through a lesson that has
+    been rewritten does not transfer, and silently carrying it across by position would tell the
+    learner they had read paragraphs that were not there when they read it.
+    """
+    await course_service.check_topic_ownership(topic_id, current_user.id)
+    await knowledge_repo.delete_topic_sections(topic_id)
+    await knowledge_repo.create_topic_sections(
+        topic_id, [item.model_dump(mode="json", exclude_unset=True) for item in body]
+    )
+    sections = await knowledge_repo.list_topic_sections(topic_id)
+    return [
+        models.TopicSectionResponse.model_validate(section, from_attributes=True)
+        for section in sections
+    ]
+
+
+async def _owned_section(section_id: str, user_id: str):
+    """Resolve a section and prove the caller owns the course it sits in.
+
+    Ownership runs through the topic, so a section in another learner's course is refused by the same
+    check that refuses the topic. Written once because three routes need it and an ownership check
+    that is easy to omit eventually is.
+    """
+    section = await knowledge_repo.find_topic_section(section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="Section not found")
+    await course_service.check_topic_ownership(section.topic_id, user_id)
+    return section
+
+
+@router.put("/topics/{topic_id}/sections/{section_id}", response_model=models.TopicSectionResponse)
+async def update_topic_section(
+    topic_id: str, section_id: str, body: models.TopicSectionUpdate, current_user: CurrentUser
+):
+    """Edit one section."""
+    section = await _owned_section(section_id, current_user.id)
+    if section.topic_id != topic_id:
+        raise HTTPException(status_code=400, detail="Section path mismatch")
+
+    updated = await knowledge_repo.update_topic_section(
+        section_id, body.model_dump(mode="json", exclude_unset=True)
+    )
+    return models.TopicSectionResponse.model_validate(updated, from_attributes=True)
+
+
+@router.delete("/topics/{topic_id}/sections/{section_id}", status_code=204)
+async def delete_topic_section(topic_id: str, section_id: str, current_user: CurrentUser):
+    """Remove one section."""
+    section = await _owned_section(section_id, current_user.id)
+    if section.topic_id != topic_id:
+        raise HTTPException(status_code=400, detail="Section path mismatch")
+    await knowledge_repo.delete_topic_section(section_id)
+
+
+@router.patch(
+    "/topics/{topic_id}/sections/{section_id}/complete",
+    response_model=models.TopicSectionResponse,
+)
+async def complete_topic_section(
+    topic_id: str,
+    section_id: str,
+    current_user: CurrentUser,
+    completed: bool = Query(True),
+):
+    """Mark a section worked through, or reopen it.
+
+    `completed` defaults to true, unlike the topic toggle which requires it. Advancing through a
+    lesson is the overwhelmingly common call and the reader sends it on every Continue; reopening is
+    rare and deliberate, so it is the one that has to say so.
+
+    **This does not touch `Topic.completed`, and finishing the last section does not complete the
+    topic.** The two are different claims: that the learner read every section, and that they consider
+    the topic done. Deriving one from the other would either mark a topic complete the moment the
+    reader scrolled to the end — before any check was answered — or reopen a topic the learner had
+    explicitly finished because a section was later added to it. Course progress therefore does not
+    move here, which is why `recount_course_progress` is not called.
+    """
+    section = await _owned_section(section_id, current_user.id)
+    if section.topic_id != topic_id:
+        raise HTTPException(status_code=400, detail="Section path mismatch")
+
+    updated = await knowledge_repo.set_topic_section_completed(section_id, completed)
+    return models.TopicSectionResponse.model_validate(updated, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Course ratings
+# ---------------------------------------------------------------------------
+
+
+@router.get("/courses/{course_id}/rating", response_model=models.CourseRatingSummary)
+async def get_course_rating(course_id: str, current_user: CurrentUser):
+    """The course's aggregate rating, and this learner's own."""
+    await course_service.check_course_ownership(course_id, current_user.id)
+    average, count, mine = await knowledge_repo.course_rating_summary(course_id, current_user.id)
+    return models.CourseRatingSummary(average=average, count=count, yourRating=mine)
+
+
+@router.put("/courses/{course_id}/rating", response_model=models.CourseRatingSummary)
+async def rate_course(course_id: str, body: models.CourseRatingCreate, current_user: CurrentUser):
+    """Rate a course, or change an existing rating.
+
+    `PUT`, not `POST`: one learner has at most one rating per course, so submitting twice sets the
+    same resource rather than creating a second. Returns the recomputed aggregate rather than the
+    single row, because the caller's next act is to render the average it just changed.
+    """
+    await course_service.check_course_ownership(course_id, current_user.id)
+    await knowledge_repo.rate_course(course_id, current_user.id, body.value, body.comment)
+    average, count, mine = await knowledge_repo.course_rating_summary(course_id, current_user.id)
+    return models.CourseRatingSummary(average=average, count=count, yourRating=mine)
 
 
 @router.get("/courses/dashboard", response_model=models.CoursesDashboardResponse)
@@ -278,6 +454,17 @@ async def create_course(body: models.CourseCreate, current_user: CurrentUser):
         modules=[],
         createdAt=course.created_at,
         updatedAt=course.updated_at,
+        category=course.category,
+        tags=course.tags,
+        outcomes=course.outcomes,
+        instructor=(
+            models.CourseInstructor(name=course.instructor_name, role=course.instructor_role)
+            if course.instructor_name
+            else None
+        ),
+        # A course cannot have been rated in the request that created it, so this is the empty
+        # aggregate rather than a query. `average` stays null, which is what "unrated" reads as.
+        rating=models.CourseRatingSummary(average=None, count=0, yourRating=None),
     )
 
 
@@ -297,6 +484,9 @@ async def get_course(course_id: str, current_user: CurrentUser):
         course_id
     )
     outline_recorded = await knowledge_repo.has_outline_satisfaction(current_user.id, course_id)
+    rating_average, rating_count, your_rating = await knowledge_repo.course_rating_summary(
+        course_id, current_user.id
+    )
 
     # The ORM attributes are snake_case even though the columns are camelCase — the
     # mapping is declared per column, e.g. `user_id: Mapped[str] = mapped_column("userId", ...)`.
@@ -319,6 +509,20 @@ async def get_course(course_id: str, current_user: CurrentUser):
         createdAt=course.created_at,
         updatedAt=course.updated_at,
         outlineSatisfactionRecorded=outline_recorded,
+        category=course.category,
+        tags=course.tags,
+        outcomes=course.outcomes,
+        # The whole object is null when no name is stored, rather than an object with null fields. A
+        # panel keyed on "is there an instructor" is a single check that way; the alternative asks
+        # every reader to know that a nameless instructor means none.
+        instructor=(
+            models.CourseInstructor(name=course.instructor_name, role=course.instructor_role)
+            if course.instructor_name
+            else None
+        ),
+        rating=models.CourseRatingSummary(
+            average=rating_average, count=rating_count, yourRating=your_rating
+        ),
     )
 
 
@@ -521,19 +725,76 @@ async def generate_topic_content(
     body: models.TopicGenerateRequest,
     current_user: CurrentUser,
 ):
-    """Generate AI learning content for a topic (explain, quiz, summary, flashcards)."""
+    """Generate learning content for a topic, and keep what is worth keeping.
+
+    This endpoint used to compose a prompt, receive content, return it and store nothing — so a
+    learner read a generated lesson once, and reopening the topic produced a different one or an empty
+    page. Every type now either persists its result or states that it did not.
+
+    - `explain` writes the lesson: `content`, `objectives`, `knowledgeCheck` and the sections. It is
+      the only type that *is* the topic's body, so it replaces it.
+    - `flashcards` creates real `Flashcard` rows through the flashcard service, where cards live and
+      where SM-2 picks them up for review. It previously returned markdown no deck ever saw.
+    - `quiz` and `summary` are returned and not stored, deliberately. A summary written into `content`
+      would replace the lesson with a condensation of it, and a five-question quiz is not the single
+      check a topic holds. Scored, recorded quizzes belong to the preparation domain.
+
+    `persisted` reports what happened, rather than leaving the caller to infer it from the type.
+    """
     topic, module, _ = await course_service.check_topic_ownership(topic_id, current_user.id)
     if topic.module_id != module_id or module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Topic path mismatch")
 
-    # Delegate to Intelligence layer (LLM)
+    if body.type == "flashcards":
+        if not body.deckId:
+            raise HTTPException(
+                status_code=422,
+                detail="deckId is required for flashcard generation, so the cards land in a deck.",
+            )
+        from src.domains.personal_learning.services import flashcard_service
+
+        cards = await flashcard_service.generate_from_topic(
+            user_id=current_user.id, topic_id=topic_id, deck_id=body.deckId
+        )
+        if not cards:
+            raise HTTPException(status_code=502, detail="No flashcards could be generated")
+        return models.TopicGenerateResponse(
+            type=body.type,
+            topicId=topic_id,
+            # The cards are the artifact. This is a receipt of what was filed, so the caller can show
+            # the result without a second request to the deck.
+            content="\n\n".join(f"**{card.front}**\n\n{card.back}" for card in cards),
+            persisted=f"{len(cards)} flashcards",
+        )
+
+    if body.type == "explain":
+        from src.domains.personal_learning.services.llm_resilient import generate_content_json
+
+        payload = await generate_content_json(
+            lesson_service.build_lesson_prompt(topic.title, topic.content),
+            max_tokens=4096,
+            fallback=None,
+            user_id=current_user.id,
+        )
+        parsed = lesson_service.parse_lesson(payload)
+        if not parsed["sections"]:
+            # Nothing usable came back. Failing is better than persisting an empty lesson over the
+            # topic's existing content, which would destroy a working body to store nothing.
+            raise HTTPException(
+                status_code=502, detail="The generated lesson could not be read. Please try again."
+            )
+
+        markdown = lesson_service.render_markdown(topic.title, parsed)
+        written = await lesson_service.persist_lesson(topic_id, markdown=markdown, parsed=parsed)
+        return models.TopicGenerateResponse(
+            type=body.type, topicId=topic_id, content=markdown, persisted=f"{written} sections"
+        )
+
     from src.domains.intelligence.reasoning.llm import generate_content
 
     prompts = {
-        "explain": f'Explain "{topic.title}" clearly with examples. Markdown format.',
         "quiz": f'Create a 5-question quiz on "{topic.title}" with answers. Markdown.',
         "summary": f'Summarize "{topic.title}" with key points and takeaways. Bullet points.',
-        "flashcards": f'Create 5-7 Q&A flashcards about "{topic.title}". Markdown.',
     }
     prompt = prompts[body.type]
     if topic.content:

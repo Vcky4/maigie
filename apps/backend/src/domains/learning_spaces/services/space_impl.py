@@ -910,7 +910,9 @@ async def import_to_space(db: Any, space_id: str, user_id: str, data: ImportRequ
     from sqlalchemy import text
     from sqlalchemy import update as sa_update
 
+    from src.domains.identity.db_models import User
     from src.domains.knowledge.db_models import Course, Resource
+    from src.domains.knowledge.services.course_service import SPACE_OWNER_INSTRUCTOR_ROLE
     from src.domains.progress.db_models import Goal
 
     imported_stats = {"notes": 0, "courses": 0, "resources": 0, "goals": 0}
@@ -933,12 +935,35 @@ async def import_to_space(db: Any, space_id: str, user_id: str, data: ImportRequ
                 imported_stats["notes"] += 1
 
     # Import Courses
+    #
+    # Bringing a course into a space makes the importer its instructor. Until now a generated course
+    # kept "Maigie" as the credit after being taken into a space, which is wrong for the space: the
+    # person who put it there is the one members will ask about it, and the panel names whoever is
+    # answerable for the material rather than whoever typed it.
+    #
+    # This is a move, not a copy — one row gains a `spaceId` — and the import already requires the
+    # caller to own the course, so there is no second version whose credit could disagree with the
+    # first. If course copying is ever added, the copy is the row that takes the new instructor and
+    # this branch stays as it is.
+    importer_name: str | None = None
+    if data.courseIds:
+        async with factory() as session:
+            importer_name = (
+                await session.execute(select(User.name).where(User.id == user_id))
+            ).scalar_one_or_none()
+
     for course_id in data.courseIds:
         async with factory() as session:
             result = await session.execute(select(Course).where(Course.id == course_id))
             course = result.scalar_one_or_none()
             if course and course.user_id == user_id and not course.space_id:
-                stmt = sa_update(Course).where(Course.id == course_id).values(space_id=space_id)
+                values: dict[str, Any] = {"space_id": space_id}
+                # Only when they have a name to show. An unnamed account would otherwise replace a
+                # real credit with an empty one, and the page would drop the panel on import.
+                if importer_name:
+                    values["instructor_name"] = importer_name
+                    values["instructor_role"] = SPACE_OWNER_INSTRUCTOR_ROLE
+                stmt = sa_update(Course).where(Course.id == course_id).values(**values)
                 await session.execute(stmt)
                 await session.commit()
                 imported_stats["courses"] += 1

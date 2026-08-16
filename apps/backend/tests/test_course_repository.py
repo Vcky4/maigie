@@ -43,6 +43,11 @@ async def repo(monkeypatch):
         knowledge_models.Course.__table__,
         knowledge_models.Module.__table__,
         knowledge_models.Topic.__table__,
+        # `Topic.sections` is a selectin relationship, so loading any topic queries this table even
+        # when the test never mentions a section. Omitting it does not skip section coverage, it
+        # breaks every topic read in the file.
+        knowledge_models.TopicSection.__table__,
+        knowledge_models.CourseRating.__table__,
     ]
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all, tables=tables)
@@ -533,3 +538,179 @@ async def test_topic_position_is_stable_when_two_topics_share_an_order(repo):
 
     assert sorted(positions.values()) == [1, 2]
     assert (await repo.topic_position(course.id, first.id))[0] == positions[first.id]
+
+
+# ---------------------------------------------------------------------------
+# Topic sections
+#
+# The rows behind a lesson. These are the reads and writes the lesson workspace makes on every
+# Continue, so ordering stability and the completion timestamp matter more here than the field
+# mapping — a lesson that reorders itself between two loads loses the learner's place.
+# ---------------------------------------------------------------------------
+
+
+async def _section(repo, topic, *, title="Section", order=1.0, **extra):
+    return await repo.create_topic_section(
+        {"topicId": topic.id, "title": title, "order": order, **extra}
+    )
+
+
+async def test_sections_come_back_in_reading_order(repo):
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    await _section(repo, topic, title="third", order=30)
+    await _section(repo, topic, title="first", order=10)
+    await _section(repo, topic, title="second", order=20)
+
+    listed = await repo.list_topic_sections(topic.id)
+    assert [s.title for s in listed] == ["first", "second", "third"]
+
+
+async def test_section_order_is_stable_when_two_share_an_order(repo):
+    """Tie-broken by id. Without it the outline can reshuffle between two loads of one lesson, and
+    the learner's current section moves under them."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    await _section(repo, topic, title="a", order=10)
+    await _section(repo, topic, title="b", order=10)
+
+    first_pass = [s.id for s in await repo.list_topic_sections(topic.id)]
+    assert first_pass == [s.id for s in await repo.list_topic_sections(topic.id)]
+
+
+async def test_sections_are_scoped_to_their_topic(repo):
+    course = await _course(repo)
+    module = await _module(repo, course)
+    mine = await _topic(repo, module, title="mine", order=1)
+    other = await _topic(repo, module, title="other", order=2)
+    await _section(repo, mine, title="belongs to mine")
+    await _section(repo, other, title="belongs to other")
+
+    assert [s.title for s in await repo.list_topic_sections(mine.id)] == ["belongs to mine"]
+
+
+async def test_the_structured_content_fields_survive_a_round_trip(repo):
+    """These are JSON columns, and the mapping between wire names and attribute names differs for
+    three of them — `durationMinutes`, `keyIdea` and `topicId`. A silent drop here would show the
+    learner a section with a title and no body."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    section = await _section(
+        repo,
+        topic,
+        kind="algorithm",
+        eyebrow="Worked example",
+        summary="How the queue advances",
+        durationMinutes=6,
+        paragraphs=["First paragraph", "Second paragraph"],
+        keyIdea="Oldest discovery leaves first",
+        steps=[{"title": "Enqueue", "detail": "Add the start node"}],
+        bullets=["Use a queue"],
+        code="queue.push(start)",
+    )
+
+    stored = await repo.find_topic_section(section.id)
+    assert stored.kind == "algorithm"
+    assert stored.eyebrow == "Worked example"
+    assert stored.duration_minutes == 6
+    assert stored.paragraphs == ["First paragraph", "Second paragraph"]
+    assert stored.key_idea == "Oldest discovery leaves first"
+    assert stored.steps == [{"title": "Enqueue", "detail": "Add the start node"}]
+    assert stored.bullets == ["Use a queue"]
+    assert stored.code == "queue.push(start)"
+
+
+async def test_completing_a_section_records_when(repo):
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    section = await _section(repo, topic)
+
+    completed = await repo.set_topic_section_completed(section.id, True)
+    assert completed.completed is True
+    assert completed.completed_at is not None
+
+
+async def test_reopening_a_section_clears_its_completion_time(repo):
+    """A pending section must never carry a completion time, or anything building a history counts it
+    as finished. Same contract as `Topic.completedAt`."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    section = await _section(repo, topic)
+
+    await repo.set_topic_section_completed(section.id, True)
+    reopened = await repo.set_topic_section_completed(section.id, False)
+    assert reopened.completed is False
+    assert reopened.completed_at is None
+
+
+async def test_completing_a_section_does_not_complete_its_topic(repo):
+    """The two are different claims: that the learner read this step, and that they consider the topic
+    done. Deriving one from the other would mark a topic complete the moment the reader reached the
+    end, before any check was answered."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    section = await _section(repo, topic)
+
+    await repo.set_topic_section_completed(section.id, True)
+    assert (await repo.find_topic(topic.id)).completed is False
+
+
+async def test_replacing_sections_leaves_only_the_new_ones(repo):
+    """Regeneration rewrites a lesson. Appending would leave the learner scrolling through two
+    versions of it."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    await _section(repo, topic, title="old one", order=10)
+    await _section(repo, topic, title="old two", order=20)
+
+    await repo.delete_topic_sections(topic.id)
+    written = await repo.create_topic_sections(
+        topic.id,
+        [
+            {"title": "new one", "order": 10, "paragraphs": ["a"]},
+            {"title": "new two", "order": 20, "paragraphs": ["b"]},
+        ],
+    )
+
+    assert written == 2
+    assert [s.title for s in await repo.list_topic_sections(topic.id)] == ["new one", "new two"]
+
+
+async def test_bulk_create_of_nothing_writes_nothing(repo):
+    """Guards the empty-list case rather than opening a transaction to insert zero rows."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    assert await repo.create_topic_sections(topic.id, []) == 0
+
+
+async def test_deleting_a_topic_deletes_its_sections(repo):
+    """The foreign key cascades. Without it a rewritten curriculum leaves orphan rows that no topic
+    can reach and nothing will ever clean up."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    section = await _section(repo, topic)
+
+    await repo.delete_topic(topic.id)
+    assert await repo.find_topic_section(section.id) is None
+
+
+async def test_updating_a_section_leaves_omitted_fields_alone(repo):
+    """`exclude_unset` on the request plus `in data` in the mapper: editing a title must not blank the
+    paragraphs the learner is reading."""
+    course = await _course(repo)
+    module = await _module(repo, course)
+    topic = await _topic(repo, module)
+    section = await _section(repo, topic, title="before", paragraphs=["kept"])
+
+    updated = await repo.update_topic_section(section.id, {"title": "after"})
+    assert updated.title == "after"
+    assert updated.paragraphs == ["kept"]

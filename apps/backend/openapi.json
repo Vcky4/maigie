@@ -565,6 +565,18 @@
       },
       "CourseCreate": {
         "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
           "description": {
             "anyOf": [
               {
@@ -586,10 +598,48 @@
               }
             ]
           },
+          "instructorName": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructorname"
+          },
+          "instructorRole": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructorrole"
+          },
           "isAIGenerated": {
             "default": false,
             "title": "Isaigenerated",
             "type": "boolean"
+          },
+          "outcomes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcomes"
           },
           "spaceId": {
             "anyOf": [
@@ -601,6 +651,20 @@
               }
             ],
             "title": "Spaceid"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           },
           "targetDate": {
             "anyOf": [
@@ -627,6 +691,31 @@
         "title": "CourseCreate",
         "type": "object"
       },
+      "CourseInstructor": {
+        "description": "Who authored or teaches the course, when anyone did.\n\nAbsent — the whole object null — for a course the learner generated for themselves, which is most\nof them. Crediting the owner as the instructor of their own course, or crediting \"Maigie\", would\nput a claim on the page that nothing supports.\n\nInitials are not stored or returned: they are the first letters of the name, which is formatting,\nand a stored copy is one more thing that can disagree with the name beside it.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CourseInstructor",
+        "type": "object"
+      },
       "CourseListItem": {
         "description": "A course as it appears in the library, without its modules or topics.\n\n`moduleCount` rather than the modules themselves: a library card shows a count, and the client\ntype comment already records that this is not named `totalModules`.",
         "properties": {
@@ -634,6 +723,17 @@
             "default": false,
             "title": "Archived",
             "type": "boolean"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
           },
           "completedTopics": {
             "default": 0,
@@ -705,6 +805,20 @@
               }
             ],
             "title": "Remaininghours"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           },
           "targetDate": {
             "anyOf": [
@@ -850,6 +964,68 @@
         "title": "CourseOutlineSatisfactionCreate",
         "type": "object"
       },
+      "CourseRatingCreate": {
+        "description": "Rating a course. Re-rating updates the existing row, so the average cannot be weighted by\nsubmitting repeatedly.",
+        "properties": {
+          "comment": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "value": {
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Value",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "CourseRatingCreate",
+        "type": "object"
+      },
+      "CourseRatingSummary": {
+        "description": "The aggregate of a course's ratings, plus this learner's own.\n\n`average` and `count` are null and zero for an unrated course, so the page can show no rating\nrather than a zero — \"nobody has rated this\" and \"everybody rated it 0\" are different statements\nand only one of them is ever true here.\n\n`yourRating` is included so the control can show the learner what they already gave without a\nsecond request, and so re-rating updates rather than adds.",
+        "properties": {
+          "average": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average"
+          },
+          "count": {
+            "default": 0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "yourRating": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yourrating"
+          }
+        },
+        "title": "CourseRatingSummary",
+        "type": "object"
+      },
       "CourseResponse": {
         "description": "A course with its modules, topics and derived progress.\n\n`progress`, `totalTopics` and `completedTopics` are computed per request from the topics rather\nthan read from `Course.progress`, which nothing writes — see the note on that column.",
         "properties": {
@@ -857,6 +1033,17 @@
             "default": false,
             "title": "Archived",
             "type": "boolean"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
           },
           "completedTopics": {
             "default": 0,
@@ -893,6 +1080,16 @@
             "title": "Id",
             "type": "string"
           },
+          "instructor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourseInstructor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "isAIGenerated": {
             "default": false,
             "title": "Isaigenerated",
@@ -906,6 +1103,20 @@
             "title": "Modules",
             "type": "array"
           },
+          "outcomes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcomes"
+          },
           "outlineSatisfactionRecorded": {
             "default": false,
             "title": "Outlinesatisfactionrecorded",
@@ -915,6 +1126,30 @@
             "default": 0.0,
             "title": "Progress",
             "type": "number"
+          },
+          "rating": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CourseRatingSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           },
           "targetDate": {
             "anyOf": [
@@ -970,6 +1205,18 @@
             ],
             "title": "Archived"
           },
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
           "description": {
             "anyOf": [
               {
@@ -991,6 +1238,44 @@
               }
             ]
           },
+          "instructorName": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructorname"
+          },
+          "instructorRole": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instructorrole"
+          },
+          "outcomes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcomes"
+          },
           "spaceId": {
             "anyOf": [
               {
@@ -1001,6 +1286,20 @@
               }
             ],
             "title": "Spaceid"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           },
           "targetDate": {
             "anyOf": [
@@ -1986,9 +2285,42 @@
             ],
             "title": "Deckid"
           },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
           "front": {
             "title": "Front",
             "type": "string"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "memoryHook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memoryhook"
           },
           "sourceId": {
             "anyOf": [
@@ -2161,9 +2493,31 @@
             "title": "Easefactor",
             "type": "number"
           },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
           "front": {
             "title": "Front",
             "type": "string"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
           },
           "id": {
             "title": "Id",
@@ -2172,6 +2526,15 @@
           "intervalDays": {
             "title": "Intervaldays",
             "type": "integer"
+          },
+          "intervalPreviews": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "description": "What each of the four review buttons would do to this card, in days.\n\nA computed field rather than a column, because there is nothing to store: SM-2 is a\ndeterministic function of `intervalDays`, `repetitionCount` and `easeFactor`, which this\nresponse already carries. The review page showed these under each button and they were deleted\nas \"unbacked by any persisted field\" — the wrong conclusion, since the arithmetic needed no\nfield at all.\n\nDerived here rather than in the client for one reason: a preview computed by a second\nimplementation is a second scheduler, and the moment the two disagree the page promises an\ninterval the card will not get. `flashcard_service.project_review` is the only place the rule\nlives, and both the preview and the grade that follows it go through it.",
+            "readOnly": true,
+            "title": "Intervalpreviews",
+            "type": "object"
           },
           "lapseCount": {
             "title": "Lapsecount",
@@ -2192,6 +2555,17 @@
               }
             ],
             "title": "Lastreviewedat"
+          },
+          "memoryHook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memoryhook"
           },
           "nextReviewAt": {
             "format": "date-time",
@@ -2246,7 +2620,8 @@
           "lastQuality",
           "lapseCount",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "intervalPreviews"
         ],
         "title": "FlashcardResponse",
         "type": "object"
@@ -2414,6 +2789,17 @@
             ],
             "title": "Deckid"
           },
+          "explanation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Explanation"
+          },
           "front": {
             "anyOf": [
               {
@@ -2425,6 +2811,28 @@
               }
             ],
             "title": "Front"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "memoryHook": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memoryhook"
           }
         },
         "title": "FlashcardUpdate",
@@ -3118,6 +3526,57 @@
           "isOnboarding"
         ],
         "title": "HomeResponse",
+        "type": "object"
+      },
+      "KnowledgeCheck": {
+        "description": "The end-of-lesson check: one question, its choices, and why the answer is what it is.",
+        "properties": {
+          "choices": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeCheckChoice"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "explanation"
+        ],
+        "title": "KnowledgeCheck",
+        "type": "object"
+      },
+      "KnowledgeCheckChoice": {
+        "description": "One option of a topic's knowledge check.\n\n`correct` is sent to the client deliberately. The check is a self-test at the end of a lesson in\na course the learner owns — it gates nothing, is not scored, and no attempt is recorded — so the\npage grades the answer and shows the explanation without a round trip. An assessment whose result\nmatters belongs in the preparation domain, where the correct answer is not published.",
+        "properties": {
+          "correct": {
+            "default": false,
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "KnowledgeCheckChoice",
         "type": "object"
       },
       "LearnCollectionSummary": {
@@ -11337,10 +11796,45 @@
             ],
             "title": "Estimatedhours"
           },
+          "knowledgeCheck": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "objectives": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objectives"
+          },
           "order": {
             "minimum": 0.0,
             "title": "Order",
             "type": "number"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
           },
           "title": {
             "maxLength": 255,
@@ -11359,6 +11853,17 @@
       "TopicGenerateRequest": {
         "description": "AI content generation type for a topic.",
         "properties": {
+          "deckId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deckid"
+          },
           "type": {
             "enum": [
               "explain",
@@ -11381,6 +11886,17 @@
           "content": {
             "title": "Content",
             "type": "string"
+          },
+          "persisted": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persisted"
           },
           "topicId": {
             "title": "Topicid",
@@ -11405,6 +11921,11 @@
           "courseId": {
             "title": "Courseid",
             "type": "string"
+          },
+          "courseProgress": {
+            "default": 0.0,
+            "title": "Courseprogress",
+            "type": "number"
           },
           "courseTitle": {
             "title": "Coursetitle",
@@ -11493,13 +12014,56 @@
             "title": "Id",
             "type": "string"
           },
+          "knowledgeCheck": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "moduleId": {
             "title": "Moduleid",
             "type": "string"
           },
+          "objectives": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objectives"
+          },
           "order": {
             "title": "Order",
             "type": "number"
+          },
+          "sections": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TopicSectionResponse"
+            },
+            "title": "Sections",
+            "type": "array"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
           },
           "title": {
             "title": "Title",
@@ -11520,6 +12084,468 @@
           "updatedAt"
         ],
         "title": "TopicResponse",
+        "type": "object"
+      },
+      "TopicSectionCreate": {
+        "properties": {
+          "bullets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bullets"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "durationMinutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationminutes"
+          },
+          "eyebrow": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eyebrow"
+          },
+          "keyIdea": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyidea"
+          },
+          "kind": {
+            "default": "concept",
+            "enum": [
+              "concept",
+              "example",
+              "algorithm",
+              "comparison",
+              "check"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "order": {
+            "minimum": 0.0,
+            "title": "Order",
+            "type": "number"
+          },
+          "paragraphs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paragraphs"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TopicSectionStep"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "order"
+        ],
+        "title": "TopicSectionCreate",
+        "type": "object"
+      },
+      "TopicSectionResponse": {
+        "description": "One step of a lesson.\n\n`completed` is per section and lives beside `Topic.completed` rather than replacing it. The two\nanswer different questions — whether the learner has worked through this step, and whether they\nconsider the topic done — and the topic's flag is not derived from the sections', because a\nlearner may mark a topic complete without clicking through every section of it.",
+        "properties": {
+          "bullets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bullets"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "completed": {
+            "default": false,
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "durationMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationminutes"
+          },
+          "eyebrow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eyebrow"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "keyIdea": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyidea"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "number"
+          },
+          "paragraphs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paragraphs"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TopicSectionStep"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topicId": {
+            "title": "Topicid",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topicId",
+          "order",
+          "kind",
+          "title",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "TopicSectionResponse",
+        "type": "object"
+      },
+      "TopicSectionStep": {
+        "description": "One step of a walkthrough. Kept as a title and a detail rather than a single string, because\nthe reader renders the title as a heading and the detail as prose beneath it.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "detail"
+        ],
+        "title": "TopicSectionStep",
+        "type": "object"
+      },
+      "TopicSectionUpdate": {
+        "description": "Every field optional, and read with `exclude_unset=True` so omitting a key leaves it alone\nwhile sending an explicit null clears it.",
+        "properties": {
+          "bullets": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bullets"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "durationMinutes": {
+            "anyOf": [
+              {
+                "maximum": 600.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationminutes"
+          },
+          "eyebrow": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eyebrow"
+          },
+          "keyIdea": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyidea"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "concept",
+                  "example",
+                  "algorithm",
+                  "comparison",
+                  "check"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "paragraphs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paragraphs"
+          },
+          "steps": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TopicSectionStep"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steps"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "TopicSectionUpdate",
         "type": "object"
       },
       "TopicUpdate": {
@@ -11558,6 +12584,30 @@
             ],
             "title": "Estimatedhours"
           },
+          "knowledgeCheck": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeCheck"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "objectives": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objectives"
+          },
           "order": {
             "anyOf": [
               {
@@ -11569,6 +12619,17 @@
               }
             ],
             "title": "Order"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
           },
           "title": {
             "anyOf": [
@@ -13753,7 +14814,7 @@
     },
     "/api/v1/knowledge/courses/{course_id}/modules/{module_id}/topics/{topic_id}/generate": {
       "post": {
-        "description": "Generate AI learning content for a topic (explain, quiz, summary, flashcards).",
+        "description": "Generate learning content for a topic, and keep what is worth keeping.\n\nThis endpoint used to compose a prompt, receive content, return it and store nothing — so a\nlearner read a generated lesson once, and reopening the topic produced a different one or an empty\npage. Every type now either persists its result or states that it did not.\n\n- `explain` writes the lesson: `content`, `objectives`, `knowledgeCheck` and the sections. It is\n  the only type that *is* the topic's body, so it replaces it.\n- `flashcards` creates real `Flashcard` rows through the flashcard service, where cards live and\n  where SM-2 picks them up for review. It previously returned markdown no deck ever saw.\n- `quiz` and `summary` are returned and not stored, deliberately. A summary written into `content`\n  would replace the lesson with a condensation of it, and a five-question quiz is not the single\n  check a topic holds. Scored, recorded quizzes belong to the preparation domain.\n\n`persisted` reports what happened, rather than leaving the caller to infer it from the type.",
         "operationId": "generate_topic_content_api_v1_knowledge_courses__course_id__modules__module_id__topics__topic_id__generate_post",
         "parameters": [
           {
@@ -13879,6 +14940,112 @@
           }
         ],
         "summary": "Record Outline Satisfaction",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/courses/{course_id}/rating": {
+      "get": {
+        "description": "The course's aggregate rating, and this learner's own.",
+        "operationId": "get_course_rating_api_v1_knowledge_courses__course_id__rating_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseRatingSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Course Rating",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      },
+      "put": {
+        "description": "Rate a course, or change an existing rating.\n\n`PUT`, not `POST`: one learner has at most one rating per course, so submitting twice sets the\nsame resource rather than creating a second. Returns the recomputed aggregate rather than the\nsingle row, because the caller's next act is to render the average it just changed.",
+        "operationId": "rate_course_api_v1_knowledge_courses__course_id__rating_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CourseRatingCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CourseRatingSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Rate Course",
         "tags": [
           "knowledge",
           "knowledge"
@@ -14287,6 +15454,366 @@
           }
         ],
         "summary": "Get Topic",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}/sections": {
+      "get": {
+        "description": "The sections of a topic, in reading order.\n\nA bare list rather than a pagination envelope: a lesson has a handful of sections, every caller\nwants all of them, and the reader cannot render a partial lesson — paging it would let the\nnext/previous controls run off the end of a page.",
+        "operationId": "list_topic_sections_api_v1_knowledge_topics__topic_id__sections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TopicSectionResponse"
+                  },
+                  "title": "Response List Topic Sections Api V1 Knowledge Topics  Topic Id  Sections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Topic Sections",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      },
+      "post": {
+        "description": "Add one section to a topic.",
+        "operationId": "create_topic_section_api_v1_knowledge_topics__topic_id__sections_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicSectionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Topic Section",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      },
+      "put": {
+        "description": "Replace a topic's sections wholesale.\n\nA replace rather than an append, because the caller is generation rewriting a lesson, and\nappending would leave the new body after the old one with the learner scrolling through two\nversions. Deleting and inserting in that order means a failed insert leaves no sections rather\nthan a mixture of both, which is the more obvious failure and the one the reader already handles\nby falling back to `Topic.content`.\n\n**This discards per-section completion for the topic**, because the sections it belonged to no\nlonger exist. That is the honest outcome of replacing the body: progress through a lesson that has\nbeen rewritten does not transfer, and silently carrying it across by position would tell the\nlearner they had read paragraphs that were not there when they read it.",
+        "operationId": "replace_topic_sections_api_v1_knowledge_topics__topic_id__sections_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "items": {
+                  "$ref": "#/components/schemas/TopicSectionCreate"
+                },
+                "title": "Body",
+                "type": "array"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TopicSectionResponse"
+                  },
+                  "title": "Response Replace Topic Sections Api V1 Knowledge Topics  Topic Id  Sections Put",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Topic Sections",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}/sections/{section_id}": {
+      "delete": {
+        "description": "Remove one section.",
+        "operationId": "delete_topic_section_api_v1_knowledge_topics__topic_id__sections__section_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Topic Section",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      },
+      "put": {
+        "description": "Edit one section.",
+        "operationId": "update_topic_section_api_v1_knowledge_topics__topic_id__sections__section_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicSectionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Topic Section",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}/sections/{section_id}/complete": {
+      "patch": {
+        "description": "Mark a section worked through, or reopen it.\n\n`completed` defaults to true, unlike the topic toggle which requires it. Advancing through a\nlesson is the overwhelmingly common call and the reader sends it on every Continue; reopening is\nrare and deliberate, so it is the one that has to say so.\n\n**This does not touch `Topic.completed`, and finishing the last section does not complete the\ntopic.** The two are different claims: that the learner read every section, and that they consider\nthe topic done. Deriving one from the other would either mark a topic complete the moment the\nreader scrolled to the end — before any check was answered — or reopen a topic the learner had\nexplicitly finished because a section was later added to it. Course progress therefore does not\nmove here, which is why `recount_course_progress` is not called.",
+        "operationId": "complete_topic_section_api_v1_knowledge_topics__topic_id__sections__section_id__complete_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_id",
+            "required": true,
+            "schema": {
+              "title": "Section Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "completed",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Completed",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Complete Topic Section",
         "tags": [
           "knowledge",
           "knowledge"
