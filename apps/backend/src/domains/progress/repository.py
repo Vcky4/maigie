@@ -434,7 +434,8 @@ class ProgressRepository:
         "duration": "duration",
         "courseId": "course_id",
         "topicId": "topic_id",
-        "spaceId": "space_id",
+        # No `spaceId`. Removed with the column in migration 032: a mapping for a field nothing sends,
+        # onto a column that no longer exists, is two ways to be wrong at once.
         "metadata": "metadata_json",
     }
 

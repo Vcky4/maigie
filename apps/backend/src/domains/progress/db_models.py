@@ -237,7 +237,10 @@ class StudySession(Base, TimestampMixin):
     # Context
     course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
-    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    # No space column. A sitting is not space-scoped work yet: nothing wrote the field, and
+    # `StartSessionRequest` accepts only `courseId` and `topicId`, so it was a claim the schema made and
+    # the product did not support — see migration 032. Space attribution stays derivable through
+    # `Course.spaceId` until a feature needs it directly, at which point it arrives with a writer.
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     __table_args__ = (
