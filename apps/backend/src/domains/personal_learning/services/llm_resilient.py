@@ -277,6 +277,23 @@ async def generate_content(
                     call_fn(prompt, max_tokens=max_tokens, temperature=temperature),
                     timeout=timeout_s,
                 )
+                # An empty reply is a failed attempt, not a successful one.
+                #
+                # This was the root cause of a `500` on the study-diagram route. A provider answered with an
+                # empty string, which this returned as a success — so it was never retried, never fell
+                # through to the next provider, and `_record_success` even credited the circuit breaker for
+                # it. The caller then handed "" to a JSON parser and got `Expecting value: line 1 column 1`.
+                #
+                # A retry was all that failure needed: asked again moments later, the same provider produced
+                # the diagram correctly. Treating it as an exception puts it through the machinery that
+                # already exists for exactly this — backoff, then the next provider — rather than adding a
+                # second recovery path beside it.
+                #
+                # No generation in this product has a use for an empty string: every caller either parses it
+                # or displays it. A caller that supplied a `fallback` still gets it if every provider comes
+                # back empty, so the only behaviour that changes is that a transient blank is now retried.
+                if not (result or "").strip():
+                    raise ValueError("provider returned an empty response")
                 _record_success(provider)
                 logger.info(f"LLM [{provider}] succeeded: response_length={len(result)}")
                 return result
@@ -454,6 +471,14 @@ async def generate_content_json(
         cleaned = cleaned.strip()
         if cleaned.startswith("json"):
             cleaned = cleaned[4:].strip()
+
+        # An empty reply is not malformed JSON, and saying so matters when something goes wrong in
+        # production. `json.loads("")` reports `Expecting value: line 1 column 1 (char 0)`, which reads as a
+        # parsing problem and sends whoever is debugging it looking at the prompt or the repair logic — when
+        # what actually happened is that the provider returned nothing at all. Raised rather than returned so
+        # the fallback handling below is unchanged; only the diagnosis improves.
+        if not cleaned:
+            raise ValueError("The model returned an empty response, so there was no JSON to parse")
 
         try:
             return json.loads(cleaned)

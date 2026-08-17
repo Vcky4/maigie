@@ -76,7 +76,26 @@ async def generate_for_topic(
         f"What to illustrate: {subject}\n"
     )
 
-    result = await generate_content_json(prompt, max_tokens=1200, temperature=0.4, user_id=user_id)
+    result = await generate_content_json(
+        prompt,
+        # Raised from 1200. The reply has to carry up to thirty lines of mermaid, a LaTeX equation and a
+        # caption, JSON-escaped — and this is the third time in this programme a generation has been sized
+        # for the happy case and truncated on a real one. 1200 was not the cause of the `500` below (an empty
+        # reply is not a truncated one) but it is close enough to the ceiling to be worth moving.
+        max_tokens=2048,
+        temperature=0.4,
+        # **The fix for a `500` on this route.** `fallback=None` — the default, and what this call site used
+        # to pass by omission — means "no fallback, raise", not "return None". So an unparseable or empty
+        # model reply escaped as a raw `JSONDecodeError` all the way out of the request, and the learner got
+        # an unhandled `500` with a stack trace instead of "try again".
+        #
+        # This is the *same defect* that was found and fixed on the lesson-generation and outline routes; the
+        # ambiguity is documented on `generate_content_json` itself and this third call site was missed. `{}`
+        # is a dict, so it passes the shape check below and falls into the empty-diagram branch, which is the
+        # actionable error the route turns into a `502`.
+        fallback={},
+        user_id=user_id,
+    )
     if not isinstance(result, dict):
         raise ValidationError("The model did not return a diagram.")
 

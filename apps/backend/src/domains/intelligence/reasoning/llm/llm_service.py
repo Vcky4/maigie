@@ -105,9 +105,15 @@ class LlmService:
         where each module has ``title``, ``description`` and a list of topic titles.
 
         Raises:
-            LlmGenerationError: If the model returned nothing parseable or an outline
-                with no modules. Failing here rather than returning ``{}`` keeps the
+            LlmGenerationError: If the model returned an outline of the wrong shape or
+                one with no modules. Failing here rather than returning ``{}`` keeps the
                 cause attached to the error.
+            json.JSONDecodeError: If the reply was not parseable at all. ``fallback=None``
+                means "no fallback — raise", so a malformed reply surfaces as the parse
+                error rather than as ``LlmGenerationError``. Stated because the two are
+                not interchangeable to a caller writing an ``except``: the sole caller,
+                ``generate_course_content_task``, catches ``Exception`` and reports over
+                its websocket, which is why this has never leaked a ``500``.
         """
         from src.domains.personal_learning.services.llm_resilient import generate_content_json
 

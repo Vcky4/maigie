@@ -46,7 +46,7 @@ from src.domains.identity.repository import IdentityRepository
 from src.domains.knowledge.services import illustration_service
 from src.shared.auth import CurrentUser
 from src.shared.auth.jwt import decode_access_token
-from src.shared.exceptions import MaigieError, SubscriptionLimitError
+from src.shared.exceptions import MaigieError, SubscriptionLimitError, ValidationError
 
 from . import bridge, context, diagram, notes, session_store, settlement
 from .billing import min_session_credits
@@ -85,14 +85,27 @@ async def study_diagram(
             detail=message or "Not enough credits for a diagram.",
         )
 
-    result = await diagram.generate_for_topic(
-        current_user.id,
-        topic_id=body.topic_id,
-        topic_title=body.topic_title,
-        course_title=body.course_title,
-        hint=body.hint,
-        transcript_tail=body.transcript_tail,
-    )
+    try:
+        result = await diagram.generate_for_topic(
+            current_user.id,
+            topic_id=body.topic_id,
+            topic_title=body.topic_title,
+            course_title=body.course_title,
+            hint=body.hint,
+            transcript_tail=body.transcript_tail,
+        )
+    except ValidationError as exc:
+        # `502`, not the `400` the global handler would give a `ValidationError`, and not the `500` this used
+        # to answer. Nothing is wrong with the request: the learner pressed a button and the model upstream
+        # returned nothing usable. `400` would tell them to change something they did not choose, and the
+        # `500` they were getting came with a stack trace and no charge reversal story.
+        #
+        # Same status and same reasoning as the lesson-generation route, which reached this conclusion first.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=getattr(exc, "detail", None)
+            or "The diagram could not be drawn just now. Try again in a moment.",
+        ) from exc
 
     # Charged after the diagram exists, not before. A generation that failed is not something to bill for,
     # and the learner would have no diagram to show for the credits.
