@@ -53,6 +53,17 @@ def standby_idle_seconds() -> float:
     return float(get_settings().GEMINI_LIVE_STANDBY_IDLE_SECONDS)
 
 
+def abandoned_after_seconds() -> float:
+    """Silence this long means the sitting is over, not paused.
+
+    Two orders of magnitude above `standby_idle_seconds`, and answering a different question. Standby is
+    "should this moment be billed"; this is "is anyone still here". A learner who walks away leaving the tab
+    open otherwise holds a session open indefinitely — billed by the minute if they are on FREE, and never
+    reaching the teardown that writes the note they asked for.
+    """
+    return float(get_settings().GEMINI_LIVE_ABANDONED_AFTER_SECONDS)
+
+
 def billing_tick_seconds() -> float:
     return float(get_settings().GEMINI_LIVE_BILLING_TICK_SECONDS)
 

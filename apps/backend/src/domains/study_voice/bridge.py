@@ -44,6 +44,7 @@ from src.shared.exceptions import SubscriptionLimitError
 from . import session_store
 from .billing import (
     BILLING_WALL_CLOCK,
+    abandoned_after_seconds,
     billing_flush_interval_seconds,
     billing_min_consume_chunk,
     billing_mode_for_tier,
@@ -201,6 +202,7 @@ async def run_bridge(
         """
         tick = billing_tick_seconds()
         idle_gap = standby_idle_seconds()
+        abandoned_gap = abandoned_after_seconds()
         min_chunk = billing_min_consume_chunk()
         flush_interval = billing_flush_interval_seconds()
         loop = asyncio.get_running_loop()
@@ -217,6 +219,39 @@ async def run_bridge(
                     continue
                 delta = max(0.0, now - state.tick_last_mono)
                 state.tick_last_mono = now
+
+                # Abandonment. Reusing this loop because it is the only thing already ticking, and adding a
+                # second timer to watch the first one's data would be two clocks disagreeing about when the
+                # session ended.
+                #
+                # Two things depend on a session actually ending. A FREE learner is billed wall-clock, so an
+                # empty room costs them by the minute. And the end-of-session note is written at teardown, so
+                # a learner who switched note-taking on, talked for half an hour and then walked away without
+                # closing the tab would never get the note they asked for. Ending on silence is also simply
+                # true: a voice session with nobody in it is over.
+                #
+                # `force_disconnect` rather than an exception: it is the same signal the credit-exhaustion
+                # path uses, so the relay unwinds through its own `finally` and settles normally.
+                last_speech = max(
+                    state.last_user_audio_mono or 0.0, state.last_ai_audio_mono or 0.0
+                )
+                if last_speech and (now - last_speech) >= abandoned_gap:
+                    logger.info(
+                        "Voice session %s abandoned after %.0fs of silence — ending it",
+                        session_id,
+                        now - last_speech,
+                    )
+                    state.force_disconnect = True
+                    await _send_json(
+                        send_to_client,
+                        {
+                            "type": "stopped",
+                            "session_id": session_id,
+                            "reason": "abandoned",
+                            "message": "Voice study ended because the room went quiet.",
+                        },
+                    )
+                    break
 
                 if state.billing_mode == BILLING_WALL_CLOCK:
                     bill_delta = delta

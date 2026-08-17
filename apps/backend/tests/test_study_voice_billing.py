@@ -261,11 +261,65 @@ async def test_a_session_starts_with_no_note():
 
 
 @pytest.mark.asyncio
+async def test_note_taking_starts_off():
+    """The default that makes the rest of this defensible.
+
+    A session buffers the transcript in memory because it needs it to run. With note-taking off, nothing is
+    ever written from that buffer — which is the difference between this and the automatic writer that used
+    to summarise a learner's conversation into their notes without asking.
+    """
+    created = await session_store.create("user-1", system_instruction="a", topic_id="t1")
+    assert created.note_taking is False
+    assert created.turns_at_last_note == 0
+
+
+@pytest.mark.asyncio
+async def test_note_taking_can_be_switched_on_and_off_again():
+    created = await session_store.create("user-1", system_instruction="a", topic_id="t1")
+
+    on = await session_store.set_note_taking(created.session_id, True)
+    assert on is not None and on.note_taking is True
+    assert (await session_store.get(created.session_id)).note_taking is True
+
+    off = await session_store.set_note_taking(created.session_id, False)
+    assert off is not None and off.note_taking is False
+    assert (await session_store.get(created.session_id)).note_taking is False
+
+
+@pytest.mark.asyncio
+async def test_toggling_note_taking_on_an_unknown_session_reports_it():
+    """`None` rather than a silent success.
+
+    A learner who pressed Take note and got no acknowledgement will believe the conversation is being kept
+    and expect a note that was never going to be written. Failing visibly is the lesser harm.
+    """
+    assert await session_store.set_note_taking("not-a-session", True) is None
+
+
+@pytest.mark.asyncio
+async def test_note_taking_survives_a_reconnect():
+    """The toggle lives on the record, not on the socket.
+
+    The web client re-sends `start_session` with the same id after a dropped connection, and the note is
+    written at teardown of whichever relay ends the sitting. If the flag lived in the socket's memory, a
+    learner whose connection blipped would silently stop having their session written up.
+    """
+    created = await session_store.create("user-1", system_instruction="a", topic_id="t1")
+    await session_store.set_note_taking(created.session_id, True)
+
+    reloaded = await session_store.get(created.session_id)
+    assert reloaded is not None and reloaded.note_taking is True
+
+
+@pytest.mark.asyncio
 async def test_a_session_remembers_the_note_it_was_saved_to():
     created = await session_store.create("user-1", system_instruction="a", topic_id="t1")
-    await session_store.remember_note(created.session_id, "note-9")
+    await session_store.remember_note(created.session_id, "note-9", turns=12)
     reloaded = await session_store.get(created.session_id)
     assert reloaded is not None and reloaded.note_id == "note-9"
+    # The conversation length at the time of writing, which is what lets a later pass tell "there is more to
+    # say" from "nothing has happened since" — and so refuse to charge twice for one note.
+    assert reloaded.turns_at_last_note == 12
 
 
 @pytest.mark.asyncio

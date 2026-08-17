@@ -80,6 +80,18 @@ class VoiceSession:
     #: "a note on this topic" — the learner may have several — and pressing save twice should rewrite one
     #: note rather than leave two accounts of the same sitting.
     note_id: str | None = None
+    #: Whether the learner has asked for this conversation to become a note.
+    #:
+    #: Off by default, which is the whole consent design: with this false the transcript is still buffered in
+    #: memory to run the session, and nothing is ever written from it. Turning it on is the learner saying
+    #: "keep this and write it up", and it is what makes the note at teardown legitimate rather than the
+    #: unasked-for automatic writer this module was built to remove.
+    note_taking: bool = False
+    #: Turn count at the last note write, so a regeneration with nothing new to say can be refused.
+    #:
+    #: `has_enough_for_a_note` counts the whole buffer, so without this marker a second write after two
+    #: silent minutes would re-run the model over the same conversation and charge for it again.
+    turns_at_last_note: int = 0
     #: Whether the wall-clock session minimum has already been charged for this session.
     #:
     #: The web client retries a dropped socket up to five times, re-sending `start_session` with the *same*
@@ -99,6 +111,10 @@ class VoiceSession:
         known["system_instruction"] = str(known.get("system_instruction") or "")
         known["created_at"] = str(known.get("created_at") or "")
         known["floor_settled"] = bool(known.get("floor_settled"))
+        known["note_taking"] = bool(known.get("note_taking"))
+        # Coerced rather than trusted: a record written before this field existed has no value for it, and
+        # `None` would fail the comparison in `notes.py` rather than reading as "no note yet".
+        known["turns_at_last_note"] = int(known.get("turns_at_last_note") or 0)
         return cls(**known)
 
 
@@ -202,13 +218,34 @@ async def update_context(
     return session
 
 
-async def remember_note(session_id: str, note_id: str) -> None:
-    """Tie a note to this session, so saving again rewrites it instead of writing a second one."""
+async def remember_note(session_id: str, note_id: str, *, turns: int = 0) -> None:
+    """Tie a note to this session, and record how much conversation it already covers.
+
+    `turns` is the transcript length at the moment of writing. It is what lets a later write tell "there is
+    more to say" from "nothing has happened since", which matters once a note is also written at teardown:
+    a learner who wrote one manually and then stopped talking should not pay for an identical second pass.
+    """
     session = await get(session_id)
     if session is None:
         return
     session.note_id = note_id
+    session.turns_at_last_note = turns
     await _persist(session)
+
+
+async def set_note_taking(session_id: str, enabled: bool) -> VoiceSession | None:
+    """Turn note-taking on or off for this session.
+
+    Returns the updated record, or `None` when the session is gone — the caller reports that rather than
+    silently succeeding, because a learner who pressed Take note and got no acknowledgement will assume it
+    is on and expect a note that was never going to be written.
+    """
+    session = await get(session_id)
+    if session is None:
+        return None
+    session.note_taking = enabled
+    await _persist(session)
+    return session
 
 
 async def claim_session_floor(session_id: str) -> bool:

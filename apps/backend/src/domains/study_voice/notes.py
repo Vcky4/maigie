@@ -18,9 +18,39 @@ If they never press it, the conversation is never written anywhere and is gone w
 ## One note per session
 
 Pressing it twice does not make two notes. The note id is remembered on the session record, and a second
-request rewrites that note from the fuller conversation. `note_service.update_note` snapshots the previous
-version first, so a learner who edited the note by hand between saves can get their wording back rather than
-discovering it silently replaced.
+request revises that note. `note_service.update_note` snapshots the previous version first, so a learner who
+edited the note by hand between saves can get their wording back rather than discovering it silently
+replaced.
+
+## Revising, not replacing
+
+A second pass is given **the note that exists plus the conversation**, and asked to extend it. The first
+implementation sent only the transcript and overwrote whatever was there, which loses two different things:
+
+- **The learner's own edits.** They fix a mistake or add a thought, the next write regenerates from the
+  transcript, and their wording is gone from `content` — recoverable only by digging through version history.
+- **The early part of a long session.** The transcript buffer is bounded (`MAX_TURNS`, `MAX_CHARS`) and
+  `render` cuts it again, so in a long sitting the opening conversation has aged out of memory. Overwriting
+  then replaces a note that *did* cover the beginning with one that cannot, and the source no longer exists
+  to recover it from.
+
+The second is the one that makes this necessary rather than nice. Once the note is the durable record, the
+transcript can stay a disposable buffer — which is the property this module was designed around, and
+revision strengthens it rather than trading against it.
+
+The prompt for a revision is deliberately conservative: keep what is there, add what is new, correct only
+what the conversation actually contradicts. Rewriting freely on every pass is a telephone game, and a note
+revised five times would drift away from what was said the first time.
+
+## When the note is written
+
+Two moments, and the toggle decides whether the second happens:
+
+- **On request**, as before — the learner asks and gets a note immediately.
+- **At the end of the session**, if note-taking was switched on. That is the normal path and the reason the
+  toggle exists: one generation covering the whole sitting, rather than a charge every few minutes. It runs
+  from the relay's teardown, on the same `on_done` hook credit settlement uses, so it survives a socket
+  drop, a cancelled task and a closed tab.
 """
 
 from __future__ import annotations
@@ -68,17 +98,49 @@ _PROMPT = (
     "Transcript:\n"
 )
 
+#: The revision prompt, used when a note for this session already exists.
+#:
+#: Deliberately narrow. The obvious instruction — "here is a note and a transcript, write a better note" —
+#: lets the model rewrite everything on every pass, which over several revisions drifts away from what was
+#: actually said and quietly discards anything the learner typed themselves. So the existing note is framed
+#: as the thing to *keep*, and the transcript as the thing to fold in.
+_REVISE_PROMPT = (
+    "Below is a note a learner already has, followed by the full transcript of the spoken tutoring "
+    "session it came from. The session has continued since the note was written.\n"
+    "Produce the updated note.\n"
+    "\n"
+    "Output exactly two parts and nothing else:\n"
+    "TITLE: a short, specific title naming what was actually discussed\n"
+    "CONTENT: the note body in Markdown\n"
+    "\n"
+    "Rules:\n"
+    "- **Keep the existing note.** Preserve its points, its wording and its order. Parts of it may have "
+    "been written or edited by the learner themselves, and parts may describe conversation that is no "
+    "longer in the transcript below — both must survive.\n"
+    "- Add what the rest of the conversation covered, in the same voice.\n"
+    "- Change an existing point only where the conversation actually corrected it. Then state the correct "
+    "idea; do not narrate the correction.\n"
+    "- Merge a repeated point rather than listing it twice.\n"
+    "- Only widen the title if the session has genuinely moved beyond what it names.\n"
+    "- Write what was worked out, in the learner's interest. Never write \"the tutor explained\" or "
+    '"we discussed".\n'
+    "- Do not invent anything that is in neither the note nor the transcript.\n"
+    "- No preamble, no closing summary, no headings above the first point.\n"
+    "\n"
+    "Existing note:\n"
+)
+
 
 async def save_session_note(
     user: User,
     session: VoiceSession,
     transcript: SessionTranscript,
 ) -> dict[str, object]:
-    """Write or rewrite this session's note. Returns `{note_id, title, content, created}`.
+    """Write or revise this session's note. Returns `{note_id, title, content, created}`.
 
-    Raises `ValidationError` when there is not enough conversation, and `SubscriptionLimitError` when the
-    learner cannot pay for the generation. Both are reported to the learner rather than swallowed — they
-    pressed a button and are owed an answer either way.
+    Raises `ValidationError` when there is not enough conversation — or not enough *new* conversation since
+    the last note — and `SubscriptionLimitError` when the learner cannot pay for the generation. Both are
+    reported rather than swallowed on the request path: the learner pressed a button and is owed an answer.
     """
     if not transcript.has_enough_for_a_note():
         raise ValidationError(
@@ -88,6 +150,27 @@ async def save_session_note(
     if not session.topic_id:
         raise ValidationError("A note needs a lesson to belong to, and this session has none.")
 
+    # Nothing said since the last note means there is nothing to add to it. Refused rather than run, because
+    # a second pass over identical material spends a model call and 100 credits to produce the note that is
+    # already on screen. This matters most on the teardown path, which fires whether or not the learner kept
+    # talking after writing one by hand.
+    existing_note = None
+    if session.note_id:
+        new_turns = transcript.turn_count - session.turns_at_last_note
+        if new_turns < MIN_TURNS_FOR_NOTE:
+            raise ValidationError(
+                "Your note is already up to date with this conversation."
+            )
+        # Fetched before the generation, because a revision has to be given what it is revising. A note the
+        # learner deleted in the meantime reads as "write a fresh one" rather than as a failure.
+        try:
+            existing_note = await note_service.get_note(user_id=user.id, note_id=session.note_id)
+        except NotFoundError:
+            logger.info("Session note %s is gone — writing a new one", session.note_id)
+
+    # Checked before the generation and charged after it, so a learner who cannot pay is told before a model
+    # call is spent, and a generation that fails is not billed. Both halves matter: the check alone would
+    # bill for failures, and the charge alone would spend a call the learner cannot cover.
     cost = CREDIT_COSTS.get("voice_session_note", 100)
     available, message = await check_credit_availability(user, cost)
     if not available:
@@ -96,19 +179,27 @@ async def save_session_note(
             detail=message or "Not enough credits to write this note.",
         )
 
-    title, content = await _write(user.id, transcript.render(_MAX_TRANSCRIPT_CHARS))
+    rendered = transcript.render(_MAX_TRANSCRIPT_CHARS)
+    if existing_note is not None:
+        title, content = await _revise(
+            user.id,
+            existing_title=existing_note.title or _DEFAULT_TITLE,
+            existing_content=existing_note.content or "",
+            transcript_text=rendered,
+        )
+    else:
+        title, content = await _write(user.id, rendered)
 
     note = None
     created = False
-    if session.note_id:
+    if existing_note is not None:
         try:
             note = await note_service.update_note(
-                user_id=user.id, note_id=session.note_id, data={"title": title, "content": content}
+                user_id=user.id, note_id=existing_note.id, data={"title": title, "content": content}
             )
         except NotFoundError:
-            # The learner deleted the note between saves. Tidying up is not an error, so write a new one
-            # rather than reporting a failure.
-            logger.info("Session note %s is gone — writing a new one", session.note_id)
+            # Deleted between the read and the write. Rare, and the answer is the same as above.
+            logger.info("Session note %s vanished mid-write — writing a new one", existing_note.id)
 
     if note is None:
         note = await note_service.create_note(
@@ -121,7 +212,12 @@ async def save_session_note(
             },
         )
         created = True
-        await session_store.remember_note(session.session_id, note.id)
+
+    # Recorded on both paths, not just creation. The marker is what the "nothing new to say" check above
+    # reads, so a revision that did not update it would let the next pass re-run over the same turns.
+    await session_store.remember_note(
+        session.session_id, note.id, turns=transcript.turn_count
+    )
 
     # Charged after the note exists. A failed generation is not something to bill for.
     try:
@@ -141,7 +237,95 @@ async def save_session_note(
     }
 
 
+async def finalise_session_note(
+    user: User,
+    session_id: str,
+    transcript: SessionTranscript,
+) -> dict[str, object] | None:
+    """Write the note at the end of a session, if the learner asked for one. Never raises.
+
+    This is the normal path, and the toggle is what authorises it: with `note_taking` off this returns
+    immediately and the conversation is never written anywhere. One generation covering the whole sitting is
+    the point — the alternative considered was a periodic refresh, which at 100 credits a pass would charge a
+    forty-minute session eight times for one note.
+
+    ## Why it cannot raise
+
+    It runs from the relay's teardown, on the same hook that settles the bill. An exception escaping here
+    would ride up through a `finally` whose other job is charging for the session, so a model outage could
+    become a free session or a lost settlement. There is also nobody left to tell: the socket is closing.
+    Failures are logged and the conversation is lost, which is the honest outcome — the learner asked for a
+    note and did not get one, and inventing a partial one would be worse.
+
+    ## Why the session record is re-read
+
+    `note_taking` is toggled by a frame at any point during the session, and the record handed to the relay
+    at `start_session` predates all of it. Reading it fresh is also what makes a note correct after a
+    reconnect, since the learner's toggle survives on the record rather than in the dropped socket.
+    """
+    try:
+        session = await session_store.get(session_id)
+        if session is None:
+            # Expired, or stopped explicitly. Nothing to write against, and no way to know what the learner
+            # had asked for, so this is silent rather than a warning.
+            return None
+        if not session.note_taking:
+            return None
+        if session.user_id != user.id:
+            # Cannot happen through the socket, which checks ownership before starting. Guarded anyway,
+            # because this writes a note into somebody's library and the check is one comparison.
+            logger.warning("Refusing to finalise a note for a session belonging to another learner")
+            return None
+
+        saved = await save_session_note(user, session, transcript)
+    except ValidationError as exc:
+        # The ordinary endings: a session too short to write about, or one already up to date because the
+        # learner wrote the note by hand and then stopped talking. Neither is a fault.
+        logger.info("No end-of-session note for user %s: %s", user.id, exc)
+        return None
+    except SubscriptionLimitError:
+        logger.info("End-of-session note for user %s was not written: out of credits", user.id)
+        return None
+    except Exception:
+        logger.exception("Failed to write the end-of-session note for user %s", user.id)
+        return None
+
+    logger.info(
+        "Wrote end-of-session note %s for user %s", saved.get("note_id"), user.id
+    )
+    return saved
+
+
 async def _write(user_id: str, transcript_text: str) -> tuple[str, str]:
+    """A first note, from the conversation alone."""
+    return await _generate(user_id, _PROMPT + transcript_text)
+
+
+async def _revise(
+    user_id: str,
+    *,
+    existing_title: str,
+    existing_content: str,
+    transcript_text: str,
+) -> tuple[str, str]:
+    """An updated note, from the note that exists plus the conversation.
+
+    A larger budget than a first write: the reply has to carry the whole existing note forward as well as
+    what is new, and a truncated revision is a note with its ending cut off — which, because this replaces
+    the note's content, would *lose* the part that was cut. That is the one failure mode here worse than not
+    revising at all.
+
+    The existing note is passed whole rather than trimmed. Trimming it would silently drop the oldest points,
+    which are precisely the ones the transcript can no longer supply.
+    """
+    prompt = (
+        f"{_REVISE_PROMPT}TITLE: {existing_title}\nCONTENT:\n{existing_content}\n\nTranscript:\n"
+        f"{transcript_text}"
+    )
+    return await _generate(user_id, prompt, max_tokens=4096)
+
+
+async def _generate(user_id: str, prompt: str, *, max_tokens: int = 2048) -> tuple[str, str]:
     """Ask for a title and a body, and take what comes back literally.
 
     The two-line format is parsed rather than guessed at: a reply that does not follow it falls back to
@@ -149,8 +333,8 @@ async def _write(user_id: str, transcript_text: str) -> tuple[str, str]:
     an error message where their note should be.
     """
     response = await generate_content(
-        _PROMPT + transcript_text,
-        max_tokens=2048,
+        prompt,
+        max_tokens=max_tokens,
         temperature=0.4,
         user_id=user_id,
     )

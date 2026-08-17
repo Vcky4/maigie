@@ -226,11 +226,15 @@ async def _user_from_token(token: str) -> User | None:
 async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None:
     """One socket per learner, carrying one session at a time.
 
-    Frames in: `start_session`, `stop`, `ping`, `update_context`, `client_message`, `save_note`, and raw
-    binary PCM.
+    Frames in: `start_session`, `stop`, `ping`, `update_context`, `client_message`, `note_taking`,
+    `save_note`, and raw binary PCM.
     Frames out: `session_started`, `transcription`, `assistant_message`, `interrupted`, `study_visual`,
-    `navigate_next_topic`, `note_saved`, `note_error`, `credit_limit_error`, `stopped`, `error`, `pong`, and
-    raw binary audio.
+    `navigate_next_topic`, `note_taking`, `note_saved`, `note_error`, `credit_limit_error`, `stopped`,
+    `error`, `pong`, and raw binary audio.
+
+    `note_taking` carries `enabled` and is the learner switching note-taking on for the sitting; the note
+    itself is then written once, at teardown, by `on_bridge_done`. `save_note` still writes one immediately
+    on request, and a `note_saved` frame with `final: true` is the end-of-session one.
     """
     user = await _user_from_token(token)
     if user is None:
@@ -267,17 +271,27 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
             logger.warning("Failed to send to voice client: %s", exc)
 
     def on_bridge_done(snapshot: bridge.BillingSnapshot) -> None:
-        """Settle the bill without holding the socket open for it.
+        """Settle the bill, and write the note, without holding the socket open for either.
 
         The session record is deliberately left in place. The client reconnects by re-sending
         `start_session` with the same id, so deleting it here would turn every dropped connection into a
         session the learner cannot resume.
+
+        This hook is why end-of-session note generation is dependable rather than best-effort: it runs from
+        the `finally` in `run_bridge`, which fires on a clean stop, on a cancelled task, on a provider socket
+        closing and on a learner shutting their laptop — the same guarantee the billing settlement relies on,
+        for the same reason. The one event it does not survive is the process itself dying, which is why the
+        learner can still write a note on demand mid-session.
+
+        Two independent tasks rather than one: a note that fails must not take the settlement with it, and a
+        settlement that fails must not cost the learner their note.
         """
         nonlocal bridge_task
         bridge_task = None
         session_id = active_session_id
         if session_id:
             asyncio.create_task(settlement.settle(user.id, session_id, snapshot))
+            asyncio.create_task(finalise_note(session_id))
 
     async def start(session_id: str) -> None:
         nonlocal bridge_task, active_session_id
@@ -322,6 +336,49 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
                 transcript=transcript,
                 on_done=on_bridge_done,
             )
+        )
+
+    async def finalise_note(session_id: str) -> None:
+        """Write the end-of-session note, and tell the learner if they are still on screen.
+
+        `notes.finalise_session_note` handles every failure itself, because this runs beside the settlement
+        and must not raise. The send is attempted anyway rather than skipped: the socket is usually gone by
+        now, but a session that ended because the *provider* dropped leaves the learner sitting in the
+        overlay, and that is exactly the moment a note appearing is worth seeing. `send_to_client` already
+        returns quietly on a closed socket.
+        """
+        saved = await notes.finalise_session_note(user, session_id, transcript)
+        if saved:
+            await _send(
+                send_to_client,
+                {"type": "note_saved", "session_id": session_id, "final": True, **saved},
+            )
+
+    async def set_note_taking(session_id: str, enabled: bool) -> None:
+        """Turn note-taking on or off, and say so.
+
+        Acknowledged rather than assumed. A learner who presses Take note and gets no reply will believe the
+        conversation is being kept and expect a note that was never going to be written — which is a worse
+        outcome than the button appearing not to work.
+        """
+        session = await session_store.set_note_taking(session_id, enabled)
+        if session is None:
+            await _send(
+                send_to_client,
+                {
+                    "type": "note_error",
+                    "session_id": session_id,
+                    "message": "That session is no longer available.",
+                },
+            )
+            return
+        await _send(
+            send_to_client,
+            {
+                "type": "note_taking",
+                "session_id": session_id,
+                "enabled": session.note_taking,
+            },
         )
 
     async def save_note(session_id: str) -> None:
@@ -406,6 +463,13 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
                 # Not awaited inline: writing a note is an LLM call taking seconds, and this loop is what
                 # forwards the learner's audio. Blocking here would mute them while they waited.
                 asyncio.create_task(save_note(str(session_id or active_session_id or "")))
+            elif message_type == "note_taking":
+                # Awaited, unlike `save_note`: this is one small write to the session record, and the
+                # acknowledgement is what the button's state renders from. Spawning it would let a learner
+                # toggle twice before the first reply and end up with a control disagreeing with the server.
+                await set_note_taking(
+                    str(session_id or active_session_id or ""), bool(data.get("enabled", True))
+                )
             elif message_type == "stop" and session_id:
                 # `None` is the bridge's stop signal: it unwinds its own forwarders and settles, rather than
                 # being cancelled from outside mid-charge.

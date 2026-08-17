@@ -321,6 +321,14 @@ class Settings(BaseSettings):
     GEMINI_LIVE_BILLING_TICK_SECONDS: float = 2.0
     GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK: int = 50
     GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS: float = 60.0
+    #: Silence this long ends a voice session, in seconds. Ten minutes.
+    #:
+    #: Distinct from `GEMINI_LIVE_STANDBY_IDLE_SECONDS`, which is 2.5 seconds and decides whether a moment
+    #: counts as billable speech. This is abandonment: nobody has spoken for long enough that the sitting is
+    #: over. It matters for two reasons — a FREE learner is billed wall-clock, so an empty room costs them
+    #: money, and the end-of-session note is written at teardown, so a session that never ends never
+    #: produces the note the learner switched on.
+    GEMINI_LIVE_ABANDONED_AFTER_SECONDS: float = 600.0
     GEMINI_LIVE_MODEL: str = "models/gemini-3.1-flash-live-preview"
     GEMINI_LIVE_GREETING_PROMPT: str | None = None
 

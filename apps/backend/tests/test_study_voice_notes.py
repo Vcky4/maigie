@@ -147,11 +147,26 @@ def note_world(monkeypatch):
         available=(True, None),
         update_raises=None,
         note_id_counter=0,
+        #: What `get_note` returns, so a revision can be given something to revise. `None` means the note is
+        #: gone, which is the "learner deleted it between saves" path.
+        existing_note=None,
+        get_raises=None,
+        #: Every prompt sent, in order. A revision run has two generations across two calls, and asserting
+        #: on a single `prompt` attribute would only ever see the last one.
+        prompts=[],
     )
 
     async def generate_content(prompt, **kwargs):
         world.prompt = prompt
+        world.prompts.append(prompt)
         return world.response
+
+    async def get_note(*, user_id, note_id):
+        if world.get_raises:
+            raise world.get_raises
+        if world.existing_note is None:
+            raise NotFoundError("Note", note_id)
+        return world.existing_note
 
     async def create_note(*, user_id, data):
         world.note_id_counter += 1
@@ -174,11 +189,12 @@ def note_world(monkeypatch):
         world.charged.append((cost, operation))
         return None
 
-    async def remember(session_id, note_id):
-        world.remembered.append((session_id, note_id))
+    async def remember(session_id, note_id, *, turns=0):
+        world.remembered.append((session_id, note_id, turns))
 
     monkeypatch.setattr(notes, "generate_content", generate_content)
     monkeypatch.setattr(notes.note_service, "create_note", create_note)
+    monkeypatch.setattr(notes.note_service, "get_note", get_note)
     monkeypatch.setattr(notes.note_service, "update_note", update_note)
     monkeypatch.setattr(notes, "check_credit_availability", check)
     monkeypatch.setattr(notes, "consume_credits", consume)
@@ -240,9 +256,12 @@ async def test_the_charge_happens_after_the_note_exists(note_world, user, sessio
 
 
 @pytest.mark.asyncio
-async def test_saving_twice_rewrites_the_same_note(note_world, user, session, conversation):
+async def test_saving_twice_revises_the_same_note(note_world, user, session, conversation):
     """One sitting, one note. Two would be two accounts of the same conversation."""
     session.note_id = "note-1"
+    note_world.existing_note = SimpleNamespace(
+        id="note-1", title="Induction", content="- The base case anchors it."
+    )
     result = await notes.save_session_note(user, session, conversation)
 
     assert result["created"] is False
@@ -251,15 +270,81 @@ async def test_saving_twice_rewrites_the_same_note(note_world, user, session, co
 
 
 @pytest.mark.asyncio
+async def test_a_revision_is_given_the_existing_note_to_keep(
+    note_world, user, session, conversation
+):
+    """The defect this fixes: the second write used to see only the transcript and overwrite the note.
+
+    Two things were lost by that. The learner's own edits, and — the one that makes this necessary — the
+    early part of a long session, which has aged out of the bounded transcript buffer and cannot be
+    regenerated from it. So the note has to be an input, not just an output.
+    """
+    session.note_id = "note-1"
+    note_world.existing_note = SimpleNamespace(
+        id="note-1",
+        title="Induction",
+        content="- The base case anchors it.\n- A learner's own hand-written line.",
+    )
+
+    await notes.save_session_note(user, session, conversation)
+
+    prompt = note_world.prompts[-1]
+    assert "A learner's own hand-written line." in prompt
+    assert "Induction" in prompt
+    # And the instruction is to preserve rather than rewrite, since a free rewrite on every pass drifts.
+    assert "Keep the existing note" in prompt
+    # The conversation is still there too — a revision needs both halves.
+    assert "induction proves it" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_note_already_up_to_date_is_not_regenerated(
+    note_world, user, session, conversation
+):
+    """Nothing said since the last note means nothing to add, so no model call and no charge.
+
+    This matters most on the teardown path, which fires whether or not the learner kept talking after
+    writing a note by hand. Without the marker it would re-run over identical material and bill for the note
+    already on screen.
+    """
+    session.note_id = "note-1"
+    session.turns_at_last_note = conversation.turn_count
+    note_world.existing_note = SimpleNamespace(id="note-1", title="Induction", content="- Anchored.")
+
+    with pytest.raises(ValidationError):
+        await notes.save_session_note(user, session, conversation)
+
+    assert note_world.prompts == []
+    assert note_world.charged == []
+    assert note_world.updated == []
+
+
+@pytest.mark.asyncio
 async def test_a_deleted_note_is_rewritten_rather_than_reported_as_an_error(
     note_world, user, session, conversation
 ):
+    """The learner tidied the note away between saves. Not an error, so write a fresh one.
+
+    Detected on the read now rather than on the write, because a revision has to fetch what it is revising —
+    which means the absence surfaces one step earlier than it used to.
+    """
     session.note_id = "note-gone"
-    note_world.update_raises = NotFoundError("Note", "note-gone")
+    note_world.existing_note = None
 
     result = await notes.save_session_note(user, session, conversation)
     assert result["created"] is True
-    assert note_world.remembered == [("sess-1", "note-1")]
+    assert note_world.remembered == [("sess-1", "note-1", 4)]
+    # A fresh note, so the first-write prompt rather than the revision one.
+    assert "Keep the existing note" not in note_world.prompts[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_note_marker_records_the_conversation_length(
+    note_world, user, session, conversation
+):
+    """What the up-to-date check above reads. Recorded on creation and on revision alike."""
+    await notes.save_session_note(user, session, conversation)
+    assert note_world.remembered == [("sess-1", "note-1", conversation.turn_count)]
 
 
 @pytest.mark.asyncio
@@ -300,3 +385,156 @@ async def test_a_written_note_is_handed_over_even_if_the_charge_fails(
     monkeypatch.setattr(notes, "consume_credits", consume)
     result = await notes.save_session_note(user, session, conversation)
     assert result["note_id"] == "note-1"
+
+
+# ---------------------------------------------------------------------------
+# The note written at the end of the session
+# ---------------------------------------------------------------------------
+#
+# This is the normal path. The learner switches note-taking on, talks, and one note is written when the
+# sitting ends — rather than a note every few minutes, which at 100 credits a pass would charge a
+# forty-minute session eight times over for one note.
+#
+# It runs from the relay's teardown, on the hook credit settlement already uses, so what matters most about
+# it is what happens when it goes wrong: an exception escaping here rides up through a `finally` whose other
+# job is charging for the session.
+
+
+@pytest.fixture
+def finalise_world(note_world, monkeypatch):
+    """`note_world`, plus a fake session store so `finalise_session_note` can look a session up."""
+    note_world.stored_session = None
+
+    async def get(session_id):
+        return note_world.stored_session
+
+    monkeypatch.setattr(notes.session_store, "get", get)
+    return note_world
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_written_when_note_taking_was_never_switched_on(
+    finalise_world, user, session, conversation
+):
+    """The consent gate, and the whole reason a toggle exists.
+
+    With this off the transcript is still buffered — the session needs it to run — and nothing is ever
+    written from it. This is the test that stops this feature from becoming the unasked-for automatic writer
+    the module was built to remove.
+    """
+    session.note_taking = False
+    finalise_world.stored_session = session
+
+    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+    assert finalise_world.prompts == []
+    assert finalise_world.created == []
+    assert finalise_world.charged == []
+
+
+@pytest.mark.asyncio
+async def test_a_note_is_written_at_teardown_when_note_taking_is_on(
+    finalise_world, user, session, conversation
+):
+    session.note_taking = True
+    finalise_world.stored_session = session
+
+    saved = await notes.finalise_session_note(user, "sess-1", conversation)
+
+    assert saved is not None
+    assert saved["note_id"] == "note-1"
+    # Tied to the lesson, which is the point of writing it at all — it has to be findable from the topic.
+    assert finalise_world.created[0]["topicId"] == "topic-1"
+    assert finalise_world.created[0]["courseId"] == "course-1"
+
+
+@pytest.mark.asyncio
+async def test_the_session_record_is_re_read_rather_than_trusted(
+    finalise_world, user, session, conversation
+):
+    """The toggle is flipped by a frame mid-session, so the record handed to the relay at start is stale.
+
+    Passing the stale copy would mean a learner who switched note-taking on after connecting got nothing.
+    """
+    session.note_taking = False
+    fresh = VoiceSession(
+        session_id="sess-1",
+        user_id="user-1",
+        system_instruction="brief",
+        course_id="course-1",
+        topic_id="topic-1",
+        note_taking=True,
+    )
+    finalise_world.stored_session = fresh
+
+    assert await notes.finalise_session_note(user, "sess-1", conversation) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_has_expired_writes_nothing(finalise_world, user, conversation):
+    """No record means no way to know what the learner asked for. Silent, not a warning."""
+    finalise_world.stored_session = None
+    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+
+
+@pytest.mark.asyncio
+async def test_another_learners_session_is_refused(finalise_world, user, conversation):
+    """Cannot happen through the socket, which checks ownership before starting.
+
+    Guarded anyway, because this writes into somebody's note library and the check costs one comparison.
+    """
+    finalise_world.stored_session = VoiceSession(
+        session_id="sess-1",
+        user_id="someone-else",
+        system_instruction="brief",
+        topic_id="topic-1",
+        note_taking=True,
+    )
+    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+    assert finalise_world.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_too_short_to_write_about_ends_quietly(
+    finalise_world, user, session
+):
+    """An ordinary ending, not a fault: the learner switched note-taking on and then said very little."""
+    session.note_taking = True
+    finalise_world.stored_session = session
+
+    thin = SessionTranscript()
+    thin.add("user", "hello")
+
+    assert await notes.finalise_session_note(user, "sess-1", thin) is None
+
+
+@pytest.mark.asyncio
+async def test_teardown_never_raises_whatever_happens(
+    finalise_world, user, session, conversation, monkeypatch
+):
+    """The one property this function must have.
+
+    It runs beside the credit settlement in the same teardown. An exception escaping would ride up through a
+    `finally` whose other job is charging for the session, so a model outage could turn into a lost
+    settlement — or, put the other way, crashing would become the cheapest way to study.
+    """
+    session.note_taking = True
+    finalise_world.stored_session = session
+
+    async def explode(*args, **kwargs):
+        raise RuntimeError("the model is on fire")
+
+    monkeypatch.setattr(notes, "generate_content", explode)
+
+    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+
+
+@pytest.mark.asyncio
+async def test_running_out_of_credits_at_teardown_is_not_an_error(
+    finalise_world, user, session, conversation
+):
+    """The learner spent their allowance during the session. Logged, not raised — see above."""
+    session.note_taking = True
+    finalise_world.stored_session = session
+    finalise_world.available = (False, "Out of credits")
+
+    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
