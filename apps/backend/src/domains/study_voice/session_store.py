@@ -1,0 +1,211 @@
+"""Where a voice session lives between `POST /conversation/start` and the socket that uses it.
+
+A voice session is created by an HTTP request and consumed moments later by a WebSocket `start_session`
+frame. Those are two separate requests, and with more than one uvicorn worker they are very likely two
+separate processes. The original implementation kept them in a module-level `dict`, which meant the socket
+could only ever find a session created by the same worker — silently returning "Session not found" the rest
+of the time. Porting is the cheapest moment to fix that, so the record now lives in Redis.
+
+## Two keys, not a scan
+
+- `study_voice:session:<session_id>` — the record.
+- `study_voice:user:<user_id>` — the learner's current session id.
+
+The second exists because both things this store is asked for are questions about a *learner*: "does this
+learner already have a session" (start closes it) and "list this learner's sessions". The original answered
+both by iterating every session in the dict, which is not something you can do against a cache without
+`SCAN`. One learner has at most one session, so a single pointer answers both exactly.
+
+## What is deliberately *not* here
+
+The billing counters, audio timestamps and disconnect flag the original kept alongside these fields. Those
+change several times a second — `mark_user_audio_activity` fires per audio frame — and they belong to one
+running bridge in one process. Writing them here would mean a network round trip per 20ms of speech to
+share state nobody else reads. They live in `bridge.BridgeState` instead, which is also why the
+`asyncio.Lock` the original needed around every access is gone: that state is now owned by a single
+coroutine tree rather than shared through a global.
+
+## When Redis is down
+
+`Cache` degrades to no-ops by design, so a Redis outage would make every session vanish the instant it was
+written. Rather than let voice fail with a lie ("Session not found"), this falls back to an in-process dict
+and logs it. Single-worker development, where Redis often is not running, therefore works unchanged; a
+multi-worker deployment that loses Redis degrades to "voice only works when both requests land on the same
+worker", which is the original behaviour and is at least reported.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import Any
+
+from src.shared.infrastructure.redis import cache
+
+logger = logging.getLogger(__name__)
+
+#: A record is only needed for the seconds between `start` and the socket, but a learner may take a while
+#: to grant microphone permission, and a session that outlives its socket is harmless. An hour is generous
+#: and still bounds the leak from a client that starts a session and never connects.
+SESSION_TTL_SECONDS = 3600
+
+_SESSION_KEY = "study_voice:session"
+_USER_KEY = "study_voice:user"
+
+# Fallback store, used only when Redis is unavailable. See the module docstring.
+_local_sessions: dict[str, dict[str, Any]] = {}
+_local_user_session: dict[str, str] = {}
+
+
+@dataclass(slots=True)
+class VoiceSession:
+    """One pending or running voice session.
+
+    `system_instruction` is the composed tutor brief, not anything the client sent — see `context.py`.
+    """
+
+    session_id: str
+    user_id: str
+    system_instruction: str
+    course_id: str | None = None
+    topic_id: str | None = None
+    chat_session_id: str | None = None
+    study_session_id: str | None = None
+    created_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> VoiceSession:
+        known = {f: data.get(f) for f in cls.__dataclass_fields__}
+        known["session_id"] = str(known.get("session_id") or "")
+        known["user_id"] = str(known.get("user_id") or "")
+        known["system_instruction"] = str(known.get("system_instruction") or "")
+        known["created_at"] = str(known.get("created_at") or "")
+        return cls(**known)
+
+
+def _session_key(session_id: str) -> str:
+    return cache.make_key([_SESSION_KEY, session_id])
+
+
+def _user_key(user_id: str) -> str:
+    return cache.make_key([_USER_KEY, user_id])
+
+
+async def create(
+    user_id: str,
+    *,
+    system_instruction: str,
+    course_id: str | None = None,
+    topic_id: str | None = None,
+    chat_session_id: str | None = None,
+    study_session_id: str | None = None,
+) -> VoiceSession:
+    """Open a session for a learner, closing any session they already had.
+
+    One at a time, as before. A learner with two live sessions would be billed for both while only
+    hearing one, and the client keeps a single shared socket anyway, so the second could never be heard.
+    """
+    session = VoiceSession(
+        session_id=str(uuid.uuid4()),
+        user_id=user_id,
+        system_instruction=system_instruction,
+        course_id=course_id,
+        topic_id=topic_id,
+        chat_session_id=chat_session_id,
+        study_session_id=study_session_id,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+
+    previous = await _current_session_id(user_id)
+    if previous and previous != session.session_id:
+        logger.info("Replacing previous voice session %s for user %s", previous, user_id)
+        await _forget(previous)
+
+    if cache.is_connected:
+        await cache.set(
+            _session_key(session.session_id), session.to_dict(), expire=SESSION_TTL_SECONDS
+        )
+        await cache.set(_user_key(user_id), session.session_id, expire=SESSION_TTL_SECONDS)
+    else:
+        logger.warning(
+            "Redis unavailable — holding voice session %s in process memory. The socket must land on "
+            "this worker for the session to be found.",
+            session.session_id,
+        )
+        _local_sessions[session.session_id] = session.to_dict()
+        _local_user_session[user_id] = session.session_id
+
+    return session
+
+
+async def get(session_id: str) -> VoiceSession | None:
+    """The record, or None if it never existed, expired, or was stopped."""
+    if cache.is_connected:
+        raw = await cache.get(_session_key(session_id))
+        if isinstance(raw, dict):
+            return VoiceSession.from_dict(raw)
+    raw_local = _local_sessions.get(session_id)
+    return VoiceSession.from_dict(raw_local) if raw_local else None
+
+
+async def delete(session_id: str) -> None:
+    """Stop a session. Clears the learner's pointer too, when it points here."""
+    await _forget(session_id)
+
+
+async def list_for_user(user_id: str) -> list[VoiceSession]:
+    """The learner's live session, as a list because the contract returns one."""
+    session_id = await _current_session_id(user_id)
+    if not session_id:
+        return []
+    session = await get(session_id)
+    return [session] if session else []
+
+
+async def update_context(
+    session_id: str, *, topic_id: str | None = None, course_id: str | None = None
+) -> VoiceSession | None:
+    """Follow the learner to a new topic mid-session.
+
+    Only overwrites what was supplied: a frame carrying a topic but no course must not blank the course.
+    Note this does **not** rebuild the brief — the provider was given its system instruction at setup and
+    there is no way to replace it on a live connection. The new ids affect tool dispatch, which is what
+    the frame is for; a genuinely different topic needs a new session.
+    """
+    session = await get(session_id)
+    if not session:
+        return None
+    if topic_id:
+        session.topic_id = topic_id
+    if course_id:
+        session.course_id = course_id
+
+    if cache.is_connected:
+        await cache.set(_session_key(session_id), session.to_dict(), expire=SESSION_TTL_SECONDS)
+    if session_id in _local_sessions:
+        _local_sessions[session_id] = session.to_dict()
+    return session
+
+
+async def _current_session_id(user_id: str) -> str | None:
+    if cache.is_connected:
+        raw = await cache.get(_user_key(user_id))
+        if isinstance(raw, str) and raw:
+            return raw
+    return _local_user_session.get(user_id)
+
+
+async def _forget(session_id: str) -> None:
+    session = await get(session_id)
+    if cache.is_connected:
+        await cache.delete(_session_key(session_id))
+        if session and await _current_session_id(session.user_id) == session_id:
+            await cache.delete(_user_key(session.user_id))
+    _local_sessions.pop(session_id, None)
+    if session and _local_user_session.get(session.user_id) == session_id:
+        _local_user_session.pop(session.user_id, None)

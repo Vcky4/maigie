@@ -612,19 +612,42 @@ class PersonalLearningRepository:
             return result.scalar_one_or_none()
 
     async def list_documents(
-        self, user_id: str, *, skip: int = 0, take: int = 20, session: AsyncSession | None = None
+        self,
+        user_id: str,
+        *,
+        skip: int = 0,
+        take: int = 20,
+        search: str | None = None,
+        doc_format: str | None = None,
+        session: AsyncSession | None = None,
     ) -> tuple[list[GeneratedDocument], int]:
+        """A page of this learner's documents, newest first.
+
+        ``search`` matches the title or the filename, because a learner looking for a document
+        remembers one or the other. ``doc_format`` is an exact match on the stored format.
+
+        Both filters are applied to the count as well as the page. Filtering only the page is how a
+        pager comes to advertise five pages of results for a query that matched three rows.
+        """
         async with self._read_session(session) as s:
-            count_stmt = (
-                select(func.count())
-                .select_from(GeneratedDocument)
-                .where(GeneratedDocument.user_id == user_id)
-            )
+            conditions = [GeneratedDocument.user_id == user_id]
+            if search:
+                term = f"%{search}%"
+                conditions.append(
+                    or_(
+                        GeneratedDocument.title.ilike(term),
+                        GeneratedDocument.filename.ilike(term),
+                    )
+                )
+            if doc_format:
+                conditions.append(GeneratedDocument.format == doc_format)
+
+            count_stmt = select(func.count()).select_from(GeneratedDocument).where(*conditions)
             total = (await s.execute(count_stmt)).scalar() or 0
 
             stmt = (
                 select(GeneratedDocument)
-                .where(GeneratedDocument.user_id == user_id)
+                .where(*conditions)
                 .order_by(GeneratedDocument.created_at.desc())
                 .offset(skip)
                 .limit(take)
@@ -632,6 +655,25 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
+
+    async def list_document_formats(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[tuple[str, int]]:
+        """Every format this learner has produced, with a count each.
+
+        The library's format breakdown was computed from the loaded page, so it reported "formats
+        used" for twenty documents and labelled it as the library's. This answers the whole library
+        in one grouped count.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(GeneratedDocument.format, func.count())
+                .where(GeneratedDocument.user_id == user_id)
+                .group_by(GeneratedDocument.format)
+                .order_by(func.count().desc(), GeneratedDocument.format)
+            )
+            result = await s.execute(stmt)
+            return [(row[0], row[1]) for row in result.all()]
 
     async def count_documents_since(
         self, user_id: str, since: datetime, *, session: AsyncSession | None = None
@@ -673,6 +715,102 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def delete_document(
+        self, doc_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Delete a document row. Scoped by owner, so a wrong id cannot delete anyone else's.
+
+        The stored file is not this method's business — ``document_impl.delete_document`` removes the
+        objects first and calls this second.
+        """
+        async with self._use_session(session) as s:
+            stmt = delete(GeneratedDocument).where(
+                GeneratedDocument.id == doc_id,
+                GeneratedDocument.user_id == user_id,
+            )
+            result = await s.execute(stmt)
+            return result.rowcount > 0
+
+    # -----------------------------------------------------------------------
+    # Note versions
+    # -----------------------------------------------------------------------
+
+    async def create_note_history(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> NoteHistory:
+        async with self._use_session(session) as s:
+            entry = NoteHistory(**self._map_note_history(data))
+            s.add(entry)
+            await s.flush()
+            await s.refresh(entry)
+            return entry
+
+    async def list_note_history(
+        self,
+        note_id: str,
+        user_id: str,
+        *,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[NoteHistory], int]:
+        """Versions of one note, newest first. Scoped by owner as well as by note."""
+        async with self._read_session(session) as s:
+            conditions = [NoteHistory.note_id == note_id, NoteHistory.user_id == user_id]
+
+            count_stmt = select(func.count()).select_from(NoteHistory).where(*conditions)
+            total = (await s.execute(count_stmt)).scalar() or 0
+
+            stmt = (
+                select(NoteHistory)
+                .where(*conditions)
+                .order_by(NoteHistory.created_at.desc(), NoteHistory.id.desc())
+                .offset(skip)
+                .limit(take)
+            )
+            result = await s.execute(stmt)
+            return list(result.scalars().all()), total
+
+    async def find_note_history(
+        self,
+        history_id: str,
+        note_id: str,
+        user_id: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> NoteHistory | None:
+        async with self._read_session(session) as s:
+            stmt = select(NoteHistory).where(
+                NoteHistory.id == history_id,
+                NoteHistory.note_id == note_id,
+                NoteHistory.user_id == user_id,
+            )
+            result = await s.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def count_note_tags(
+        self, user_id: str, *, archived: bool = False, session: AsyncSession | None = None
+    ) -> list[tuple[str, int]]:
+        """Every tag on this learner's personal notes, with a count each, commonest first.
+
+        Scoped the same way ``list_notes`` is by default — personal notes only (``spaceId IS NULL``)
+        and matching ``archived`` — so a chip's count is the number of notes the chip would show.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(NoteTag.tag, func.count())
+                .join(Note, Note.id == NoteTag.note_id)
+                .where(
+                    Note.user_id == user_id,
+                    Note.space_id.is_(None),
+                    Note.archived == archived,
+                )
+                .group_by(NoteTag.tag)
+                .order_by(func.count().desc(), NoteTag.tag)
+            )
+            result = await s.execute(stmt)
+            return [(row[0], row[1]) for row in result.all()]
+
     # -----------------------------------------------------------------------
     # Field mapping helpers (camelCase dict keys → snake_case model attrs)
     # -----------------------------------------------------------------------
@@ -692,6 +830,16 @@ class PersonalLearningRepository:
             "voiceRecordingUrl": "voice_recording_url",
         }
         return map_fields(data, field_map, entity="_map_note")
+
+    @staticmethod
+    def _map_note_history(data: dict[str, Any]) -> dict[str, Any]:
+        field_map = {
+            "noteId": "note_id",
+            "userId": "user_id",
+            "title": "title",
+            "content": "content",
+        }
+        return map_fields(data, field_map, entity="_map_note_history")
 
     @staticmethod
     def _map_attachment(data: dict[str, Any]) -> dict[str, Any]:
@@ -1154,13 +1302,7 @@ class PersonalLearningRepository:
                 if sort == "due"
                 else (Flashcard.created_at.desc(), Flashcard.id.asc())
             )
-            stmt = (
-                select(Flashcard)
-                .where(*conditions)
-                .order_by(*order)
-                .offset(skip)
-                .limit(take)
-            )
+            stmt = select(Flashcard).where(*conditions).order_by(*order).offset(skip).limit(take)
             rows = list((await s.execute(stmt)).scalars().all())
             return rows, total
 
@@ -1716,15 +1858,20 @@ class PersonalLearningRepository:
             return result.scalar_one_or_none()
 
     async def update_last_accessed(
-        self, resource_id: str, *, session: AsyncSession | None = None
-    ) -> None:
+        self, resource_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Stamp the access time. Scoped by owner, and reports whether a row matched."""
         async with self._use_session(session) as s:
             stmt = (
                 update(SavedResource)
-                .where(SavedResource.id == resource_id)
+                .where(
+                    SavedResource.id == resource_id,
+                    SavedResource.user_id == user_id,
+                )
                 .values(last_accessed_at=datetime.now(UTC))
             )
-            await s.execute(stmt)
+            result = await s.execute(stmt)
+            return result.rowcount > 0
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Saved Resources
@@ -3257,9 +3404,7 @@ class PersonalLearningRepository:
         """
         async with self._use_session(session) as s:
             owned = await s.execute(
-                select(StudyPlan.id).where(
-                    StudyPlan.id == plan_id, StudyPlan.user_id == user_id
-                )
+                select(StudyPlan.id).where(StudyPlan.id == plan_id, StudyPlan.user_id == user_id)
             )
             if owned.scalar_one_or_none() is None:
                 return False
@@ -3406,9 +3551,7 @@ class PersonalLearningRepository:
             existing = set(
                 (
                     await s.execute(
-                        select(StudyPlanCourse.course_id).where(
-                            StudyPlanCourse.plan_id == plan_id
-                        )
+                        select(StudyPlanCourse.course_id).where(StudyPlanCourse.plan_id == plan_id)
                     )
                 )
                 .scalars()
@@ -3605,25 +3748,27 @@ class PersonalLearningRepository:
                             StudyPlanItem.status == "COMPLETED",
                             StudyPlanItem.item_type.in_(practice_types),
                         ),
-                        func.count(StudyPlanItem.id).filter(
-                            StudyPlanItem.status == "SKIPPED"
-                        ),
+                        func.count(StudyPlanItem.id).filter(StudyPlanItem.status == "SKIPPED"),
                     ).where(StudyPlanItem.plan_id == plan_id)
                 )
             ).one()
 
             day = func.date(StudyPlanItem.completed_at)
             days = (
-                await s.execute(
-                    select(day)
-                    .where(
-                        StudyPlanItem.plan_id == plan_id,
-                        StudyPlanItem.completed_at.is_not(None),
+                (
+                    await s.execute(
+                        select(day)
+                        .where(
+                            StudyPlanItem.plan_id == plan_id,
+                            StudyPlanItem.completed_at.is_not(None),
+                        )
+                        .group_by(day)
+                        .order_by(day.desc())
                     )
-                    .group_by(day)
-                    .order_by(day.desc())
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
             return {
                 "completed_minutes": int(row[0] or 0),
@@ -3751,9 +3896,7 @@ class PersonalLearningRepository:
                         func.min(StudyPlanItem.scheduled_date),
                         func.max(StudyPlanItem.scheduled_date),
                         func.count(StudyPlanItem.id),
-                        func.count(StudyPlanItem.id).filter(
-                            StudyPlanItem.status == "COMPLETED"
-                        ),
+                        func.count(StudyPlanItem.id).filter(StudyPlanItem.status == "COMPLETED"),
                     )
                     .where(
                         StudyPlanItem.plan_id.in_(plan_ids),
@@ -3824,9 +3967,7 @@ class PersonalLearningRepository:
         entity = aliased(StudyPlanItem, ranked)
 
         async with self._read_session(session) as s:
-            rows = (
-                await s.execute(select(entity).where(ranked.c.rank == 1))
-            ).scalars().all()
+            rows = (await s.execute(select(entity).where(ranked.c.rank == 1))).scalars().all()
 
         return {item.plan_id: item for item in rows}
 

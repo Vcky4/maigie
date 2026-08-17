@@ -236,6 +236,36 @@ class BunnyStorageClient:
             return (parsed.path or "").lstrip("/")
         return url_or_path.lstrip("/")
 
+    def owns_url(self, url_or_path: str) -> bool:
+        """Whether this URL points at an object in our own storage.
+
+        ``delete`` deliberately does not ask — it is called with URLs this application uploaded, and
+        the path is all it needs. Callers that hold URLs of mixed provenance do need to ask: a note
+        attachment can be a link the learner pasted to somebody else's site, and turning a
+        "remove this attachment" into a delete against our storage zone at that site's path is at
+        best a wasted request and at worst a delete of an unrelated object that happens to share the
+        path. Ask first, and delete only what we put there.
+
+        A relative path counts as ours; nothing else in the app produces one.
+        """
+        if not url_or_path:
+            return False
+        if "://" not in url_or_path:
+            return True
+
+        self._ensure_init()
+        host = (urlparse(url_or_path).hostname or "").lower()
+        if not host:
+            return False
+
+        known = set()
+        if self.public_url_base:
+            known.add((urlparse(self.public_url_base).hostname or "").lower())
+        if self.cdn_hostname:
+            known.add(self.cdn_hostname.lower())
+        known.discard("")
+        return host in known
+
     def chat_images_storage_path(self, public_url: str) -> str | None:
         """Return the storage path for a chat-image URL, if it lives in our storage."""
         path = self._normalize_path(public_url)

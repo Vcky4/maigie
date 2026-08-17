@@ -134,6 +134,17 @@ _STYLE_GUIDANCE = {
 }
 
 
+def style_guidance(teaching_style: str | None) -> str:
+    """How to teach in the style this course was created with, or `""` for anything unrecognised.
+
+    Public because the voice tutor needs the same guidance as the written lesson, and a second copy of the
+    map would let a spoken lesson and a read one drift into teaching the same course two different ways.
+    Returns empty rather than a default so a course with no style gets no instruction at all, which is
+    what "no preference" means.
+    """
+    return _STYLE_GUIDANCE.get(teaching_style or "", "")
+
+
 def build_lesson_prompt(
     title: str,
     existing_content: str | None = None,

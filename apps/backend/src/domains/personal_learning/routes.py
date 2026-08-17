@@ -244,6 +244,22 @@ async def list_notes(
     )
 
 
+# Declared before `/notes/{note_id}`, or `tags` is read as a note id and this route is
+# unreachable.
+@router.get("/notes/tags", response_model=list[models.NoteTagCountResponse])
+async def list_note_tags(
+    current_user: CurrentUser,
+    archived: bool = Query(False),
+):
+    """Every tag the learner has used, with a count each, commonest first.
+
+    The whole catalogue rather than the current page. Filter chips derived from a loaded page are
+    truthful about that page and wrong about the library: a tag used only on older notes has no chip,
+    and each count is a page count under a library heading.
+    """
+    return await note_service.list_tags(user_id=current_user.id, archived=archived)
+
+
 @router.get("/notes/{note_id}", response_model=models.NoteResponse)
 async def get_note(note_id: str, current_user: CurrentUser):
     """Get a note by ID."""
@@ -278,14 +294,83 @@ async def add_attachment(
     )
 
 
+@router.post(
+    "/notes/{note_id}/attachments/upload",
+    response_model=models.NoteAttachmentResponse,
+    status_code=201,
+)
+async def upload_attachment(
+    note_id: str,
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+):
+    """Upload a file and attach it to a note.
+
+    Multipart, through the same storage service study-plan materials and generated documents use.
+    The JSON route above registers a URL, which a client could only produce by hosting the file
+    somewhere else first — this is the half that was missing.
+    """
+    try:
+        return await note_service.upload_attachment(
+            user_id=current_user.id, note_id=note_id, file=file
+        )
+    except ValueError as error:
+        # Storage refused the object. A 502 rather than a 400: the request was fine and the learner
+        # can do nothing differently.
+        raise HTTPException(status_code=502, detail=str(error)) from error
+
+
 @router.delete("/notes/{note_id}/attachments/{attachment_id}", status_code=204)
 async def remove_attachment(note_id: str, attachment_id: str, current_user: CurrentUser):
-    """Remove an attachment from a note."""
+    """Remove an attachment from a note, and its stored file."""
     removed = await note_service.remove_attachment(
         user_id=current_user.id, note_id=note_id, attachment_id=attachment_id
     )
     if not removed:
         raise HTTPException(status_code=404, detail="Attachment not found")
+
+
+@router.get(
+    "/notes/{note_id}/history",
+    response_model=models.PaginatedResponse[models.NoteVersionResponse],
+)
+async def list_note_history_entries(
+    note_id: str,
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+):
+    """Versions of a note, newest first.
+
+    A version is recorded before anything overwrites the note's content — a manual edit or an AI
+    retake. `NoteHistory` rows existed as a table with no producer and no reader until migration 033;
+    the reason to give it both rather than drop it is `POST /notes/{id}/retake`, which replaces a
+    learner's own prose with a model's rewrite of it.
+    """
+    items, total = await note_service.list_history(
+        user_id=current_user.id, note_id=note_id, page=page, size=pageSize
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.NoteVersionResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
+
+
+@router.post("/notes/{note_id}/history/{version_id}/restore", response_model=models.NoteResponse)
+async def restore_note_version(note_id: str, version_id: str, current_user: CurrentUser):
+    """Put a note's content back to a recorded version.
+
+    The current content is snapshotted first, so restoring the wrong version is itself undoable.
+    Content only: the title is stored on a version to label it, not to be restored — see
+    `note_service.restore_version`.
+    """
+    return await note_service.restore_version(
+        user_id=current_user.id, note_id=note_id, version_id=version_id
+    )
 
 
 @router.post("/notes/{note_id}/summary", response_model=models.NoteResponse)
@@ -1100,6 +1185,19 @@ async def delete_resource(resource_id: str, current_user: CurrentUser):
         raise HTTPException(status_code=404, detail="Resource not found")
 
 
+@router.post("/resources/{resource_id}/access", status_code=204)
+async def track_resource_access(resource_id: str, current_user: CurrentUser):
+    """Record that the learner opened a saved resource.
+
+    `resource_service.track_access` has existed since the domain was written and no route called it,
+    so `lastAccessedAt` is null on every saved resource in the database — a column that exists to
+    order "recently used" and has never been written. This is the caller.
+    """
+    tracked = await resource_service.track_access(user_id=current_user.id, resource_id=resource_id)
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+
 @router.patch("/resources/{resource_id}/tags", response_model=models.SavedResourceResponse)
 async def update_resource_tags(
     resource_id: str, body: models.SavedResourceTagUpdate, current_user: CurrentUser
@@ -1207,9 +1305,7 @@ async def get_study_plan(plan_id: str, current_user: CurrentUser):
     return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
 
 
-@router.get(
-    "/study-plans/{plan_id}/metrics", response_model=models.StudyPlanMetricsResponse
-)
+@router.get("/study-plans/{plan_id}/metrics", response_model=models.StudyPlanMetricsResponse)
 async def get_study_plan_metrics(plan_id: str, current_user: CurrentUser):
     """Progress figures for one plan, derived from its items.
 
@@ -1217,15 +1313,11 @@ async def get_study_plan_metrics(plan_id: str, current_user: CurrentUser):
     items describe what to do, these describe how it has gone — and because a client
     rendering only the schedule should not pay for the aggregates.
     """
-    return await study_plan_service.get_plan_metrics(
-        user_id=current_user.id, plan_id=plan_id
-    )
+    return await study_plan_service.get_plan_metrics(user_id=current_user.id, plan_id=plan_id)
 
 
 @router.patch("/study-plans/{plan_id}", response_model=models.StudyPlanResponse)
-async def update_study_plan(
-    plan_id: str, body: models.StudyPlanUpdate, current_user: CurrentUser
-):
+async def update_study_plan(plan_id: str, body: models.StudyPlanUpdate, current_user: CurrentUser):
     """Rename a plan, restate its goal, move its deadline, or pause and resume it.
 
     Moving the deadline redistributes pending items, so the schedule cannot end up
@@ -1234,9 +1326,7 @@ async def update_study_plan(
     data = body.model_dump(exclude_unset=True)
     if not data:
         return await study_plan_service.get_plan(user_id=current_user.id, plan_id=plan_id)
-    return await study_plan_service.update_plan(
-        user_id=current_user.id, plan_id=plan_id, data=data
-    )
+    return await study_plan_service.update_plan(user_id=current_user.id, plan_id=plan_id, data=data)
 
 
 @router.delete("/study-plans/{plan_id}", status_code=204)
@@ -1306,9 +1396,7 @@ async def add_study_plan_material(
 @router.delete(
     "/study-plans/{plan_id}/materials/{material_id}", response_model=models.StudyPlanResponse
 )
-async def delete_study_plan_material(
-    plan_id: str, material_id: str, current_user: CurrentUser
-):
+async def delete_study_plan_material(plan_id: str, material_id: str, current_user: CurrentUser):
     """Remove a reference file from a plan, and from storage."""
     return await study_plan_service.delete_material(
         user_id=current_user.id, plan_id=plan_id, material_id=material_id
@@ -1331,9 +1419,7 @@ async def add_study_plan_item(
     )
 
 
-@router.patch(
-    "/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse
-)
+@router.patch("/study-plans/{plan_id}/items/{item_id}", response_model=models.StudyPlanResponse)
 async def update_study_plan_item(
     plan_id: str, item_id: str, body: models.StudyPlanItemUpdate, current_user: CurrentUser
 ):
@@ -1423,7 +1509,11 @@ def _document_job_owner_key(task_id: str) -> str:
     return f"personal_learning:document_job_owner:{task_id}"
 
 
-@router.post("/documents/async", status_code=202)
+@router.post(
+    "/documents/async",
+    response_model=models.DocumentJobQueuedResponse,
+    status_code=202,
+)
 async def generate_document_async(body: models.DocumentGenerateRequest, current_user: CurrentUser):
     """
     Queue a document generation job. Returns immediately with a task id.
@@ -1436,7 +1526,18 @@ async def generate_document_async(body: models.DocumentGenerateRequest, current_
     from src.shared.infrastructure import cache
     from src.workers.personal_learning_tasks import generate_document_task
 
+    from .services import document_impl
+
     payload = body.model_dump()
+
+    # Validated here, as the synchronous route does. Without this an unsupported format was accepted
+    # with a `202`, queued, and failed inside the worker — so the learner waited for a job that could
+    # never succeed instead of being told immediately.
+    try:
+        fmt = document_impl._normalize_format(payload.get("format", "pdf"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     task_id = uuid.uuid4().hex
 
     # Record ownership before queueing. If this fails the job is never queued,
@@ -1463,16 +1564,16 @@ async def generate_document_async(body: models.DocumentGenerateRequest, current_
             "doc_type": payload["type"],
             "title": payload["title"],
             "prompt": payload["prompt"],
-            "format": payload.get("format", "pdf"),
+            "format": fmt,
             "style": payload.get("style", "academic"),
             "course_id": payload.get("courseId"),
             "topic_id": payload.get("topicId"),
         },
     )
-    return {"taskId": task_id, "status": "queued"}
+    return models.DocumentJobQueuedResponse(task_id=task_id, status="queued")
 
 
-@router.get("/documents/jobs/{task_id}")
+@router.get("/documents/jobs/{task_id}", response_model=models.DocumentJobStatusResponse)
 async def get_document_job(task_id: str, current_user: CurrentUser):
     """
     Poll the status of a queued document generation job.
@@ -1481,8 +1582,11 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
     other learners' jobs are all reported as ``404`` so this endpoint cannot be
     used to discover that another learner's job exists.
 
-    Response shape:
-      - ``{"taskId": ..., "status": "queued|running|success|failed", "result": {...} | null}``
+    The result is a ``DocumentResponse``, the same shape every other document route returns. The
+    worker serializes its Celery payload in snake_case, and with no response model on this route that
+    payload reached the browser untranslated — so the web client carried a second, snake_case
+    document type and a hand-written mapper to convert it. Validating through the response model
+    deletes both.
     """
     from celery.result import AsyncResult
 
@@ -1506,7 +1610,8 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
     }
     friendly = status_map.get(state, state)
 
-    body: dict = {"taskId": task_id, "status": friendly, "result": None}
+    document: models.DocumentResponse | None = None
+    error: str | None = None
     if result.successful():
         payload = result.result
         # Defence in depth: never hand back a document owned by someone else.
@@ -1516,25 +1621,69 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
                 extra={"user_id": current_user.id, "task_id": task_id},
             )
             raise HTTPException(status_code=404, detail="Document job not found")
-        body["result"] = payload
+        if isinstance(payload, dict) and payload.get("id"):
+            document = models.DocumentResponse.model_validate(payload)
+        else:
+            # The task reported success without a document. Reported as a failure rather than a
+            # success with nothing in it, because a client polling for a document has no other way
+            # to stop waiting.
+            friendly = "failed"
+            error = "Generation finished without producing a document"
     elif result.failed():
-        body["error"] = str(result.result) if result.result else "Unknown error"
-    return body
+        error = str(result.result) if result.result else "Unknown error"
+
+    return models.DocumentJobStatusResponse(
+        task_id=task_id,
+        status=friendly,  # type: ignore[arg-type]
+        result=document,
+        error=error,
+    )
 
 
-@router.get("/documents", response_model=models.DocumentListResponse)
+# Declared before `/documents/{doc_id}`, or `formats` is read as a document id.
+@router.get("/documents/formats", response_model=list[models.DocumentFormatCountResponse])
+async def list_document_formats(current_user: CurrentUser):
+    """Every format the learner has produced, with a count each.
+
+    Two jobs: the library's "formats used" figure, which was counted from whichever page happened to
+    be loaded, and the format filter, which should offer only formats the learner actually has rather
+    than the three the product supports.
+    """
+    from .services import document_impl
+
+    return await document_impl.list_formats(user_id=current_user.id)
+
+
+@router.get("/documents", response_model=models.PaginatedResponse[models.DocumentResponse])
 async def list_documents(
     current_user: CurrentUser,
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None, description="Matches the title or the filename."),
+    format: str | None = Query(None, description="Exact format: pdf, docx, pptx."),
 ):
-    """List generated documents."""
+    """List generated documents, newest first.
+
+    Filtering happens here rather than in the browser. The library page filtered the twenty documents
+    it had loaded, so a search over a larger library silently missed everything past the first page.
+    """
     from .services import document_impl
 
     items, total = await document_impl.list_documents(
-        user_id=current_user.id, page=page, page_size=pageSize
+        user_id=current_user.id,
+        page=page,
+        page_size=pageSize,
+        search=search,
+        format=format,
     )
-    return models.DocumentListResponse(items=items, total=total, page=page, pageSize=pageSize)
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.DocumentResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
 
 
 @router.get("/documents/share/{share_id}", response_model=models.DocumentResponse)
@@ -1565,10 +1714,43 @@ async def get_document(doc_id: str, current_user: CurrentUser):
 
 @router.post("/documents/{doc_id}/publish", response_model=models.DocumentResponse)
 async def publish_document(doc_id: str, current_user: CurrentUser):
-    """Make a document public with a share link."""
+    """Make a document public with a share link.
+
+    The share id is rotated on every publish, so a document that was unpublished and published again
+    is reachable at a new link rather than the retired one.
+    """
     from .services import document_impl
 
     return await document_impl.publish_document(user_id=current_user.id, doc_id=doc_id)
+
+
+@router.post("/documents/{doc_id}/unpublish", response_model=models.DocumentResponse)
+async def unpublish_document(doc_id: str, current_user: CurrentUser):
+    """Withdraw a published document and retire the link it was shared under.
+
+    Publishing was one-way until now. The share id is rotated as well as `isPublic` cleared, so the
+    URL already sent out cannot come back to life on a later publish.
+
+    It withdraws the shared page, not the file: documents are stored at unauthenticated public URLs,
+    so anyone holding ``fileUrl`` or ``previewUrl`` keeps that access. Clients must say so rather than
+    promising revocation. See ``document_impl.unpublish_document``.
+    """
+    from .services import document_impl
+
+    return await document_impl.unpublish_document(user_id=current_user.id, doc_id=doc_id)
+
+
+@router.delete("/documents/{doc_id}", status_code=204)
+async def delete_document(doc_id: str, current_user: CurrentUser):
+    """Delete a document and the objects it stored.
+
+    A hard delete: the file, its HTML preview, and the row. There is no `deletedAt` column, and the
+    reasoning is in ``document_impl.delete_document`` — a soft delete keeps paying storage on two
+    objects the learner has said they do not want and adds a filter every read path must remember.
+    """
+    from .services import document_impl
+
+    await document_impl.delete_document(user_id=current_user.id, doc_id=doc_id)
 
 
 # ===========================================================================

@@ -87,6 +87,34 @@ class NoteImportRequest(CamelModel):
     spaceId: str
 
 
+class NoteTagCountResponse(CamelModel):
+    """One tag the learner has used, and how many of their notes carry it.
+
+    The whole catalogue, not the current page. The notes page derived its filter chips from the
+    twenty or hundred notes it happened to have loaded, which is truthful about those notes and
+    wrong about the library: a tag on note 130 had no chip, and every count was a page count
+    wearing a library label.
+    """
+
+    tag: str
+    count: int
+
+
+class NoteVersionResponse(CamelModel):
+    """A snapshot of a note taken before its content was replaced.
+
+    ``content`` is the note *as it was*, not a diff. Callers render or restore it; the server does
+    not attempt to summarise what changed, because a summary of a change to prose is a second thing
+    to get wrong.
+    """
+
+    id: str
+    note_id: str
+    title: str
+    content: str | None = None
+    created_at: datetime
+
+
 # ===========================================================================
 # Exam Preparation
 # ===========================================================================
@@ -153,24 +181,63 @@ class DocumentGenerateRequest(CamelModel):
 
 
 class DocumentResponse(CamelModel):
+    """A stored document.
+
+    Every field below is `NOT NULL` on `GeneratedDocument`, so every field below is required. The
+    model previously defaulted eight of them to `None`, which published a weaker contract than the
+    table and made each one something the client had to defend against for no reason. Two —
+    ``size`` and ``contentType`` — were absent entirely although the worker already serialized
+    them, so a file size the database held could not be read back.
+    """
+
     id: str
     user_id: str
     title: str
-    format: str | None = None
-    style: str | None = None
-    filename: str | None = None
-    file_url: str | None = None
-    preview_url: str | None = None
-    share_id: str | None = None
-    is_public: bool = False
+    format: str
+    style: str
+    filename: str
+    file_url: str
+    preview_url: str
+    size: int
+    content_type: str
+    # Present on every document, private ones included. ``isPublic`` decides whether it resolves.
+    share_id: str
+    is_public: bool
     created_at: datetime
 
 
-class DocumentListResponse(BaseModel):
-    items: list[DocumentResponse]
-    total: int
-    page: int
-    pageSize: int
+# `DocumentListResponse` is gone. It was the third pagination envelope in the codebase — hand-rolled
+# `pageSize`, no `pages`, a plain `BaseModel` — for a list that is paginated exactly like notes and
+# saved resources. `PaginatedResponse[DocumentResponse]` replaces it.
+
+
+class DocumentFormatCountResponse(CamelModel):
+    """One output format the learner has produced, and how many documents use it."""
+
+    format: str
+    count: int
+
+
+class DocumentJobQueuedResponse(CamelModel):
+    """The reply to queueing a generation job."""
+
+    task_id: str
+    status: Literal["queued"]
+
+
+class DocumentJobStatusResponse(CamelModel):
+    """The state of a queued generation job, and its document once there is one.
+
+    ``result`` is a `DocumentResponse`, which is the point of this model existing. Both job routes
+    used to return bare dicts, so neither reached the generated client types, and the worker's
+    snake_case Celery payload went to the browser untranslated — where the web client kept a
+    hand-written second document type and a mapper to convert it. One response model deletes both.
+    """
+
+    task_id: str
+    status: Literal["queued", "running", "success", "failed"]
+    result: DocumentResponse | None = None
+    error: str | None = None
 
 
 # ===========================================================================

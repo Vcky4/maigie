@@ -1205,35 +1205,44 @@ async def handle_generate_document(
             user_id=user_id,
         )
 
-        # Save document to database via raw SQL (GeneratedDocument not yet in SQLAlchemy)
-        share_id = None
-        try:
-            from sqlalchemy import text
+        # Persist through the repository, like every other writer of this table.
+        #
+        # This was a raw `INSERT` with a comment saying `GeneratedDocument` was "not yet in
+        # SQLAlchemy" — it has been for some time — and the insert omitted `shareId`, which is
+        # `NOT NULL` with no default. So it raised, every time, into the `except` below, which logged
+        # a warning and carried on returning success. Every document generated from chat was written,
+        # uploaded to storage, shown in the conversation, and never stored: it did not appear in the
+        # library, could not be found again, and the count of it was zero. The `RETURNING "shareId"`
+        # was not read either, so `shareId` went back to the client as null regardless.
+        #
+        # It also passed `isPublic: true`. A document is private until the learner publishes it.
+        from src.domains.personal_learning.repository import personal_learning_repo
 
-            factory = get_session_factory()
-            doc_id = __import__("uuid").uuid4().hex[:25]
-            async with factory() as session:
-                await session.execute(
-                    text(
-                        'INSERT INTO "GeneratedDocument" (id, "userId", title, format, style, filename, "fileUrl", "previewUrl", size, "contentType", "isPublic", "createdAt", "updatedAt") '
-                        'VALUES (:id, :uid, :title, :fmt, :style, :filename, :url, :preview, :size, :ct, true, now(), now()) RETURNING "shareId"'
-                    ),
-                    {
-                        "id": doc_id,
-                        "uid": user_id,
-                        "title": result["title"],
-                        "fmt": result["format"],
-                        "style": style,
-                        "filename": result["filename"],
-                        "url": result["url"],
-                        "preview": result["preview_url"],
-                        "size": result["size"],
-                        "ct": result["content_type"],
-                    },
-                )
-                await session.commit()
+        doc_id: str | None = None
+        share_id: str | None = None
+        try:
+            doc = await personal_learning_repo.create_document(
+                {
+                    "userId": user_id,
+                    "title": result["title"],
+                    "format": result["format"],
+                    "style": style,
+                    "filename": result["filename"],
+                    "fileUrl": result["url"],
+                    "previewUrl": result["preview_url"],
+                    "size": result["size"],
+                    "contentType": result["content_type"],
+                    "shareId": __import__("uuid").uuid4().hex[:16],
+                    "isPublic": False,
+                }
+            )
+            doc_id = doc.id
+            share_id = doc.share_id
         except Exception as e:
-            logger.warning(f"Failed to save document record: {e}")
+            # Still not fatal — the file exists and the learner can download it from the reply — but
+            # it is now an error, because a document missing from the library is a lost artifact
+            # rather than a cosmetic gap.
+            logger.error(f"Failed to save document record for {user_id}: {e}", exc_info=True)
 
         return {
             "status": "success",
@@ -1241,6 +1250,7 @@ async def handle_generate_document(
             "_component_type": "DocumentCardMessage",
             "message": f"Your {doc_format.upper()} document '{title}' is ready.",
             "document": {
+                "id": doc_id,
                 "title": result["title"],
                 "filename": result["filename"],
                 "url": result["url"],

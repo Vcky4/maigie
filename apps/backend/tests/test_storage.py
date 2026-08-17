@@ -157,6 +157,46 @@ async def test_fetch_bytes_returns_content_and_type():
     assert result == (b"png-bytes", "image/png")
 
 
+class TestOwnsUrl:
+    """Whether a URL points at an object we put in our own storage.
+
+    `delete` deliberately does not ask, because it is called with URLs this application uploaded and
+    the path is all it needs. Callers holding URLs of mixed provenance do have to ask: a note
+    attachment can be a link the learner pasted, and issuing a delete against our storage zone at
+    somebody else's path is at best a wasted request.
+    """
+
+    def test_a_url_on_the_cdn_hostname_is_ours(self):
+        client = _fresh_client(_mock_settings())
+        assert client.owns_url("https://cdn.test.com/note-attachments/u/slides.pdf") is True
+
+    def test_a_url_on_the_configured_public_base_is_ours(self):
+        client = _fresh_client(_mock_settings(public_base="https://files.test.com/media"))
+        assert client.owns_url("https://files.test.com/media/note-attachments/a.pdf") is True
+
+    def test_someone_elses_host_is_not_ours(self):
+        client = _fresh_client(_mock_settings())
+        assert client.owns_url("https://arxiv.org/abs/1706.03762") is False
+
+    def test_a_matching_path_on_another_host_is_still_not_ours(self):
+        """The path is not the test — this is the case that would delete an unrelated object."""
+        client = _fresh_client(_mock_settings())
+        assert client.owns_url("https://evil.example/note-attachments/u/slides.pdf") is False
+
+    def test_a_relative_path_is_ours(self):
+        """Nothing else in the app produces one."""
+        client = _fresh_client(_mock_settings())
+        assert client.owns_url("generated-docs/user/report.pdf") is True
+
+    def test_an_empty_url_is_not_ours(self):
+        client = _fresh_client(_mock_settings())
+        assert client.owns_url("") is False
+
+    def test_the_host_comparison_ignores_case(self):
+        client = _fresh_client(_mock_settings())
+        assert client.owns_url("https://CDN.TEST.COM/generated-docs/a.pdf") is True
+
+
 def test_singleton_instance_exists():
     """The module exposes a shared instance."""
     assert isinstance(storage_service, BunnyStorageClient)

@@ -1296,7 +1296,12 @@ async def get_document(*, user_id: str, doc_id: str):
 
 
 async def publish_document(*, user_id: str, doc_id: str):
-    """Mark a document as public and return a share id."""
+    """Mark a document as public and return a share id.
+
+    The share id is rotated on every publish. A document published, unpublished and published again
+    therefore gets a *new* link rather than reviving the old one, which is what makes unpublishing
+    mean something.
+    """
     import uuid as _uuid
 
     from src.domains.personal_learning.repository import personal_learning_repo as repo
@@ -1311,12 +1316,108 @@ async def publish_document(*, user_id: str, doc_id: str):
     return await repo.find_document(doc_id, user_id)
 
 
-async def list_documents(*, user_id: str, page: int = 1, page_size: int = 20):
-    """Return a page of generated documents for the current user, newest first."""
+async def unpublish_document(*, user_id: str, doc_id: str):
+    """Withdraw a published document and retire the link it was shared under.
+
+    ``isPublic`` goes false and the share id is rotated, so the URL the learner sent out stops
+    resolving permanently — a later republish issues a different one. ``shareId`` is `NOT NULL`, so
+    it is replaced rather than cleared; a private document has always had one.
+
+    What this does **not** do, stated because the alternative is a button that claims more than it
+    delivers: it does not revoke the file. Documents are stored at unauthenticated public URLs, so
+    anybody already holding ``fileUrl`` or ``previewUrl`` keeps their access, and anybody who
+    downloaded the file keeps the file. Unpublishing withdraws the shared *page*. Making the file
+    itself revocable needs token-authenticated storage URLs or a proxied download route, which is a
+    change to how every stored object is served, not to this function.
+
+    Idempotent: unpublishing something already private is a success, and still rotates the id, since
+    the caller's intent is "this link should not work".
+    """
+    import uuid as _uuid
+
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.shared.exceptions import NotFoundError
+
+    doc = await repo.find_document(doc_id, user_id)
+    if not doc:
+        raise NotFoundError("Document", doc_id)
+
+    await repo.update_document(doc_id, {"isPublic": False, "shareId": _uuid.uuid4().hex[:16]})
+    return await repo.find_document(doc_id, user_id)
+
+
+async def delete_document(*, user_id: str, doc_id: str) -> None:
+    """Delete a document, and the two objects it stored.
+
+    **Hard delete, not a `deletedAt` column.** Every generated document is two stored objects — the
+    file and its HTML preview — so a soft delete keeps paying for storage on something the learner
+    has said they do not want, forever, and hides it behind a filter that every read path then has to
+    remember. The learner's other artifacts here already delete outright, notes included, and a
+    document is reproducible: the prompt that made it is the thing worth keeping, and it is in the
+    activity feed.
+
+    Storage first, row second, following ``study_plan_service.delete_material``. A row pointing at a
+    file that still exists is recoverable — the learner sees the document and can try again. A
+    deleted row pointing at a live object leaves something nobody can find, name or clean up. Both
+    objects are attempted even if the first fails, so a transient failure on the preview does not
+    strand the file.
+    """
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.shared.exceptions import NotFoundError
+    from src.shared.infrastructure.storage import storage_service
+
+    doc = await repo.find_document(doc_id, user_id)
+    if not doc:
+        raise NotFoundError("Document", doc_id)
+
+    for url in (doc.file_url, doc.preview_url):
+        if not url or not storage_service.owns_url(url):
+            continue
+        removed = await storage_service.delete(url)
+        if not removed:
+            # Logged rather than raised. Storage being unreachable should not leave the learner
+            # unable to remove a document from their own library, and the row is the record that
+            # makes the object findable — keeping it because a delete failed inverts the problem.
+            logger.warning(
+                "Document object could not be deleted from storage; deleting the row anyway",
+                extra={"user_id": user_id, "doc_id": doc_id, "url": url},
+            )
+
+    await repo.delete_document(doc_id, user_id)
+
+
+async def list_documents(
+    *,
+    user_id: str,
+    page: int = 1,
+    page_size: int = 20,
+    search: str | None = None,
+    format: str | None = None,
+):
+    """Return a page of generated documents for the current user, newest first.
+
+    ``search`` matches title or filename; ``format`` is exact. Both are applied in the query, not
+    after the fact: the page used to be filtered in the browser over whichever twenty documents it
+    had loaded, so searching a library of sixty found nothing in the other forty.
+    """
     from src.domains.personal_learning.repository import personal_learning_repo as repo
 
     skip = max(0, (page - 1) * page_size)
-    return await repo.list_documents(user_id, skip=skip, take=page_size)
+    return await repo.list_documents(
+        user_id,
+        skip=skip,
+        take=page_size,
+        search=search,
+        doc_format=format,
+    )
+
+
+async def list_formats(*, user_id: str) -> list[dict[str, Any]]:
+    """Formats the learner has actually produced, with counts, commonest first."""
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+
+    counts = await repo.list_document_formats(user_id)
+    return [{"format": fmt, "count": count} for fmt, count in counts]
 
 
 async def get_by_share_id(*, share_id: str, requester_id: str | None = None):

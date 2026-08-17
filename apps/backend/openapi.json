@@ -432,6 +432,20 @@
         "title": "Body_login_form_api_v1_auth_login_post",
         "type": "object"
       },
+      "Body_upload_attachment_api_v1_learning_notes__note_id__attachments_upload_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_attachment_api_v1_learning_notes__note_id__attachments_upload_post",
+        "type": "object"
+      },
       "Body_upload_material_file_api_v1_learning_preparations__prep_id__materials_upload_post": {
         "properties": {
           "category": {
@@ -2026,6 +2040,25 @@
         "title": "DiscoveryRecommendationResponse",
         "type": "object"
       },
+      "DocumentFormatCountResponse": {
+        "description": "One output format the learner has produced, and how many documents use it.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "count"
+        ],
+        "title": "DocumentFormatCountResponse",
+        "type": "object"
+      },
       "DocumentGenerateRequest": {
         "description": "Request to generate an academic document.",
         "properties": {
@@ -2089,118 +2122,119 @@
         "title": "DocumentGenerateRequest",
         "type": "object"
       },
-      "DocumentListResponse": {
+      "DocumentJobQueuedResponse": {
+        "description": "The reply to queueing a generation job.",
         "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/DocumentResponse"
-            },
-            "title": "Items",
-            "type": "array"
+          "status": {
+            "const": "queued",
+            "title": "Status",
+            "type": "string"
           },
-          "page": {
-            "title": "Page",
-            "type": "integer"
-          },
-          "pageSize": {
-            "title": "Pagesize",
-            "type": "integer"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer"
+          "taskId": {
+            "title": "Taskid",
+            "type": "string"
           }
         },
         "required": [
-          "items",
-          "total",
-          "page",
-          "pageSize"
+          "taskId",
+          "status"
         ],
-        "title": "DocumentListResponse",
+        "title": "DocumentJobQueuedResponse",
+        "type": "object"
+      },
+      "DocumentJobStatusResponse": {
+        "description": "The state of a queued generation job, and its document once there is one.\n\n``result`` is a `DocumentResponse`, which is the point of this model existing. Both job routes\nused to return bare dicts, so neither reached the generated client types, and the worker's\nsnake_case Celery payload went to the browser untranslated — where the web client kept a\nhand-written second document type and a mapper to convert it. One response model deletes both.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "success",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "taskId": {
+            "title": "Taskid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "taskId",
+          "status"
+        ],
+        "title": "DocumentJobStatusResponse",
         "type": "object"
       },
       "DocumentResponse": {
+        "description": "A stored document.\n\nEvery field below is `NOT NULL` on `GeneratedDocument`, so every field below is required. The\nmodel previously defaulted eight of them to `None`, which published a weaker contract than the\ntable and made each one something the client had to defend against for no reason. Two —\n``size`` and ``contentType`` — were absent entirely although the worker already serialized\nthem, so a file size the database held could not be read back.",
         "properties": {
+          "contentType": {
+            "title": "Contenttype",
+            "type": "string"
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
           },
           "fileUrl": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Fileurl"
+            "title": "Fileurl",
+            "type": "string"
           },
           "filename": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filename"
+            "title": "Filename",
+            "type": "string"
           },
           "format": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Format"
+            "title": "Format",
+            "type": "string"
           },
           "id": {
             "title": "Id",
             "type": "string"
           },
           "isPublic": {
-            "default": false,
             "title": "Ispublic",
             "type": "boolean"
           },
           "previewUrl": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Previewurl"
+            "title": "Previewurl",
+            "type": "string"
           },
           "shareId": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Shareid"
+            "title": "Shareid",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
           },
           "style": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Style"
+            "title": "Style",
+            "type": "string"
           },
           "title": {
             "title": "Title",
@@ -2215,6 +2249,15 @@
           "id",
           "userId",
           "title",
+          "format",
+          "style",
+          "filename",
+          "fileUrl",
+          "previewUrl",
+          "size",
+          "contentType",
+          "shareId",
+          "isPublic",
           "createdAt"
         ],
         "title": "DocumentResponse",
@@ -5111,6 +5154,25 @@
         "title": "NoteResponse",
         "type": "object"
       },
+      "NoteTagCountResponse": {
+        "description": "One tag the learner has used, and how many of their notes carry it.\n\nThe whole catalogue, not the current page. The notes page derived its filter chips from the\ntwenty or hundred notes it happened to have loaded, which is truthful about those notes and\nwrong about the library: a tag on note 130 had no chip, and every count was a page count\nwearing a library label.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "tag": {
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "count"
+        ],
+        "title": "NoteTagCountResponse",
+        "type": "object"
+      },
       "NoteTagResponse": {
         "properties": {
           "id": {
@@ -5224,6 +5286,47 @@
           }
         },
         "title": "NoteUpdate",
+        "type": "object"
+      },
+      "NoteVersionResponse": {
+        "description": "A snapshot of a note taken before its content was replaced.\n\n``content`` is the note *as it was*, not a diff. Callers render or restore it; the server does\nnot attempt to summarise what changed, because a summary of a change to prose is a second thing\nto get wrong.",
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "noteId": {
+            "title": "Noteid",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "noteId",
+          "title",
+          "createdAt"
+        ],
+        "title": "NoteVersionResponse",
         "type": "object"
       },
       "NotificationResponse": {
@@ -5423,6 +5526,42 @@
         "title": "OnboardingStatusResponse",
         "type": "object"
       },
+      "PaginatedResponse_DocumentResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[DocumentResponse]",
+        "type": "object"
+      },
       "PaginatedResponse_FlashcardResponse_": {
         "properties": {
           "items": {
@@ -5493,6 +5632,42 @@
           "pages"
         ],
         "title": "PaginatedResponse[NoteResponse]",
+        "type": "object"
+      },
+      "PaginatedResponse_NoteVersionResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NoteVersionResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[NoteVersionResponse]",
         "type": "object"
       },
       "PaginatedResponse_PrepQuestionBankItem_": {
@@ -17474,7 +17649,7 @@
     },
     "/api/v1/learning/documents": {
       "get": {
-        "description": "List generated documents.",
+        "description": "List generated documents, newest first.\n\nFiltering happens here rather than in the browser. The library page filtered the twenty documents\nit had loaded, so a search over a larger library silently missed everything past the first page.",
         "operationId": "list_documents_api_v1_learning_documents_get",
         "parameters": [
           {
@@ -17499,6 +17674,42 @@
               "title": "Pagesize",
               "type": "integer"
             }
+          },
+          {
+            "description": "Matches the title or the filename.",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Matches the title or the filename.",
+              "title": "Search"
+            }
+          },
+          {
+            "description": "Exact format: pdf, docx, pptx.",
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact format: pdf, docx, pptx.",
+              "title": "Format"
+            }
           }
         ],
         "responses": {
@@ -17506,7 +17717,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DocumentListResponse"
+                  "$ref": "#/components/schemas/PaginatedResponse_DocumentResponse_"
                 }
               }
             },
@@ -17599,7 +17810,9 @@
           "202": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentJobQueuedResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -17627,9 +17840,41 @@
         ]
       }
     },
+    "/api/v1/learning/documents/formats": {
+      "get": {
+        "description": "Every format the learner has produced, with a count each.\n\nTwo jobs: the library's \"formats used\" figure, which was counted from whichever page happened to\nbe loaded, and the format filter, which should offer only formats the learner actually has rather\nthan the three the product supports.",
+        "operationId": "list_document_formats_api_v1_learning_documents_formats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DocumentFormatCountResponse"
+                  },
+                  "title": "Response List Document Formats Api V1 Learning Documents Formats Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Document Formats",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/documents/jobs/{task_id}": {
       "get": {
-        "description": "Poll the status of a queued document generation job.\n\nOnly the learner who queued the job can read it. Unknown, expired, and\nother learners' jobs are all reported as ``404`` so this endpoint cannot be\nused to discover that another learner's job exists.\n\nResponse shape:\n  - ``{\"taskId\": ..., \"status\": \"queued|running|success|failed\", \"result\": {...} | null}``",
+        "description": "Poll the status of a queued document generation job.\n\nOnly the learner who queued the job can read it. Unknown, expired, and\nother learners' jobs are all reported as ``404`` so this endpoint cannot be\nused to discover that another learner's job exists.\n\nThe result is a ``DocumentResponse``, the same shape every other document route returns. The\nworker serializes its Celery payload in snake_case, and with no response model on this route that\npayload reached the browser untranslated — so the web client carried a second, snake_case\ndocument type and a hand-written mapper to convert it. Validating through the response model\ndeletes both.",
         "operationId": "get_document_job_api_v1_learning_documents_jobs__task_id__get",
         "parameters": [
           {
@@ -17646,7 +17891,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentJobStatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -17724,6 +17971,46 @@
       }
     },
     "/api/v1/learning/documents/{doc_id}": {
+      "delete": {
+        "description": "Delete a document and the objects it stored.\n\nA hard delete: the file, its HTML preview, and the row. There is no `deletedAt` column, and the\nreasoning is in ``document_impl.delete_document`` — a soft delete keeps paying storage on two\nobjects the learner has said they do not want and adds a filter every read path must remember.",
+        "operationId": "delete_document_api_v1_learning_documents__doc_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Document",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
       "get": {
         "description": "Get a document by ID.",
         "operationId": "get_document_api_v1_learning_documents__doc_id__get",
@@ -17774,7 +18061,7 @@
     },
     "/api/v1/learning/documents/{doc_id}/publish": {
       "post": {
-        "description": "Make a document public with a share link.",
+        "description": "Make a document public with a share link.\n\nThe share id is rotated on every publish, so a document that was unpublished and published again\nis reachable at a new link rather than the retired one.",
         "operationId": "publish_document_api_v1_learning_documents__doc_id__publish_post",
         "parameters": [
           {
@@ -17815,6 +18102,55 @@
           }
         ],
         "summary": "Publish Document",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/documents/{doc_id}/unpublish": {
+      "post": {
+        "description": "Withdraw a published document and retire the link it was shared under.\n\nPublishing was one-way until now. The share id is rotated as well as `isPublic` cleared, so the\nURL already sent out cannot come back to life on a later publish.\n\nIt withdraws the shared page, not the file: documents are stored at unauthenticated public URLs,\nso anyone holding ``fileUrl`` or ``previewUrl`` keeps that access. Clients must say so rather than\npromising revocation. See ``document_impl.unpublish_document``.",
+        "operationId": "unpublish_document_api_v1_learning_documents__doc_id__unpublish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unpublish Document",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -18910,6 +19246,60 @@
         ]
       }
     },
+    "/api/v1/learning/notes/tags": {
+      "get": {
+        "description": "Every tag the learner has used, with a count each, commonest first.\n\nThe whole catalogue rather than the current page. Filter chips derived from a loaded page are\ntruthful about that page and wrong about the library: a tag used only on older notes has no chip,\nand each count is a page count under a library heading.",
+        "operationId": "list_note_tags_api_v1_learning_notes_tags_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NoteTagCountResponse"
+                  },
+                  "title": "Response List Note Tags Api V1 Learning Notes Tags Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Note Tags",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/notes/{note_id}": {
       "delete": {
         "description": "Delete a note.",
@@ -19115,9 +19505,68 @@
         ]
       }
     },
+    "/api/v1/learning/notes/{note_id}/attachments/upload": {
+      "post": {
+        "description": "Upload a file and attach it to a note.\n\nMultipart, through the same storage service study-plan materials and generated documents use.\nThe JSON route above registers a URL, which a client could only produce by hosting the file\nsomewhere else first — this is the half that was missing.",
+        "operationId": "upload_attachment_api_v1_learning_notes__note_id__attachments_upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_attachment_api_v1_learning_notes__note_id__attachments_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteAttachmentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Upload Attachment",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/notes/{note_id}/attachments/{attachment_id}": {
       "delete": {
-        "description": "Remove an attachment from a note.",
+        "description": "Remove an attachment from a note, and its stored file.",
         "operationId": "remove_attachment_api_v1_learning_notes__note_id__attachments__attachment_id__delete",
         "parameters": [
           {
@@ -19160,6 +19609,136 @@
           }
         ],
         "summary": "Remove Attachment",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/notes/{note_id}/history": {
+      "get": {
+        "description": "Versions of a note, newest first.\n\nA version is recorded before anything overwrites the note's content — a manual edit or an AI\nretake. `NoteHistory` rows existed as a table with no producer and no reader until migration 033;\nthe reason to give it both rather than drop it is `POST /notes/{id}/retake`, which replaces a\nlearner's own prose with a model's rewrite of it.",
+        "operationId": "list_note_history_entries_api_v1_learning_notes__note_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_NoteVersionResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Note History Entries",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/notes/{note_id}/history/{version_id}/restore": {
+      "post": {
+        "description": "Put a note's content back to a recorded version.\n\nThe current content is snapshotted first, so restoring the wrong version is itself undoable.\nContent only: the title is stored on a version to label it, not to be restored — see\n`note_service.restore_version`.",
+        "operationId": "restore_note_version_api_v1_learning_notes__note_id__history__version_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Restore Note Version",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -21854,6 +22433,48 @@
           }
         ],
         "summary": "Delete Resource",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/resources/{resource_id}/access": {
+      "post": {
+        "description": "Record that the learner opened a saved resource.\n\n`resource_service.track_access` has existed since the domain was written and no route called it,\nso `lastAccessedAt` is null on every saved resource in the database — a column that exists to\norder \"recently used\" and has never been written. This is the caller.",
+        "operationId": "track_resource_access_api_v1_learning_resources__resource_id__access_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "resource_id",
+            "required": true,
+            "schema": {
+              "title": "Resource Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Track Resource Access",
         "tags": [
           "personal-learning",
           "personal-learning"

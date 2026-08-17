@@ -63,9 +63,16 @@ async def update_tags(*, user_id: str, resource_id: str, tags: list[str]) -> Any
     return await repo.update_resource_tags(resource_id, user_id, tags)
 
 
-async def track_access(*, resource_id: str) -> None:
+async def track_access(*, user_id: str, resource_id: str) -> bool:
     """
-    Update last_accessed_at for "recently used" sorting.
+    Stamp ``lastAccessedAt`` so "recently used" can mean something.
     Req 6.5
+
+    Two things changed here. It now takes a ``user_id`` and scopes the update to the owner: it used
+    to take a bare resource id and update whichever row matched, so any learner could bump anybody
+    else's timestamp — harmless-looking, and still a write to another account's data.
+
+    And it is now reachable. Nothing called it, which is why ``lastAccessedAt`` was null on every
+    saved resource in the database while the column sat there implying otherwise.
     """
-    await repo.update_last_accessed(resource_id)
+    return await repo.update_last_accessed(resource_id, user_id=user_id)

@@ -139,6 +139,16 @@ class NoteAttachment(Base):
 
 
 class NoteHistory(Base):
+    """A snapshot of a note taken immediately before its content was replaced.
+
+    Written by ``note_service`` on every content-changing write — a manual edit, an AI retake — and
+    read by ``GET /notes/{id}/history``. Both halves arrived in migration 033; before that the table
+    existed with no producer and no consumer.
+
+    ``title`` is snapshotted with the content so a version stays self-describing after the note is
+    renamed. ``content`` is nullable because ``Note.content`` is.
+    """
+
     __tablename__ = "NoteHistory"
 
     id: Mapped[str] = mapped_column(
@@ -150,6 +160,7 @@ class NoteHistory(Base):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
@@ -236,11 +247,17 @@ class GeneratedDocument(Base, TimestampMixin):
     size: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     content_type: Mapped[str] = mapped_column("contentType", String, nullable=False)
 
-    # Share settings
+    # Share settings.
+    #
+    # ``shareId`` is NOT NULL in the database and always has been. The model used to declare it
+    # nullable, which is how a raw-SQL insert in the chat skill came to omit it and fail at the
+    # constraint — silently, inside a `except Exception: log.warning`, so every document generated
+    # from chat was rendered, uploaded and then never stored. A private document still has a share
+    # id; ``isPublic`` is what decides whether the id resolves.
     is_public: Mapped[bool] = mapped_column(
         "isPublic", Boolean, default=False, server_default="false"
     )
-    share_id: Mapped[str | None] = mapped_column("shareId", String, unique=True, nullable=True)
+    share_id: Mapped[str] = mapped_column("shareId", String, unique=True, nullable=False)
 
     def __repr__(self) -> str:
         return f"<GeneratedDocument id={self.id} title={self.title}>"
@@ -1105,9 +1122,7 @@ class StudyPlan(Base, TimestampMixin):
     # The two facts behind the pace, kept separately as well as multiplied into
     # `weeklyGoalMinutes`, because the product cannot be taken apart again: 175 minutes a
     # week is 5x35 or 7x25, and the detail page prints "35 min - 5x week".
-    sessions_per_week: Mapped[int | None] = mapped_column(
-        "sessionsPerWeek", Integer, nullable=True
-    )
+    sessions_per_week: Mapped[int | None] = mapped_column("sessionsPerWeek", Integer, nullable=True)
     session_minutes: Mapped[int | None] = mapped_column("sessionMinutes", Integer, nullable=True)
     # ISO weekday numbers the learner is available: 1 = Monday ... 7 = Sunday. Numbers
     # rather than the wizard's "Mon"/"Tue" labels, which are English and would have to be
