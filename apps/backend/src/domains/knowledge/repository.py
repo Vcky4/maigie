@@ -24,6 +24,7 @@ from .db_models import (
     Resource,
     Topic,
     TopicCheckAttempt,
+    TopicIllustration,
     TopicSection,
 )
 
@@ -770,6 +771,74 @@ class KnowledgeRepository:
                 .order_by(TopicCheckAttempt.created_at, TopicCheckAttempt.id)
             )
             return list(rows.scalars().all())
+
+    # -----------------------------------------------------------------------
+    # Topic illustrations
+    # -----------------------------------------------------------------------
+
+    async def create_topic_illustration(self, data: dict[str, Any]) -> TopicIllustration:
+        """Store one generated diagram or equation.
+
+        Explicit keywords rather than `map_fields`, matching `create_topic_check_attempt`: both callers are
+        server-side — the `study_show_visual` tool dispatch and the diagram route — and neither passes a
+        client dictionary through, so there is no request body whose extra field could be dropped. The
+        strict mapper exists for the paths where one can.
+        """
+        async with await self._session() as session:
+            illustration = TopicIllustration(
+                topic_id=data["topicId"],
+                user_id=data["userId"],
+                mermaid=data.get("mermaid") or None,
+                display_math=data.get("displayMath") or None,
+                caption=data.get("caption") or None,
+                source=data.get("source") or "tutor",
+            )
+            session.add(illustration)
+            await session.commit()
+            await session.refresh(illustration)
+            return illustration
+
+    async def list_topic_illustrations(
+        self, topic_id: str, user_id: str, *, take: int = 50
+    ) -> list[TopicIllustration]:
+        """One learner's illustrations for one topic, newest first.
+
+        Newest first, unlike check attempts, and the difference is deliberate. The first attempt at a check
+        is the one that measures understanding, so those read oldest first. A diagram carries no such
+        ordering — the useful one is the most recent thing the tutor drew, which is what a learner returning
+        to a lesson is looking for.
+
+        Bounded, because a talkative session can push a dozen and a learner can revisit a topic many times.
+        `id` breaks ties so two visuals pushed in the same clock tick do not swap places between loads.
+        """
+        async with await self._session() as session:
+            rows = await session.execute(
+                select(TopicIllustration)
+                .where(
+                    TopicIllustration.topic_id == topic_id,
+                    TopicIllustration.user_id == user_id,
+                )
+                .order_by(TopicIllustration.created_at.desc(), TopicIllustration.id.desc())
+                .limit(take)
+            )
+            return list(rows.scalars().all())
+
+    async def delete_topic_illustration(self, illustration_id: str, user_id: str) -> bool:
+        """Delete one, scoped to its owner.
+
+        The `userId` is in the `WHERE` rather than checked after a read, so another learner's illustration
+        id deletes nothing and the route answers `404` — the pattern §14.2 sets, which keeps an id from
+        being probed for existence.
+        """
+        async with await self._session() as session:
+            result = await session.execute(
+                delete(TopicIllustration).where(
+                    TopicIllustration.id == illustration_id,
+                    TopicIllustration.user_id == user_id,
+                )
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
 
     def _map_section_data(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate wire names to attribute names for the three that differ.

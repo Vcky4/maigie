@@ -74,3 +74,9 @@ class StudyDiagramResponse(BaseModel):
     #: LaTeX for one display equation, no delimiters. Empty when a diagram alone answers it.
     display_math: str
     caption: str
+    #: Id of the stored `TopicIllustration`, so the client can delete the one it just asked for.
+    #:
+    #: Null when the diagram was generated but could not be kept. The diagram is still returned and still
+    #: charged for, because the learner has it either way — see `illustration_service`. A null here means
+    #: "this one will not be on the lesson page later", not "this one failed".
+    illustration_id: str | None = None

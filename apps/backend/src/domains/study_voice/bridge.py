@@ -38,6 +38,7 @@ from src.config import get_settings
 from src.domains.billing.services.credit_consumption_service import consume_credits
 from src.domains.identity.repository import IdentityRepository
 from src.domains.intelligence.action.skills.registry import skill_registry
+from src.domains.knowledge.services import illustration_service
 from src.shared.exceptions import SubscriptionLimitError
 
 from . import session_store
@@ -335,7 +336,29 @@ async def run_bridge(
         ):
             mermaid = str(args.get("mermaid") or "").strip()
             display_math = str(args.get("display_math") or "").strip()
+            caption = str(args.get("caption") or "").strip()
             if mermaid or display_math:
+                topic_id = context.get("topicId")
+                # Kept as well as sent. This visual used to exist only in the frame below: the client put
+                # it in an in-memory map that nothing read, so the tutor announced a diagram, the learner
+                # saw nothing, and a reload lost it regardless.
+                #
+                # `record` cannot raise — a storage failure must not break a turn the model is mid-way
+                # through, and the learner has the diagram either way. `None` when there is no topic open,
+                # since an illustration with nothing to illustrate has nowhere to live.
+                illustration_id = (
+                    await illustration_service.record(
+                        user_id,
+                        topic_id=str(topic_id),
+                        mermaid=mermaid,
+                        display_math=display_math,
+                        caption=caption,
+                        # The model chose to draw this. The learner pressing "Diagram" is the other source.
+                        source=illustration_service.SOURCE_TUTOR,
+                    )
+                    if topic_id
+                    else None
+                )
                 await _send_json(
                     send_to_client,
                     {
@@ -343,7 +366,10 @@ async def run_bridge(
                         "session_id": session_id,
                         "mermaid": mermaid,
                         "display_math": display_math,
-                        "caption": str(args.get("caption") or "").strip(),
+                        "caption": caption,
+                        # Sent so the client can offer to remove this one without refetching the list.
+                        # Null means it was shown but not kept, which is a real state rather than an error.
+                        "illustration_id": illustration_id,
                     },
                 )
 

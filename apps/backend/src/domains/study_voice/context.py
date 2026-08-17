@@ -52,8 +52,13 @@ BASE_INSTRUCTION = (
     "- Ask questions. A tutor that only explains is a podcast.\n"
     "- When the learner is wrong, say so plainly and kindly, then work out why with them.\n"
     "- Never claim to have done something you have not done.\n"
-    "- If you need a diagram or an equation, call the study_show_visual tool so it appears on their "
-    "screen. Do not read diagram syntax or LaTeX out loud.\n"
+    "- If you need a diagram or an equation, call the study_show_visual tool. It appears on the learner's "
+    "screen straight away and is kept on the lesson afterwards, so you can refer to it as something they "
+    "can see. Do not read diagram syntax or LaTeX out loud.\n"
+    "- When the learner has finished a topic and wants to move on, call the "
+    "complete_topic_and_continue tool. Saying that you have marked it complete does not mark it "
+    "complete; only the tool does, and telling them otherwise breaks the rule above about never "
+    "claiming to have done something you have not.\n"
 )
 
 _NO_TOPIC_INSTRUCTION = "\nThe learner has not opened a specific lesson, so ask what they want to work on before teaching."

@@ -1,8 +1,8 @@
 """
 Knowledge domain — SQLAlchemy models.
 
-Course, Module, Topic, TopicSection, CourseRating, Resource, Embedding,
-CourseOutlineSatisfaction, UserTopicProgress.
+Course, Module, Topic, TopicSection, TopicCheckAttempt, TopicIllustration, CourseRating, Resource,
+Embedding, CourseOutlineSatisfaction, UserTopicProgress.
 """
 
 from datetime import datetime
@@ -304,6 +304,89 @@ class TopicCheckAttempt(Base):
 
     def __repr__(self) -> str:
         return f"<TopicCheckAttempt topic={self.topic_id} correct={self.correct}>"
+
+
+class TopicIllustration(Base):
+    """A diagram or equation produced while studying a topic.
+
+    ## Why this table exists
+
+    Two paths already generated visuals and neither kept them. The voice tutor calls `study_show_visual`
+    when a picture would help, and the learner can ask for one directly through
+    `POST /gemini-live/study/diagram`, which costs 80 credits. Both delivered `{mermaid, display_math,
+    caption}` to the browser, where it went into a zustand map capped at 48 entries — **read by nothing, and
+    with no mermaid or KaTeX renderer installed anywhere in the client.** So the tutor said "look at this
+    diagram", the learner saw nothing, and reloading the page discarded whatever had been generated.
+
+    Rendering it was the first half. This is the second: a diagram the learner paid for and understood
+    something from should still be there tomorrow, and a lesson they return to should show what they were
+    shown last time. Client memory cannot do that.
+
+    ## Columns rather than an opaque block array
+
+    The web models these as `MessageContentBlock[]`, and storing that shape verbatim was the obvious move.
+    It is rejected because the server would then hold a JSON blob it cannot reason about — it could not tell
+    a diagram from an image, could not enforce that a row contains *something* drawable, and could not
+    reject an `image` block pointing at an arbitrary URL. Both producers emit exactly these three values, so
+    these are the three columns, and the client composes its own blocks from them the way it already does
+    for the REST response.
+
+    ## `userId`, even though a course has one owner
+
+    Same reasoning as `TopicCheckAttempt`. Classrooms assign courses to their members, so several learners
+    genuinely study one topic — and a visual generated inside *one* learner's voice conversation was framed
+    by what that learner was struggling with. Showing it to everyone who opens the topic would leak one
+    person's session into another's lesson.
+
+    ## No `TimestampMixin`
+
+    An illustration is an event: generated once, never edited. An `updatedAt` here could only ever equal
+    `createdAt` while implying that editing is a thing that happens. Deletion is offered — an unhelpful
+    diagram is clutter on a lesson the learner returns to — and deleting is not editing.
+    """
+
+    __tablename__ = "TopicIllustration"
+    __table_args__ = (
+        Index("TopicIllustration_topicId_userId_createdAt_idx", "topicId", "userId", "createdAt"),
+        # At least one of the two must hold something. A row with neither renders as an empty panel, which
+        # reads as a broken feature rather than as an absent one — the same reason `generate_for_topic`
+        # raises instead of returning a blank diagram.
+        CheckConstraint(
+            "(mermaid IS NOT NULL AND mermaid <> '') OR"
+            " (\"displayMath\" IS NOT NULL AND \"displayMath\" <> '')",
+            name="TopicIllustration_has_content",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    topic_id: Mapped[str] = mapped_column(
+        "topicId", String, ForeignKey("Topic.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE")
+    )
+    #: Mermaid source, diagram body only — no markdown fences. Nullable because a row may be maths alone.
+    mermaid: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Display-mode LaTeX without delimiters. Nullable because a row may be a diagram alone.
+    display_math: Mapped[str | None] = mapped_column("displayMath", Text, nullable=True)
+    #: The model's own one-line account of what it drew. Null rather than derived from the topic title,
+    #: which would describe the lesson instead of the picture.
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: `tutor` when the model chose to show it mid-conversation, `learner` when it was asked for directly.
+    #: Worth keeping apart: one is teaching, the other is a request, and a lesson that lists them together
+    #: without saying which is which attributes the learner's own question to the tutor.
+    source: Mapped[str] = mapped_column(String, default="tutor", server_default="tutor")
+
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TopicIllustration topic={self.topic_id} source={self.source}>"
 
 
 class CourseRating(Base, TimestampMixin):

@@ -43,6 +43,7 @@ from src.domains.billing.services.credit_consumption_service import (
 )
 from src.domains.identity.db_models import User
 from src.domains.identity.repository import IdentityRepository
+from src.domains.knowledge.services import illustration_service
 from src.shared.auth import CurrentUser
 from src.shared.auth.jwt import decode_access_token
 from src.shared.exceptions import MaigieError, SubscriptionLimitError
@@ -103,7 +104,25 @@ async def study_diagram(
             detail=getattr(exc, "detail", None) or str(exc),
         ) from exc
 
-    return StudyDiagramResponse(**result)
+    # Kept, so the diagram is still on the lesson tomorrow. It used to be handed to the browser and
+    # nowhere else: the client put it in an in-memory map that nothing read, so 80 credits bought something
+    # that lasted until the tab was closed and was never drawn even then.
+    #
+    # `record` rather than `record_checked`: `generate_for_topic` has already resolved the topic through
+    # `check_topic_ownership`, so a second check would re-ask a question already answered. It cannot raise,
+    # so a storage failure cannot turn a diagram the learner is looking at into an error.
+    illustration_id = await illustration_service.record(
+        current_user.id,
+        topic_id=body.topic_id,
+        mermaid=result.get("mermaid"),
+        display_math=result.get("display_math"),
+        caption=result.get("caption"),
+        # The learner pressed a button. The tutor deciding to draw something is the other source, and the
+        # lesson page distinguishes them rather than crediting this to the tutor.
+        source=illustration_service.SOURCE_LEARNER,
+    )
+
+    return StudyDiagramResponse(**result, illustration_id=illustration_id)
 
 
 @router.post("/conversation/start", response_model=StartConversationResponse)

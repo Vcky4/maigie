@@ -11020,6 +11020,17 @@
             "title": "Display Math",
             "type": "string"
           },
+          "illustration_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Illustration Id"
+          },
           "mermaid": {
             "title": "Mermaid",
             "type": "string"
@@ -12877,6 +12888,69 @@
           "content"
         ],
         "title": "TopicGenerateResponse",
+        "type": "object"
+      },
+      "TopicIllustrationResponse": {
+        "description": "A diagram or equation kept from a study session.\n\n`mermaid` and `displayMath` are both optional and at least one is always present — the table has a check\nconstraint saying so, because a row with neither draws an empty panel, which reads as a broken feature\nrather than an absent one.\n\nThe client composes its own `MessageContentBlock[]` from these two fields, which is the conversion it\nalready performs on the diagram route's reply. Sending the block array instead was considered and\nrejected: the server would then be publishing a shape it does not validate, and the `image` variant in\nthat union would let a stored row point anywhere.",
+        "properties": {
+          "caption": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caption"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "displayMath": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Displaymath"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "mermaid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mermaid"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "topicId": {
+            "title": "Topicid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topicId",
+          "source",
+          "createdAt"
+        ],
+        "title": "TopicIllustrationResponse",
         "type": "object"
       },
       "TopicLocationResponse": {
@@ -17133,6 +17207,110 @@
           }
         ],
         "summary": "Record Topic Check Attempt",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}/illustrations": {
+      "get": {
+        "description": "The diagrams and equations kept from studying this topic, newest first.\n\nThere is no matching `POST`, and that is the design rather than an omission. Both producers are\nserver-side — the `study_show_visual` tool dispatch inside the voice relay, and the diagram route that\ngenerates one on request — so they write directly through `illustration_service`. A public create\nendpoint would let a client store arbitrary mermaid against a topic, and would add a second way for the\nsame row to arrive, which is how two writers end up disagreeing about what `source` means.\n\nNewest first, unlike check attempts. The first attempt at a check is the one that measures\nunderstanding; a diagram carries no such ordering, and the most recent one is what a learner returning\nto a lesson is looking for.\n\nAnswers `403` for another learner's topic and `404` for one that does not exist, because that is what\n`check_topic_ownership` does and every topic route in this domain does the same. Worth flagging: §14.2 of\nthe integration plan asks for `404` in both cases so an id cannot be probed. Following the helper is the\nlesser evil — one route disagreeing with its eleven neighbours is a worse inconsistency than the domain\ndisagreeing with the plan, and reconciling them means changing a shipped contract deliberately rather\nthan as a side effect of adding this.",
+        "operationId": "list_topic_illustrations_api_v1_knowledge_topics__topic_id__illustrations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TopicIllustrationResponse"
+                  },
+                  "title": "Response List Topic Illustrations Api V1 Knowledge Topics  Topic Id  Illustrations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Topic Illustrations",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}/illustrations/{illustration_id}": {
+      "delete": {
+        "description": "Remove one illustration.\n\nOffered because a model-generated diagram is sometimes unhelpful or wrong, and a lesson the learner\nreturns to should not be permanently decorated with it. Deleting is not editing, which is why these rows\nhave a `createdAt` and no `updatedAt`.\n\n`topic_id` is in the path for consistency with every other topic-scoped route and is deliberately not\nused to authorize: the row carries its own `userId`, so one scoped `DELETE` both finds it and proves\nownership. A mismatched but owned pair therefore succeeds — the alternative is an extra query to reject\na request that names the right row.",
+        "operationId": "delete_topic_illustration_api_v1_knowledge_topics__topic_id__illustrations__illustration_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "illustration_id",
+            "required": true,
+            "schema": {
+              "title": "Illustration Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Topic Illustration",
         "tags": [
           "knowledge",
           "knowledge"

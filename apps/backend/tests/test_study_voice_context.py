@@ -185,6 +185,41 @@ async def test_objectives_and_teaching_style_are_included(brief_world):
 
 
 @pytest.mark.asyncio
+async def test_the_tutor_is_told_to_complete_a_topic_with_the_tool(brief_world):
+    """The instruction the web client depended on and never had.
+
+    Topic completion used to be detected in the browser by substring-matching transcribed model speech
+    against a hand-written phrase list, and the phrase the model was supposed to say was specified in the
+    client's `system_instruction` — a field this domain **ignores by design**, because a browser-authored
+    system prompt is a browser-authored tutor. So the model was never asked to say the phrase, and any match
+    the browser found was a coincidence that then wrote `completed = true` on a real row.
+
+    The browser no longer guesses; it acts on the `navigate_next_topic` frame that
+    `complete_topic_and_continue` produces after the write. That only works if the tutor knows to call the
+    tool, which is what this pins — and it is pinned in the *brief*, the one place the model actually reads.
+    """
+    brief = await context.build_brief("user-1", course_id="course-1", topic_id="topic-1")
+    assert "complete_topic_and_continue" in brief
+    # And that it is framed as the only thing that completes a topic. Saying so without calling the tool is
+    # the failure mode the phrase matcher was built to catch, and the honest fix is to forbid it.
+    assert "does not mark it" in brief
+
+
+@pytest.mark.asyncio
+async def test_the_tutor_is_told_a_visual_is_seen_and_kept(brief_world):
+    """`study_show_visual` now has somewhere to appear, and the brief says so.
+
+    It previously promised the diagram would appear "on their screen" while nothing rendered a content block
+    anywhere in the client and no mermaid package was installed — so the tutor announced a picture the
+    learner could not see. The overlay draws it now and migration 035 keeps it, and both halves are stated
+    because a tutor that knows the diagram persists can refer back to it in a later session.
+    """
+    brief = await context.build_brief("user-1", course_id="course-1", topic_id="topic-1")
+    assert "study_show_visual" in brief
+    assert "kept on the lesson" in brief
+
+
+@pytest.mark.asyncio
 async def test_a_course_with_no_teaching_style_gets_no_style_instruction(brief_world):
     brief_world.course = _course(teaching_style=None)
     brief = await context.build_brief("user-1", course_id="course-1", topic_id="topic-1")

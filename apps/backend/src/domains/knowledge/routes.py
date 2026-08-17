@@ -25,7 +25,13 @@ from src.shared.auth import CurrentUser
 
 from . import models
 from .repository import knowledge_repo
-from .services import course_service, lesson_service, resource_service, topic_check_service
+from .services import (
+    course_service,
+    illustration_service,
+    lesson_service,
+    resource_service,
+    topic_check_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +451,60 @@ async def list_topic_check_attempts(topic_id: str, current_user: CurrentUser):
         models.TopicCheckAttemptResponse.model_validate(attempt, from_attributes=True)
         for attempt in attempts
     ]
+
+
+@router.get(
+    "/topics/{topic_id}/illustrations",
+    response_model=list[models.TopicIllustrationResponse],
+)
+async def list_topic_illustrations(topic_id: str, current_user: CurrentUser):
+    """The diagrams and equations kept from studying this topic, newest first.
+
+    There is no matching `POST`, and that is the design rather than an omission. Both producers are
+    server-side — the `study_show_visual` tool dispatch inside the voice relay, and the diagram route that
+    generates one on request — so they write directly through `illustration_service`. A public create
+    endpoint would let a client store arbitrary mermaid against a topic, and would add a second way for the
+    same row to arrive, which is how two writers end up disagreeing about what `source` means.
+
+    Newest first, unlike check attempts. The first attempt at a check is the one that measures
+    understanding; a diagram carries no such ordering, and the most recent one is what a learner returning
+    to a lesson is looking for.
+
+    Answers `403` for another learner's topic and `404` for one that does not exist, because that is what
+    `check_topic_ownership` does and every topic route in this domain does the same. Worth flagging: §14.2 of
+    the integration plan asks for `404` in both cases so an id cannot be probed. Following the helper is the
+    lesser evil — one route disagreeing with its eleven neighbours is a worse inconsistency than the domain
+    disagreeing with the plan, and reconciling them means changing a shipped contract deliberately rather
+    than as a side effect of adding this.
+    """
+    rows = await illustration_service.list_for_topic(current_user.id, topic_id=topic_id)
+    return [
+        models.TopicIllustrationResponse.model_validate(row, from_attributes=True) for row in rows
+    ]
+
+
+@router.delete(
+    "/topics/{topic_id}/illustrations/{illustration_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_topic_illustration(
+    topic_id: str, illustration_id: str, current_user: CurrentUser
+):
+    """Remove one illustration.
+
+    Offered because a model-generated diagram is sometimes unhelpful or wrong, and a lesson the learner
+    returns to should not be permanently decorated with it. Deleting is not editing, which is why these rows
+    have a `createdAt` and no `updatedAt`.
+
+    `topic_id` is in the path for consistency with every other topic-scoped route and is deliberately not
+    used to authorize: the row carries its own `userId`, so one scoped `DELETE` both finds it and proves
+    ownership. A mismatched but owned pair therefore succeeds — the alternative is an extra query to reject
+    a request that names the right row.
+    """
+    removed = await illustration_service.delete(current_user.id, illustration_id=illustration_id)
+    if not removed:
+        # `404` for both "no such id" and "not yours", per §14.2, so an id cannot be probed.
+        raise HTTPException(status_code=404, detail="Illustration not found")
 
 
 async def _owned_section(section_id: str, user_id: str):

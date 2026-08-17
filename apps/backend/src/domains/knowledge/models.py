@@ -181,6 +181,30 @@ class TopicCheckAttemptResponse(CamelModel):
     created_at: datetime
 
 
+class TopicIllustrationResponse(CamelModel):
+    """A diagram or equation kept from a study session.
+
+    `mermaid` and `displayMath` are both optional and at least one is always present — the table has a check
+    constraint saying so, because a row with neither draws an empty panel, which reads as a broken feature
+    rather than an absent one.
+
+    The client composes its own `MessageContentBlock[]` from these two fields, which is the conversion it
+    already performs on the diagram route's reply. Sending the block array instead was considered and
+    rejected: the server would then be publishing a shape it does not validate, and the `image` variant in
+    that union would let a stored row point anywhere.
+    """
+
+    id: str
+    topic_id: str
+    mermaid: str | None = None
+    display_math: str | None = None
+    caption: str | None = None
+    #: `tutor` when the model chose to show it, `learner` when it was asked for. Shown, because a lesson
+    #: that lists both without distinction credits the learner's own question to the tutor.
+    source: str
+    created_at: datetime
+
+
 class TopicCheckSummary(CamelModel):
     """What a learner's attempts at one check add up to.
 
