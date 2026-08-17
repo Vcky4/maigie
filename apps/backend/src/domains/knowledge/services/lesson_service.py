@@ -51,7 +51,40 @@ _MAX_OBJECTIVES = 6
 _VALID_KINDS = {"concept", "example", "algorithm", "comparison", "check"}
 
 
-def build_lesson_prompt(title: str, existing_content: str | None = None) -> str:
+#: How each teaching style is described to the model.
+#:
+#: The wizard asks the learner how a course should be explained and stores the answer in
+#: `Course.teachingStyle`. Until this existed the field was written and read by nothing, while the wizard's
+#: summary panel promised "Maigie will adapt explanations and practice to your ... learning style" — a claim
+#: with no mechanism behind it. This is the mechanism.
+#:
+#: Phrased as an instruction about emphasis rather than a format, because a style that dictated structure
+#: would fight the section shape the reader needs.
+_STYLE_GUIDANCE = {
+    "Visual": (
+        "Lead with concrete imagery, spatial descriptions and worked diagrams described in words. "
+        "Prefer examples the learner can picture over formal definitions."
+    ),
+    "Hands-on": (
+        "Lead with something the learner does. Prefer step-by-step walkthroughs and exercises over "
+        "exposition, and use the `algorithm` and `example` section kinds heavily."
+    ),
+    "Concept first": (
+        "Establish the underlying principle before any example, and name why it holds. Prefer the "
+        "`concept` and `comparison` section kinds."
+    ),
+    "Mixed": (
+        "Alternate between explanation and application so no more than two consecutive sections are of "
+        "the same kind."
+    ),
+}
+
+
+def build_lesson_prompt(
+    title: str,
+    existing_content: str | None = None,
+    teaching_style: str | None = None,
+) -> str:
     """Ask for a lesson as JSON, in the shape the reader renders.
 
     The field names match the response models exactly, so a well-behaved reply needs no translation.
@@ -96,6 +129,12 @@ Rules:
   omit a key entirely rather than inventing content to fill it. Do not include a code example unless
   the subject genuinely involves code.
 - Exactly one choice in `knowledgeCheck` has "correct": true, and give between 3 and 4 choices."""
+
+    # The course's own style, when it has one. Appended rather than woven into the rules above so the
+    # required shape stays identical for every style — a learner changing style should get different
+    # emphasis, not a differently-shaped lesson the reader cannot render.
+    if guidance := _STYLE_GUIDANCE.get(teaching_style or ""):
+        prompt += f"\n\nThis course is taught in a {teaching_style} style. {guidance}"
 
     if existing_content:
         prompt += f"\n\nBuild on this existing material rather than contradicting it:\n{existing_content[:2000]}"
@@ -297,3 +336,162 @@ def render_markdown(title: str, parsed: dict[str, Any]) -> str:
         lines.append("")
 
     return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# Course outlines
+#
+# The create wizard's review step showed the outline of whichever *template* the learner started from,
+# regardless of what they asked for: type "Data analytics" against the public-speaking template and the
+# review step offered "Working with speaking nerves" and "Read the audience". The title and category
+# followed the input; the curriculum did not. Accepting it saved that outline, so the learner ended up
+# with a course about the wrong subject.
+#
+# So the outline is generated from the brief, shown for review, and only persisted once accepted. Two
+# reasons that ordering matters:
+#
+# - **Generation before persistence.** A rejected outline should cost nothing but a model call. Writing it
+#   first and letting the learner delete it would leave partial courses behind every time they changed
+#   their mind.
+# - **Review before content.** An outline is a dozen titles and cheap to produce; the lessons behind them
+#   are a model call each. Generating twelve lessons for an outline the learner then rejects wastes twelve
+#   calls, so only the first lesson is written on acceptance and the rest are written when opened.
+# ---------------------------------------------------------------------------
+
+#: Bounds on a generated outline. A model asked for "a course" will occasionally return thirty modules of
+#: one topic, which is an index rather than a curriculum.
+_MAX_MODULES = 8
+_MIN_MODULES = 2
+_MAX_TOPICS_PER_MODULE = 10
+
+#: The kinds a generated topic may claim, matching `TopicKind`. Anything else becomes a plain lesson rather
+#: than being stored as a label the outline cannot render.
+_VALID_TOPIC_KINDS = {"Lesson", "Practice", "Project", "Check"}
+
+
+def build_outline_prompt(
+    *,
+    title: str,
+    brief: str,
+    level: str | None = None,
+    teaching_style: str | None = None,
+    category: str | None = None,
+) -> str:
+    """Ask for a course outline as JSON, from the learner's own brief.
+
+    The brief is the thing being answered, so it goes in first and verbatim. Level, style and category are
+    context rather than instructions — a learner who asked for something specific should get that, shaped
+    by their preferences, not a generic course about their category.
+    """
+    prompt = f"""Design a course outline for this learner.
+
+Their course title: "{title}"
+What they asked for, in their words: "{brief}"
+"""
+    if category:
+        prompt += f"Subject area: {category}\n"
+    if level:
+        prompt += f"Target level: {level}\n"
+    if guidance := _STYLE_GUIDANCE.get(teaching_style or ""):
+        prompt += f"Preferred teaching style: {teaching_style}. {guidance}\n"
+
+    prompt += f"""
+Return ONLY a JSON object, no prose around it:
+
+{{
+  "modules": [
+    {{
+      "title": "module title",
+      "description": "one sentence on what this module covers",
+      "topics": [
+        {{
+          "title": "lesson title",
+          "kind": "Lesson | Practice | Project | Check",
+          "durationMinutes": 15
+        }}
+      ]
+    }}
+  ],
+  "outcomes": ["what the learner will be able to do afterwards"]
+}}
+
+Rules:
+- Between {_MIN_MODULES} and {_MAX_MODULES} modules, ordered so each builds on the last.
+- Between 2 and {_MAX_TOPICS_PER_MODULE} topics per module.
+- `kind` describes what the sitting asks of the learner: reading (Lesson), rehearsing (Practice),
+  building something (Project), or testing recall (Check). Most topics are Lessons. Include at least one
+  Practice or Project per module where the subject allows it.
+- `durationMinutes` between 5 and 90, realistic for the topic.
+- Between 3 and 5 outcomes, each a concrete capability rather than a topic restated.
+- Answer the learner's brief specifically. Do not produce a generic course about the subject area."""
+    return prompt
+
+
+def parse_outline(payload: Any) -> dict[str, Any]:
+    """Turn a model reply into modules, topics and outcomes.
+
+    Validated rather than trusted, for the same reason `parse_lesson` is: this reply is the one input to the
+    feature that no type system guards. A malformed reply degrades to fewer modules, and to none if nothing
+    survives — which the caller reports as a failure to generate rather than saving an empty course.
+
+    Positions are not assigned here. The caller owns them, because the learner may reorder or drop modules
+    in review before anything is written, and an order computed now would be wrong by then.
+    """
+    if not isinstance(payload, dict):
+        return {"modules": [], "outcomes": None}
+
+    modules: list[dict[str, Any]] = []
+    for raw_module in payload.get("modules") or []:
+        if not isinstance(raw_module, dict):
+            continue
+        module_title = _clean_str(raw_module.get("title"), 255)
+        if not module_title:
+            continue
+
+        topics: list[dict[str, Any]] = []
+        for raw_topic in raw_module.get("topics") or []:
+            # A bare string is a shape the model does return, and it is recoverable: the title is the only
+            # required field, so treat it as one rather than dropping the topic.
+            if isinstance(raw_topic, str):
+                raw_topic = {"title": raw_topic}
+            if not isinstance(raw_topic, dict):
+                continue
+            topic_title = _clean_str(raw_topic.get("title"), 255)
+            if not topic_title:
+                continue
+
+            kind = raw_topic.get("kind")
+            duration = raw_topic.get("durationMinutes")
+            topics.append(
+                {
+                    "title": topic_title,
+                    "kind": kind if kind in _VALID_TOPIC_KINDS else "Lesson",
+                    "durationMinutes": (
+                        int(duration)
+                        if isinstance(duration, int | float) and 5 <= duration <= 90
+                        else None
+                    ),
+                }
+            )
+            if len(topics) >= _MAX_TOPICS_PER_MODULE:
+                break
+
+        # A module with no topics is a heading with nothing under it — the same reason a section with no
+        # paragraphs is dropped from a lesson.
+        if not topics:
+            continue
+
+        modules.append(
+            {
+                "title": module_title,
+                "description": _clean_str(raw_module.get("description")),
+                "topics": topics,
+            }
+        )
+        if len(modules) >= _MAX_MODULES:
+            break
+
+    return {
+        "modules": modules,
+        "outcomes": _clean_str_list(payload.get("outcomes"), 5),
+    }

@@ -1,26 +1,6 @@
 {
   "components": {
     "schemas": {
-      "AICourseRequest": {
-        "description": "AI-generated course request.",
-        "properties": {
-          "difficulty": {
-            "$ref": "#/components/schemas/DifficultyLevel",
-            "default": "BEGINNER"
-          },
-          "topic": {
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Topic",
-            "type": "string"
-          }
-        },
-        "required": [
-          "topic"
-        ],
-        "title": "AICourseRequest",
-        "type": "object"
-      },
       "AccountDeletionStatusResponse": {
         "description": "Account deletion state.",
         "properties": {
@@ -968,6 +948,92 @@
           "title"
         ],
         "title": "CourseNextTopic",
+        "type": "object"
+      },
+      "CourseOutlineRequest": {
+        "description": "The brief an outline is generated from.\n\nEverything the create wizard has gathered by its review step. `brief` is the learner's own words and is\nthe thing being answered; the rest is context that shapes it.",
+        "properties": {
+          "brief": {
+            "maxLength": 8000,
+            "minLength": 12,
+            "title": "Brief",
+            "type": "string"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DifficultyLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "teachingStyle": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Teachingstyle"
+          },
+          "title": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "brief"
+        ],
+        "title": "CourseOutlineRequest",
+        "type": "object"
+      },
+      "CourseOutlineResponse": {
+        "description": "A proposed curriculum, generated and **not saved**.\n\nReturned for review so a learner sees what they are about to get before it exists. The wizard previously\nshowed the outline of whichever template they started from, whatever they had asked for — typing \"Data\nanalytics\" against the public-speaking template offered \"Working with speaking nerves\", and accepting it\nsaved exactly that.\n\nNothing here carries an id or a position, because nothing has been written. The client sends the parts it\nkeeps back through the normal create endpoints, which is what makes rejecting an outline free.",
+        "properties": {
+          "modules": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GeneratedOutlineModule"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "outcomes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcomes"
+          }
+        },
+        "title": "CourseOutlineResponse",
         "type": "object"
       },
       "CourseOutlineSatisfactionCreate": {
@@ -3048,6 +3114,68 @@
           "email"
         ],
         "title": "ForgotPasswordRequest",
+        "type": "object"
+      },
+      "GeneratedOutlineModule": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topics": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GeneratedOutlineTopic"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "GeneratedOutlineModule",
+        "type": "object"
+      },
+      "GeneratedOutlineTopic": {
+        "description": "One planned sitting. No id and no order: nothing is persisted yet.",
+        "properties": {
+          "durationMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Durationminutes"
+          },
+          "kind": {
+            "default": "Lesson",
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "GeneratedOutlineTopic",
         "type": "object"
       },
       "GoalCreate": {
@@ -14295,25 +14423,27 @@
         ]
       }
     },
-    "/api/v1/knowledge/courses/generate": {
+    "/api/v1/knowledge/courses/outline": {
       "post": {
-        "description": "Trigger AI course generation (returns immediately, updates via WebSocket).",
-        "operationId": "generate_ai_course_api_v1_knowledge_courses_generate_post",
+        "description": "Propose a curriculum from the learner's brief, without saving anything.\n\n**This replaces `POST /courses/generate`**, which was a published `501` with an unreachable\nimplementation behind it. A permanent `501` is the one option the plan ruled out: it advertises a\ncapability and refuses it, so every client has to special-case an endpoint that has never worked.\n\nGeneration happens *before* persistence, and that ordering is the point. The create wizard used to show\nthe outline of whichever template the learner started from, regardless of what they had asked for — a\nbrief about data analytics was reviewed against \"Working with speaking nerves\" and, on acceptance, saved\nexactly that. Now the outline answers the brief, the learner reviews the real thing, and a rejected\noutline costs one model call rather than a course they have to delete.\n\nNothing is written here, so nothing needs cleaning up when the learner asks for something different.\nOnly the outline is generated; the lessons behind it are a model call each, and writing twelve of them\nfor a curriculum that may be rejected would waste eleven of them. The first lesson is written when the\ncourse is accepted, and the rest when they are opened.",
+        "operationId": "generate_course_outline_api_v1_knowledge_courses_outline_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AICourseRequest"
+                "$ref": "#/components/schemas/CourseOutlineRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "202": {
+          "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/CourseOutlineResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -14334,7 +14464,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Generate Ai Course",
+        "summary": "Generate Course Outline",
         "tags": [
           "knowledge",
           "knowledge"

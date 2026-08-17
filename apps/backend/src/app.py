@@ -34,7 +34,11 @@ from src.shared.exceptions import (
     validation_error_handler,
 )
 from src.shared.infrastructure import cache
-from src.shared.middleware import LoggingMiddleware, SecurityHeadersMiddleware
+from src.shared.middleware import (
+    LoggingMiddleware,
+    SecurityHeadersMiddleware,
+    UnhandledExceptionMiddleware,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +121,16 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
-    # --- Middleware (order matters: last added = first executed) ---
+    # --- Middleware (order matters: last added = first executed, so first added is innermost) ---
+    #
+    # Added first, therefore innermost, therefore it wraps the router more closely than CORS does. That
+    # placement is the entire point: Starlette routes the catch-all `Exception` handler registered above
+    # through `ServerErrorMiddleware`, which sits *outside* every middleware added here — so the `500` it
+    # produces never passes back through `CORSMiddleware` and carries no `Access-Control-Allow-Origin`
+    # header. A browser then reports a CORS failure for what is really a server error, pointing at the wrong
+    # subsystem entirely, and the client's own error handling never runs because it sees a network failure
+    # rather than a status code.
+    app.add_middleware(UnhandledExceptionMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(

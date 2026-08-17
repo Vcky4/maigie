@@ -9,6 +9,8 @@ import logging
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from fastapi import HTTPException
+
 from src.domains.identity.db_models import User
 from src.shared.events import emit
 from src.shared.exceptions import ForbiddenError, NotFoundError, ValidationError
@@ -218,19 +220,68 @@ async def get_dashboard(*, user_id: str) -> dict[str, Any]:
     }
 
 
+async def ensure_can_create_course(user: User) -> None:
+    """Refuse early if this learner has used up their monthly course allowance.
+
+    Extracted from `create_course` so it can run **before** an outline is generated. The check used to live
+    only at the point of saving, which meant a free-tier learner at their limit walked through four wizard
+    steps, waited for a curriculum to be designed, reviewed it, pressed Create — and only then learned they
+    could not have it. That wasted a model call on an outline that could never be saved, and spent the
+    learner's time on a decision that had already been made.
+
+    Called from the outline endpoint and from creation both. The second call is not redundant: the outline is
+    reviewed for as long as the learner likes, and a limit can be reached in another tab in between, so the
+    save has to check again. The cost of checking twice is one `COUNT`.
+
+    Raises:
+        HTTPException: A `403` whose `detail` is the shared upgrade payload — `upgradeRequired`, `reason`,
+            `capability`, `upgradeUrl`, `trialAvailable`, `upgradeValue`. The same shape the quiz and document
+            gates use, so one client component renders all three.
+    """
+    from src.domains.personal_learning.services import feature_tier_service
+
+    tier, _is_trial, _days = await feature_tier_service.get_effective_tier(user.id)
+    if tier == "plus":
+        return
+
+    # The limit and the sales copy both come from the capability matrix, so changing the number changes the
+    # enforcement and the message together. Read from `free` because this branch is only reached at free tier.
+    entry = feature_tier_service.FEATURE_TIER_MATRIX["course_creation"]
+    allowance = entry["free"]["max_per_month"]
+
+    thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
+    count = await knowledge_repo.count_courses(
+        {"userId": user.id, "createdAt": {"gte": thirty_days_ago}}
+    )
+    if count < allowance:
+        return
+
+    # A typed `403`, the same shape the quiz and document gates raise, rather than a plain `ForbiddenError`
+    # with a sentence in it. The difference is what the client can do with it: a bare message can only be
+    # printed, while this carries what the capability is worth, whether a trial is still available, and where
+    # to go — so the web can offer the upgrade instead of reporting a refusal.
+    #
+    # `upgradeRequired` is the discriminant the client keys on, and is why this is an `HTTPException` rather
+    # than a `MaigieError`: FastAPI nests `detail` for the former, which is the envelope `getApiError`
+    # already understands.
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "upgradeRequired": True,
+            "reason": (
+                f"You have used your {allowance} courses for this month on the free plan."
+            ),
+            "capability": "course_creation",
+            "upgradeUrl": "/subscription",
+            "trialAvailable": await feature_tier_service.trial_available(user.id),
+            "upgradeValue": entry["upgrade_value"],
+        },
+    )
+
+
 async def create_course(*, user: User, data: dict[str, Any]) -> Any:
     """Create a course manually."""
-    # Free tier limit: 2 courses per month
-    if str(user.tier) == "FREE":
-        thirty_days_ago = datetime.now(UTC) - timedelta(days=30)
-        count = await knowledge_repo.count_courses(
-            {"userId": user.id, "createdAt": {"gte": thirty_days_ago}}
-        )
-        if count >= 2:
-            raise ForbiddenError(
-                "You can only create 2 courses per month on the free plan. "
-                "Start a free trial for unlimited courses."
-            )
+    await ensure_can_create_course(user)
 
     # The fields a client may set when creating a course.
     #

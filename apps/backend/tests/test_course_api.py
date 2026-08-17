@@ -18,6 +18,8 @@ import uuid
 import pytest
 from httpx import AsyncClient
 
+from src.domains.knowledge.repository import knowledge_repo
+
 BASE = "/api/v1/knowledge"
 
 
@@ -1093,3 +1095,112 @@ async def test_the_wizards_brief_and_style_round_trip(client: AsyncClient, auth_
     payload = fetched.json()
     assert payload["sourcePrompt"] == "Teach me graph algorithms with lots of diagrams"
     assert payload["teachingStyle"] == "Visual"
+
+
+async def test_the_free_tier_cap_is_checked_before_an_outline_is_generated(
+    client: AsyncClient, auth_headers, monkeypatch
+):
+    """The limit must refuse at the outline step, not at the save step.
+
+    It used to be checked only when saving, so a learner at their limit walked through four wizard steps,
+    waited for a curriculum to be designed, reviewed it, pressed Create — and only then found out. That spent
+    a model call on an outline that could never be saved, and spent their time on a decision already made.
+
+    Monkeypatched rather than driven by creating courses: the cap is two per rolling month and the fixture
+    learner's tier is not FREE, so the honest way to exercise the refusal is to make the guard itself refuse.
+    This asserts the *ordering* — that generation is never reached — which is the thing that regressed.
+    """
+    from src.domains.knowledge.services import course_service
+    from src.shared.exceptions import ForbiddenError
+
+    generated = False
+
+    async def refuse(_user):
+        raise ForbiddenError("You can only create 2 courses per month on the free plan.")
+
+    async def record_generation(*args, **kwargs):
+        nonlocal generated
+        generated = True
+        return {}
+
+    monkeypatch.setattr(course_service, "ensure_can_create_course", refuse)
+    monkeypatch.setattr(
+        "src.domains.personal_learning.services.llm_resilient.generate_content_json",
+        record_generation,
+    )
+
+    response = await client.post(
+        f"{BASE}/courses/outline",
+        json={"title": "Anything", "brief": "A brief long enough to pass validation"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 403, response.text
+    assert generated is False, "the outline was generated despite the learner being over their limit"
+
+
+async def test_the_course_cap_returns_the_shared_upgrade_payload(
+    client: AsyncClient, auth_headers, monkeypatch
+):
+    """The refusal has to be actionable, not just a sentence.
+
+    It used to raise a plain `ForbiddenError`, so the only thing a client could do with it was print it. The
+    quiz and document gates already answer with a typed payload carrying what the capability is worth, whether
+    a trial is available and where to go — this now uses the same shape, so one component renders all three.
+
+    `upgradeRequired` is the discriminant the client keys on, which is why the assertion is on that rather
+    than on the wording.
+    """
+    from src.domains.personal_learning.services import feature_tier_service
+
+    async def free_tier(_user_id):
+        return ("free", False, None)
+
+    async def at_the_limit(_where):
+        return 99
+
+    monkeypatch.setattr(feature_tier_service, "get_effective_tier", free_tier)
+    monkeypatch.setattr(knowledge_repo, "count_courses", at_the_limit)
+
+    response = await client.post(
+        f"{BASE}/courses",
+        json={"title": "One too many", "difficulty": "BEGINNER"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 403, response.text
+    # FastAPI nests `HTTPException.detail`, which is the envelope `getApiError` already understands.
+    detail = response.json()["detail"]
+    assert detail["upgradeRequired"] is True
+    assert detail["capability"] == "course_creation"
+    assert detail["upgradeUrl"] == "/subscription"
+    # Read from the capability matrix rather than written here, so the number and the copy cannot drift.
+    assert "unlimited courses" in detail["upgradeValue"]
+    assert isinstance(detail["trialAvailable"], bool)
+
+
+async def test_a_plus_learner_is_not_capped(client: AsyncClient, auth_headers, monkeypatch):
+    """The count is not even taken at Plus — an unlimited allowance should not cost a query."""
+    from src.domains.personal_learning.services import feature_tier_service
+
+    counted = False
+
+    async def plus_tier(_user_id):
+        return ("plus", False, None)
+
+    async def record_count(_where):
+        nonlocal counted
+        counted = True
+        return 99
+
+    monkeypatch.setattr(feature_tier_service, "get_effective_tier", plus_tier)
+    monkeypatch.setattr(knowledge_repo, "count_courses", record_count)
+
+    response = await client.post(
+        f"{BASE}/courses",
+        json={"title": "Unlimited", "difficulty": "BEGINNER"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 201, response.text
+    assert counted is False, "a Plus learner should not be counted against a free-tier allowance"

@@ -39,6 +39,24 @@ FEATURE_TIER_MATRIX: dict[str, dict[str, Any]] = {
         },
         "upgrade_value": "Get 2x more flashcards per note with cloze, multiple-choice, and image-based cards",
     },
+    "course_creation": {
+        # A quota rather than a set of permitted values, which is why `check_capability` does not gate it —
+        # that function answers "may this learner use this mode/format/style", and a count is a different
+        # question. The entry exists so the limit is described in one place with the others, and so the
+        # capabilities summary endpoint tells the truth about it instead of omitting it.
+        #
+        # `knowledge.course_service.ensure_can_create_course` reads `max_per_month` and `upgrade_value` from
+        # here, so changing the number changes the enforcement and the message together.
+        "free": {
+            "max_per_month": 2,
+            "description": "Create up to 2 courses each month",
+        },
+        "plus": {
+            "max_per_month": None,
+            "description": "Create as many courses as you want",
+        },
+        "upgrade_value": "Build unlimited courses, with lessons written for each topic as you reach it",
+    },
     "quiz_modes": {
         "free": {
             "modes": ["FULL_PRACTICE", "WEAK_AREAS", "TOPIC_FOCUS"],
@@ -363,6 +381,16 @@ async def get_capabilities_summary(user_id: str) -> CapabilitiesSummary:
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
+
+async def trial_available(user_id: str) -> bool:
+    """Whether this learner may still start a trial.
+
+    Public because gates outside this domain need it to build an upgrade payload — the course cap in
+    `knowledge` is one. Without it a `403` could not say whether a trial was on offer, and the panel would
+    either omit that or guess.
+    """
+    return await _trial_available(user_id)
 
 
 async def _trial_available(user_id: str) -> bool:

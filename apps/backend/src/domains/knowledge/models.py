@@ -561,11 +561,55 @@ class CoursesDashboardResponse(CamelModel):
     timezone_known: bool = False
 
 
-class AICourseRequest(BaseModel):
-    """AI-generated course request."""
+# `AICourseRequest` was deleted with the `POST /courses/generate` endpoint it served. That endpoint was a
+# published `501` whose implementation had been unreachable since the LLM migration, and a permanent `501`
+# advertises a capability while refusing it — every client has to special-case something that never worked.
+# `CourseOutlineRequest` below replaces it, and takes the learner's brief rather than a bare topic string.
 
-    topic: str = Field(..., min_length=1, max_length=8000)
-    difficulty: DifficultyLevel = DifficultyLevel.BEGINNER
+
+class CourseOutlineRequest(BaseModel):
+    """The brief an outline is generated from.
+
+    Everything the create wizard has gathered by its review step. `brief` is the learner's own words and is
+    the thing being answered; the rest is context that shapes it.
+    """
+
+    title: str = Field(..., min_length=1, max_length=255)
+    brief: str = Field(..., min_length=12, max_length=8000)
+    difficulty: DifficultyLevel | None = None
+    teachingStyle: str | None = Field(None, max_length=60)
+    category: str | None = Field(None, max_length=120)
+
+
+class GeneratedOutlineTopic(CamelModel):
+    """One planned sitting. No id and no order: nothing is persisted yet."""
+
+    title: str
+    kind: str = "Lesson"
+    duration_minutes: int | None = None
+
+
+class GeneratedOutlineModule(CamelModel):
+    title: str
+    description: str | None = None
+    topics: list[GeneratedOutlineTopic] = []
+
+
+class CourseOutlineResponse(CamelModel):
+    """A proposed curriculum, generated and **not saved**.
+
+    Returned for review so a learner sees what they are about to get before it exists. The wizard previously
+    showed the outline of whichever template they started from, whatever they had asked for — typing "Data
+    analytics" against the public-speaking template offered "Working with speaking nerves", and accepting it
+    saved exactly that.
+
+    Nothing here carries an id or a position, because nothing has been written. The client sends the parts it
+    keeps back through the normal create endpoints, which is what makes rejecting an outline free.
+    """
+
+    modules: list[GeneratedOutlineModule] = []
+    #: Course-level outcomes the same generation produced, so the learner is not asked for them separately.
+    outcomes: list[str] | None = None
 
 
 class CourseOutlineSatisfactionCreate(BaseModel):

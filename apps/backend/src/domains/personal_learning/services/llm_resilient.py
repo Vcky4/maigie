@@ -16,6 +16,7 @@ Circuit Breaker States (per-provider):
 """
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any
@@ -323,6 +324,95 @@ async def generate_content(
     )
 
 
+def _repair_json(cleaned: str) -> Any | None:
+    """Recover a usable object from a nearly-valid JSON reply, or `None` if there is nothing to recover.
+
+    Two failure modes, and the second is the common one.
+
+    **Surrounding prose.** The model wraps the object in a sentence. Handled by trimming to the outermost
+    brackets, which is what this function used to do and all it used to do.
+
+    **Truncation.** The reply hit the token limit mid-value, so it ends in the middle of a string with a
+    dozen structures still open. The old repair made this *worse*: trimming to the last `}` or `]` cuts at
+    whatever nested object happened to close last, producing a fragment that is still invalid. A generated
+    lesson failed exactly this way — `Unterminated string starting at line 56 column 16` — and the route
+    answered `500`.
+
+    Truncation is repaired by closing what is open: terminate the dangling string, drop a trailing comma or
+    key, and emit the missing brackets in reverse order of opening. The result is the prefix the model did
+    finish, which for a list of sections is most of them — and the parsers downstream already drop
+    incomplete entries, so a half-written final section is discarded rather than rendered.
+
+    Returns `None` rather than raising, so the caller decides between a fallback and an error. Repair is
+    best-effort by nature and a failure here is not exceptional.
+    """
+    # Trim to the outermost brackets first: prose before or after the object defeats everything else.
+    start = next((i for i, char in enumerate(cleaned) if char in "[{"), -1)
+    if start < 0:
+        return None
+
+    candidate = cleaned[start:]
+
+    # The old behaviour, kept because it is the right repair when the reply is complete but wrapped.
+    last = max(candidate.rfind("]"), candidate.rfind("}"))
+    if last > 0:
+        try:
+            return json.loads(candidate[: last + 1])
+        except json.JSONDecodeError:
+            pass
+
+    # Truncation. Walk the text tracking structure, ignoring anything inside a string, so a `}` in prose
+    # does not read as a closing brace.
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for char in candidate:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "[{":
+            stack.append(char)
+        elif char in "]}":
+            if stack:
+                stack.pop()
+
+    if not stack and not in_string:
+        return None
+
+    patched = candidate
+    # Close the dangling string. An escape character immediately before the cut would escape the quote
+    # being added, so it goes too.
+    if in_string:
+        if escaped:
+            patched = patched[:-1]
+        patched += '"'
+
+    # A trailing comma, or a key with no value, cannot be closed into anything valid — drop back to the
+    # last complete entry.
+    patched = patched.rstrip()
+    while patched and patched[-1] in ",:":
+        patched = patched[:-1].rstrip()
+        if patched.endswith('"'):
+            # A dangling key: remove it, leaving the object to be closed.
+            key_start = patched.rfind('"', 0, len(patched) - 1)
+            if key_start > 0 and patched[:key_start].rstrip().endswith(("{", ",")):
+                patched = patched[:key_start].rstrip().rstrip(",")
+
+    patched += "".join("]" if opener == "[" else "}" for opener in reversed(stack))
+
+    try:
+        return json.loads(patched)
+    except json.JSONDecodeError:
+        return None
+
+
 async def generate_content_json(
     prompt: str,
     *,
@@ -339,9 +429,12 @@ async def generate_content_json(
     1. Call LLM (with per-user provider routing)
     2. Parse response as JSON
     3. Fall back to a default on any failure (LLM down, bad JSON, etc.)
-    """
-    import json
 
+    **`fallback` is what is returned on failure, and `None` means "no fallback — raise".** The two readings
+    of `fallback=None` are not the same and the ambiguity has already cost a `500`: two routes passed it
+    meaning "give me `None` and I will handle it", and got an unhandled `JSONDecodeError` instead. There is
+    no way to ask for `None` on failure; a caller that wants that catches the exception.
+    """
     try:
         response = await generate_content(
             prompt,
@@ -365,23 +458,9 @@ async def generate_content_json(
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError:
-            # Attempt repair: find first [ or { and last ] or }
-            first_bracket = -1
-            for i, c in enumerate(cleaned):
-                if c in "[{":
-                    first_bracket = i
-                    break
-            if first_bracket >= 0:
-                last_bracket = max(
-                    cleaned.rfind("]"),
-                    cleaned.rfind("}"),
-                )
-                if last_bracket > first_bracket:
-                    trimmed = cleaned[first_bracket : last_bracket + 1]
-                    try:
-                        return json.loads(trimmed)
-                    except json.JSONDecodeError:
-                        pass
+            repaired = _repair_json(cleaned)
+            if repaired is not None:
+                return repaired
             raise
 
     except (LLMUnavailableError, json.JSONDecodeError, Exception) as e:

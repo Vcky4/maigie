@@ -13,7 +13,6 @@ from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -38,15 +37,83 @@ router = APIRouter(tags=["knowledge"])
 # ===========================================================================
 
 
-@router.post("/courses/generate", status_code=status.HTTP_202_ACCEPTED)
-async def generate_ai_course(
-    body: models.AICourseRequest,
-    background_tasks: BackgroundTasks,
-    current_user: CurrentUser,
-):
-    """Trigger AI course generation (returns immediately, updates via WebSocket)."""
-    # AI course generation pending migration to new LLM architecture
-    raise HTTPException(status_code=501, detail="AI course generation pending migration")
+@router.post("/courses/outline", response_model=models.CourseOutlineResponse)
+async def generate_course_outline(body: models.CourseOutlineRequest, current_user: CurrentUser):
+    """Propose a curriculum from the learner's brief, without saving anything.
+
+    **This replaces `POST /courses/generate`**, which was a published `501` with an unreachable
+    implementation behind it. A permanent `501` is the one option the plan ruled out: it advertises a
+    capability and refuses it, so every client has to special-case an endpoint that has never worked.
+
+    Generation happens *before* persistence, and that ordering is the point. The create wizard used to show
+    the outline of whichever template the learner started from, regardless of what they had asked for — a
+    brief about data analytics was reviewed against "Working with speaking nerves" and, on acceptance, saved
+    exactly that. Now the outline answers the brief, the learner reviews the real thing, and a rejected
+    outline costs one model call rather than a course they have to delete.
+
+    Nothing is written here, so nothing needs cleaning up when the learner asks for something different.
+    Only the outline is generated; the lessons behind it are a model call each, and writing twelve of them
+    for a curriculum that may be rejected would waste eleven of them. The first lesson is written when the
+    course is accepted, and the rest when they are opened.
+    """
+    from src.domains.personal_learning.services.llm_resilient import generate_content_json
+
+    # Before generating, not after. A free-tier learner at their limit used to walk through four steps, wait
+    # for a curriculum to be designed, review it, press Create — and only then be told they could not have it.
+    # The model call was already spent on an outline that could never be saved.
+    #
+    # `create_course` checks again when the outline is accepted, and that is not redundant: an outline is
+    # reviewed for as long as the learner likes, and the limit can be reached in another tab in between.
+    await course_service.ensure_can_create_course(current_user)
+
+    # `fallback` is what comes back on failure, and `None` means "no fallback — raise". Passing `None` here
+    # meaning "give me nothing and I will handle it" is what turned a truncated model reply into an
+    # unhandled `JSONDecodeError` and a `500`, which the browser then reported as a CORS error because an
+    # unhandled 500 never passes back through the CORS middleware.
+    #
+    # An empty dict is the honest fallback: `parse_outline` reads it as no modules, which the check below
+    # already turns into a `502` the learner can act on.
+    payload = await generate_content_json(
+        lesson_service.build_outline_prompt(
+            title=body.title,
+            brief=body.brief,
+            level=body.difficulty.value if body.difficulty else None,
+            teaching_style=body.teachingStyle,
+            category=body.category,
+        ),
+        # An outline is a dozen titles and a few outcomes, but a model that writes generous descriptions
+        # runs long, and a reply cut mid-string is the one failure this endpoint cannot recover from.
+        max_tokens=4096,
+        fallback={},
+        user_id=current_user.id,
+    )
+    parsed = lesson_service.parse_outline(payload)
+    if not parsed["modules"]:
+        # Nothing usable came back. A failure the learner can retry, rather than an empty outline they would
+        # have to recognise as broken.
+        raise HTTPException(
+            status_code=502,
+            detail="The outline could not be generated. Please try again, or add more detail to your goal.",
+        )
+
+    return models.CourseOutlineResponse(
+        modules=[
+            models.GeneratedOutlineModule(
+                title=module["title"],
+                description=module["description"],
+                topics=[
+                    models.GeneratedOutlineTopic(
+                        title=topic["title"],
+                        kind=topic["kind"],
+                        durationMinutes=topic["durationMinutes"],
+                    )
+                    for topic in module["topics"]
+                ],
+            )
+            for module in parsed["modules"]
+        ],
+        outcomes=parsed["outcomes"],
+    )
 
 
 # ===========================================================================
@@ -866,7 +933,7 @@ async def generate_topic_content(
 
     `persisted` reports what happened, rather than leaving the caller to infer it from the type.
     """
-    topic, module, _ = await course_service.check_topic_ownership(topic_id, current_user.id)
+    topic, module, course = await course_service.check_topic_ownership(topic_id, current_user.id)
     if topic.module_id != module_id or module.course_id != course_id:
         raise HTTPException(status_code=400, detail="Topic path mismatch")
 
@@ -896,9 +963,17 @@ async def generate_topic_content(
         from src.domains.personal_learning.services.llm_resilient import generate_content_json
 
         payload = await generate_content_json(
-            lesson_service.build_lesson_prompt(topic.title, topic.content),
-            max_tokens=4096,
-            fallback=None,
+            lesson_service.build_lesson_prompt(
+                topic.title, topic.content, teaching_style=course.teaching_style
+            ),
+            # A full lesson is the largest thing generated anywhere in the product: up to twelve sections,
+            # each with paragraphs, steps and possibly code, plus objectives and a knowledge check. 4096 was
+            # not enough and the replies were being cut mid-string — the reported `Unterminated string
+            # starting at line 56` — so the whole lesson was lost to a `500`.
+            max_tokens=8192,
+            # See the note on the outline route: `None` means raise, not "return nothing". An empty dict
+            # reads as no sections, which the check below reports as a `502`.
+            fallback={},
             user_id=current_user.id,
         )
         parsed = lesson_service.parse_lesson(payload)
