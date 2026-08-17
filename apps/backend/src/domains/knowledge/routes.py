@@ -25,7 +25,7 @@ from src.shared.auth import CurrentUser
 
 from . import models
 from .repository import knowledge_repo
-from .services import course_service, lesson_service, resource_service
+from .services import course_service, lesson_service, resource_service, topic_check_service
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +263,13 @@ async def get_topic(topic_id: str, current_user: CurrentUser):
     topic, module, course = await course_service.check_topic_ownership(topic_id, current_user.id)
     position, total = await knowledge_repo.topic_position(course.id, topic_id)
 
+    # Only read when the topic has a check. A topic without one has nothing to have attempted, and
+    # querying for attempts that cannot exist would add a round trip to every lesson open.
+    check_progress = None
+    if topic.knowledge_check:
+        attempts = await knowledge_repo.list_topic_check_attempts(topic_id, current_user.id)
+        check_progress = topic_check_service.summarise(attempts)
+
     return models.TopicLocationResponse(
         topic=models.TopicResponse.model_validate(topic, from_attributes=True),
         moduleId=module.id,
@@ -271,6 +278,9 @@ async def get_topic(topic_id: str, current_user: CurrentUser):
         courseTitle=course.title,
         position=position,
         totalTopics=total,
+        checkProgress=check_progress,
+        lessonGenerationStage=topic.lesson_generation_stage,
+        lessonGenerationProgress=lesson_service.generation_progress(topic.lesson_generation_stage),
         # Read from the stored column rather than recomputed here. It is kept true by
         # `recount_course_progress` on every event that can change it, and recomputing would mean two
         # expressions for one number that can disagree in the last digit.
@@ -349,6 +359,91 @@ async def replace_topic_sections(
     return [
         models.TopicSectionResponse.model_validate(section, from_attributes=True)
         for section in sections
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Knowledge check attempts
+#
+# Under the topic rather than the section, because the check belongs to the topic: it is one question
+# about the whole lesson, stored on `Topic.knowledgeCheck`, and the section of kind `check` is only
+# where the reader chooses to show it.
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/topics/{topic_id}/check/attempts",
+    response_model=models.TopicCheckAttemptResult,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_topic_check_attempt(
+    topic_id: str, body: models.TopicCheckAttemptCreate, current_user: CurrentUser
+):
+    """Record one answer to a topic's knowledge check, and grade it.
+
+    Every submission is a row. Changing the answer is allowed — the reader reveals the correct choice
+    and its explanation and then lets the learner pick again — so the last answer is nearly always
+    correct and is not evidence of anything. The first one is, and keeping every attempt keeps it.
+
+    The body carries the chosen id and nothing else. The verdict is decided here from the stored check,
+    because the answer key ships to the browser for an instant reveal and a result taken from the page
+    being tested is a result that page got to choose.
+
+    `409` when the topic has no check: there is nothing to answer, and accepting the attempt would
+    record an answer to a question that does not exist. `422` when the chosen id is not one of the
+    check's options — which happens for real when a lesson is regenerated between the page loading and
+    the learner answering, and is refused rather than stored as a wrong answer to a question that was
+    never asked.
+    """
+    topic, _module, _course = await course_service.check_topic_ownership(topic_id, current_user.id)
+
+    check = topic.knowledge_check
+    if not check:
+        raise HTTPException(status_code=409, detail="This topic has no knowledge check")
+
+    choice = topic_check_service.find_choice(check, body.choice_id)
+    if choice is None:
+        raise HTTPException(
+            status_code=422,
+            detail="That choice is not part of this check. The lesson may have been rewritten.",
+        )
+
+    attempt = await knowledge_repo.create_topic_check_attempt(
+        {
+            "topicId": topic_id,
+            "userId": current_user.id,
+            "choiceId": body.choice_id,
+            # Snapshotted so the row survives the lesson being regenerated under it.
+            "question": topic_check_service.question_of(check),
+            "choiceLabel": str(choice.get("label") or ""),
+            "correct": topic_check_service.grade(choice),
+        }
+    )
+
+    attempts = await knowledge_repo.list_topic_check_attempts(topic_id, current_user.id)
+    return models.TopicCheckAttemptResult(
+        attempt=models.TopicCheckAttemptResponse.model_validate(attempt, from_attributes=True),
+        summary=topic_check_service.summarise(attempts),
+        explanation=topic_check_service.explanation_of(check),
+    )
+
+
+@router.get(
+    "/topics/{topic_id}/check/attempts",
+    response_model=list[models.TopicCheckAttemptResponse],
+)
+async def list_topic_check_attempts(topic_id: str, current_user: CurrentUser):
+    """This learner's attempts at a topic's check, oldest first.
+
+    Separate from the summary on `GET /topics/{id}`, which is what the reader needs to render. This is
+    the history itself — what was asked, what was chosen, and when — for a review that wants to work
+    from the answers rather than from counts.
+    """
+    await course_service.check_topic_ownership(topic_id, current_user.id)
+    attempts = await knowledge_repo.list_topic_check_attempts(topic_id, current_user.id)
+    return [
+        models.TopicCheckAttemptResponse.model_validate(attempt, from_attributes=True)
+        for attempt in attempts
     ]
 
 
@@ -962,30 +1057,59 @@ async def generate_topic_content(
     if body.type == "explain":
         from src.domains.personal_learning.services.llm_resilient import generate_content_json
 
-        payload = await generate_content_json(
-            lesson_service.build_lesson_prompt(
-                topic.title, topic.content, teaching_style=course.teaching_style
-            ),
-            # A full lesson is the largest thing generated anywhere in the product: up to twelve sections,
-            # each with paragraphs, steps and possibly code, plus objectives and a knowledge check. 4096 was
-            # not enough and the replies were being cut mid-string — the reported `Unterminated string
-            # starting at line 56` — so the whole lesson was lost to a `500`.
-            max_tokens=8192,
-            # See the note on the outline route: `None` means raise, not "return nothing". An empty dict
-            # reads as no sections, which the check below reports as a `502`.
-            fallback={},
-            user_id=current_user.id,
+        # Each phase records itself, so the reader can report what the server reached rather than
+        # animating for the whole 8192-token call. The stage is observed through a concurrent read of
+        # `GET /topics/{id}` while this request is still open — this endpoint stays synchronous, so the
+        # caller's own response is the terminal signal and there is no lost-task case to bound.
+        #
+        # Cleared on every exit below, including the failures. A stage left set would have the reader
+        # report a lesson as still being written after the attempt that wrote it had already returned.
+        await lesson_service.set_stage(topic_id, lesson_service.GenerationStage.PREPARING)
+        prompt = lesson_service.build_lesson_prompt(
+            topic.title, topic.content, teaching_style=course.teaching_style
         )
-        parsed = lesson_service.parse_lesson(payload)
-        if not parsed["sections"]:
-            # Nothing usable came back. Failing is better than persisting an empty lesson over the
-            # topic's existing content, which would destroy a working body to store nothing.
-            raise HTTPException(
-                status_code=502, detail="The generated lesson could not be read. Please try again."
+
+        await lesson_service.set_stage(topic_id, lesson_service.GenerationStage.WRITING_LESSON)
+        try:
+            payload = await generate_content_json(
+                prompt,
+                # A full lesson is the largest thing generated anywhere in the product: up to twelve
+                # sections, each with paragraphs, steps and possibly code, plus objectives and a knowledge
+                # check. 4096 was not enough and the replies were being cut mid-string — the reported
+                # `Unterminated string starting at line 56` — so the whole lesson was lost to a `500`.
+                max_tokens=8192,
+                # See the note on the outline route: `None` means raise, not "return nothing". An empty
+                # dict reads as no sections, which the check below reports as a `502`.
+                fallback={},
+                user_id=current_user.id,
             )
 
-        markdown = lesson_service.render_markdown(topic.title, parsed)
-        written = await lesson_service.persist_lesson(topic_id, markdown=markdown, parsed=parsed)
+            await lesson_service.set_stage(topic_id, lesson_service.GenerationStage.STRUCTURING)
+            parsed = lesson_service.parse_lesson(payload)
+            if not parsed["sections"]:
+                # Nothing usable came back. Failing is better than persisting an empty lesson over the
+                # topic's existing content, which would destroy a working body to store nothing.
+                raise HTTPException(
+                    status_code=502,
+                    detail="The generated lesson could not be read. Please try again.",
+                )
+
+            markdown = lesson_service.render_markdown(topic.title, parsed)
+            await lesson_service.set_stage(topic_id, lesson_service.GenerationStage.SAVING)
+            written = await lesson_service.persist_lesson(
+                topic_id, markdown=markdown, parsed=parsed
+            )
+        except BaseException:
+            # Cleared on the way out, whatever went wrong — a provider failure, an unreadable reply, or
+            # the learner navigating away and the request being cancelled. Leaving the stage set would
+            # have the next read report a generation that is no longer running.
+            await lesson_service.set_stage(topic_id, None)
+            raise
+
+        # `persist_lesson` writes the topic, so the stage is cleared after it rather than before: a
+        # `READY` written first would be overwritten by the persist, and one written last would leave the
+        # reader briefly told a finished lesson was still saving.
+        await lesson_service.set_stage(topic_id, None)
         return models.TopicGenerateResponse(
             type=body.type, topicId=topic_id, content=markdown, persisted=f"{written} sections"
         )

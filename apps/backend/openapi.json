@@ -3766,7 +3766,7 @@
         "type": "object"
       },
       "KnowledgeCheckChoice": {
-        "description": "One option of a topic's knowledge check.\n\n`correct` is sent to the client deliberately. The check is a self-test at the end of a lesson in\na course the learner owns — it gates nothing, is not scored, and no attempt is recorded — so the\npage grades the answer and shows the explanation without a round trip. An assessment whose result\nmatters belongs in the preparation domain, where the correct answer is not published.",
+        "description": "One option of a topic's knowledge check.\n\n`correct` is still sent to the client, now that attempts *are* recorded. The reveal is immediate and\noffline-tolerant: the reader shows the verdict and the explanation the moment the learner answers,\nwithout waiting for a round trip that could fail and leave them staring at a question they have\nalready answered.\n\nWhat that costs is that the answer key is visible to anyone reading the response, so the published\nkey cannot be the basis of the recorded result. It is not: `POST /topics/{id}/check/attempts` takes\nonly the chosen id and grades it against the stored check, so the row cannot be talked into saying\nsomething the check does not. A learner could still read the key before answering — but this is a\nself-test in their own course, and the only person it would mislead is them. An assessment whose\nresult matters to somebody else belongs in the preparation domain, which does not publish its keys.",
         "properties": {
           "correct": {
             "default": false,
@@ -12033,6 +12033,150 @@
         "title": "TopicBulkCreate",
         "type": "object"
       },
+      "TopicCheckAttemptCreate": {
+        "description": "An answer to a topic's check.\n\nThe chosen id and nothing else. No `correct` field: the server grades the attempt from the stored\ncheck, so the record cannot be shaped by the page that is being tested.",
+        "properties": {
+          "choiceId": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Choiceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "choiceId"
+        ],
+        "title": "TopicCheckAttemptCreate",
+        "type": "object"
+      },
+      "TopicCheckAttemptResponse": {
+        "description": "One recorded answer.\n\n`question` and `choiceLabel` are as they were when the attempt was made, so the history stays\nreadable after a lesson is regenerated and its check replaced.",
+        "properties": {
+          "choiceId": {
+            "title": "Choiceid",
+            "type": "string"
+          },
+          "choiceLabel": {
+            "title": "Choicelabel",
+            "type": "string"
+          },
+          "correct": {
+            "title": "Correct",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "topicId": {
+            "title": "Topicid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "topicId",
+          "choiceId",
+          "question",
+          "choiceLabel",
+          "correct",
+          "createdAt"
+        ],
+        "title": "TopicCheckAttemptResponse",
+        "type": "object"
+      },
+      "TopicCheckAttemptResult": {
+        "description": "The graded attempt, plus what it does to the learner's record of this check.",
+        "properties": {
+          "attempt": {
+            "$ref": "#/components/schemas/TopicCheckAttemptResponse"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/TopicCheckSummary"
+          }
+        },
+        "required": [
+          "attempt",
+          "summary",
+          "explanation"
+        ],
+        "title": "TopicCheckAttemptResult",
+        "type": "object"
+      },
+      "TopicCheckSummary": {
+        "description": "What a learner's attempts at one check add up to.\n\nThe field that matters for review is `firstAttemptCorrect`. Understanding is what the learner knew\nbefore being told, and the reader shows the answer as soon as they submit — so anything after the\nfirst attempt measures whether they can copy a revealed answer.",
+        "properties": {
+          "attempts": {
+            "default": 0,
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "firstAttemptCorrect": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firstattemptcorrect"
+          },
+          "incorrectAttempts": {
+            "default": 0,
+            "title": "Incorrectattempts",
+            "type": "integer"
+          },
+          "lastAttemptAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastattemptat"
+          },
+          "lastChoiceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastchoiceid"
+          },
+          "needsRevisit": {
+            "default": false,
+            "title": "Needsrevisit",
+            "type": "boolean"
+          },
+          "passed": {
+            "default": false,
+            "title": "Passed",
+            "type": "boolean"
+          }
+        },
+        "title": "TopicCheckSummary",
+        "type": "object"
+      },
       "TopicCreate": {
         "properties": {
           "content": {
@@ -12197,6 +12341,16 @@
       "TopicLocationResponse": {
         "description": "A topic, plus enough of its module and course to open it.\n\nExists because every caller that holds a topic id needs its course before it can show the topic,\nand nothing could get from one to the other. Two surfaces were blocked on that:\n\n- The lesson route, `/learn/lessons/{id}`, which had no backend concept behind it at all.\n- A study plan item carrying a `topicId`, which could be completed but not opened.\n\nReturns the ids and titles of the ancestors rather than the whole `CourseResponse`. A caller that\nwants the full outline asks for the course; a caller opening one topic wants a breadcrumb, and\nembedding every module and topic of the course to supply it would make opening one topic cost the\nwhole curriculum.",
         "properties": {
+          "checkProgress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TopicCheckSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "courseId": {
             "title": "Courseid",
             "type": "string"
@@ -12209,6 +12363,35 @@
           "courseTitle": {
             "title": "Coursetitle",
             "type": "string"
+          },
+          "lessonGenerationProgress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessongenerationprogress"
+          },
+          "lessonGenerationStage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "PREPARING",
+                  "WRITING_LESSON",
+                  "STRUCTURING",
+                  "SAVING",
+                  "READY"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lessongenerationstage"
           },
           "moduleId": {
             "title": "Moduleid",
@@ -16070,6 +16253,116 @@
           }
         ],
         "summary": "Get Topic",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      }
+    },
+    "/api/v1/knowledge/topics/{topic_id}/check/attempts": {
+      "get": {
+        "description": "This learner's attempts at a topic's check, oldest first.\n\nSeparate from the summary on `GET /topics/{id}`, which is what the reader needs to render. This is\nthe history itself — what was asked, what was chosen, and when — for a review that wants to work\nfrom the answers rather than from counts.",
+        "operationId": "list_topic_check_attempts_api_v1_knowledge_topics__topic_id__check_attempts_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TopicCheckAttemptResponse"
+                  },
+                  "title": "Response List Topic Check Attempts Api V1 Knowledge Topics  Topic Id  Check Attempts Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Topic Check Attempts",
+        "tags": [
+          "knowledge",
+          "knowledge"
+        ]
+      },
+      "post": {
+        "description": "Record one answer to a topic's knowledge check, and grade it.\n\nEvery submission is a row. Changing the answer is allowed — the reader reveals the correct choice\nand its explanation and then lets the learner pick again — so the last answer is nearly always\ncorrect and is not evidence of anything. The first one is, and keeping every attempt keeps it.\n\nThe body carries the chosen id and nothing else. The verdict is decided here from the stored check,\nbecause the answer key ships to the browser for an instant reveal and a result taken from the page\nbeing tested is a result that page got to choose.\n\n`409` when the topic has no check: there is nothing to answer, and accepting the attempt would\nrecord an answer to a question that does not exist. `422` when the chosen id is not one of the\ncheck's options — which happens for real when a lesson is regenerated between the page loading and\nthe learner answering, and is refused rather than stored as a wrong answer to a question that was\nnever asked.",
+        "operationId": "record_topic_check_attempt_api_v1_knowledge_topics__topic_id__check_attempts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "title": "Topic Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicCheckAttemptCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicCheckAttemptResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record Topic Check Attempt",
         "tags": [
           "knowledge",
           "knowledge"

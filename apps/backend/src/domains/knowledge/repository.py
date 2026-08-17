@@ -23,6 +23,7 @@ from .db_models import (
     Module,
     Resource,
     Topic,
+    TopicCheckAttempt,
     TopicSection,
 )
 
@@ -119,13 +120,17 @@ class KnowledgeRepository:
         """
         async with await self._session() as session:
             rows = (
-                await session.execute(
-                    select(Topic.id)
-                    .join(Module, Topic.module_id == Module.id)
-                    .where(Module.course_id == course_id)
-                    .order_by(Module.order.asc(), Topic.order.asc(), Topic.id.asc())
+                (
+                    await session.execute(
+                        select(Topic.id)
+                        .join(Module, Topic.module_id == Module.id)
+                        .where(Module.course_id == course_id)
+                        .order_by(Module.order.asc(), Topic.order.asc(), Topic.id.asc())
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
         ids = list(rows)
         return (ids.index(topic_id) + 1 if topic_id in ids else 0), len(ids)
@@ -210,19 +215,21 @@ class KnowledgeRepository:
 
         async with await self._session() as session:
             rows = (
-                await session.execute(
-                    select(Topic.completed_at)
-                    .join(Module, Topic.module_id == Module.id)
-                    .join(Course, Module.course_id == Course.id)
-                    .where(*conditions)
-                    .order_by(Topic.completed_at.desc())
+                (
+                    await session.execute(
+                        select(Topic.completed_at)
+                        .join(Module, Topic.module_id == Module.id)
+                        .join(Course, Module.course_id == Course.id)
+                        .where(*conditions)
+                        .order_by(Topic.completed_at.desc())
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         return [row for row in rows if row is not None]
 
-    async def completed_hours_between(
-        self, user_id: str, start: datetime, end: datetime
-    ) -> float:
+    async def completed_hours_between(self, user_id: str, start: datetime, end: datetime) -> float:
         """Estimated hours on the topics this learner completed in a window.
 
         Estimated, not measured. Nothing observes how long a topic actually took, so a caller must
@@ -306,9 +313,7 @@ class KnowledgeRepository:
 
         async with await self._session() as session:
             rows = (
-                await session.execute(
-                    select(entity, ranked.c.course_id).where(ranked.c.rank == 1)
-                )
+                await session.execute(select(entity, ranked.c.course_id).where(ranked.c.rank == 1))
             ).all()
 
         return {course_id: topic for topic, course_id in rows}
@@ -538,6 +543,11 @@ class KnowledgeRepository:
                 mapped["objectives"] = data["objectives"]
             if "knowledgeCheck" in data:
                 mapped["knowledge_check"] = data["knowledgeCheck"]
+            # `in data` again: every terminal path clears the stage by writing `None`, and a truthiness
+            # test would skip the clear and leave a finished lesson reporting that it is still being
+            # written.
+            if "lessonGenerationStage" in data:
+                mapped["lesson_generation_stage"] = data["lessonGenerationStage"]
             if mapped:
                 stmt = update(Topic).where(Topic.id == topic_id).values(**mapped)
                 await session.execute(stmt)
@@ -646,9 +656,7 @@ class KnowledgeRepository:
 
     async def find_topic_section(self, section_id: str) -> TopicSection | None:
         async with await self._session() as session:
-            rows = await session.execute(
-                select(TopicSection).where(TopicSection.id == section_id)
-            )
+            rows = await session.execute(select(TopicSection).where(TopicSection.id == section_id))
             return rows.scalar_one_or_none()
 
     async def create_topic_section(self, data: dict[str, Any]) -> TopicSection:
@@ -679,7 +687,9 @@ class KnowledgeRepository:
             await session.commit()
         return len(items)
 
-    async def update_topic_section(self, section_id: str, data: dict[str, Any]) -> TopicSection | None:
+    async def update_topic_section(
+        self, section_id: str, data: dict[str, Any]
+    ) -> TopicSection | None:
         async with await self._session() as session:
             mapped = self._map_section_data(data)
             if mapped:
@@ -720,6 +730,46 @@ class KnowledgeRepository:
             )
             await session.commit()
         return await self.find_topic_section(section_id)
+
+    # -----------------------------------------------------------------------
+    # Knowledge check attempts
+    # -----------------------------------------------------------------------
+
+    async def create_topic_check_attempt(self, data: dict[str, Any]) -> TopicCheckAttempt:
+        async with await self._session() as session:
+            attempt = TopicCheckAttempt(
+                topic_id=data["topicId"],
+                user_id=data["userId"],
+                choice_id=data["choiceId"],
+                question=data["question"],
+                choice_label=data["choiceLabel"],
+                correct=data["correct"],
+            )
+            session.add(attempt)
+            await session.commit()
+            await session.refresh(attempt)
+            return attempt
+
+    async def list_topic_check_attempts(
+        self, topic_id: str, user_id: str
+    ) -> list[TopicCheckAttempt]:
+        """One learner's attempts at one check, oldest first.
+
+        Oldest first because the first attempt is the one that carries the meaning, and every caller
+        wants it: the summary reads `[0]`, and the history reads in the order the learner answered.
+        Ordered by `createdAt` then `id` so two attempts landing in the same clock tick — a double
+        press — keep a stable order instead of swapping between two loads of the same page.
+        """
+        async with await self._session() as session:
+            rows = await session.execute(
+                select(TopicCheckAttempt)
+                .where(
+                    TopicCheckAttempt.topic_id == topic_id,
+                    TopicCheckAttempt.user_id == user_id,
+                )
+                .order_by(TopicCheckAttempt.created_at, TopicCheckAttempt.id)
+            )
+            return list(rows.scalars().all())
 
     def _map_section_data(self, data: dict[str, Any]) -> dict[str, Any]:
         """Translate wire names to attribute names for the three that differ.
@@ -978,8 +1028,16 @@ class KnowledgeRepository:
         # Previously a passthrough: an unknown key became an ORM keyword argument and failed with a
         # `TypeError` naming SQLAlchemy internals rather than the field the caller sent. Strict mapping
         # names the field instead, and refuses rather than guessing.
-        for own_name in ("title", "description", "difficulty", "archived", "progress",
-                         "category", "tags", "outcomes"):
+        for own_name in (
+            "title",
+            "description",
+            "difficulty",
+            "archived",
+            "progress",
+            "category",
+            "tags",
+            "outcomes",
+        ):
             field_map.setdefault(own_name, own_name)
         return map_fields(data, field_map, entity="_map_course_data")
 

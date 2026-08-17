@@ -43,6 +43,60 @@ from ..repository import knowledge_repo
 
 logger = logging.getLogger(__name__)
 
+
+class GenerationStage:
+    """The phases writing a lesson passes through.
+
+    Each is a real phase with a write behind it, which is the whole point — the same standard
+    `quiz_engine.GenerationStage` sets. The reader observes them through a concurrent read of the topic
+    while its own generate request is still open, so nothing here is a timer and nothing is interpolated.
+
+    Four phases because the work has four boundaries, not because four looks good on a bar:
+    `WRITING_LESSON` is the model call and is most of the wall clock; the other three are the cheap parts
+    on either side of it, and the reader labels the long one as the long one rather than pretending the
+    four are equal.
+
+    Ordered. `INDEX` gives the client something to draw without hardcoding a length.
+    """
+
+    PREPARING = "PREPARING"
+    WRITING_LESSON = "WRITING_LESSON"
+    STRUCTURING = "STRUCTURING"
+    SAVING = "SAVING"
+    READY = "READY"
+
+    ORDER = (PREPARING, WRITING_LESSON, STRUCTURING, SAVING, READY)
+    INDEX = {stage: position for position, stage in enumerate(ORDER)}
+
+
+def generation_progress(stage: str | None) -> float | None:
+    """How far through writing a lesson the server is, 0.0-1.0, or `None` if unknown.
+
+    Derived from the stage rather than stored, so the two cannot disagree. `None` rather than 0 for an
+    unknown stage: a topic whose lesson was written before the column existed had no stage recorded, and
+    reporting 0 would claim it never started when in fact it finished.
+    """
+    if stage is None or stage not in GenerationStage.INDEX:
+        return None
+    last = len(GenerationStage.ORDER) - 1
+    return round(GenerationStage.INDEX[stage] / last, 2)
+
+
+async def set_stage(topic_id: str, stage: str | None) -> None:
+    """Record which phase writing a lesson reached, or clear it.
+
+    Best-effort. A failed stage write must not abort a generation that is otherwise fine: the learner
+    would rather have their lesson than an accurate progress bar. Same trade as `quiz_engine._set_stage`.
+    """
+    try:
+        await knowledge_repo.update_topic(topic_id, {"lessonGenerationStage": stage})
+    except Exception:  # noqa: BLE001 - progress reporting is not worth failing over
+        logger.warning(
+            "Could not record lesson generation stage",
+            extra={"topic_id": topic_id, "stage": stage},
+        )
+
+
 #: How many sections a generated lesson may contain. A ceiling rather than a target: the model
 #: occasionally returns a section per sentence, and a lesson of forty one-line steps is a worse
 #: reading experience than one of six, as well as forty rows and forty completion writes.
@@ -261,7 +315,11 @@ def _parse_knowledge_check(raw: Any) -> dict[str, Any] | None:
         )
 
     if len(choices) < 2 or sum(1 for c in choices if c["correct"]) != 1:
-        logger.warning("Discarding knowledge check: %d choices, %d correct", len(choices), sum(1 for c in choices if c["correct"]))
+        logger.warning(
+            "Discarding knowledge check: %d choices, %d correct",
+            len(choices),
+            sum(1 for c in choices if c["correct"]),
+        )
         return None
 
     return {

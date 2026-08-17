@@ -174,6 +174,19 @@ class Topic(Base, TimestampMixin):
     # multi-question attempt feeding readiness scoring, and borrowing it would leave an abandoned
     # scored session in preparation analytics for every lesson opened.
     knowledge_check: Mapped[dict | None] = mapped_column("knowledgeCheck", JSON, nullable=True)
+    #: Which phase writing this lesson has reached, while it is being written.
+    #:
+    #: Exists so the reader can report a stage the server actually reached, the same reason
+    #: `QuizSession.generationStage` does. Writing a lesson is the longest generation in the product and
+    #: the reader showed a pulsing icon for all of it. Every value has a write behind it; nothing here is
+    #: interpolated.
+    #:
+    #: Cleared on every terminal path. A value left behind by a server restart is overwritten by the next
+    #: attempt, and nothing derives anything from it — the client's terminal signal is its own request
+    #: resolving, not this column.
+    lesson_generation_stage: Mapped[str | None] = mapped_column(
+        "lessonGenerationStage", String, nullable=True
+    )
 
     # Relationships
     module: Mapped["Module"] = relationship("Module", back_populates="topics")
@@ -241,6 +254,56 @@ class TopicSection(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<TopicSection id={self.id} kind={self.kind} title={self.title}>"
+
+
+class TopicCheckAttempt(Base):
+    """One answer to a topic's end-of-lesson knowledge check.
+
+    A row per press of `Check answer`, not a column holding the current answer. Changing the answer is
+    allowed by design — the reader reveals the correct choice and its explanation, then lets the learner
+    pick again — so a latest-answer column would record what they clicked *after* being told, which is
+    almost always correct and says nothing about what they understood. Keeping every attempt keeps the
+    first one, which is the only one that measures anything.
+
+    `TimestampMixin` is deliberately not used: an attempt is an event. It happened once, at one time,
+    and nothing about it is ever edited, so an `updatedAt` would be a column that can only ever equal
+    `createdAt` while implying otherwise.
+
+    `question` and `choiceLabel` are snapshots. `Topic.knowledgeCheck` is JSON that regeneration
+    replaces wholesale, so without them an attempt would reference a choice id that no longer exists on
+    a question that may no longer be asked.
+    """
+
+    __tablename__ = "TopicCheckAttempt"
+    __table_args__ = (
+        Index("TopicCheckAttempt_userId_topicId_createdAt_idx", "userId", "topicId", "createdAt"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    topic_id: Mapped[str] = mapped_column(
+        "topicId", String, ForeignKey("Topic.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE")
+    )
+    choice_id: Mapped[str] = mapped_column("choiceId", String, nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    choice_label: Mapped[str] = mapped_column("choiceLabel", Text, nullable=False)
+    #: Graded on the server from the stored check. The answer key ships to the browser so the reader
+    #: can reveal the verdict without a round trip, which is exactly why the verdict cannot be taken
+    #: from the browser: it would be a score the learner's own page got to decide.
+    correct: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        "createdAt",
+        DateTime(timezone=True),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TopicCheckAttempt topic={self.topic_id} correct={self.correct}>"
 
 
 class CourseRating(Base, TimestampMixin):

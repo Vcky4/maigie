@@ -116,10 +116,17 @@ class TopicSectionResponse(CamelModel):
 class KnowledgeCheckChoice(CamelModel):
     """One option of a topic's knowledge check.
 
-    `correct` is sent to the client deliberately. The check is a self-test at the end of a lesson in
-    a course the learner owns — it gates nothing, is not scored, and no attempt is recorded — so the
-    page grades the answer and shows the explanation without a round trip. An assessment whose result
-    matters belongs in the preparation domain, where the correct answer is not published.
+    `correct` is still sent to the client, now that attempts *are* recorded. The reveal is immediate and
+    offline-tolerant: the reader shows the verdict and the explanation the moment the learner answers,
+    without waiting for a round trip that could fail and leave them staring at a question they have
+    already answered.
+
+    What that costs is that the answer key is visible to anyone reading the response, so the published
+    key cannot be the basis of the recorded result. It is not: `POST /topics/{id}/check/attempts` takes
+    only the chosen id and grades it against the stored check, so the row cannot be talked into saying
+    something the check does not. A learner could still read the key before answering — but this is a
+    self-test in their own course, and the only person it would mislead is them. An assessment whose
+    result matters to somebody else belongs in the preparation domain, which does not publish its keys.
     """
 
     id: str
@@ -133,6 +140,80 @@ class KnowledgeCheck(CamelModel):
     question: str
     explanation: str
     choices: list[KnowledgeCheckChoice] = []
+
+
+#: Phases writing a lesson passes through. Typed rather than a bare string so the reader gets a closed
+#: set to switch on: a wait screen that has to guess at stage names cannot report an unknown one
+#: honestly. Kept in step with `lesson_service.GenerationStage`, which owns the order and is asserted
+#: against this.
+LessonGenerationStage = Literal[
+    "PREPARING",
+    "WRITING_LESSON",
+    "STRUCTURING",
+    "SAVING",
+    "READY",
+]
+
+
+class TopicCheckAttemptCreate(CamelModel):
+    """An answer to a topic's check.
+
+    The chosen id and nothing else. No `correct` field: the server grades the attempt from the stored
+    check, so the record cannot be shaped by the page that is being tested.
+    """
+
+    choice_id: str = Field(..., min_length=1, max_length=255)
+
+
+class TopicCheckAttemptResponse(CamelModel):
+    """One recorded answer.
+
+    `question` and `choiceLabel` are as they were when the attempt was made, so the history stays
+    readable after a lesson is regenerated and its check replaced.
+    """
+
+    id: str
+    topic_id: str
+    choice_id: str
+    question: str
+    choice_label: str
+    correct: bool
+    created_at: datetime
+
+
+class TopicCheckSummary(CamelModel):
+    """What a learner's attempts at one check add up to.
+
+    The field that matters for review is `firstAttemptCorrect`. Understanding is what the learner knew
+    before being told, and the reader shows the answer as soon as they submit — so anything after the
+    first attempt measures whether they can copy a revealed answer.
+    """
+
+    attempts: int = 0
+    incorrect_attempts: int = 0
+    #: Null when the check has never been attempted, which is not the same as having failed it.
+    first_attempt_correct: bool | None = None
+    #: Whether any attempt was correct. A learner who failed twice and then passed has `passed` true
+    #: and `firstAttemptCorrect` false, which is the distinction the whole table exists to keep.
+    passed: bool = False
+    last_attempt_at: datetime | None = None
+    #: What they chose most recently, so reopening a lesson restores the reader rather than presenting
+    #: an answered question as unanswered.
+    last_choice_id: str | None = None
+    #: True once the learner has been wrong here even once, and it stays true after they pass. Passing
+    #: on the second attempt does not undo not knowing it on the first, and this is the flag a revisit
+    #: — a flashcard, a practice set, a nudge — should key on.
+    needs_revisit: bool = False
+
+
+class TopicCheckAttemptResult(CamelModel):
+    """The graded attempt, plus what it does to the learner's record of this check."""
+
+    attempt: TopicCheckAttemptResponse
+    summary: TopicCheckSummary
+    #: Why the correct answer is correct. Returned so the verdict and its reasoning come from the same
+    #: place as the grade, rather than the page explaining a result it did not decide.
+    explanation: str
 
 
 #: What kind of work a sitting is. Distinct from `SectionKind`, which is how one passage within a
@@ -438,6 +519,24 @@ class TopicLocationResponse(CamelModel):
     #: sitting sits in the course, so without it the surface would have to fetch the entire course to
     #: print one number.
     course_progress: float = 0.0
+    #: The learner's record on this topic's check. Included here rather than left to a second request
+    #: because the reader needs it to render at all: reopening a lesson has to know whether the check
+    #: was already answered, and with what, or it presents an answered question as unanswered and gates
+    #: Continue behind work the learner already did.
+    #:
+    #: Null when the topic has no check. A topic that has one but has never been attempted carries a
+    #: summary with `attempts: 0` — "no check here" and "not attempted yet" are different facts.
+    check_progress: TopicCheckSummary | None = None
+    #: Which phase writing this lesson has reached, or null when nothing is being written.
+    #:
+    #: Writing a lesson is the longest generation in the product, and the reader used to show a pulsing
+    #: icon for all of it. The generate request stays synchronous, so the reader watches these stages by
+    #: reading this endpoint *while its own request is open*: the request resolving is the terminal
+    #: signal, and this is the detail in between. Every value has a database write behind it, the same
+    #: standard `QuizSessionResponse.generationStage` holds.
+    lesson_generation_stage: LessonGenerationStage | None = None
+    #: 0.0-1.0, derived from the stage so the two cannot disagree. Null when no stage is known.
+    lesson_generation_progress: float | None = None
 
 
 class CourseNextTopic(CamelModel):
