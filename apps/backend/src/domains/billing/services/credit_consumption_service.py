@@ -115,6 +115,11 @@ CREDIT_COSTS = {
     # Writing a note from a voice session. Charged only when the learner asks for one — nothing about a
     # voice conversation is summarised or stored automatically, so this cost is never incurred silently.
     "voice_session_note": 100,
+    # Combining several notes on one topic into one. The same price as writing a note, because it is the
+    # same thing: one model call producing one durable note the learner keeps. Charged once for the merge
+    # regardless of how many notes went into it — the inputs were already paid for when they were written,
+    # and pricing per input would make consolidating a messy topic more expensive the messier it got.
+    "note_merge": 100,
 }
 
 

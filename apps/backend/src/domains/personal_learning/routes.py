@@ -22,6 +22,7 @@ from .services import (
     exam_prep_service,
     flashcard_service,
     home_service,
+    note_merge_service,
     note_service,
     notification_service,
     onboarding_service,
@@ -273,6 +274,35 @@ async def get_note_summary(
     moment the fetch is filtered, since the tiles would move as the learner typed.
     """
     return await note_service.get_summary(user_id=current_user.id, archived=archived)
+
+
+@router.post(
+    "/notes/merge",
+    response_model=models.NoteResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def merge_notes(body: models.NoteMergeRequest, current_user: CurrentUser):
+    """Combine several notes into one, archiving the originals.
+
+    A voice session writes one note per sitting, so studying a lesson across five short sittings leaves five
+    thin notes on it — worse for revision than one consolidated note, and not something the learner can fix
+    without retyping.
+
+    **The originals are archived, not deleted.** A merge is one model call reading several inputs, so it can
+    drop something, and "your five notes are now one and the five are gone" is not a claim worth making
+    without a way back. Archiving is one reversible flag; deleting would also destroy their attachments and
+    version history, which the merged note has no way to carry.
+
+    **One id that is not the learner's fails the whole request** rather than being skipped. Combining four
+    notes when five were named and reporting success is the accept-and-discard pattern this codebase has a
+    guard against.
+
+    Declared with the other collection-level literals — `/notes/tags`, `/notes/summary` — and above
+    `/notes/{note_id}`. Nothing today would shadow it: no `POST` is registered on `/notes/{note_id}`, so
+    `merge` cannot currently be read as a note id. It sits here so that stays true when one is added, which
+    is exactly how the `/modules/reorder` hazard arose in the knowledge domain.
+    """
+    return await note_merge_service.merge_notes(current_user, note_ids=body.noteIds)
 
 
 @router.get("/notes/{note_id}", response_model=models.NoteResponse)

@@ -5167,6 +5167,25 @@
         "title": "NoteImportRequest",
         "type": "object"
       },
+      "NoteMergeRequest": {
+        "description": "Combine several of the learner's notes into one.\n\nThe ids are chosen by the learner rather than derived from a rule. There is no provenance on `Note`, so\nthe server cannot tell a note written from a voice session apart from one the learner typed, and a\n\"merge the short session notes on this topic\" feature would have swept up the wrong ones. The person who\nknows which notes belong together is the one who wrote them.\n\nBounded on both sides: fewer than two is nothing to combine, and more than ten will not fit in one reply\n— the service says so rather than truncating, and batches are easier to check than one huge rewrite.",
+        "properties": {
+          "noteIds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "minItems": 2,
+            "title": "Noteids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "noteIds"
+        ],
+        "title": "NoteMergeRequest",
+        "type": "object"
+      },
       "NoteResponse": {
         "properties": {
           "archived": {
@@ -20027,6 +20046,54 @@
           }
         ],
         "summary": "Create Note",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/notes/merge": {
+      "post": {
+        "description": "Combine several notes into one, archiving the originals.\n\nA voice session writes one note per sitting, so studying a lesson across five short sittings leaves five\nthin notes on it — worse for revision than one consolidated note, and not something the learner can fix\nwithout retyping.\n\n**The originals are archived, not deleted.** A merge is one model call reading several inputs, so it can\ndrop something, and \"your five notes are now one and the five are gone\" is not a claim worth making\nwithout a way back. Archiving is one reversible flag; deleting would also destroy their attachments and\nversion history, which the merged note has no way to carry.\n\n**One id that is not the learner's fails the whole request** rather than being skipped. Combining four\nnotes when five were named and reporting success is the accept-and-discard pattern this codebase has a\nguard against.\n\nDeclared with the other collection-level literals — `/notes/tags`, `/notes/summary` — and above\n`/notes/{note_id}`. Nothing today would shadow it: no `POST` is registered on `/notes/{note_id}`, so\n`merge` cannot currently be read as a note id. It sits here so that stays true when one is added, which\nis exactly how the `/modules/reorder` hazard arose in the knowledge domain.",
+        "operationId": "merge_notes_api_v1_learning_notes_merge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Merge Notes",
         "tags": [
           "personal-learning",
           "personal-learning"

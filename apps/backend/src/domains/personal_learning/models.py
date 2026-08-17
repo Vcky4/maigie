@@ -87,6 +87,21 @@ class NoteImportRequest(CamelModel):
     spaceId: str
 
 
+class NoteMergeRequest(CamelModel):
+    """Combine several of the learner's notes into one.
+
+    The ids are chosen by the learner rather than derived from a rule. There is no provenance on `Note`, so
+    the server cannot tell a note written from a voice session apart from one the learner typed, and a
+    "merge the short session notes on this topic" feature would have swept up the wrong ones. The person who
+    knows which notes belong together is the one who wrote them.
+
+    Bounded on both sides: fewer than two is nothing to combine, and more than ten will not fit in one reply
+    — the service says so rather than truncating, and batches are easier to check than one huge rewrite.
+    """
+
+    noteIds: list[str] = Field(..., min_length=2, max_length=10)
+
+
 class NoteTagCountResponse(CamelModel):
     """One tag the learner has used, and how many of their notes carry it.
 
