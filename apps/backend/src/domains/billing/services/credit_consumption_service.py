@@ -112,6 +112,9 @@ CREDIT_COSTS = {
     "ai_action": 100,  # 100 tokens per AI action (reduced from 250)
     "gemini_live_voice": 500,  # minimum pre-start check; live voice bills by time (+ paid standby = audio-active only)
     "study_diagram": 80,  # one-off Mermaid / math diagram for Study Mode (text model; complements live voice)
+    # Writing a note from a voice session. Charged only when the learner asks for one — nothing about a
+    # voice conversation is summarised or stored automatically, so this cost is never incurred silently.
+    "voice_session_note": 100,
 }
 
 

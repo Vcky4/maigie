@@ -193,6 +193,59 @@ async def list_tags(*, user_id: str, archived: bool = False) -> list[dict[str, A
     return [{"tag": tag, "count": count} for tag, count in counts]
 
 
+async def get_summary(*, user_id: str, archived: bool = False) -> dict[str, Any]:
+    """Library-wide note figures, plus a seven-day capture trend in the learner's own days.
+
+    The trend's days are the learner's, where we know them. ``UserPreferences.timezone`` is `NOT NULL`
+    with a `"UTC"` default and was never prompted for, so it is only a fact when its source says it
+    was observed; ``resolve_learner_timezone`` encodes that and falls back to UTC flagged as unknown.
+    Every day in the window is present, zeros included, so a client renders gaps rather than
+    inferring them.
+    """
+    import asyncio
+    from datetime import UTC, datetime, timedelta
+
+    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+
+    learner_timezone = await resolve_learner_timezone(user_id)
+    local_now = to_learner_local(datetime.now(UTC), learner_timezone)
+    local_today = local_now.date()
+    # Seven days inclusive of today, so the window starts six days back.
+    window_start_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        days=6
+    )
+    window_start = window_start_local.astimezone(UTC)
+
+    counts, created_at_values = await asyncio.gather(
+        repo.count_note_summary(user_id, archived=archived),
+        repo.list_note_creation_times(user_id, since=window_start, archived=archived),
+    )
+    total, tagged, linked_to_course, with_attachments = counts
+
+    per_day: dict[Any, int] = {
+        (window_start_local + timedelta(days=offset)).date(): 0 for offset in range(7)
+    }
+    for created_at in created_at_values:
+        local_day = to_learner_local(created_at, learner_timezone).date()
+        if local_day in per_day:
+            per_day[local_day] += 1
+        elif local_day > local_today:
+            # A clock skew or a zone change can put a row a few hours "ahead". Counted on the last
+            # day rather than dropped: the note exists, and silently losing it from a trend is how a
+            # chart comes to disagree with the total beside it.
+            per_day[local_today] += 1
+
+    return {
+        "total": total,
+        "tagged": tagged,
+        "linkedToCourse": linked_to_course,
+        "withAttachments": with_attachments,
+        "capturedLastWeek": [
+            {"date": day, "count": count} for day, count in sorted(per_day.items())
+        ],
+    }
+
+
 async def delete_note(*, user_id: str, note_id: str) -> bool:
     """Delete a note, and any attachment files it owns.
 

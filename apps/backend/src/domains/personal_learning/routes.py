@@ -260,6 +260,21 @@ async def list_note_tags(
     return await note_service.list_tags(user_id=current_user.id, archived=archived)
 
 
+# Declared before `/notes/{note_id}`, for the same reason as `/notes/tags`.
+@router.get("/notes/summary", response_model=models.NoteSummaryResponse)
+async def get_note_summary(
+    current_user: CurrentUser,
+    archived: bool = Query(False),
+):
+    """Library-wide note figures and a seven-day capture trend.
+
+    Counted here because the page's filters are now server-side. Deriving these from the fetched page
+    was defensible while that page was a hundred unfiltered notes; it stops being defensible the
+    moment the fetch is filtered, since the tiles would move as the learner typed.
+    """
+    return await note_service.get_summary(user_id=current_user.id, archived=archived)
+
+
 @router.get("/notes/{note_id}", response_model=models.NoteResponse)
 async def get_note(note_id: str, current_user: CurrentUser):
     """Get a note by ID."""
@@ -1640,18 +1655,18 @@ async def get_document_job(task_id: str, current_user: CurrentUser):
     )
 
 
-# Declared before `/documents/{doc_id}`, or `formats` is read as a document id.
-@router.get("/documents/formats", response_model=list[models.DocumentFormatCountResponse])
-async def list_document_formats(current_user: CurrentUser):
-    """Every format the learner has produced, with a count each.
+# Declared before `/documents/{doc_id}`, or `summary` is read as a document id.
+@router.get("/documents/summary", response_model=models.DocumentSummaryResponse)
+async def get_document_summary(current_user: CurrentUser):
+    """Library-wide document figures, for the page's tiles and its format filter.
 
-    Two jobs: the library's "formats used" figure, which was counted from whichever page happened to
-    be loaded, and the format filter, which should offer only formats the learner actually has rather
-    than the three the product supports.
+    Every one of these was counted in the browser from one fetched page and then labelled as a
+    library figure. The format list doubles as the filter's options, so the filter offers formats the
+    learner actually has rather than the three the product supports.
     """
     from .services import document_impl
 
-    return await document_impl.list_formats(user_id=current_user.id)
+    return await document_impl.get_summary(user_id=current_user.id)
 
 
 @router.get("/documents", response_model=models.PaginatedResponse[models.DocumentResponse])
@@ -1661,11 +1676,20 @@ async def list_documents(
     pageSize: int = Query(20, ge=1, le=100),
     search: str | None = Query(None, description="Matches the title or the filename."),
     format: str | None = Query(None, description="Exact format: pdf, docx, pptx."),
+    type: str | None = Query(
+        None,
+        description=(
+            "Exact document type: essay, report, presentation, letter, cv. Matches only "
+            "documents created after the type began being stored; earlier rows have none."
+        ),
+    ),
 ):
     """List generated documents, newest first.
 
     Filtering happens here rather than in the browser. The library page filtered the twenty documents
-    it had loaded, so a search over a larger library silently missed everything past the first page.
+    it had loaded, so a search over a larger library silently missed everything past the first page —
+    and it filtered on a type inferred by substring-matching the filename, because the type the
+    learner chose was never stored.
     """
     from .services import document_impl
 
@@ -1675,6 +1699,7 @@ async def list_documents(
         page_size=pageSize,
         search=search,
         format=format,
+        type=type,
     )
     pages = (total + pageSize - 1) // pageSize if total else 0
     return models.PaginatedResponse[models.DocumentResponse](

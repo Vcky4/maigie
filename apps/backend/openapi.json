@@ -525,6 +525,60 @@
         "title": "ChangePasswordRequest",
         "type": "object"
       },
+      "ConversationListResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummary"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "title": "ConversationListResponse",
+        "type": "object"
+      },
+      "ConversationStatusResponse": {
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status",
+          "user_id"
+        ],
+        "title": "ConversationStatusResponse",
+        "type": "object"
+      },
+      "ConversationSummary": {
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "title": "ConversationSummary",
+        "type": "object"
+      },
       "CourseActivityEntry": {
         "description": "A topic the learner completed, with the course it belongs to.\n\nBuilt from `Topic.completedAt`, not from a stored activity log. Topics completed before that\ncolumn existed are absent rather than dated from `updatedAt`, which moves on any edit.",
         "properties": {
@@ -2200,6 +2254,17 @@
             "title": "Createdat",
             "type": "string"
           },
+          "docType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doctype"
+          },
           "fileUrl": {
             "title": "Fileurl",
             "type": "string"
@@ -2250,6 +2315,7 @@
           "userId",
           "title",
           "format",
+          "docType",
           "style",
           "filename",
           "fileUrl",
@@ -2261,6 +2327,44 @@
           "createdAt"
         ],
         "title": "DocumentResponse",
+        "type": "object"
+      },
+      "DocumentSummaryResponse": {
+        "description": "Library-wide figures for the document page's tiles.\n\nEvery one of these was previously counted in the browser from whichever page had been\nfetched, and then labelled as a library figure — \"In your library\", \"Shared publicly\". With\none page and no pager that was merely optimistic; with a pager it is simply wrong. They are\ncounted here instead, in one round trip.\n\n``month_start`` is published rather than assumed: \"this month\" is a claim about the learner's\nwall clock, and the zone is only known when they have told us. Returning the instant the count\nwas measured from lets the page say *since when* instead of asserting a calendar month it\ncannot prove.",
+        "properties": {
+          "createdThisMonth": {
+            "title": "Createdthismonth",
+            "type": "integer"
+          },
+          "formats": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentFormatCountResponse"
+            },
+            "title": "Formats",
+            "type": "array"
+          },
+          "monthStart": {
+            "format": "date-time",
+            "title": "Monthstart",
+            "type": "string"
+          },
+          "published": {
+            "title": "Published",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "published",
+          "createdThisMonth",
+          "monthStart",
+          "formats"
+        ],
+        "title": "DocumentSummaryResponse",
         "type": "object"
       },
       "DueReviewResponse": {
@@ -4940,6 +5044,26 @@
         "title": "NoteAttachmentResponse",
         "type": "object"
       },
+      "NoteCaptureDay": {
+        "description": "Notes created on one day of the learner's week.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "count"
+        ],
+        "title": "NoteCaptureDay",
+        "type": "object"
+      },
       "NoteCreate": {
         "properties": {
           "archived": {
@@ -5152,6 +5276,43 @@
           "updatedAt"
         ],
         "title": "NoteResponse",
+        "type": "object"
+      },
+      "NoteSummaryResponse": {
+        "description": "Library-wide figures for the notes page's tiles and its capture trend.\n\nAdded when search and tag filtering moved server-side. The page counted these from the notes it\nhad fetched, which was tolerable while it fetched a hundred unfiltered ones and labelled them\n\"Saved to your library\" — and would have become plainly wrong the moment the fetch became a\nfiltered page, since the tiles would then change as the learner typed.\n\nScoped like the default note list: personal notes, not archived, so a tile and the list it sits\nabove are counting the same thing.",
+        "properties": {
+          "capturedLastWeek": {
+            "items": {
+              "$ref": "#/components/schemas/NoteCaptureDay"
+            },
+            "title": "Capturedlastweek",
+            "type": "array"
+          },
+          "linkedToCourse": {
+            "title": "Linkedtocourse",
+            "type": "integer"
+          },
+          "tagged": {
+            "title": "Tagged",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "withAttachments": {
+            "title": "Withattachments",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "tagged",
+          "linkedToCourse",
+          "withAttachments",
+          "capturedLastWeek"
+        ],
+        "title": "NoteSummaryResponse",
         "type": "object"
       },
       "NoteTagCountResponse": {
@@ -10252,6 +10413,113 @@
         "title": "SpaceResponse",
         "type": "object"
       },
+      "StartConversationRequest": {
+        "description": "What the client asks for when opening a session.",
+        "properties": {
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "system_instruction": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Instruction"
+          },
+          "topic_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Id"
+          }
+        },
+        "title": "StartConversationRequest",
+        "type": "object"
+      },
+      "StartConversationResponse": {
+        "properties": {
+          "chat_session_id": {
+            "default": "",
+            "title": "Chat Session Id",
+            "type": "string"
+          },
+          "course_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Id"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "study_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Study Session Id"
+          },
+          "topic_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Id"
+          }
+        },
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "title": "StartConversationResponse",
+        "type": "object"
+      },
       "StartSessionRequest": {
         "properties": {
           "courseId": {
@@ -10278,6 +10546,24 @@
           }
         },
         "title": "StartSessionRequest",
+        "type": "object"
+      },
+      "StopConversationResponse": {
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "title": "StopConversationResponse",
         "type": "object"
       },
       "StreakResponse": {
@@ -10665,6 +10951,86 @@
           }
         },
         "title": "StudyBlockUpdate",
+        "type": "object"
+      },
+      "StudyDiagramRequest": {
+        "properties": {
+          "course_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Course Title"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hint"
+          },
+          "topic_id": {
+            "title": "Topic Id",
+            "type": "string"
+          },
+          "topic_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic Title"
+          },
+          "transcript_tail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript Tail"
+          }
+        },
+        "required": [
+          "topic_id"
+        ],
+        "title": "StudyDiagramRequest",
+        "type": "object"
+      },
+      "StudyDiagramResponse": {
+        "properties": {
+          "caption": {
+            "title": "Caption",
+            "type": "string"
+          },
+          "display_math": {
+            "title": "Display Math",
+            "type": "string"
+          },
+          "mermaid": {
+            "title": "Mermaid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mermaid",
+          "display_math",
+          "caption"
+        ],
+        "title": "StudyDiagramResponse",
         "type": "object"
       },
       "StudyPlanCourseLink": {
@@ -14541,6 +14907,235 @@
         ]
       }
     },
+    "/api/v1/gemini-live/conversation/start": {
+      "post": {
+        "description": "Compose the tutor brief and issue a session id for the socket to use.\n\nAny session the learner already had is closed here — one at a time, because they have one voice and one\nshared socket, and a second live session would bill for audio nobody can hear.",
+        "operationId": "start_conversation_api_v1_gemini_live_conversation_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartConversationRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Start Conversation",
+        "tags": [
+          "study-voice",
+          "study-voice"
+        ]
+      }
+    },
+    "/api/v1/gemini-live/conversation/{session_id}/status": {
+      "get": {
+        "description": "Whether the session record still exists.\n\nThis reports on the *record*, not on the provider connection — the relay holding that socket may be on\nanother worker. A client that needs to know whether audio is flowing has `session_started` and `stopped`\nframes on its own socket, which are the only authority on that.",
+        "operationId": "conversation_status_api_v1_gemini_live_conversation__session_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Conversation Status",
+        "tags": [
+          "study-voice",
+          "study-voice"
+        ]
+      }
+    },
+    "/api/v1/gemini-live/conversation/{session_id}/stop": {
+      "post": {
+        "description": "Forget a session. The socket, if one is running, ends when the client stops sending.",
+        "operationId": "stop_conversation_api_v1_gemini_live_conversation__session_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stop Conversation",
+        "tags": [
+          "study-voice",
+          "study-voice"
+        ]
+      }
+    },
+    "/api/v1/gemini-live/conversations": {
+      "get": {
+        "description": "The learner's current session, if they have one. At most one, by design.",
+        "operationId": "list_conversations_api_v1_gemini_live_conversations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Conversations",
+        "tags": [
+          "study-voice",
+          "study-voice"
+        ]
+      }
+    },
+    "/api/v1/gemini-live/study/diagram": {
+      "post": {
+        "description": "Draw what the learner asked to see. Uses a text model, not the live audio one.",
+        "operationId": "study_diagram_api_v1_gemini_live_study_diagram_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudyDiagramRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudyDiagramResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Study Diagram",
+        "tags": [
+          "study-voice",
+          "study-voice"
+        ]
+      }
+    },
     "/api/v1/knowledge/courses": {
       "get": {
         "description": "List courses with pagination and filtering.\n\nThree things this used to get wrong, all of which the library page depends on.\n\n`search` was accepted and thrown away. It was translated into a Prisma-style `where[\"OR\"]`, and\nthe SQLAlchemy translator has no `OR` branch, so the parameter was silently dropped and the\ncaller was handed the unfiltered library while believing it had searched.\n\n`archived` defaulted to *no filter*, so a shelved course still appeared in the default library.\nArchiving is the learner saying \"not now\"; a list that ignores that has ignored the only thing\narchiving does. It now defaults to unarchived, and `archived=true` is the archive view.\n\n`spaceId` was forced to `None` whenever it was absent, which is not the same as being unset: a\ncourse belonging to a space could not be listed at all, and there was no way to ask for\neverything. Absent now means \"no filter\"; `spaceId=\"\"` asks for personal courses specifically.",
@@ -17649,7 +18244,7 @@
     },
     "/api/v1/learning/documents": {
       "get": {
-        "description": "List generated documents, newest first.\n\nFiltering happens here rather than in the browser. The library page filtered the twenty documents\nit had loaded, so a search over a larger library silently missed everything past the first page.",
+        "description": "List generated documents, newest first.\n\nFiltering happens here rather than in the browser. The library page filtered the twenty documents\nit had loaded, so a search over a larger library silently missed everything past the first page —\nand it filtered on a type inferred by substring-matching the filename, because the type the\nlearner chose was never stored.",
         "operationId": "list_documents_api_v1_learning_documents_get",
         "parameters": [
           {
@@ -17709,6 +18304,24 @@
               ],
               "description": "Exact format: pdf, docx, pptx.",
               "title": "Format"
+            }
+          },
+          {
+            "description": "Exact document type: essay, report, presentation, letter, cv. Matches only documents created after the type began being stored; earlier rows have none.",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact document type: essay, report, presentation, letter, cv. Matches only documents created after the type began being stored; earlier rows have none.",
+              "title": "Type"
             }
           }
         ],
@@ -17840,38 +18453,6 @@
         ]
       }
     },
-    "/api/v1/learning/documents/formats": {
-      "get": {
-        "description": "Every format the learner has produced, with a count each.\n\nTwo jobs: the library's \"formats used\" figure, which was counted from whichever page happened to\nbe loaded, and the format filter, which should offer only formats the learner actually has rather\nthan the three the product supports.",
-        "operationId": "list_document_formats_api_v1_learning_documents_formats_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/DocumentFormatCountResponse"
-                  },
-                  "title": "Response List Document Formats Api V1 Learning Documents Formats Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Document Formats",
-        "tags": [
-          "personal-learning",
-          "personal-learning"
-        ]
-      }
-    },
     "/api/v1/learning/documents/jobs/{task_id}": {
       "get": {
         "description": "Poll the status of a queued document generation job.\n\nOnly the learner who queued the job can read it. Unknown, expired, and\nother learners' jobs are all reported as ``404`` so this endpoint cannot be\nused to discover that another learner's job exists.\n\nThe result is a ``DocumentResponse``, the same shape every other document route returns. The\nworker serializes its Celery payload in snake_case, and with no response model on this route that\npayload reached the browser untranslated — so the web client carried a second, snake_case\ndocument type and a hand-written mapper to convert it. Validating through the response model\ndeletes both.",
@@ -17964,6 +18545,34 @@
           }
         ],
         "summary": "Get Shared Document",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/documents/summary": {
+      "get": {
+        "description": "Library-wide document figures, for the page's tiles and its format filter.\n\nEvery one of these was counted in the browser from one fetched page and then labelled as a\nlibrary figure. The format list doubles as the filter's options, so the filter offers formats the\nlearner actually has rather than the three the product supports.",
+        "operationId": "get_document_summary_api_v1_learning_documents_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Document Summary",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -19240,6 +19849,56 @@
           }
         ],
         "summary": "Create Note",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/notes/summary": {
+      "get": {
+        "description": "Library-wide note figures and a seven-day capture trend.\n\nCounted here because the page's filters are now server-side. Deriving these from the fetched page\nwas defensible while that page was a hundred unfiltered notes; it stops being defensible the\nmoment the fetch is filtered, since the tiles would move as the learner typed.",
+        "operationId": "get_note_summary_api_v1_learning_notes_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Note Summary",
         "tags": [
           "personal-learning",
           "personal-learning"

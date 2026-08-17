@@ -311,6 +311,14 @@ def _register_domains(app: FastAPI) -> None:
 
     app.include_router(progress_router, prefix=f"{prefix}/progress", tags=["progress"])
 
+    # --- Study Voice ---
+    # Mounted at `gemini-live` because two shipped clients hardcode that path, including a released mobile
+    # build. The name puts a vendor in a public URL and should become `/study/voice`; that is a coordinated
+    # rename across three repositories, not something to do while restoring the feature.
+    from src.domains.study_voice import router as study_voice_router
+
+    app.include_router(study_voice_router, prefix=f"{prefix}/gemini-live", tags=["study-voice"])
+
     # --- Billing (pending SQLAlchemy migration) ---
     # from src.domains.billing.routes import router as billing_router
     # from src.domains.billing.webhooks import router as webhooks_router

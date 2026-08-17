@@ -783,23 +783,52 @@ async def handle_complete_topic_and_continue(
     user_id: str,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Handle complete_topic_and_continue tool call."""
+    """Mark the current topic complete and tell the client to move on.
+
+    Three things were wrong here and all three mattered once voice study was mounted, because until then
+    this handler was unreachable:
+
+    - **No ownership check.** It took `context["topicId"]` — a value that reaches the server from a client
+      frame — and wrote `completed = True` on that row for anyone. Every other topic write in the codebase
+      goes through `check_topic_ownership`.
+    - **A detached task.** The result told the learner the topic was completed while the write was still in
+      flight, so a failure was reported as success and logged as a warning nobody would read.
+    - **A bare column write.** `completedAt` was left null and `Course.progress` was not recounted, so a
+      topic finished by voice counted for less than the same topic finished by tapping the checkbox. The
+      canonical path does both and emits the events spaced repetition listens for.
+    """
+    from src.domains.knowledge.services.course_service import (
+        check_topic_ownership,
+        toggle_topic_completion,
+    )
+
     topic_id = (context or {}).get("topicId")
-    if topic_id:
-        import asyncio
+    if not topic_id:
+        return {
+            "status": "error",
+            "message": "No topic is open, so there is nothing to complete.",
+        }
 
-        async def mark_complete() -> None:
-            try:
-                await knowledge_repo.update_topic(topic_id, {"completed": True})
-            except Exception as e:
-                logger.warning(f"Failed to mark topic {topic_id} complete: {e}")
-
-        asyncio.create_task(mark_complete())
+    try:
+        topic, module, _course = await check_topic_ownership(topic_id, user_id)
+        await toggle_topic_completion(
+            topic_id=topic_id,
+            module_id=topic.module_id,
+            course_id=module.course_id,
+            user_id=user_id,
+            completed=True,
+        )
+    except Exception as e:
+        logger.warning("Could not complete topic %s for user %s: %s", topic_id, user_id, e)
+        return {
+            "status": "error",
+            "message": "The topic could not be marked as completed. Tell the learner it did not save.",
+        }
 
     return {
         "status": "success",
         "action": "navigate_next",
-        "message": "System has marked the topic as completed, notifying client to navigate to the next topic.",
+        "message": "The topic is marked as completed. The client is moving to the next topic.",
     }
 
 
@@ -1226,6 +1255,8 @@ async def handle_generate_document(
                     "userId": user_id,
                     "title": result["title"],
                     "format": result["format"],
+                    # No `docType`: this skill renders content the model produced rather than a type
+                    # the learner picked from a list, so there is none to record. Null says that.
                     "style": style,
                     "filename": result["filename"],
                     "fileUrl": result["url"],

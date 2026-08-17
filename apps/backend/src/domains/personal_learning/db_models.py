@@ -240,6 +240,12 @@ class GeneratedDocument(Base, TimestampMixin):
 
     title: Mapped[str] = mapped_column(String, nullable=False)
     format: Mapped[str] = mapped_column(String, nullable=False)
+    # What the learner asked for — essay, report, presentation, letter, cv. Sent on every generate
+    # request since the feature shipped and dropped on the way to the database until migration 034,
+    # which is why the library page inferred it by substring-matching the filename. Nullable: the
+    # rows written before then have no recoverable type, and guessing one would put a guess in a
+    # column that reads as a fact.
+    doc_type: Mapped[str | None] = mapped_column("docType", String, nullable=True)
     style: Mapped[str] = mapped_column(String, default="academic", server_default="academic")
     filename: Mapped[str] = mapped_column(String, nullable=False)
     file_url: Mapped[str] = mapped_column("fileUrl", String, nullable=False)

@@ -80,6 +80,7 @@ def _serialize_document(doc) -> dict:
         "user_id": getattr(doc, "user_id", None),
         "title": getattr(doc, "title", None),
         "format": getattr(doc, "format", None),
+        "doc_type": getattr(doc, "doc_type", None),
         "style": getattr(doc, "style", None),
         "filename": getattr(doc, "filename", None),
         "file_url": getattr(doc, "file_url", None),

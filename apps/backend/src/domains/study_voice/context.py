@@ -89,7 +89,7 @@ async def build_brief(
     if topic.summary:
         parts.append(f"- In one line: {topic.summary}")
 
-    if guidance := _STYLE_GUIDANCE.get(course.teaching_style or ""):
+    if guidance := style_guidance(course.teaching_style):
         parts.append(
             f"\nThis learner asked to be taught in a {course.teaching_style} way. {guidance}"
         )

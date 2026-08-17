@@ -1,0 +1,274 @@
+"""Voice billing arithmetic and session bookkeeping.
+
+Voice is the only thing in the product billed by time rather than tokens, which means these are the only
+figures that cannot be re-derived from a provider response after the fact. If the accrual and the settlement
+disagree, the learner is either charged twice for the same minute or not charged for the last one, and neither
+shows up anywhere except a support ticket.
+
+The arithmetic is pure, so it is tested directly rather than through a socket. The billing *loop* that drives
+it needs a fake provider to test and is called out in the design document as the highest-value test asset
+still missing.
+"""
+
+from types import SimpleNamespace
+
+import pytest
+
+from src.domains.study_voice import billing, session_store
+from src.domains.study_voice.bridge import BridgeState, study_tools_for
+
+
+@pytest.fixture
+def settings(monkeypatch):
+    """Fixed billing settings, so these assertions do not move when pricing does."""
+    fake = SimpleNamespace(
+        GEMINI_LIVE_CREDITS_PER_MINUTE=100.0,
+        GEMINI_LIVE_MIN_SESSION_CREDITS=500,
+        GEMINI_LIVE_STANDBY_IDLE_SECONDS=2.5,
+        GEMINI_LIVE_BILLING_TICK_SECONDS=2.0,
+        GEMINI_LIVE_BILLING_MIN_CONSUME_CHUNK=50,
+        GEMINI_LIVE_BILLING_FLUSH_INTERVAL_SECONDS=60.0,
+    )
+    monkeypatch.setattr(billing, "get_settings", lambda: fake)
+    return fake
+
+
+# ---------------------------------------------------------------------------
+# Billing mode
+# ---------------------------------------------------------------------------
+
+
+def test_free_tier_is_billed_for_the_whole_connection():
+    assert billing.billing_mode_for_tier("FREE") == billing.BILLING_WALL_CLOCK
+
+
+def test_a_missing_tier_is_treated_as_free():
+    """Standby is a paid perk, so an unknown tier must not be given it by default."""
+    assert billing.billing_mode_for_tier(None) == billing.BILLING_WALL_CLOCK
+
+
+@pytest.mark.parametrize("tier", ["PLUS", "PRO", "anything-not-free"])
+def test_paid_tiers_are_billed_only_while_audio_is_flowing(tier):
+    assert billing.billing_mode_for_tier(tier) == billing.BILLING_ACTIVE_AUDIO
+
+
+# ---------------------------------------------------------------------------
+# Accrual
+# ---------------------------------------------------------------------------
+
+
+def test_accrual_is_proportional_to_billable_time(settings):
+    assert billing.credits_from_billable_seconds_raw(60.0) == 100
+    assert billing.credits_from_billable_seconds_raw(30.0) == 50
+
+
+def test_accrual_truncates_rather_than_rounding_up(settings):
+    """A partial credit is not charged until it is whole, so ticks cannot outrun the time they bill."""
+    assert billing.credits_from_billable_seconds_raw(0.5) == 0
+    assert billing.credits_from_billable_seconds_raw(1.2) == 2
+
+
+def test_accrual_never_goes_negative(settings):
+    assert billing.credits_from_billable_seconds_raw(-10.0) == 0
+
+
+def test_accrual_has_no_session_floor(settings):
+    """The floor belongs to settlement only. Applied during accrual it would charge it every tick."""
+    assert billing.credits_from_billable_seconds_raw(1.0) < billing.min_session_credits()
+
+
+# ---------------------------------------------------------------------------
+# Settlement
+# ---------------------------------------------------------------------------
+
+
+def test_a_short_free_session_still_costs_the_session_minimum(settings):
+    total = billing.credits_total_final_settlement(10.0, billing.BILLING_WALL_CLOCK)
+    assert total == 500
+
+
+def test_a_long_free_session_costs_more_than_the_minimum(settings):
+    total = billing.credits_total_final_settlement(600.0, billing.BILLING_WALL_CLOCK)
+    assert total == 1000
+
+
+def test_a_short_paid_session_is_not_floored(settings):
+    """A paid learner who spoke for ten seconds genuinely cost ten seconds."""
+    total = billing.credits_total_final_settlement(10.0, billing.BILLING_ACTIVE_AUDIO)
+    assert total == 16
+
+
+def test_settlement_of_no_time_is_free_for_paid_and_floored_for_free(settings):
+    assert billing.credits_total_final_settlement(0.0, billing.BILLING_ACTIVE_AUDIO) == 0
+    assert billing.credits_total_final_settlement(0.0, billing.BILLING_WALL_CLOCK) == 500
+
+
+def test_settlement_never_undercuts_what_was_already_charged(settings):
+    """The property the loop depends on: the running total can only be caught up to, never exceeded.
+
+    `settle` charges `total - consumed`, so if accrual could ever exceed settlement for the same seconds,
+    the difference would be silently refunded — and there is no refund path.
+    """
+    for seconds in (0.0, 1.0, 7.5, 61.0, 3600.0):
+        for mode in (billing.BILLING_WALL_CLOCK, billing.BILLING_ACTIVE_AUDIO):
+            accrued = billing.credits_from_billable_seconds_raw(seconds)
+            assert billing.credits_total_final_settlement(seconds, mode) >= accrued
+
+
+# ---------------------------------------------------------------------------
+# Bridge state
+# ---------------------------------------------------------------------------
+
+
+def test_a_fresh_bridge_has_nothing_to_settle():
+    snapshot = BridgeState(billing_mode=billing.BILLING_WALL_CLOCK).snapshot()
+    assert snapshot.billing_started is False
+    assert snapshot.billable_seconds == 0.0
+    assert snapshot.consumed_credits == 0
+
+
+def test_the_snapshot_carries_what_settlement_needs():
+    state = BridgeState(billing_mode=billing.BILLING_ACTIVE_AUDIO)
+    state.billing_started = True
+    state.billable_seconds = 42.0
+    state.consumed_credits = 60
+    snapshot = state.snapshot()
+    assert (snapshot.billing_mode, snapshot.billable_seconds, snapshot.consumed_credits) == (
+        billing.BILLING_ACTIVE_AUDIO,
+        42.0,
+        60,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tool exposure
+# ---------------------------------------------------------------------------
+
+
+def test_a_session_without_a_topic_gets_no_tools():
+    """The original fell back to the entire agentic toolset here, which could create and delete a learner's
+    content from a socket with no client handling for the result."""
+    assert study_tools_for(None) is None
+
+
+def test_a_session_with_a_topic_gets_only_study_tools():
+    groups = study_tools_for("topic-1")
+    assert groups and "functionDeclarations" not in groups[0]
+    names = {d["name"] for d in groups[0]["function_declarations"]}
+    assert names == {"study_show_visual", "complete_topic_and_continue"}
+
+
+# ---------------------------------------------------------------------------
+# Session store, in its Redis-unavailable mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_redis(monkeypatch):
+    """Force the in-process path, and clear it between tests."""
+    monkeypatch.setattr(session_store.cache, "_connected", False, raising=False)
+    session_store._local_sessions.clear()
+    session_store._local_user_session.clear()
+    yield
+    session_store._local_sessions.clear()
+    session_store._local_user_session.clear()
+
+
+@pytest.mark.asyncio
+async def test_a_session_can_be_read_back_by_id():
+    created = await session_store.create("user-1", system_instruction="brief", topic_id="t1")
+    found = await session_store.get(created.session_id)
+    assert found is not None
+    assert (found.user_id, found.topic_id, found.system_instruction) == ("user-1", "t1", "brief")
+
+
+@pytest.mark.asyncio
+async def test_starting_a_second_session_closes_the_first():
+    """One voice, one session. Two live sessions would bill for audio the learner cannot hear."""
+    first = await session_store.create("user-1", system_instruction="a")
+    second = await session_store.create("user-1", system_instruction="b")
+
+    assert await session_store.get(first.session_id) is None
+    assert [s.session_id for s in await session_store.list_for_user("user-1")] == [
+        second.session_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_learners_session_does_not_appear_for_another():
+    await session_store.create("user-1", system_instruction="a")
+    mine = await session_store.create("user-2", system_instruction="b")
+    assert [s.session_id for s in await session_store.list_for_user("user-2")] == [mine.session_id]
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_session_forgets_it_entirely():
+    created = await session_store.create("user-1", system_instruction="a")
+    await session_store.delete(created.session_id)
+    assert await session_store.get(created.session_id) is None
+    assert await session_store.list_for_user("user-1") == []
+
+
+@pytest.mark.asyncio
+async def test_update_context_only_overwrites_what_it_was_given():
+    """A frame carrying a topic but no course must not blank the course."""
+    created = await session_store.create(
+        "user-1", system_instruction="a", course_id="c1", topic_id="t1"
+    )
+    updated = await session_store.update_context(created.session_id, topic_id="t2")
+    assert updated is not None
+    assert (updated.course_id, updated.topic_id) == ("c1", "t2")
+
+
+@pytest.mark.asyncio
+async def test_update_context_on_an_unknown_session_reports_it():
+    assert await session_store.update_context("not-a-session", topic_id="t1") is None
+
+
+@pytest.mark.asyncio
+async def test_the_session_floor_can_only_be_claimed_once():
+    """A dropped socket reconnects into the same session, and each attempt settles separately.
+
+    Without this the wall-clock minimum would be charged per socket rather than per sitting, so a FREE
+    learner on a flaky connection pays it five times for one conversation — the web client retries five
+    times.
+    """
+    created = await session_store.create("user-1", system_instruction="a")
+    assert await session_store.claim_session_floor(created.session_id) is True
+    assert await session_store.claim_session_floor(created.session_id) is False
+    assert await session_store.claim_session_floor(created.session_id) is False
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_session_is_charged_the_floor():
+    """Failing open here: a learner who calls stop before the relay unwinds must not get a free session."""
+    assert await session_store.claim_session_floor("expired-or-never-existed") is True
+
+
+@pytest.mark.asyncio
+async def test_each_learners_floor_is_claimed_independently():
+    first = await session_store.create("user-1", system_instruction="a")
+    second = await session_store.create("user-2", system_instruction="b")
+    assert await session_store.claim_session_floor(first.session_id) is True
+    assert await session_store.claim_session_floor(second.session_id) is True
+
+
+@pytest.mark.asyncio
+async def test_a_session_starts_with_no_note():
+    """Nothing is written unless the learner asks, so a fresh session has no note attached."""
+    created = await session_store.create("user-1", system_instruction="a", topic_id="t1")
+    assert created.note_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_session_remembers_the_note_it_was_saved_to():
+    created = await session_store.create("user-1", system_instruction="a", topic_id="t1")
+    await session_store.remember_note(created.session_id, "note-9")
+    reloaded = await session_store.get(created.session_id)
+    assert reloaded is not None and reloaded.note_id == "note-9"
+
+
+@pytest.mark.asyncio
+async def test_remembering_a_note_on_an_unknown_session_is_a_no_op():
+    await session_store.remember_note("not-a-session", "note-9")
+    assert await session_store.get("not-a-session") is None

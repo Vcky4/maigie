@@ -38,8 +38,12 @@ async def repo(monkeypatch):
         cursor.close()
 
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    # `UserPreferences` is here because the summary resolves the learner's timezone from it. No row
+    # is inserted: a learner who has never been asked resolves to unknown, which is the common case
+    # and the one the month boundary has to be honest about.
     tables = [
         identity_models.User.__table__,
+        identity_models.UserPreferences.__table__,
         pl_models.GeneratedDocument.__table__,
     ]
     async with engine.begin() as connection:
@@ -65,6 +69,7 @@ async def _document(
     *,
     title="Photosynthesis essay",
     fmt="pdf",
+    doc_type="essay",
     filename=None,
     user_id=USER,
     is_public=False,
@@ -75,6 +80,7 @@ async def _document(
             "userId": user_id,
             "title": title,
             "format": fmt,
+            "docType": doc_type,
             "style": "academic",
             "filename": filename or f"document-{index}.{fmt}",
             "fileUrl": f"https://cdn.example/generated-docs/{user_id}/file-{index}.{fmt}",
@@ -145,6 +151,48 @@ async def test_search_matches_the_filename(repo):
     assert items[0].id == wanted.id
 
 
+async def test_the_type_filter_reads_a_stored_type(repo):
+    """The type the learner chose was sent on every request and dropped before the insert.
+
+    The library page therefore inferred it by substring-matching the filename and title, which made
+    the filter both wrong — "Reporting standards" was a report by luck — and unable to reach past the
+    page in the browser, because the value did not exist in the database to filter on.
+    """
+    from src.domains.personal_learning.services import document_impl
+
+    essay = await _document(repo, title="On photosynthesis", doc_type="essay")
+    await _document(repo, title="Quarterly figures", doc_type="report")
+
+    items, total = await document_impl.list_documents(user_id=USER, type="essay")
+    assert total == 1
+    assert items[0].id == essay.id
+
+
+async def test_a_title_that_merely_mentions_a_type_is_not_that_type(repo):
+    """The exact case substring inference got wrong."""
+    from src.domains.personal_learning.services import document_impl
+
+    await _document(repo, title="Reporting standards in biology", doc_type="essay")
+
+    _, reports = await document_impl.list_documents(user_id=USER, type="report")
+    _, essays = await document_impl.list_documents(user_id=USER, type="essay")
+    assert reports == 0
+    assert essays == 1
+
+
+async def test_documents_written_before_the_type_was_stored_have_none(repo):
+    """Nullable and deliberately not backfilled: a guess in this column would read as a fact."""
+    from src.domains.personal_learning.services import document_impl
+
+    legacy = await _document(repo, doc_type=None)
+
+    fetched = await document_impl.get_document(user_id=USER, doc_id=legacy.id)
+    assert fetched.doc_type is None
+
+    _, matched = await document_impl.list_documents(user_id=USER, type="essay")
+    assert matched == 0
+
+
 async def test_a_filter_narrows_the_total_as_well_as_the_page(repo):
     """Filtering only the page is how a pager advertises results a query never matched."""
     from src.domains.personal_learning.services import document_impl
@@ -196,11 +244,52 @@ async def test_the_format_breakdown_covers_the_whole_library(repo):
     await _document(repo, fmt="pptx")
     await _document(repo, user_id=OTHER_USER, fmt="pptx")
 
-    assert await document_impl.list_formats(user_id=USER) == [
+    summary = await document_impl.get_summary(user_id=USER)
+    assert summary["formats"] == [
         {"format": "pdf", "count": 3},
         {"format": "docx", "count": 2},
         {"format": "pptx", "count": 1},
     ]
+
+
+async def test_the_summary_counts_the_library_not_a_page(repo):
+    """These figures were counted in the browser from one fetched page and labelled library-wide."""
+    from src.domains.personal_learning.services import document_impl
+
+    for _ in range(4):
+        await _document(repo)
+    published = await _document(repo)
+    await document_impl.publish_document(user_id=USER, doc_id=published.id)
+    await _document(repo, user_id=OTHER_USER)
+
+    summary = await document_impl.get_summary(user_id=USER)
+    assert summary["total"] == 5
+    assert summary["published"] == 1
+    assert summary["createdThisMonth"] == 5
+
+
+async def test_the_summary_publishes_the_boundary_it_measured_from(repo):
+    """ "This month" is a claim about the learner's wall clock, and the zone is often unknown.
+
+    Returning the instant makes the page able to say what it counted from instead of asserting a
+    calendar month for a learner whose location was never captured.
+    """
+    from src.domains.personal_learning.services import document_impl
+
+    await _document(repo)
+    summary = await document_impl.get_summary(user_id=USER)
+
+    assert summary["monthStart"].day == 1
+    assert summary["monthStart"].hour == 0
+
+
+async def test_the_summary_is_empty_rather_than_absent_for_a_new_learner(repo):
+    from src.domains.personal_learning.services import document_impl
+
+    summary = await document_impl.get_summary(user_id=USER)
+    assert summary["total"] == 0
+    assert summary["published"] == 0
+    assert summary["formats"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +511,7 @@ def test_the_workers_payload_validates_as_a_document_response():
         content_type = "application/pdf"
         share_id = "abc123"
         is_public = False
+        doc_type = "essay"
 
         class created_at:  # noqa: N801 - stands in for a datetime
             @staticmethod

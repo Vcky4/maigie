@@ -49,6 +49,9 @@ async def repo(monkeypatch):
     # tests, but a foreign key cannot even be emitted unless its target is in the metadata.
     tables = [
         identity_models.User.__table__,
+        # The summary resolves the learner's timezone from here. No row is inserted: a learner who
+        # has never been asked resolves to unknown, which is the common case.
+        identity_models.UserPreferences.__table__,
         knowledge_models.Course.__table__,
         knowledge_models.Module.__table__,
         knowledge_models.Topic.__table__,
@@ -464,3 +467,96 @@ async def test_deleting_a_note_cleans_up_its_uploaded_files(repo, monkeypatch):
         "https://cdn.example/note-attachments/one.pdf",
         "https://cdn.example/note-attachments/two.pdf",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Library summary
+# ---------------------------------------------------------------------------
+
+
+async def test_the_summary_counts_a_note_once_however_many_tags_it_has(repo):
+    """`EXISTS`, not a join. A join would count a three-tag note three times."""
+    from src.domains.personal_learning.services import note_service
+
+    note = await _note(repo, title="Heavily tagged")
+    await repo.create_note_tags(note.id, ["a", "b", "c"])
+    await _note(repo, title="Bare")
+
+    summary = await note_service.get_summary(user_id=USER)
+    assert summary["total"] == 2
+    assert summary["tagged"] == 1
+
+
+async def test_the_summary_counts_links_and_attachments(repo):
+    from src.domains.personal_learning.services import note_service
+
+    plain = await _note(repo, title="Plain")
+    with_file = await _note(repo, title="With a file")
+    await note_service.add_attachment(
+        user_id=USER,
+        note_id=with_file.id,
+        data={"filename": "slides.pdf", "url": "https://cdn.example/a.pdf"},
+    )
+
+    summary = await note_service.get_summary(user_id=USER)
+    assert summary["withAttachments"] == 1
+    assert summary["linkedToCourse"] == 0
+    assert summary["total"] == 2
+    assert plain.id != with_file.id
+
+
+async def test_the_summary_matches_the_scope_of_the_default_list(repo):
+    """Archived notes are excluded, because the list above these tiles excludes them."""
+    from src.domains.personal_learning.services import note_service
+
+    await _note(repo, title="Live")
+    await _note(repo, title="Archived", archived=True)
+
+    assert (await note_service.get_summary(user_id=USER))["total"] == 1
+    assert (await note_service.get_summary(user_id=USER, archived=True))["total"] == 1
+
+
+async def test_the_summary_is_per_learner(repo):
+    from src.domains.personal_learning.services import note_service
+
+    await _note(repo, title="Mine")
+    await _note(repo, title="Theirs", user_id=OTHER_USER)
+
+    assert (await note_service.get_summary(user_id=USER))["total"] == 1
+
+
+async def test_the_capture_trend_covers_seven_days_including_empty_ones(repo):
+    """Zeros are returned rather than omitted, so a chart renders gaps instead of inferring them."""
+    from src.domains.personal_learning.services import note_service
+
+    await _note(repo, title="Today")
+
+    trend = (await note_service.get_summary(user_id=USER))["capturedLastWeek"]
+    assert len(trend) == 7
+    assert [entry["date"] for entry in trend] == sorted(entry["date"] for entry in trend)
+    assert sum(entry["count"] for entry in trend) == 1
+    assert trend[-1]["count"] == 1
+
+
+async def test_notes_older_than_the_window_are_not_in_the_trend(repo):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from src.domains.personal_learning.db_models import Note
+    from src.domains.personal_learning.services import note_service
+    from src.shared.database import get_session_factory
+
+    old = await _note(repo, title="Ancient")
+    factory = get_session_factory()
+    async with factory() as session:
+        await session.execute(
+            update(Note)
+            .where(Note.id == old.id)
+            .values(created_at=datetime.now(UTC) - timedelta(days=30))
+        )
+        await session.commit()
+
+    summary = await note_service.get_summary(user_id=USER)
+    assert summary["total"] == 1
+    assert sum(entry["count"] for entry in summary["capturedLastWeek"]) == 0

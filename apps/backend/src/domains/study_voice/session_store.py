@@ -74,6 +74,19 @@ class VoiceSession:
     chat_session_id: str | None = None
     study_session_id: str | None = None
     created_at: str = ""
+    #: The note this session has already been saved to, if the learner asked for one.
+    #:
+    #: Here rather than derived from the topic, because "the note for this conversation" is not the same as
+    #: "a note on this topic" — the learner may have several — and pressing save twice should rewrite one
+    #: note rather than leave two accounts of the same sitting.
+    note_id: str | None = None
+    #: Whether the wall-clock session minimum has already been charged for this session.
+    #:
+    #: The web client retries a dropped socket up to five times, re-sending `start_session` with the *same*
+    #: id each time. Each attempt is a separate relay with its own settlement, so a FREE learner on a flaky
+    #: connection would pay `GEMINI_LIVE_MIN_SESSION_CREDITS` once per attempt — five times the floor for one
+    #: sitting they experienced as one sitting. The floor belongs to the session, not to the socket.
+    floor_settled: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -85,6 +98,7 @@ class VoiceSession:
         known["user_id"] = str(known.get("user_id") or "")
         known["system_instruction"] = str(known.get("system_instruction") or "")
         known["created_at"] = str(known.get("created_at") or "")
+        known["floor_settled"] = bool(known.get("floor_settled"))
         return cls(**known)
 
 
@@ -184,12 +198,45 @@ async def update_context(
         session.topic_id = topic_id
     if course_id:
         session.course_id = course_id
-
-    if cache.is_connected:
-        await cache.set(_session_key(session_id), session.to_dict(), expire=SESSION_TTL_SECONDS)
-    if session_id in _local_sessions:
-        _local_sessions[session_id] = session.to_dict()
+    await _persist(session)
     return session
+
+
+async def remember_note(session_id: str, note_id: str) -> None:
+    """Tie a note to this session, so saving again rewrites it instead of writing a second one."""
+    session = await get(session_id)
+    if session is None:
+        return
+    session.note_id = note_id
+    await _persist(session)
+
+
+async def claim_session_floor(session_id: str) -> bool:
+    """Claim the right to charge the session minimum, returning False if it is already claimed.
+
+    Called once per settlement. A session the record has outlived — expired, or stopped before the relay
+    unwound — returns True, because charging the floor for a session we cannot prove was already charged is
+    the same decision the original made for every session, and undercharging a sitting we have no record of
+    would be exploitable by simply calling stop first.
+    """
+    session = await get(session_id)
+    if session is None:
+        return True
+    if session.floor_settled:
+        return False
+    session.floor_settled = True
+    await _persist(session)
+    return True
+
+
+async def _persist(session: VoiceSession) -> None:
+    """Write a changed record back to wherever it came from."""
+    if cache.is_connected:
+        await cache.set(
+            _session_key(session.session_id), session.to_dict(), expire=SESSION_TTL_SECONDS
+        )
+    if session.session_id in _local_sessions:
+        _local_sessions[session.session_id] = session.to_dict()
 
 
 async def _current_session_id(user_id: str) -> str | None:

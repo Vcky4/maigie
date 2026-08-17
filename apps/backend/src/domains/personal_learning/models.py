@@ -100,6 +100,34 @@ class NoteTagCountResponse(CamelModel):
     count: int
 
 
+class NoteCaptureDay(CamelModel):
+    """Notes created on one day of the learner's week."""
+
+    date: date
+    count: int
+
+
+class NoteSummaryResponse(CamelModel):
+    """Library-wide figures for the notes page's tiles and its capture trend.
+
+    Added when search and tag filtering moved server-side. The page counted these from the notes it
+    had fetched, which was tolerable while it fetched a hundred unfiltered ones and labelled them
+    "Saved to your library" — and would have become plainly wrong the moment the fetch became a
+    filtered page, since the tiles would then change as the learner typed.
+
+    Scoped like the default note list: personal notes, not archived, so a tile and the list it sits
+    above are counting the same thing.
+    """
+
+    total: int
+    tagged: int
+    linked_to_course: int
+    with_attachments: int
+    # Oldest first, one entry per day including days with nothing, so a client can render a bar
+    # chart without inventing the gaps.
+    captured_last_week: list[NoteCaptureDay]
+
+
 class NoteVersionResponse(CamelModel):
     """A snapshot of a note taken before its content was replaced.
 
@@ -194,6 +222,10 @@ class DocumentResponse(CamelModel):
     user_id: str
     title: str
     format: str
+    # Nullable, and the one field here that genuinely is. Documents written before migration 034
+    # have no recorded type: the value was sent on every request and dropped, so there is nothing to
+    # backfill from except the filename, which is the guessing this column exists to stop.
+    doc_type: str | None
     style: str
     filename: str
     file_url: str
@@ -216,6 +248,27 @@ class DocumentFormatCountResponse(CamelModel):
 
     format: str
     count: int
+
+
+class DocumentSummaryResponse(CamelModel):
+    """Library-wide figures for the document page's tiles.
+
+    Every one of these was previously counted in the browser from whichever page had been
+    fetched, and then labelled as a library figure — "In your library", "Shared publicly". With
+    one page and no pager that was merely optimistic; with a pager it is simply wrong. They are
+    counted here instead, in one round trip.
+
+    ``month_start`` is published rather than assumed: "this month" is a claim about the learner's
+    wall clock, and the zone is only known when they have told us. Returning the instant the count
+    was measured from lets the page say *since when* instead of asserting a calendar month it
+    cannot prove.
+    """
+
+    total: int
+    published: int
+    created_this_month: int
+    month_start: datetime
+    formats: list[DocumentFormatCountResponse]
 
 
 class DocumentJobQueuedResponse(CamelModel):

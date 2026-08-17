@@ -1230,10 +1230,29 @@ async def create_from_prompt(
     try:
         content = await generate_content(llm_prompt, max_tokens=max_tokens, temperature=0.7)
     except Exception as e:
+        # Reported as a failure. This used to substitute
+        # `# {title}\n\n(Content generation failed. Please try again.)`, render *that* to a PDF,
+        # upload it, store it and answer `201` — so a failed generation produced a document in the
+        # learner's library whose entire content was an apology, and the client's own copy for this
+        # case ("Nothing was saved to your library") was untrue. A 502 rather than a 500: the request
+        # was fine and the learner can do nothing differently except try again.
+        from fastapi import HTTPException
+
         logger.error(f"LLM generation failed for document '{title}': {e}")
-        content = f"# {title}\n\n(Content generation failed. Please try again.)"
+        raise HTTPException(
+            status_code=502,
+            detail="The document could not be written. Nothing was saved — please try again.",
+        ) from e
 
     content = _sanitize_llm_output(content)
+    if not content.strip():
+        from fastapi import HTTPException
+
+        logger.error(f"LLM returned nothing usable for document '{title}'")
+        raise HTTPException(
+            status_code=502,
+            detail="The document came back empty. Nothing was saved — please try again.",
+        )
 
     # Render the file bytes and upload
     result = await document_generation_service.generate_document(
@@ -1251,6 +1270,10 @@ async def create_from_prompt(
             "userId": user_id,
             "title": title,
             "format": format,
+            # The type the learner chose. It shaped the prompt and was then dropped before this
+            # dictionary until migration 034, which is why the library page had to guess it back out
+            # of the filename.
+            "docType": doc_type,
             "style": style,
             "filename": result.get("filename"),
             "fileUrl": result.get("url"),
@@ -1393,12 +1416,14 @@ async def list_documents(
     page_size: int = 20,
     search: str | None = None,
     format: str | None = None,
+    type: str | None = None,
 ):
     """Return a page of generated documents for the current user, newest first.
 
-    ``search`` matches title or filename; ``format`` is exact. Both are applied in the query, not
-    after the fact: the page used to be filtered in the browser over whichever twenty documents it
-    had loaded, so searching a library of sixty found nothing in the other forty.
+    ``search`` matches title or filename; ``format`` and ``type`` are exact. All three are applied in
+    the query, not after the fact: the page used to be filtered in the browser over whichever twenty
+    documents it had loaded, so searching a library of sixty found nothing in the other forty — and
+    the type it filtered on was inferred from the filename rather than stored at all.
     """
     from src.domains.personal_learning.repository import personal_learning_repo as repo
 
@@ -1409,15 +1434,44 @@ async def list_documents(
         take=page_size,
         search=search,
         doc_format=format,
+        doc_type=type,
     )
 
 
-async def list_formats(*, user_id: str) -> list[dict[str, Any]]:
-    """Formats the learner has actually produced, with counts, commonest first."""
-    from src.domains.personal_learning.repository import personal_learning_repo as repo
+async def get_summary(*, user_id: str) -> dict[str, Any]:
+    """Library-wide document figures: totals, published, this month, and the format breakdown.
 
-    counts = await repo.list_document_formats(user_id)
-    return [{"format": fmt, "count": count} for fmt, count in counts]
+    "This month" is resolved in the learner's own timezone where we have one. ``UserPreferences.timezone``
+    is `NOT NULL` with a `"UTC"` default, so it is only a fact when the source says it was observed —
+    ``resolve_learner_timezone`` is what encodes that, and it falls back to UTC flagged as unknown. The
+    boundary is returned alongside the count so the page can say what it measured from rather than
+    asserting a calendar month for a learner whose location we have never been told.
+    """
+    import asyncio
+    from datetime import UTC as _UTC
+    from datetime import datetime as _datetime
+
+    from src.domains.personal_learning.repository import personal_learning_repo as repo
+    from src.shared.time.learner_timezone import resolve_learner_timezone, to_learner_local
+
+    learner_timezone = await resolve_learner_timezone(user_id)
+    local_now = to_learner_local(_datetime.now(_UTC), learner_timezone)
+    local_month_start = local_now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = local_month_start.astimezone(_UTC)
+
+    counts, formats = await asyncio.gather(
+        repo.count_documents(user_id, since=month_start),
+        repo.list_document_formats(user_id),
+    )
+    total, published, created_this_month = counts
+
+    return {
+        "total": total,
+        "published": published,
+        "createdThisMonth": created_this_month,
+        "monthStart": month_start,
+        "formats": [{"format": fmt, "count": count} for fmt, count in formats],
+    }
 
 
 async def get_by_share_id(*, share_id: str, requester_id: str | None = None):

@@ -619,15 +619,18 @@ class PersonalLearningRepository:
         take: int = 20,
         search: str | None = None,
         doc_format: str | None = None,
+        doc_type: str | None = None,
         session: AsyncSession | None = None,
     ) -> tuple[list[GeneratedDocument], int]:
         """A page of this learner's documents, newest first.
 
         ``search`` matches the title or the filename, because a learner looking for a document
-        remembers one or the other. ``doc_format`` is an exact match on the stored format.
+        remembers one or the other. ``doc_format`` and ``doc_type`` are exact matches.
 
-        Both filters are applied to the count as well as the page. Filtering only the page is how a
-        pager comes to advertise five pages of results for a query that matched three rows.
+        Filtering by type matches only documents written after migration 034 — earlier rows have no
+        recorded type and are deliberately not guessed at. Every filter is applied to the count as
+        well as the page: filtering only the page is how a pager comes to advertise five pages of
+        results for a query that matched three rows.
         """
         async with self._read_session(session) as s:
             conditions = [GeneratedDocument.user_id == user_id]
@@ -641,6 +644,8 @@ class PersonalLearningRepository:
                 )
             if doc_format:
                 conditions.append(GeneratedDocument.format == doc_format)
+            if doc_type:
+                conditions.append(GeneratedDocument.doc_type == doc_type)
 
             count_stmt = select(func.count()).select_from(GeneratedDocument).where(*conditions)
             total = (await s.execute(count_stmt)).scalar() or 0
@@ -674,6 +679,25 @@ class PersonalLearningRepository:
             )
             result = await s.execute(stmt)
             return [(row[0], row[1]) for row in result.all()]
+
+    async def count_documents(
+        self, user_id: str, *, since: datetime, session: AsyncSession | None = None
+    ) -> tuple[int, int, int]:
+        """``(total, published, created_since)`` in one round trip.
+
+        Three conditional counts rather than three queries. A round trip to the hosted database
+        costs enough that the difference is visible, and these are the numbers one page renders
+        together.
+        """
+        async with self._read_session(session) as s:
+            owned = GeneratedDocument.user_id == user_id
+            stmt = select(
+                func.count(),
+                func.count().filter(GeneratedDocument.is_public.is_(True)),
+                func.count().filter(GeneratedDocument.created_at >= since),
+            ).where(owned)
+            row = (await s.execute(stmt)).one()
+            return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0)
 
     async def count_documents_since(
         self, user_id: str, since: datetime, *, session: AsyncSession | None = None
@@ -788,6 +812,58 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def count_note_summary(
+        self, user_id: str, *, archived: bool = False, session: AsyncSession | None = None
+    ) -> tuple[int, int, int, int]:
+        """``(total, tagged, linked_to_course, with_attachments)`` in one round trip.
+
+        Scoped like ``list_notes`` is by default — personal notes matching ``archived`` — so a tile
+        counts what the list below it would show. `EXISTS` rather than a join: a note with three tags
+        must count once, and a join would count it three times.
+        """
+        async with self._read_session(session) as s:
+            owned = [
+                Note.user_id == user_id,
+                Note.space_id.is_(None),
+                Note.archived == archived,
+            ]
+            has_tag = select(NoteTag.id).where(NoteTag.note_id == Note.id).exists()
+            has_attachment = (
+                select(NoteAttachment.id).where(NoteAttachment.note_id == Note.id).exists()
+            )
+            stmt = select(
+                func.count(),
+                func.count().filter(has_tag),
+                func.count().filter(Note.course_id.is_not(None)),
+                func.count().filter(has_attachment),
+            ).where(*owned)
+            row = (await s.execute(stmt)).one()
+            return int(row[0] or 0), int(row[1] or 0), int(row[2] or 0), int(row[3] or 0)
+
+    async def list_note_creation_times(
+        self,
+        user_id: str,
+        *,
+        since: datetime,
+        archived: bool = False,
+        session: AsyncSession | None = None,
+    ) -> list[datetime]:
+        """Creation instants for notes made since ``since``.
+
+        Returned as instants and bucketed into local days by the caller, rather than grouped in SQL.
+        Day boundaries depend on the learner's timezone, and `timezone(name, timestamptz)` is
+        Postgres-only — doing it here would make the query untestable anywhere else for the sake of a
+        set bounded by one week.
+        """
+        async with self._read_session(session) as s:
+            stmt = select(Note.created_at).where(
+                Note.user_id == user_id,
+                Note.space_id.is_(None),
+                Note.archived == archived,
+                Note.created_at >= since,
+            )
+            return [row[0] for row in (await s.execute(stmt)).all() if row[0] is not None]
+
     async def count_note_tags(
         self, user_id: str, *, archived: bool = False, session: AsyncSession | None = None
     ) -> list[tuple[str, int]]:
@@ -873,6 +949,7 @@ class PersonalLearningRepository:
             "userId": "user_id",
             "title": "title",
             "format": "format",
+            "docType": "doc_type",
             "style": "style",
             "filename": "filename",
             "fileUrl": "file_url",

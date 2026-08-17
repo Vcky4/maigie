@@ -30,7 +30,7 @@ async def _me(client: AsyncClient, headers) -> str:
     return response.json()["id"]
 
 
-async def _seed(user_id: str, *, title="Seeded essay", fmt="pdf", filename=None):
+async def _seed(user_id: str, *, title="Seeded essay", fmt="pdf", doc_type="essay", filename=None):
     """Insert a document row directly. Not our storage host, deliberately."""
     from src.domains.personal_learning.repository import personal_learning_repo as repo
 
@@ -40,6 +40,7 @@ async def _seed(user_id: str, *, title="Seeded essay", fmt="pdf", filename=None)
             "userId": user_id,
             "title": title,
             "format": fmt,
+            "docType": doc_type,
             "style": "academic",
             "filename": filename or f"seeded-{marker}.{fmt}",
             "fileUrl": f"https://not-our-cdn.invalid/seeded/{marker}.{fmt}",
@@ -56,7 +57,7 @@ async def _seed(user_id: str, *, title="Seeded essay", fmt="pdf", filename=None)
 async def test_document_endpoints_require_authentication(client: AsyncClient):
     for method, path in (
         ("get", BASE),
-        ("get", f"{BASE}/formats"),
+        ("get", f"{BASE}/summary"),
         ("get", f"{BASE}/any-id"),
         ("delete", f"{BASE}/any-id"),
         ("post", f"{BASE}/any-id/unpublish"),
@@ -108,15 +109,36 @@ async def test_search_and_format_filter_in_the_query(client: AsyncClient, auth_h
 
 
 @pytest.mark.asyncio
-async def test_formats_is_not_read_as_a_document_id(client: AsyncClient, auth_headers):
+async def test_the_type_filter_is_served_from_a_stored_column(client: AsyncClient, auth_headers):
+    """The type was sent on every generate request and dropped, so the page inferred it."""
+    user_id = await _me(client, auth_headers)
+    marker = uuid.uuid4().hex[:6]
+    report = await _seed(user_id, title=f"Figures {marker}", doc_type="report")
+    essay = await _seed(user_id, title=f"Reporting standards {marker}", doc_type="essay")
+
+    filtered = await client.get(f"{BASE}?search={marker}&type=report", headers=auth_headers)
+    assert filtered.status_code == 200
+    # The essay's title contains "Reporting", which the old substring inference read as a report.
+    assert [entry["id"] for entry in filtered.json()["items"]] == [report.id]
+    assert filtered.json()["items"][0]["docType"] == "report"
+
+    for doc_id in (report.id, essay.id):
+        await client.delete(f"{BASE}/{doc_id}", headers=auth_headers)
+
+
+@pytest.mark.asyncio
+async def test_summary_is_not_read_as_a_document_id(client: AsyncClient, auth_headers):
     """Declaration order decides this, and getting it wrong makes the route unreachable."""
     user_id = await _me(client, auth_headers)
     doc = await _seed(user_id, fmt="pptx")
 
-    response = await client.get(f"{BASE}/formats", headers=auth_headers)
+    response = await client.get(f"{BASE}/summary", headers=auth_headers)
     assert response.status_code == 200
-    counts = {entry["format"]: entry["count"] for entry in response.json()}
+    body = response.json()
+    assert set(body) == {"total", "published", "createdThisMonth", "monthStart", "formats"}
+    counts = {entry["format"]: entry["count"] for entry in body["formats"]}
     assert counts.get("pptx", 0) >= 1
+    assert body["total"] >= 1
 
     await client.delete(f"{BASE}/{doc.id}", headers=auth_headers)
 
