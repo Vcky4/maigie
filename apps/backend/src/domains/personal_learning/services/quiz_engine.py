@@ -1465,6 +1465,8 @@ async def complete_quiz(
         user_id=user_id,
         activity_type="quiz_completed",
         title=f"Completed quiz — {round(score_pct, 1)}% ({correct}/{total})",
+        entity_type="quiz",
+        entity_id=quiz_id,
         context={"source": "personal", "quizId": quiz_id, "score": round(score_pct, 1)},
     )
 

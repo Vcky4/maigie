@@ -339,9 +339,7 @@ async def list_plans_page(
     return summaries, total
 
 
-def _current_phase(
-    phases: list[dict[str, Any]], next_item: Any | None
-) -> dict[str, Any] | None:
+def _current_phase(phases: list[dict[str, Any]], next_item: Any | None) -> dict[str, Any] | None:
     """The phase a plan is in.
 
     The phase holding the next pending item, because that is where the work is. With
@@ -553,9 +551,7 @@ async def get_dashboard(*, user_id: str) -> dict[str, Any]:
             repo.get_plan_metrics(plan_id),
             repo.list_plan_items_between(plan_id, week_start, week_end),
         )
-        featured_streak = _streak_from_dates(
-            set(metrics["active_dates"]), now_local.date()
-        )
+        featured_streak = _streak_from_dates(set(metrics["active_dates"]), now_local.date())
 
     goal_total = counts.get("weeklyGoalTotal") or 0
     return {
@@ -935,7 +931,10 @@ async def set_item_status(*, user_id: str, plan_id: str, item_id: str, status: s
         await activity_feed_service.record(
             user_id=user_id,
             activity_type="plan_item_completed",
-            title=f"Completed study task ({completed}/{total})",
+            # The plan, not the item: an item has no page of its own, so routing to it would be a
+            # link to nowhere. `itemId` stays in the context for anything that wants to highlight it.
+            entity_type="study_plan",
+            entity_id=plan_id,
             context={"source": "personal", "planId": plan_id, "itemId": item_id},
         )
 
@@ -1016,9 +1015,7 @@ async def _queue_review_cards(*, user_id: str, plan: Any, item: Any) -> None:
         )
 
 
-async def generate_review_cards_for_item(
-    *, user_id: str, plan_id: str, item_id: str
-) -> list[Any]:
+async def generate_review_cards_for_item(*, user_id: str, plan_id: str, item_id: str) -> list[Any]:
     """Generate review cards for one completed plan item. Entry point for the worker."""
     from . import flashcard_service
 
@@ -1079,9 +1076,7 @@ async def run_weekly_check_ins(*, before: datetime | None = None, limit: int = 5
         # Recorded even when the notification was suppressed by quiet hours or the daily
         # limit. Otherwise the plan stays "due" and retries every run, turning a
         # suppressed notification into a queue that all arrives at once.
-        await repo.update_study_plan(
-            plan.id, plan.user_id, {"lastCheckInAt": datetime.now(UTC)}
-        )
+        await repo.update_study_plan(plan.id, plan.user_id, {"lastCheckInAt": datetime.now(UTC)})
         if notification is not None:
             sent += 1
 
@@ -1122,9 +1117,7 @@ async def _redistribute_plan(plan_id: str, user_id: str) -> None:
     # progress would put it behind before the learner saw it.
     day_index = 0
     daily_minutes_used = 0.0
-    candidates = _available_dates(
-        now + timedelta(days=1), days_remaining, plan.preferred_days
-    )
+    candidates = _available_dates(now + timedelta(days=1), days_remaining, plan.preferred_days)
 
     for item in pending_items:
         item_minutes = getattr(item, "estimated_minutes", 30) or 30
@@ -1189,9 +1182,7 @@ def _normalise_preferred_days(preferred_days: Any) -> tuple[int, ...]:
     return tuple(days) if days else _ALL_WEEKDAYS
 
 
-def _available_dates(
-    start: datetime, days_available: int, preferred_days: Any
-) -> list[datetime]:
+def _available_dates(start: datetime, days_available: int, preferred_days: Any) -> list[datetime]:
     """The dates inside the window that the learner said they study on, in order.
 
     The two schedulers used to index days by offset from today — day 0, day 1, day 2 —
@@ -1299,9 +1290,7 @@ def _add_review_items(
     return reviews
 
 
-def _conform_phases(
-    topics: list[dict[str, Any]], shape_phases: list[str]
-) -> list[dict[str, Any]]:
+def _conform_phases(topics: list[dict[str, Any]], shape_phases: list[str]) -> list[dict[str, Any]]:
     """Make the topics' phase labels the ones the learner was shown.
 
     Asking for the labels in the prompt is not the same as getting them: a model that

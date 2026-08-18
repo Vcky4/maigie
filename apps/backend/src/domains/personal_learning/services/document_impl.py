@@ -1295,6 +1295,8 @@ async def create_from_prompt(
         user_id=user_id,
         activity_type="document_generated",
         title=f"Generated {doc_type}: {title}",
+        entity_type="document",
+        entity_id=doc.id,
         context={"source": "personal", "docId": doc.id, "format": format},
     )
 

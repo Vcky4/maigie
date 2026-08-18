@@ -135,6 +135,28 @@
             ],
             "title": "Description"
           },
+          "entityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entityid"
+          },
+          "entityType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entitytype"
+          },
           "id": {
             "title": "Id",
             "type": "string"

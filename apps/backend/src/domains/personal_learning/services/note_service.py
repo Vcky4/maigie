@@ -34,6 +34,8 @@ async def create_note(*, user_id: str, data: dict[str, Any]) -> Any:
         user_id=user_id,
         activity_type="note_created",
         title=f"Created note: {data.get('title', 'Untitled')}",
+        entity_type="note",
+        entity_id=note.id,
         context={"source": "personal", "noteId": note.id},
     )
 

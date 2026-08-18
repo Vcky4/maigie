@@ -85,6 +85,67 @@ def _map_course(course: Any) -> models.LearnCourseSummary:
     )
 
 
+async def _load_featured(user_id: str) -> models.LearnFeaturedItem | None:
+    """The thing to resume: the next unfinished topic of the course last made progress in.
+
+    `featured` returned `null` unconditionally, with §7.1 recording that as deliberate "until a
+    persisted last-position source exists". The source arrived in stage 4 — migration 024 put
+    `completedAt` on the topic, and §18 recorded the decision as resolved — but only the *courses*
+    dashboard was wired to it. So the course library grew a resume card and the Learn dashboard, which
+    is the page a learner reaches Learn through, kept returning nothing and no longer had a reason to.
+
+    "Most recent completion" rather than most recently *updated*: renaming a course would otherwise
+    promote it above the one actually being worked through. A learner with no completions has nothing
+    to resume and gets no card, rather than an arbitrary course.
+
+    Two bounded queries, and deliberately not read out of the course page loaded beside it: that page
+    is the four most recently updated courses, so resuming a fifth would silently produce no card.
+    """
+    recent = await knowledge_repo.recently_completed_topics(user_id, limit=1)
+    if not recent:
+        return None
+
+    _, course_id, _ = recent[0]
+    course = await knowledge_repo.find_course_with_modules(course_id, user_id)
+    if course is None:
+        return None
+
+    topics = [topic for module in (course.modules or []) for topic in (module.topics or [])]
+    completed = sum(1 for topic in topics if topic.completed)
+    next_topic = next((topic for topic in topics if not topic.completed), None)
+
+    # A finished course is featured as the course. The alternative — no card once the last topic is
+    # completed — hides the course the learner was working in at the moment they finish it.
+    if next_topic is None:
+        return models.LearnFeaturedItem(
+            entity_type="course",
+            entity_id=course.id,
+            course_id=course.id,
+            topic_id=None,
+            title=course.title,
+            description=course.description,
+            course_title=course.title,
+            estimated_minutes=None,
+            progress_percent=_percent(completed, len(topics)),
+            completed_units=completed,
+            total_units=len(topics),
+        )
+
+    return models.LearnFeaturedItem(
+        entity_type="topic",
+        entity_id=next_topic.id,
+        course_id=course.id,
+        topic_id=next_topic.id,
+        title=next_topic.title,
+        description=next_topic.summary,
+        course_title=course.title,
+        estimated_minutes=_estimated_topic_minutes(next_topic.estimated_hours),
+        progress_percent=_percent(completed, len(topics)),
+        completed_units=completed,
+        total_units=len(topics),
+    )
+
+
 async def _load_review(user_id: str) -> tuple[dict[str, Any], int]:
     stats, overdue = await asyncio.gather(
         flashcard_service.get_statistics(user_id=user_id),
@@ -213,11 +274,12 @@ async def get_dashboard(
         document_impl.list_documents(user_id=user_id, page=1, page_size=recent_limit),
         _load_review(user_id),
         _load_paths(user_id, path_limit),
+        _load_featured(user_id),
         return_exceptions=True,
     )
     if all(isinstance(result, BaseException) for result in results):
         for source, error in zip(
-            ("courses", "notes", "resources", "documents", "review", "paths"),
+            ("courses", "notes", "resources", "documents", "review", "paths", "featured"),
             results,
             strict=True,
         ):
@@ -241,6 +303,7 @@ async def get_dashboard(
     overdue_cards = 0
     paths: list[models.LearnPathSummary] = []
     paths_total = 0  # Both study plans and preparations
+    featured: models.LearnFeaturedItem | None = None
 
     source_sections: dict[str, set[models.LearnDashboardSection]] = {
         "courses": {"courses", "stats", "tools"},
@@ -249,6 +312,10 @@ async def get_dashboard(
         "documents": {"stats", "tools", "recentItems"},
         "review": {"review", "tools"},
         "paths": {"paths", "tools"},
+        # Only its own section. A failed resume lookup must not mark the course grid degraded — the
+        # grid loaded, and telling a learner their courses are unavailable while showing them is
+        # worse than one missing card.
+        "featured": {"featured"},
     }
     for source, result in zip(source_sections, results, strict=True):
         if isinstance(result, BaseException):
@@ -267,6 +334,8 @@ async def get_dashboard(
         flashcard_stats, overdue_cards = results[4]
     if not isinstance(results[5], BaseException):
         paths, paths_total = results[5]
+    if not isinstance(results[6], BaseException):
+        featured = results[6]
 
     due_cards = max(0, int(flashcard_stats.get("dueToday", 0)))
     total_cards = max(0, int(flashcard_stats.get("total", 0)))
@@ -309,7 +378,7 @@ async def get_dashboard(
             generated_at=datetime.now(UTC),
             degraded_sections=[section for section in section_order if section in degraded],
         ),
-        featured=None,
+        featured=featured,
         review=review,
         stats=stats,
         courses=models.LearnCourseList(

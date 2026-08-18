@@ -8,7 +8,7 @@ These are the learner's private artifacts.
 from datetime import date, datetime
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 # Imported rather than defined here: the knowledge domain needs the same base, and a second copy is
 # how the two would drift. See `src/shared/schemas.py` for the two failure modes it prevents.
@@ -2112,6 +2112,19 @@ class DiscoveryRecommendationResponse(CamelModel):
 # ===========================================================================
 
 
+#: Rows written before `entityType`/`entityId` existed carry an id under a key each service chose for
+#: itself. Mapped here, in one place, so historical entries are routeable too — and so no consumer has
+#: to learn six key names, which is the whole point of the pair.
+_LEGACY_ACTIVITY_ENTITY_KEYS: list[tuple[str, str]] = [
+    ("noteId", "note"),
+    ("docId", "document"),
+    ("cardId", "flashcard"),
+    ("planId", "study_plan"),
+    ("prepId", "preparation"),
+    ("quizId", "quiz"),
+]
+
+
 class ActivityFeedEntryResponse(CamelModel):
     id: str
     user_id: str
@@ -2120,6 +2133,31 @@ class ActivityFeedEntryResponse(CamelModel):
     description: str | None = None
     context: dict | None = None
     occurred_at: datetime
+
+    #: What this entry is about, and which row — the two fields that make an entry clickable.
+    #:
+    #: Nullable, and the nullability is a fact rather than a hedge: entries written before
+    #: `activity_feed_service.record` required them have no recorded artifact, and for a few of those
+    #: the context holds no id at all. A client renders those as text, which is what they are.
+    entity_type: str | None = None
+    entity_id: str | None = None
+
+    @model_validator(mode="after")
+    def _derive_entity(self) -> "ActivityFeedEntryResponse":
+        context = self.context or {}
+        if not self.entity_type:
+            self.entity_type = context.get("entityType")
+        if not self.entity_id:
+            self.entity_id = context.get("entityId")
+        if self.entity_id:
+            return self
+        for key, entity_type in _LEGACY_ACTIVITY_ENTITY_KEYS:
+            value = context.get(key)
+            if value:
+                self.entity_type = self.entity_type or entity_type
+                self.entity_id = value
+                break
+        return self
 
 
 #: The activity feed's page. `PaginatedResponse` rather than a fourth hand-written envelope — it already used

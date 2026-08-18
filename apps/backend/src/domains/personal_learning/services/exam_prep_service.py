@@ -53,6 +53,8 @@ async def create_preparation(*, user_id: str, data: dict[str, Any]) -> Any:
         user_id=user_id,
         activity_type="preparation_created",
         title=f"Started preparation: {data['subject']}",
+        entity_type="preparation",
+        entity_id=prep.id,
         context={"source": "personal", "prepId": prep.id, "type": prep_data["type"]},
     )
 
@@ -702,6 +704,8 @@ async def mark_completed(*, user_id: str, prep_id: str) -> Any:
         user_id=user_id,
         activity_type="preparation_completed",
         title=f"Completed preparation: {prep.subject}",
+        entity_type="preparation",
+        entity_id=prep_id,
         context={"source": "personal", "prepId": prep_id},
     )
 

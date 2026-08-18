@@ -6,11 +6,25 @@ Presents one continuous learning journey rather than separate products.
 
 import logging
 from datetime import UTC, datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from ..repository import personal_learning_repo as repo
 
 logger = logging.getLogger(__name__)
+
+
+#: Artifacts an activity entry can point at. Closed, because the whole purpose of the pair below is
+#: that a consumer can switch on it without knowing which service wrote the row.
+ActivityEntity = Literal[
+    "note",
+    "document",
+    "flashcard",
+    "study_plan",
+    "preparation",
+    "quiz",
+    "course",
+    "topic",
+]
 
 
 async def record(
@@ -18,6 +32,8 @@ async def record(
     user_id: str,
     activity_type: str,
     title: str,
+    entity_type: ActivityEntity,
+    entity_id: str,
     description: str | None = None,
     context: dict | None = None,
 ) -> Any:
@@ -26,15 +42,28 @@ async def record(
 
     Called by services and event handlers when significant actions occur.
     Context dict indicates source: {"source": "personal"|"collaborative", ...}
+
+    ``entity_type`` and ``entity_id`` are **required**, and that is the point of them. Every writer
+    already put an id in ``context`` and each chose its own key — `noteId`, `docId`, `cardId`,
+    `prepId`, `quizId`, `planId` — so a reader wanting to make an entry clickable had to know all six
+    names, and a seventh writer would invent a seventh. They are folded into the context under the
+    fixed keys ``entityType`` and ``entityId``, which is what makes the feed routeable from one branch
+    instead of six.
+
+    Required rather than optional so a new writer cannot skip them: an optional field here would be
+    populated by the six callers that exist today and forgotten by the next one, which is precisely
+    how the six key names happened. The existing per-service keys are kept — they are already stored
+    on historical rows, and dropping them would make old entries and new ones disagree about shape.
     """
     now = datetime.now(UTC)
+    merged_context = {**(context or {}), "entityType": entity_type, "entityId": entity_id}
     entry = await repo.create_feed_entry(
         {
             "userId": user_id,
             "activityType": activity_type,
             "title": title,
             "description": description,
-            "context": context,
+            "context": merged_context,
             "occurredAt": now,
         }
     )

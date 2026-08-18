@@ -486,6 +486,8 @@ async def review_flashcard(*, user_id: str, card_id: str, quality: int) -> Any:
         user_id=user_id,
         activity_type="flashcard_reviewed",
         title=f"Reviewed flashcard (quality: {quality}/5)",
+        entity_type="flashcard",
+        entity_id=card_id,
         context={"source": "personal", "cardId": card_id, "quality": quality},
     )
 
