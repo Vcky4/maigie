@@ -139,3 +139,105 @@ async def test_ownership_is_checked_before_anything_is_generated(world, monkeypa
         await diagram.generate_for_topic("user-1", topic_id="topic-1")
 
     assert world.max_tokens is None, "nothing should have been generated"
+
+
+# ---------------------------------------------------------------------------
+# Truncation
+# ---------------------------------------------------------------------------
+#
+# The second reported failure on this route. The learner got a "diagram could not be drawn" panel showing a
+# body that stopped mid-label: `C1["ID 101 | Plan: Basic`.
+#
+# The mermaid was not invalid. Every construct in it — pipes inside quoted labels, parentheses, colons, an
+# arrow inside a label, quoted subgraph titles — was parsed against mermaid itself and all of it is legal.
+# The diagram failed for one reason: it stopped before it finished.
+#
+# It reached the browser looking valid because `generate_content_json` repairs a truncated reply by closing
+# the dangling JSON string and brackets. That is right for a lesson, whose sections are a list — the complete
+# ones survive. A diagram is one indivisible value, so the same repair produces valid JSON containing half a
+# diagram, which stores, costs 80 credits and then will not render.
+
+
+async def test_a_diagram_cut_off_mid_label_is_refused(world):
+    """The exact reported payload, unclosed quote and unclosed subgraph."""
+    world.response = {
+        "mermaid": (
+            'flowchart TD\n'
+            '    subgraph RawData["Raw Churn Data (Messy)"]\n'
+            '        A1["ID 101 | Plan: basic | Churn: Yes"]\n'
+            '    end\n'
+            '    subgraph CleanData["Cleaned Data"]\n'
+            '        C1["ID 101 | Plan: Basic'
+        ),
+        "display_math": "",
+        "caption": "",
+    }
+
+    with pytest.raises(ValidationError):
+        await diagram.generate_for_topic("user-1", topic_id="topic-1")
+
+
+async def test_an_unclosed_subgraph_is_refused(world):
+    world.response = {
+        "mermaid": 'flowchart TD\n  subgraph A["One"]\n    N1["x"]\n',
+        "display_math": "",
+        "caption": "",
+    }
+
+    with pytest.raises(ValidationError):
+        await diagram.generate_for_topic("user-1", topic_id="topic-1")
+
+
+async def test_the_reported_diagram_passes_once_it_is_complete(world):
+    """The control. The same diagram, finished, must not be caught by the truncation check.
+
+    Without this the heuristic could tighten over time until it rejected ordinary content — pipes, colons and
+    parentheses inside labels are all normal, and this asserts they stay allowed.
+    """
+    world.response = {
+        "mermaid": (
+            'flowchart TD\n'
+            '    subgraph RawData["Raw Churn Data (Messy)"]\n'
+            '        A1["ID 101 | Plan: basic | Churn: Yes"]\n'
+            '        A2["ID 101 | Plan: Basic | Churn: Yes (Duplicate)"]\n'
+            '    end\n'
+            '    subgraph Prep["Phase 2: Data Preparation"]\n'
+            '        B2["Standardize Case (basic -> Basic)"]\n'
+            '    end\n'
+            '    RawData --> Prep'
+        ),
+        "display_math": "",
+        "caption": "Cleaning the churn data",
+    }
+
+    result = await diagram.generate_for_topic("user-1", topic_id="topic-1")
+    assert result["mermaid"].startswith("flowchart TD")
+    assert "Churn: Yes (Duplicate)" in result["mermaid"]
+
+
+async def test_maths_is_not_subjected_to_the_mermaid_truncation_check(world):
+    """LaTeX has its own brace conventions and no `subgraph`/`end` pairing.
+
+    Running the mermaid heuristic over it would reject perfectly good notation, so the check is applied to
+    the mermaid field alone.
+    """
+    world.response = {
+        "mermaid": "",
+        "display_math": r"\sum_{i=1}^{n} i = \frac{n(n+1)}{2}",
+        "caption": "",
+    }
+
+    result = await diagram.generate_for_topic("user-1", topic_id="topic-1")
+    assert result["display_math"].startswith(r"\sum")
+
+
+async def test_the_token_budget_accounts_for_a_thinking_model(world):
+    """8192, after 1200 and 2048 both truncated in practice.
+
+    The output is tiny — a real diagram is around 700 characters — but the configured model draws its
+    reasoning from the same output allowance, so a model that spends 1,900 tokens deciding what to draw has
+    148 left to draw it with. Pinned because the figure looks obviously over-generous for the payload and is
+    exactly the kind of thing a later reader trims.
+    """
+    await diagram.generate_for_topic("user-1", topic_id="topic-1")
+    assert world.max_tokens >= 8192

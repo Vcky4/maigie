@@ -78,11 +78,16 @@ async def generate_for_topic(
 
     result = await generate_content_json(
         prompt,
-        # Raised from 1200. The reply has to carry up to thirty lines of mermaid, a LaTeX equation and a
-        # caption, JSON-escaped — and this is the third time in this programme a generation has been sized
-        # for the happy case and truncated on a real one. 1200 was not the cause of the `500` below (an empty
-        # reply is not a truncated one) but it is close enough to the ceiling to be worth moving.
-        max_tokens=2048,
+        # 8192, from 1200 and then 2048, both of which truncated in practice.
+        #
+        # The output itself is tiny — a real diagram is around 700 characters — so this looks absurdly
+        # generous until you account for where the budget actually goes: the configured model is a *thinking*
+        # model, and reasoning tokens are drawn from the same output allowance. A model that spends 1,900
+        # tokens deciding what to draw and then starts writing has 148 left, which produces exactly the
+        # symptom seen here — a reply cut off mid-label. The lesson route reached 8192 by the same route.
+        #
+        # Costing nothing when unused: billing is on tokens actually produced, not on the ceiling.
+        max_tokens=8192,
         temperature=0.4,
         # **The fix for a `500` on this route.** `fallback=None` — the default, and what this call site used
         # to pass by omission — means "no fallback, raise", not "return None". So an unparseable or empty
@@ -104,8 +109,49 @@ async def generate_for_topic(
     if not mermaid and not display_math:
         raise ValidationError("The model returned an empty diagram.")
 
+    # A diagram cut off mid-draw is worse than none, and it reaches here looking valid.
+    #
+    # `generate_content_json` repairs truncated replies by closing the dangling JSON string and brackets.
+    # For a lesson that is right: the sections are a list, so the complete ones survive and the parsers
+    # discard the incomplete last one. A mermaid diagram is not a list — it is **one indivisible value** — so
+    # the same repair converts "the reply was cut off" into "here is valid JSON containing half a diagram",
+    # which parses, stores, costs 80 credits, and then fails to render in the browser.
+    #
+    # Verified rather than assumed: the diagram from the reported failure was parsed against mermaid itself,
+    # every construct in it is legal, and the only reason it would not draw is that it stops mid-label.
+    if mermaid and _looks_truncated(mermaid):
+        raise ValidationError(
+            "The diagram was cut off before it finished. Try asking again."
+        )
+
     return {
         "mermaid": mermaid,
         "display_math": display_math,
         "caption": str(result.get("caption") or "").strip(),
     }
+
+
+def _looks_truncated(mermaid: str) -> bool:
+    """Whether a mermaid body stops in the middle of something.
+
+    Three cheap structural checks rather than a mermaid parser, which does not exist in Python. Each one is a
+    thing a *complete* diagram never does, so a false positive costs one regeneration and a false negative is
+    caught by the renderer's own failure panel — the asymmetry that makes a heuristic acceptable here.
+
+    Deliberately not checking for balanced parentheses: they appear inside labels far more often than they
+    delimit anything, and `Churn: Yes (Duplicate)` is ordinary content.
+    """
+    # An odd number of double quotes means a label was opened and never closed — the exact shape of the
+    # reported failure, which ended `C1["ID 101 | Plan: Basic`.
+    if mermaid.count('"') % 2 != 0:
+        return True
+    # Every `subgraph` needs its `end`. More subgraphs than `end`s means the diagram stops inside one.
+    if mermaid.count("subgraph ") > len(
+        [line for line in mermaid.splitlines() if line.strip() == "end"]
+    ):
+        return True
+    # Unbalanced node brackets. Counted across the whole body rather than per line, because a label may
+    # legitimately contain a bracket only when quoted — and an unquoted stray one is its own defect.
+    if mermaid.count("[") != mermaid.count("]"):
+        return True
+    return False
