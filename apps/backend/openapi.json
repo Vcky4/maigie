@@ -163,37 +163,6 @@
         "title": "ActivityFeedEntryResponse",
         "type": "object"
       },
-      "ActivityFeedResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ActivityFeedEntryResponse"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "page": {
-            "title": "Page",
-            "type": "integer"
-          },
-          "pageSize": {
-            "title": "Pagesize",
-            "type": "integer"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "pageSize"
-        ],
-        "title": "ActivityFeedResponse",
-        "type": "object"
-      },
       "AnswerResultResponse": {
         "description": "Result for the one question just submitted, including its key.\n\nThis is the only place an answer key is disclosed before the session\ncompletes, and only for a question the learner has now answered.",
         "properties": {
@@ -5706,6 +5675,42 @@
         "title": "OnboardingStatusResponse",
         "type": "object"
       },
+      "PaginatedResponse_ActivityFeedEntryResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityFeedEntryResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[ActivityFeedEntryResponse]",
+        "type": "object"
+      },
       "PaginatedResponse_DocumentResponse_": {
         "properties": {
           "items": {
@@ -5956,6 +5961,42 @@
           "pages"
         ],
         "title": "PaginatedResponse[ReflectionResponse]",
+        "type": "object"
+      },
+      "PaginatedResponse_ResourceResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[ResourceResponse]",
         "type": "object"
       },
       "PaginatedResponse_SavedResourceResponse_": {
@@ -9547,40 +9588,22 @@
         "title": "ResourceCreate",
         "type": "object"
       },
-      "ResourceListResponse": {
+      "ResourceInteractionRequest": {
+        "description": "What a learner did with a resource.\n\nA closed set, not a free string. The kind used to arrive as a query parameter typed `str`, so any value\nreached `record_interaction` and the two the service actually understands were documented nowhere — a\ncaller had to read the service to find out that `RESOURCE_VIEW` does nothing.\n\n`interactionType` on the wire because that is the convention everywhere else here; the old query\nparameter was `interaction_type`, which is the only snake_case name this API published.",
         "properties": {
-          "hasMore": {
-            "title": "Hasmore",
-            "type": "boolean"
-          },
-          "page": {
-            "title": "Page",
-            "type": "integer"
-          },
-          "pageSize": {
-            "title": "Pagesize",
-            "type": "integer"
-          },
-          "resources": {
-            "items": {
-              "$ref": "#/components/schemas/ResourceResponse"
-            },
-            "title": "Resources",
-            "type": "array"
-          },
-          "total": {
-            "title": "Total",
-            "type": "integer"
+          "interactionType": {
+            "enum": [
+              "RESOURCE_CLICK",
+              "RESOURCE_BOOKMARK"
+            ],
+            "title": "Interactiontype",
+            "type": "string"
           }
         },
         "required": [
-          "resources",
-          "total",
-          "page",
-          "pageSize",
-          "hasMore"
+          "interactionType"
         ],
-        "title": "ResourceListResponse",
+        "title": "ResourceInteractionRequest",
         "type": "object"
       },
       "ResourceRecommendationItem": {
@@ -9694,6 +9717,7 @@
         "type": "object"
       },
       "ResourceResponse": {
+        "description": "A saved or recommended resource.\n\nSnake_case fields on `CamelModel`, validated straight off the `Resource` row — which let\n`_format_resource` be deleted rather than kept in step. That hand-written mapper is worth remembering:\nit built a camelCase dict from snake_case reads, and when the ORM moved from Prisma it silently returned\n`bookmarkCount: 0` and `recommendationSource: None` for every resource because its `getattr` defaults\nswallowed the renames. A model that reads the row directly cannot drift from it.\n\nTwo fields need care and both are pinned rather than left to the generator:\n\n- `metadata` is mapped as `metadata_json` on the ORM, because `metadata` is reserved on a declarative\n  class and resolves to SQLAlchemy's own `MetaData` object. `to_camel` would publish it as\n  `metadataJson`, so the alias holds the published name.\n- The timestamps are `datetime`, not `str`. The old model typed them as strings because the mapper had\n  already called `.isoformat()`; reading the row means reading real datetimes, which serialise to the\n  same ISO strings on the wire.",
         "properties": {
           "bookmarkCount": {
             "default": 0,
@@ -9705,7 +9729,19 @@
             "title": "Clickcount",
             "type": "integer"
           },
+          "courseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Courseid"
+          },
           "createdAt": {
+            "format": "date-time",
             "title": "Createdat",
             "type": "string"
           },
@@ -9732,6 +9768,7 @@
           "lastAccessedAt": {
             "anyOf": [
               {
+                "format": "date-time",
                 "type": "string"
               },
               {
@@ -9789,11 +9826,23 @@
             "title": "Title",
             "type": "string"
           },
+          "topicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicid"
+          },
           "type": {
             "title": "Type",
             "type": "string"
           },
           "updatedAt": {
+            "format": "date-time",
             "title": "Updatedat",
             "type": "string"
           },
@@ -12876,6 +12925,7 @@
         "type": "object"
       },
       "TopicGenerateResponse": {
+        "description": "What a generation call produced, and what it stored.\n\n`CamelModel` rather than `BaseModel`: this was one of four response models in the domain still declaring\ncamelCase field names directly, which is a second mechanism for one wire format and the reason §13 lists\nunification. It is constructed by hand with camelCase keywords, which `populate_by_name` keeps working.",
         "properties": {
           "content": {
             "title": "Content",
@@ -16849,7 +16899,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResourceListResponse"
+                  "$ref": "#/components/schemas/PaginatedResponse_ResourceResponse_"
                 }
               }
             },
@@ -16878,7 +16928,7 @@
         ]
       },
       "post": {
-        "description": "Create a new resource.",
+        "description": "Create a new resource.\n\nTyped and `201`, both of which it lacked. Without a `response_model` this published whatever the service\nhappened to return — six of the row's nineteen fields, as an untyped dict — so the schema said `{}` and\nthe web client, which types the result as a full resource and puts it straight into its list, was working\nfrom a shape the contract never promised.",
         "operationId": "create_resource_api_v1_knowledge_resources_post",
         "requestBody": {
           "content": {
@@ -16891,10 +16941,12 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -16972,7 +17024,7 @@
     },
     "/api/v1/knowledge/resources/{resource_id}": {
       "delete": {
-        "description": "Delete a resource.",
+        "description": "Delete a resource.\n\n`204`, matching every other delete in the programme. The `{\"success\": true, \"message\": ...}` body it used\nto return is a second way of saying what the status code says, and a caller that checked the flag rather\nthan the status would treat a `500` — which has no `success` field — as a falsy success.",
         "operationId": "delete_resource_api_v1_knowledge_resources__resource_id__delete",
         "parameters": [
           {
@@ -16986,12 +17038,7 @@
           }
         ],
         "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            },
+          "204": {
             "description": "Successful Response"
           },
           "422": {
@@ -17019,7 +17066,7 @@
     },
     "/api/v1/knowledge/resources/{resource_id}/interact": {
       "post": {
-        "description": "Record a user interaction with a resource.",
+        "description": "Record that a learner clicked or bookmarked a resource.\n\nThe interaction kind moved from a **query parameter** into the body. A `POST` that carries its only\npayload in the query string is the odd one out in this API, and it forced the web client into\n`apiClient.post(url, null, { params: { interaction_type } })` — a null body with a query string, which is\nthe shape of a call nobody meant to write. It is also now a closed set rather than a free string, so an\nunknown kind is refused at the boundary instead of reaching the service.\n\n`204`, because there is nothing to say. It returned `{\"success\": true}`, which is what the status code\nalready means.",
         "operationId": "record_interaction_api_v1_knowledge_resources__resource_id__interact_post",
         "parameters": [
           {
@@ -17030,24 +17077,20 @@
               "title": "Resource Id",
               "type": "string"
             }
-          },
-          {
-            "in": "query",
-            "name": "interaction_type",
-            "required": true,
-            "schema": {
-              "title": "Interaction Type",
-              "type": "string"
-            }
           }
         ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {}
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceInteractionRequest"
               }
-            },
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
             "description": "Successful Response"
           },
           "422": {
@@ -17730,7 +17773,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ActivityFeedResponse"
+                  "$ref": "#/components/schemas/PaginatedResponse_ActivityFeedEntryResponse_"
                 }
               }
             },

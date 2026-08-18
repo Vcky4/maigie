@@ -2122,11 +2122,9 @@ class ActivityFeedEntryResponse(CamelModel):
     occurred_at: datetime
 
 
-class ActivityFeedResponse(BaseModel):
-    items: list[ActivityFeedEntryResponse]
-    total: int
-    page: int
-    pageSize: int
+#: The activity feed's page. `PaginatedResponse` rather than a fourth hand-written envelope — it already used
+#: `items`, so the only change on the wire is that `pages` appears, which no consumer can be broken by.
+ActivityFeedResponse = PaginatedResponse[ActivityFeedEntryResponse]
 
 
 # ===========================================================================

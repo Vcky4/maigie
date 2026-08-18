@@ -1196,7 +1196,9 @@ async def generate_topic_content(
 # ===========================================================================
 
 
-@router.get("/resources", response_model=models.ResourceListResponse)
+@router.get(
+    "/resources", response_model=models.PaginatedResponse[models.ResourceResponse]
+)
 async def list_resources(
     current_user: CurrentUser,
     circle_id: str | None = Query(None, alias="space_id"),
@@ -1225,9 +1227,19 @@ async def list_resources(
     return result
 
 
-@router.post("/resources")
+@router.post(
+    "/resources",
+    response_model=models.ResourceResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_resource(body: models.ResourceCreate, current_user: CurrentUser):
-    """Create a new resource."""
+    """Create a new resource.
+
+    Typed and `201`, both of which it lacked. Without a `response_model` this published whatever the service
+    happened to return — six of the row's nineteen fields, as an untyped dict — so the schema said `{}` and
+    the web client, which types the result as a full resource and puts it straight into its list, was working
+    from a shape the contract never promised.
+    """
     return await resource_service.create_resource(
         user=current_user, data=body.model_dump(exclude_unset=True)
     )
@@ -1244,17 +1256,32 @@ async def recommend_resources(
     return result
 
 
-@router.post("/resources/{resource_id}/interact")
-async def record_interaction(resource_id: str, interaction_type: str, current_user: CurrentUser):
-    """Record a user interaction with a resource."""
+@router.post("/resources/{resource_id}/interact", status_code=status.HTTP_204_NO_CONTENT)
+async def record_interaction(
+    resource_id: str, body: models.ResourceInteractionRequest, current_user: CurrentUser
+):
+    """Record that a learner clicked or bookmarked a resource.
+
+    The interaction kind moved from a **query parameter** into the body. A `POST` that carries its only
+    payload in the query string is the odd one out in this API, and it forced the web client into
+    `apiClient.post(url, null, { params: { interaction_type } })` — a null body with a query string, which is
+    the shape of a call nobody meant to write. It is also now a closed set rather than a free string, so an
+    unknown kind is refused at the boundary instead of reaching the service.
+
+    `204`, because there is nothing to say. It returned `{"success": true}`, which is what the status code
+    already means.
+    """
     await resource_service.record_interaction(
-        user_id=current_user.id, resource_id=resource_id, interaction_type=interaction_type
+        user_id=current_user.id, resource_id=resource_id, interaction_type=body.interactionType
     )
-    return {"success": True, "message": "Interaction recorded"}
 
 
-@router.delete("/resources/{resource_id}")
+@router.delete("/resources/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_resource(resource_id: str, current_user: CurrentUser):
-    """Delete a resource."""
+    """Delete a resource.
+
+    `204`, matching every other delete in the programme. The `{"success": true, "message": ...}` body it used
+    to return is a second way of saying what the status code says, and a caller that checked the flag rather
+    than the status would treat a `500` — which has no `success` field — as a falsy success.
+    """
     await resource_service.delete_resource(user_id=current_user.id, resource_id=resource_id)
-    return {"success": True, "message": "Resource deleted"}

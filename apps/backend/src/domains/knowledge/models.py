@@ -315,9 +315,16 @@ class TopicGenerateRequest(BaseModel):
     deckId: str | None = None
 
 
-class TopicGenerateResponse(BaseModel):
+class TopicGenerateResponse(CamelModel):
+    """What a generation call produced, and what it stored.
+
+    `CamelModel` rather than `BaseModel`: this was one of four response models in the domain still declaring
+    camelCase field names directly, which is a second mechanism for one wire format and the reason §13 lists
+    unification. It is constructed by hand with camelCase keywords, which `populate_by_name` keeps working.
+    """
+
     type: str
-    topicId: str
+    topic_id: str
     content: str
     #: What was stored, in words — "7 sections", "5 flashcards" — or null when the type deliberately
     #: stores nothing. Stated rather than implied by the type, so a caller can report the outcome
@@ -781,31 +788,63 @@ class ResourceCreate(BaseModel):
     spaceId: str | None = None
 
 
-class ResourceResponse(BaseModel):
+class ResourceResponse(CamelModel):
+    """A saved or recommended resource.
+
+    Snake_case fields on `CamelModel`, validated straight off the `Resource` row — which let
+    `_format_resource` be deleted rather than kept in step. That hand-written mapper is worth remembering:
+    it built a camelCase dict from snake_case reads, and when the ORM moved from Prisma it silently returned
+    `bookmarkCount: 0` and `recommendationSource: None` for every resource because its `getattr` defaults
+    swallowed the renames. A model that reads the row directly cannot drift from it.
+
+    Two fields need care and both are pinned rather than left to the generator:
+
+    - `metadata` is mapped as `metadata_json` on the ORM, because `metadata` is reserved on a declarative
+      class and resolves to SQLAlchemy's own `MetaData` object. `to_camel` would publish it as
+      `metadataJson`, so the alias holds the published name.
+    - The timestamps are `datetime`, not `str`. The old model typed them as strings because the mapper had
+      already called `.isoformat()`; reading the row means reading real datetimes, which serialise to the
+      same ISO strings on the wire.
+    """
+
     id: str
-    userId: str
+    user_id: str
     title: str
     url: str
     description: str | None = None
     type: str
-    metadata: dict | None = None
-    isRecommended: bool = False
-    recommendationScore: float | None = None
-    recommendationSource: str | None = None
-    clickCount: int = 0
-    bookmarkCount: int = 0
-    spaceId: str | None = None
-    lastAccessedAt: str | None = None
-    createdAt: str
-    updatedAt: str
+    # Split aliases, not one `alias`. A single `alias="metadata"` would make pydantic *read* the attribute
+    # called `metadata` off the row — which on any declarative class is SQLAlchemy's own `MetaData` object,
+    # not the column. That is the trap this file's own docstring warns about, and it fails as a validation
+    # error rather than an `AttributeError`, so it would have looked like a schema problem.
+    metadata: dict | None = Field(
+        default=None, validation_alias="metadata_json", serialization_alias="metadata"
+    )
+    is_recommended: bool = False
+    recommendation_score: float | None = None
+    recommendation_source: str | None = None
+    click_count: int = 0
+    bookmark_count: int = 0
+    space_id: str | None = None
+    course_id: str | None = None
+    topic_id: str | None = None
+    last_accessed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
-class ResourceListResponse(BaseModel):
-    resources: list[ResourceResponse]
-    total: int
-    page: int
-    pageSize: int
-    hasMore: bool
+class ResourceInteractionRequest(BaseModel):
+    """What a learner did with a resource.
+
+    A closed set, not a free string. The kind used to arrive as a query parameter typed `str`, so any value
+    reached `record_interaction` and the two the service actually understands were documented nowhere — a
+    caller had to read the service to find out that `RESOURCE_VIEW` does nothing.
+
+    `interactionType` on the wire because that is the convention everywhere else here; the old query
+    parameter was `interaction_type`, which is the only snake_case name this API published.
+    """
+
+    interactionType: Literal["RESOURCE_CLICK", "RESOURCE_BOOKMARK"]
 
 
 class ResourceRecommendationRequest(BaseModel):
@@ -814,7 +853,7 @@ class ResourceRecommendationRequest(BaseModel):
     context: dict | None = None
 
 
-class ResourceRecommendationItem(BaseModel):
+class ResourceRecommendationItem(CamelModel):
     title: str
     url: str
     description: str | None = None
@@ -823,7 +862,7 @@ class ResourceRecommendationItem(BaseModel):
     score: float = 0.5
 
 
-class ResourceRecommendationResponse(BaseModel):
+class ResourceRecommendationResponse(CamelModel):
     recommendations: list[ResourceRecommendationItem]
     query: str
     personalized: bool = True

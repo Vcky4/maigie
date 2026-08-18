@@ -1938,7 +1938,13 @@ async def get_activity_feed(
     items, total = await activity_feed_service.list_feed(
         user_id=current_user.id, page=page, page_size=pageSize
     )
-    return models.ActivityFeedResponse(items=items, total=total, page=page, pageSize=pageSize)
+    return models.ActivityFeedResponse(
+        items=items,
+        total=total,
+        page=page,
+        pageSize=pageSize,
+        pages=max(1, (total + pageSize - 1) // pageSize),
+    )
 
 
 # ===========================================================================

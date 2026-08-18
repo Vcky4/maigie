@@ -53,16 +53,25 @@ async def list_resources(
         where=where, skip=skip, take=page_size, order={sort_by: sort_order}
     )
 
+    # The canonical envelope, and `pages` rather than `hasMore` — which answers strictly more, since
+    # "is there another page" is `page < pages` while the reverse cannot be recovered. This was the third
+    # pagination shape in the codebase for a list paginated exactly like notes, documents and saved
+    # resources; `ResourceListResponse` is deleted rather than patched.
+    #
+    # Rows are returned as-is. `ResourceResponse` validates off the ORM row, which is what let the
+    # hand-written `_format_resource` mapper go: it built a camelCase dict from snake_case reads and, when
+    # the ORM moved off Prisma, silently reported `bookmarkCount: 0` for every resource because its
+    # `getattr` defaults absorbed the renames.
     return {
-        "resources": [_format_resource(r) for r in resources],
+        "items": resources,
         "total": total,
         "page": page,
         "pageSize": page_size,
-        "hasMore": (skip + page_size) < total,
+        "pages": max(1, (total + page_size - 1) // page_size),
     }
 
 
-async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]:
+async def create_resource(*, user: User, data: dict[str, Any]) -> Any:
     """Create a new resource and index it."""
     resource_data: dict[str, Any] = {
         "userId": user.id,
@@ -89,14 +98,11 @@ async def create_resource(*, user: User, data: dict[str, Any]) -> dict[str, Any]
     resource = await knowledge_repo.create_resource(resource_data)
     await emit_resource_added(user.id, resource.id, data.get("courseId"))
 
-    return {
-        "id": resource.id,
-        "title": resource.title,
-        "url": resource.url,
-        "description": resource.description,
-        "type": resource.type,
-        "createdAt": resource.created_at.isoformat(),
-    }
+    # The row, not a hand-picked subset of it. This used to return six of the nineteen fields the row has —
+    # no `metadata`, no `spaceId`, no `courseId`/`topicId`, no `updatedAt` — as an untyped dict, which is why
+    # the route carried no `response_model`. The web client types the result as a full resource and pushes it
+    # straight into its list, so every omitted field was a hole a caller had to work around or refetch for.
+    return resource
 
 
 async def record_interaction(*, user_id: str, resource_id: str, interaction_type: str) -> None:
@@ -171,36 +177,3 @@ async def recommend_resources(
     }
 
 
-def _format_resource(r) -> dict[str, Any]:
-    """Format a `Resource` row for an API response.
-
-    Keys are camelCase for the wire; reads are snake_case because that is what the ORM
-    exposes. This was written against the Prisma client, whose records carried camelCase
-    attributes, and never adjusted when the model moved to SQLAlchemy — so every read
-    here raised `AttributeError` and the resource listing answered `500`.
-
-    Two of them were worse than an exception. `r.metadata` resolves on any declarative
-    class to SQLAlchemy's own `MetaData` object, so it returned something plausible-looking
-    instead of failing; the column is mapped as `metadata_json` precisely because
-    `metadata` is reserved. And the `getattr(..., default)` calls swallowed the mistake
-    silently, reporting `bookmarkCount: 0` and `recommendationSource: None` for every
-    resource regardless of what was stored — a wrong answer rather than a loud one.
-    """
-    return {
-        "id": r.id,
-        "userId": r.user_id,
-        "title": r.title,
-        "url": r.url,
-        "description": r.description,
-        "type": r.type,
-        "metadata": r.metadata_json,
-        "isRecommended": r.is_recommended,
-        "recommendationScore": r.recommendation_score,
-        "recommendationSource": r.recommendation_source,
-        "clickCount": r.click_count,
-        "bookmarkCount": r.bookmark_count,
-        "spaceId": r.space_id,
-        "lastAccessedAt": r.last_accessed_at.isoformat() if r.last_accessed_at else None,
-        "createdAt": r.created_at.isoformat(),
-        "updatedAt": r.updated_at.isoformat(),
-    }
