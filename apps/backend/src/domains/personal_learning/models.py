@@ -2319,9 +2319,56 @@ class LearnRecentItem(CamelModel):
 class LearnCollectionSummary(CamelModel):
     id: str
     title: str
-    description: str | None
     item_count: int
-    source: Literal["course", "topic", "tag"]
+    entity_types: list[str]
+
+
+# ===========================================================================
+# Collections
+# ===========================================================================
+
+
+class CollectionCreate(CamelModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+
+
+class CollectionUpdate(CamelModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+
+
+class CollectionItemAdd(CamelModel):
+    entity_type: Literal["note", "deck", "saved_resource", "document"]
+    entity_id: str
+
+
+class CollectionReorder(CamelModel):
+    item_ids: list[str]
+
+
+class CollectionItemResponse(CamelModel):
+    id: str
+    entity_type: str
+    entity_id: str
+    title: str
+    position: int | None
+    added_at: datetime
+
+
+class CollectionResponse(CamelModel):
+    id: str
+    title: str
+    description: str | None
+    source_tag: str | None
+    item_count: int
+    entity_types: list[str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class CollectionDetailResponse(CollectionResponse):
+    items: list[CollectionItemResponse]
 
 
 class LearnDashboardResponse(CamelModel):

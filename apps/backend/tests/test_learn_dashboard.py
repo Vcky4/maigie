@@ -200,6 +200,7 @@ class FakeSources:
         self.stats: dict[str, int] = {"dueToday": 0, "total": 0, "masteredCount": 0}
         self.overdue = 0
         self.fail: set[str] = set()
+        self.collections: list[dict] = []
         self.knowledge = FakeKnowledge(self)
         self.repo = FakePersonalLearning(self)
 
@@ -235,6 +236,15 @@ def sources(monkeypatch):
     monkeypatch.setattr(learn_dashboard_service.note_service, "list_notes", list_notes)
     monkeypatch.setattr(learn_dashboard_service.document_impl, "list_documents", list_documents)
     monkeypatch.setattr(prep_readiness, "load_for_preparations", load_for_preparations)
+
+    from src.domains.personal_learning.services import collection_service
+
+    async def get_dashboard_collections(user_id, limit=6):
+        fake._boom("collections")
+        return fake.collections
+
+    monkeypatch.setattr(collection_service, "get_dashboard_collections", get_dashboard_collections)
+
     return fake
 
 
@@ -471,6 +481,7 @@ class TestDegradation:
             ("review", {"review", "tools"}),
             ("paths", {"paths", "tools"}),
             ("featured", {"featured"}),
+            ("collections", {"collections"}),
         ],
     )
     async def test_a_failed_source_degrades_exactly_the_sections_it_feeds(
@@ -522,6 +533,7 @@ class TestDegradation:
             "review",
             "paths",
             "featured",
+            "collections",
         }
         with pytest.raises(MaigieError) as caught:
             await _dashboard()
@@ -530,7 +542,15 @@ class TestDegradation:
 
     async def test_all_but_one_source_failing_still_answers(self, populated):
         """The `503` is for a total outage. One surviving section is worth rendering."""
-        populated.fail = {"courses", "notes", "resources", "documents", "review", "featured"}
+        populated.fail = {
+            "courses",
+            "notes",
+            "resources",
+            "documents",
+            "review",
+            "featured",
+            "collections",
+        }
         dashboard = await _dashboard()
         assert len(dashboard.paths) == 2
         assert "paths" not in dashboard.meta.degraded_sections

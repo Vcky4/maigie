@@ -1809,6 +1809,116 @@ async def delete_document(doc_id: str, current_user: CurrentUser):
 
 
 # ===========================================================================
+# Collections
+# ===========================================================================
+
+
+@router.post("/collections", response_model=models.CollectionResponse, status_code=201)
+async def create_collection(body: models.CollectionCreate, current_user: CurrentUser):
+    """Create a named collection of learning artifacts."""
+    from .services import collection_service
+
+    return await collection_service.create_collection(
+        user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
+
+
+@router.get("/collections", response_model=models.PaginatedResponse[models.CollectionResponse])
+async def list_collections(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+):
+    """List the learner's collections."""
+    from .services import collection_service
+
+    items, total = await collection_service.list_collections(
+        user_id=current_user.id, page=page, page_size=pageSize
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.CollectionResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
+
+
+@router.get("/collections/{collection_id}", response_model=models.CollectionDetailResponse)
+async def get_collection(collection_id: str, current_user: CurrentUser):
+    """Get a collection with its resolved items."""
+    from .services import collection_service
+
+    return await collection_service.get_detail(user_id=current_user.id, collection_id=collection_id)
+
+
+@router.patch("/collections/{collection_id}", response_model=models.CollectionResponse)
+async def update_collection(
+    collection_id: str, body: models.CollectionUpdate, current_user: CurrentUser
+):
+    """Update a collection's title or description."""
+    from .services import collection_service
+
+    return await collection_service.update_collection(
+        user_id=current_user.id,
+        collection_id=collection_id,
+        data=body.model_dump(exclude_unset=True),
+    )
+
+
+@router.delete("/collections/{collection_id}", status_code=204)
+async def delete_collection(collection_id: str, current_user: CurrentUser):
+    """Soft-delete a collection."""
+    from .services import collection_service
+
+    await collection_service.delete_collection(user_id=current_user.id, collection_id=collection_id)
+
+
+@router.post(
+    "/collections/{collection_id}/items",
+    response_model=models.CollectionItemResponse,
+    status_code=201,
+)
+async def add_collection_item(
+    collection_id: str, body: models.CollectionItemAdd, current_user: CurrentUser
+):
+    """Add an item to a collection. Returns 409 if the item already exists."""
+    from .services import collection_service
+
+    return await collection_service.add_item(
+        user_id=current_user.id,
+        collection_id=collection_id,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+    )
+
+
+@router.delete("/collections/{collection_id}/items/{item_id}", status_code=204)
+async def remove_collection_item(collection_id: str, item_id: str, current_user: CurrentUser):
+    """Remove an item from a collection."""
+    from .services import collection_service
+
+    await collection_service.remove_item(
+        user_id=current_user.id, collection_id=collection_id, item_id=item_id
+    )
+
+
+@router.patch(
+    "/collections/{collection_id}/items/reorder", response_model=models.CollectionResponse
+)
+async def reorder_collection_items(
+    collection_id: str, body: models.CollectionReorder, current_user: CurrentUser
+):
+    """Reorder items in a collection."""
+    from .services import collection_service
+
+    return await collection_service.reorder_items(
+        user_id=current_user.id, collection_id=collection_id, item_ids=body.item_ids
+    )
+
+
+# ===========================================================================
 # Notifications
 # ===========================================================================
 

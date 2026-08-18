@@ -270,6 +270,77 @@ class GeneratedDocument(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# Collection
+# ---------------------------------------------------------------------------
+
+
+class Collection(Base, TimestampMixin):
+    """A named group of learning artifacts belonging to one learner.
+
+    May be auto-seeded from a tag that crosses a threshold (artifacts in ≥2 entity types) or
+    created manually. `source_tag` records the origin; `deleted_at` is a soft delete so the
+    seeding logic knows not to recreate something the learner deliberately removed.
+    """
+
+    __tablename__ = "Collection"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_tag: Mapped[str | None] = mapped_column("sourceTag", String(100), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        "deletedAt", DateTime(timezone=True), nullable=True
+    )
+
+    items: Mapped[list["CollectionItem"]] = relationship(
+        "CollectionItem", back_populates="collection", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Collection id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# CollectionItem
+# ---------------------------------------------------------------------------
+
+
+class CollectionItem(Base):
+    """Membership of one artifact in one collection.
+
+    No FK from `entity_id` to the artifact tables — the four types live in separate tables.
+    Dangling references are filtered at read time.
+    """
+
+    __tablename__ = "CollectionItem"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    collection_id: Mapped[str] = mapped_column(
+        "collectionId", String, ForeignKey("Collection.id", ondelete="CASCADE"), index=True
+    )
+    entity_type: Mapped[str] = mapped_column("entityType", String(20), nullable=False)
+    entity_id: Mapped[str] = mapped_column("entityId", String, nullable=False)
+    position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    added_at: Mapped[datetime] = mapped_column(
+        "addedAt",
+        DateTime(timezone=True),
+        default=lambda: __import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+    )
+
+    collection: Mapped["Collection"] = relationship("Collection", back_populates="items")
+
+    def __repr__(self) -> str:
+        return f"<CollectionItem id={self.id} type={self.entity_type} entity={self.entity_id}>"
+
+
+# ---------------------------------------------------------------------------
 # FlashcardDeck
 # ---------------------------------------------------------------------------
 

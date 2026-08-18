@@ -264,6 +264,13 @@ def _log_source_failure(user_id: str, source: str, error: BaseException) -> None
     )
 
 
+async def _load_collections(user_id: str) -> list[dict]:
+    """Auto-seed and return dashboard collection summaries."""
+    from . import collection_service
+
+    return await collection_service.get_dashboard_collections(user_id)
+
+
 async def get_dashboard(
     *, user_id: str, course_limit: int, path_limit: int, recent_limit: int
 ) -> models.LearnDashboardResponse:
@@ -275,11 +282,21 @@ async def get_dashboard(
         _load_review(user_id),
         _load_paths(user_id, path_limit),
         _load_featured(user_id),
+        _load_collections(user_id),
         return_exceptions=True,
     )
     if all(isinstance(result, BaseException) for result in results):
         for source, error in zip(
-            ("courses", "notes", "resources", "documents", "review", "paths", "featured"),
+            (
+                "courses",
+                "notes",
+                "resources",
+                "documents",
+                "review",
+                "paths",
+                "featured",
+                "collections",
+            ),
             results,
             strict=True,
         ):
@@ -304,6 +321,7 @@ async def get_dashboard(
     paths: list[models.LearnPathSummary] = []
     paths_total = 0  # Both study plans and preparations
     featured: models.LearnFeaturedItem | None = None
+    collections: list[models.LearnCollectionSummary] = []
 
     source_sections: dict[str, set[models.LearnDashboardSection]] = {
         "courses": {"courses", "stats", "tools"},
@@ -316,6 +334,7 @@ async def get_dashboard(
         # grid loaded, and telling a learner their courses are unavailable while showing them is
         # worse than one missing card.
         "featured": {"featured"},
+        "collections": {"collections"},
     }
     for source, result in zip(source_sections, results, strict=True):
         if isinstance(result, BaseException):
@@ -336,6 +355,16 @@ async def get_dashboard(
         paths, paths_total = results[5]
     if not isinstance(results[6], BaseException):
         featured = results[6]
+    if not isinstance(results[7], BaseException):
+        collections = [
+            models.LearnCollectionSummary(
+                id=c["id"],
+                title=c["title"],
+                item_count=c["item_count"],
+                entity_types=c["entity_types"],
+            )
+            for c in results[7]
+        ]
 
     due_cards = max(0, int(flashcard_stats.get("dueToday", 0)))
     total_cards = max(0, int(flashcard_stats.get("total", 0)))
@@ -388,5 +417,5 @@ async def get_dashboard(
         paths=paths,
         tools=tools,
         recent_items=recent_items,
-        collections=[],
+        collections=collections,
     )

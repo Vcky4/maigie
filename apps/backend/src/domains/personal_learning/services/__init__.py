@@ -5,6 +5,7 @@ from . import (
     auto_setup_service,
     behaviour_service,
     chat_helper,
+    collection_service,
     conversion_engine,
     discovery_service,
     document_impl,
@@ -52,4 +53,5 @@ __all__ = [
     "milestone_service",
     "value_summary_service",
     "retention_service",
+    "collection_service",
 ]

@@ -26,6 +26,8 @@ from src.shared.field_mapping import map_fields
 
 from .db_models import (
     ActivityFeedEntry,
+    Collection,
+    CollectionItem,
     DiscoveryRecommendation,
     ExamPrep,
     Flashcard,
@@ -4404,6 +4406,306 @@ class PersonalLearningRepository:
                 .values(maturity_days=LearningProfile.maturity_days + 1)
             )
             await s.execute(stmt)
+
+    # -----------------------------------------------------------------------
+    # Collections
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _map_collection(data: dict[str, Any]) -> dict[str, Any]:
+        field_map = {
+            "userId": "user_id",
+            "title": "title",
+            "description": "description",
+            "sourceTag": "source_tag",
+            "deletedAt": "deleted_at",
+        }
+        return map_fields(data, field_map, entity="_map_collection")
+
+    @staticmethod
+    def _map_collection_item(data: dict[str, Any]) -> dict[str, Any]:
+        field_map = {
+            "collectionId": "collection_id",
+            "entityType": "entity_type",
+            "entityId": "entity_id",
+            "position": "position",
+        }
+        return map_fields(data, field_map, entity="_map_collection_item")
+
+    async def create_collection(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Collection:
+        async with self._use_session(session) as s:
+            collection = Collection(**self._map_collection(data))
+            s.add(collection)
+            await s.flush()
+            await s.refresh(collection)
+            return collection
+
+    async def find_collection(
+        self, collection_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> Collection | None:
+        """Find a non-deleted collection owned by user."""
+        async with self._read_session(session) as s:
+            stmt = select(Collection).where(
+                Collection.id == collection_id,
+                Collection.user_id == user_id,
+                Collection.deleted_at.is_(None),
+            )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def update_collection(
+        self, collection_id: str, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> Collection | None:
+        async with self._use_session(session) as s:
+            mapped = self._map_collection(data)
+            if mapped:
+                stmt = update(Collection).where(Collection.id == collection_id).values(**mapped)
+                await s.execute(stmt)
+
+        async with self._use_session(None) as s:
+            stmt = select(Collection).where(Collection.id == collection_id)
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def soft_delete_collection(
+        self, collection_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._use_session(session) as s:
+            stmt = (
+                update(Collection)
+                .where(
+                    Collection.id == collection_id,
+                    Collection.user_id == user_id,
+                    Collection.deleted_at.is_(None),
+                )
+                .values(deleted_at=datetime.now(UTC))
+            )
+            result = await s.execute(stmt)
+            return result.rowcount > 0
+
+    async def list_collections(
+        self,
+        user_id: str,
+        *,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[Collection], int]:
+        """List non-deleted collections ordered by updatedAt desc, with item counts."""
+        async with self._read_session(session) as s:
+            conditions = [
+                Collection.user_id == user_id,
+                Collection.deleted_at.is_(None),
+            ]
+            total = (
+                await s.execute(select(func.count()).select_from(Collection).where(*conditions))
+            ).scalar_one() or 0
+
+            stmt = (
+                select(Collection)
+                .where(*conditions)
+                .order_by(Collection.updated_at.desc())
+                .offset(skip)
+                .limit(take)
+            )
+            result = await s.execute(stmt)
+            items = list(result.scalars().all())
+            return items, total
+
+    async def create_collection_item(
+        self, data: dict[str, Any], *, session: AsyncSession | None = None
+    ) -> CollectionItem:
+        async with self._use_session(session) as s:
+            item = CollectionItem(**self._map_collection_item(data))
+            s.add(item)
+            await s.flush()
+            await s.refresh(item)
+            return item
+
+    async def delete_collection_item(
+        self, item_id: str, collection_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        async with self._use_session(session) as s:
+            stmt = delete(CollectionItem).where(
+                CollectionItem.id == item_id,
+                CollectionItem.collection_id == collection_id,
+            )
+            result = await s.execute(stmt)
+            return result.rowcount > 0
+
+    async def reorder_collection_items(
+        self, collection_id: str, item_ids: list[str], *, session: AsyncSession | None = None
+    ) -> None:
+        async with self._use_session(session) as s:
+            for position, item_id in enumerate(item_ids):
+                await s.execute(
+                    update(CollectionItem)
+                    .where(
+                        CollectionItem.id == item_id,
+                        CollectionItem.collection_id == collection_id,
+                    )
+                    .values(position=position)
+                )
+
+    async def find_cross_type_tags(
+        self, user_id: str, *, limit: int = 8, session: AsyncSession | None = None
+    ) -> list[tuple[str, int]]:
+        """Tags appearing in >=2 entity types, excluding tags already used by a Collection."""
+        from sqlalchemy import text as sql_text
+
+        async with self._read_session(session) as s:
+            query = sql_text(
+                """
+                WITH tag_sources AS (
+                    SELECT nt.tag AS tag, 'note' AS entity_type
+                    FROM "NoteTag" nt
+                    JOIN "Note" n ON n.id = nt."noteId"
+                    WHERE n."userId" = :user_id AND n."spaceId" IS NULL
+
+                    UNION ALL
+
+                    SELECT unnest(sr.tags) AS tag, 'saved_resource' AS entity_type
+                    FROM "SavedResource" sr
+                    WHERE sr."userId" = :user_id AND sr.tags IS NOT NULL
+                ),
+                cross_tags AS (
+                    SELECT tag, COUNT(DISTINCT entity_type) AS type_count
+                    FROM tag_sources
+                    GROUP BY tag
+                    HAVING COUNT(DISTINCT entity_type) >= 2
+                )
+                SELECT ct.tag, ct.type_count
+                FROM cross_tags ct
+                WHERE ct.tag NOT IN (
+                    SELECT c."sourceTag" FROM "Collection" c
+                    WHERE c."userId" = :user_id AND c."sourceTag" IS NOT NULL
+                )
+                ORDER BY ct.type_count DESC, ct.tag ASC
+                LIMIT :limit
+            """
+            )
+            result = await s.execute(query, {"user_id": user_id, "limit": limit})
+            return [(row[0], row[1]) for row in result.all()]
+
+    async def bulk_create_collection_items(
+        self,
+        collection_id: str,
+        items: list[dict[str, Any]],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
+        async with self._use_session(session) as s:
+            for item_data in items:
+                mapped = self._map_collection_item(item_data)
+                mapped["collection_id"] = collection_id
+                ci = CollectionItem(**mapped)
+                s.add(ci)
+            await s.flush()
+
+    async def list_collection_items_with_titles(
+        self, collection_id: str, *, session: AsyncSession | None = None
+    ) -> list[dict[str, Any]]:
+        """LEFT JOIN against artifact tables to resolve titles; exclude deleted artifacts."""
+        async with self._read_session(session) as s:
+            note_alias = aliased(Note)
+            deck_alias = aliased(FlashcardDeck)
+            resource_alias = aliased(SavedResource)
+            document_alias = aliased(GeneratedDocument)
+
+            stmt = (
+                select(
+                    CollectionItem.id,
+                    CollectionItem.entity_type,
+                    CollectionItem.entity_id,
+                    CollectionItem.position,
+                    CollectionItem.added_at,
+                    note_alias.title.label("note_title"),
+                    deck_alias.title.label("deck_title"),
+                    resource_alias.title.label("resource_title"),
+                    document_alias.title.label("document_title"),
+                )
+                .outerjoin(
+                    note_alias,
+                    (CollectionItem.entity_id == note_alias.id)
+                    & (CollectionItem.entity_type == "note"),
+                )
+                .outerjoin(
+                    deck_alias,
+                    (CollectionItem.entity_id == deck_alias.id)
+                    & (CollectionItem.entity_type == "deck"),
+                )
+                .outerjoin(
+                    resource_alias,
+                    (CollectionItem.entity_id == resource_alias.id)
+                    & (CollectionItem.entity_type == "saved_resource"),
+                )
+                .outerjoin(
+                    document_alias,
+                    (CollectionItem.entity_id == document_alias.id)
+                    & (CollectionItem.entity_type == "document"),
+                )
+                .where(CollectionItem.collection_id == collection_id)
+                .order_by(CollectionItem.position.asc().nullslast(), CollectionItem.added_at.asc())
+            )
+            rows = (await s.execute(stmt)).all()
+            results: list[dict[str, Any]] = []
+            for row in rows:
+                title = row.note_title or row.deck_title or row.resource_title or row.document_title
+                if title is None:
+                    # Artifact was deleted — skip
+                    continue
+                results.append(
+                    {
+                        "id": row.id,
+                        "entity_type": row.entity_type,
+                        "entity_id": row.entity_id,
+                        "title": title,
+                        "position": row.position,
+                        "added_at": row.added_at,
+                    }
+                )
+            return results
+
+    async def list_dashboard_collections(
+        self, user_id: str, *, take: int = 6, session: AsyncSession | None = None
+    ) -> list[dict[str, Any]]:
+        """Returns id, title, item_count, entity_types for the dashboard."""
+        async with self._read_session(session) as s:
+            stmt = (
+                select(Collection)
+                .where(
+                    Collection.user_id == user_id,
+                    Collection.deleted_at.is_(None),
+                )
+                .order_by(Collection.updated_at.desc())
+                .limit(take)
+            )
+            collections = list((await s.execute(stmt)).scalars().all())
+
+            results: list[dict[str, Any]] = []
+            for collection in collections:
+                # Count items and get distinct entity types
+                count_stmt = select(func.count(CollectionItem.id)).where(
+                    CollectionItem.collection_id == collection.id
+                )
+                item_count = (await s.execute(count_stmt)).scalar_one() or 0
+
+                types_stmt = (
+                    select(CollectionItem.entity_type)
+                    .where(CollectionItem.collection_id == collection.id)
+                    .distinct()
+                )
+                entity_types = [row[0] for row in (await s.execute(types_stmt)).all()]
+
+                results.append(
+                    {
+                        "id": collection.id,
+                        "title": collection.title,
+                        "item_count": item_count,
+                        "entity_types": entity_types,
+                    }
+                )
+            return results
 
 
 # Singleton
