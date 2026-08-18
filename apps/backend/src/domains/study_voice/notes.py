@@ -239,7 +239,7 @@ async def save_session_note(
 
 async def finalise_session_note(
     user: User,
-    session_id: str,
+    session: VoiceSession,
     transcript: SessionTranscript,
 ) -> dict[str, object] | None:
     """Write the note at the end of a session, if the learner asked for one. Never raises.
@@ -257,18 +257,19 @@ async def finalise_session_note(
     Failures are logged and the conversation is lost, which is the honest outcome — the learner asked for a
     note and did not get one, and inventing a partial one would be worse.
 
-    ## Why the session record is re-read
+    ## Why the session is passed in rather than looked up
 
-    `note_taking` is toggled by a frame at any point during the session, and the record handed to the relay
-    at `start_session` predates all of it. Reading it fresh is also what makes a note correct after a
-    reconnect, since the learner's toggle survives on the record rather than in the dropped socket.
+    **This took the caller's word for it and it was wrong to.** The first version re-read the record by id,
+    reasoning that `note_taking` is toggled mid-session so the copy taken at `start_session` is stale. The
+    reasoning was right and the mechanism was not: the web client's exit path closes the socket and
+    *immediately* fires `POST /conversation/{id}/stop`, which **deletes the record**. Teardown then read
+    `None` and returned silently, so a learner who switched note-taking on got no note and no error.
+
+    The socket now holds its own copy and keeps it in step with every toggle and every manual save, and passes
+    it here. The stored record is still the source of truth across reconnects, which is what it is for — a
+    fresh socket reads it in `start`. It is simply not something a teardown can rely on still existing.
     """
     try:
-        session = await session_store.get(session_id)
-        if session is None:
-            # Expired, or stopped explicitly. Nothing to write against, and no way to know what the learner
-            # had asked for, so this is silent rather than a warning.
-            return None
         if not session.note_taking:
             return None
         if session.user_id != user.id:

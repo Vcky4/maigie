@@ -425,7 +425,7 @@ async def test_nothing_is_written_when_note_taking_was_never_switched_on(
     session.note_taking = False
     finalise_world.stored_session = session
 
-    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+    assert await notes.finalise_session_note(user, session, conversation) is None
     assert finalise_world.prompts == []
     assert finalise_world.created == []
     assert finalise_world.charged == []
@@ -438,7 +438,7 @@ async def test_a_note_is_written_at_teardown_when_note_taking_is_on(
     session.note_taking = True
     finalise_world.stored_session = session
 
-    saved = await notes.finalise_session_note(user, "sess-1", conversation)
+    saved = await notes.finalise_session_note(user, session, conversation)
 
     assert saved is not None
     assert saved["note_id"] == "note-1"
@@ -448,32 +448,49 @@ async def test_a_note_is_written_at_teardown_when_note_taking_is_on(
 
 
 @pytest.mark.asyncio
-async def test_the_session_record_is_re_read_rather_than_trusted(
+async def test_the_note_is_written_even_though_the_record_is_already_deleted(
     finalise_world, user, session, conversation
 ):
-    """The toggle is flipped by a frame mid-session, so the record handed to the relay at start is stale.
+    """The reported bug, and the reason this function no longer looks the session up.
 
-    Passing the stale copy would mean a learner who switched note-taking on after connecting got nothing.
+    Two sessions were reported where note-taking was switched on and no note appeared. The cause was an
+    ordering race the client creates on every exit: `stopConversation` closes the socket and *immediately*
+    fires `POST /conversation/{id}/stop`, which **deletes the session record**. Teardown then read the record
+    by id, got `None`, and returned silently — no note, no error, nothing in the log a learner could see.
+
+    `stored_session = None` here is that state: the record is gone. The note must still be written, because
+    the socket held its own copy and passed it in.
     """
-    session.note_taking = False
-    fresh = VoiceSession(
-        session_id="sess-1",
-        user_id="user-1",
-        system_instruction="brief",
-        course_id="course-1",
-        topic_id="topic-1",
-        note_taking=True,
-    )
-    finalise_world.stored_session = fresh
+    session.note_taking = True
+    finalise_world.stored_session = None
 
-    assert await notes.finalise_session_note(user, "sess-1", conversation) is not None
+    saved = await notes.finalise_session_note(user, session, conversation)
+
+    assert saved is not None
+    assert finalise_world.created[0]["topicId"] == "topic-1"
 
 
 @pytest.mark.asyncio
-async def test_a_session_that_has_expired_writes_nothing(finalise_world, user, conversation):
-    """No record means no way to know what the learner asked for. Silent, not a warning."""
-    finalise_world.stored_session = None
-    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+async def test_the_session_is_never_looked_up_by_id(
+    finalise_world, user, session, conversation, monkeypatch
+):
+    """Guards the fix at the mechanism rather than the symptom.
+
+    A later refactor that reintroduced a lookup would pass the test above whenever the record happened to
+    still exist — which is most of the time in a test and rarely at the moment a real session ends.
+    """
+    session.note_taking = True
+    looked_up: list[str] = []
+
+    async def get(session_id):
+        looked_up.append(session_id)
+        return finalise_world.stored_session
+
+    monkeypatch.setattr(notes.session_store, "get", get)
+
+    await notes.finalise_session_note(user, session, conversation)
+
+    assert looked_up == [], "teardown must not depend on the stored record"
 
 
 @pytest.mark.asyncio
@@ -482,14 +499,14 @@ async def test_another_learners_session_is_refused(finalise_world, user, convers
 
     Guarded anyway, because this writes into somebody's note library and the check costs one comparison.
     """
-    finalise_world.stored_session = VoiceSession(
+    theirs = VoiceSession(
         session_id="sess-1",
         user_id="someone-else",
         system_instruction="brief",
         topic_id="topic-1",
         note_taking=True,
     )
-    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+    assert await notes.finalise_session_note(user, theirs, conversation) is None
     assert finalise_world.created == []
 
 
@@ -504,7 +521,7 @@ async def test_a_conversation_too_short_to_write_about_ends_quietly(
     thin = SessionTranscript()
     thin.add("user", "hello")
 
-    assert await notes.finalise_session_note(user, "sess-1", thin) is None
+    assert await notes.finalise_session_note(user, session, thin) is None
 
 
 @pytest.mark.asyncio
@@ -525,7 +542,7 @@ async def test_teardown_never_raises_whatever_happens(
 
     monkeypatch.setattr(notes, "generate_content", explode)
 
-    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+    assert await notes.finalise_session_note(user, session, conversation) is None
 
 
 @pytest.mark.asyncio
@@ -537,4 +554,4 @@ async def test_running_out_of_credits_at_teardown_is_not_an_error(
     finalise_world.stored_session = session
     finalise_world.available = (False, "Out of credits")
 
-    assert await notes.finalise_session_note(user, "sess-1", conversation) is None
+    assert await notes.finalise_session_note(user, session, conversation) is None

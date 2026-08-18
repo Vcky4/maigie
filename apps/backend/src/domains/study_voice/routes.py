@@ -263,6 +263,23 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
     client_queue: asyncio.Queue[str | bytes | None] = asyncio.Queue()
     bridge_task: asyncio.Task[None] | None = None
     active_session_id: str | None = None
+    #: This socket's copy of the session record.
+    #:
+    #: **Held rather than re-read at teardown, and that is a bug fix rather than an optimisation.** The note
+    #: written at the end of a session used to look the record up again, and the record is frequently gone by
+    #: then: the web client's exit path closes the socket and *immediately* fires
+    #: `POST /conversation/{id}/stop`, which deletes it. The note task read `None` and returned silently, so a
+    #: learner who switched note-taking on got nothing and no error — twice, as reported.
+    #:
+    #: Within one socket's life this copy is authoritative. The stored record still is across reconnects,
+    #: which is what it is for: a fresh socket reads it in `start`.
+    active_session: session_store.VoiceSession | None = None
+    #: Strong references to detached teardown tasks.
+    #:
+    #: `asyncio.create_task` returns a task nobody was keeping, and a task with no reference can be garbage
+    #: collected mid-execution. Settlement mostly survived it by being quick; writing a note is a model call
+    #: taking seconds, which is long enough to lose. The set is the documented remedy.
+    pending: set[asyncio.Task[Any]] = set()
     # The conversation, in memory, for as long as this socket is open. Owned here rather than by the bridge
     # because this loop is what serves `save_note`, and because it must be discarded when the socket closes
     # even if the bridge ended some other way.
@@ -303,11 +320,19 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
         bridge_task = None
         session_id = active_session_id
         if session_id:
-            asyncio.create_task(settlement.settle(user.id, session_id, snapshot))
-            asyncio.create_task(finalise_note(session_id))
+            _spawn(settlement.settle(user.id, session_id, snapshot))
+            # The session object is passed, not its id. See `active_session`: looking it up here raced the
+            # client's own `POST /conversation/{id}/stop`, which deletes the record, and the note lost.
+            _spawn(finalise_note(active_session))
+
+    def _spawn(coro: Any) -> None:
+        """Run a teardown coroutine detached, keeping a reference so it cannot be collected mid-flight."""
+        task = asyncio.create_task(coro)
+        pending.add(task)
+        task.add_done_callback(pending.discard)
 
     async def start(session_id: str) -> None:
-        nonlocal bridge_task, active_session_id
+        nonlocal bridge_task, active_session_id, active_session
 
         if bridge_task is not None and not bridge_task.done():
             await _error(
@@ -335,6 +360,9 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
             return
 
         active_session_id = session_id
+        # Captured for teardown. A reconnect lands here again and picks up the stored record, which is where
+        # a note-taking toggle from the dropped attempt survives.
+        active_session = session
         # A reconnect re-enters the same session id, and the buffer from the dropped attempt is still here.
         # Kept rather than cleared: the learner had one conversation and a note should cover all of it.
         bridge_task = asyncio.create_task(
@@ -351,8 +379,12 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
             )
         )
 
-    async def finalise_note(session_id: str) -> None:
+    async def finalise_note(session: session_store.VoiceSession | None) -> None:
         """Write the end-of-session note, and tell the learner if they are still on screen.
+
+        Takes the session this socket has been holding rather than an id to look up. The lookup was the bug:
+        the client's exit path deletes the record moments after closing the socket, so the note read `None`
+        and returned silently.
 
         `notes.finalise_session_note` handles every failure itself, because this runs beside the settlement
         and must not raise. The send is attempted anyway rather than skipped: the socket is usually gone by
@@ -360,11 +392,18 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
         overlay, and that is exactly the moment a note appearing is worth seeing. `send_to_client` already
         returns quietly on a closed socket.
         """
-        saved = await notes.finalise_session_note(user, session_id, transcript)
+        if session is None:
+            return
+        saved = await notes.finalise_session_note(user, session, transcript)
         if saved:
             await _send(
                 send_to_client,
-                {"type": "note_saved", "session_id": session_id, "final": True, **saved},
+                {
+                    "type": "note_saved",
+                    "session_id": session.session_id,
+                    "final": True,
+                    **saved,
+                },
             )
 
     async def set_note_taking(session_id: str, enabled: bool) -> None:
@@ -374,7 +413,12 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
         conversation is being kept and expect a note that was never going to be written — which is a worse
         outcome than the button appearing not to work.
         """
+        nonlocal active_session
         session = await session_store.set_note_taking(session_id, enabled)
+        # Kept in step with the stored record, or teardown would work from the copy taken at `start` and
+        # decide the learner never asked for a note.
+        if session is not None:
+            active_session = session
         if session is None:
             await _send(
                 send_to_client,
@@ -400,6 +444,9 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
         Failures come back as `note_error` rather than `error`, so the client can report them against the
         button that caused them instead of showing a panel that reads as though the session died.
         """
+        nonlocal active_session
+        # This one reads the record, and correctly: it runs while the socket is open, so the record is there,
+        # and re-reading picks up a `note_id` written by an earlier save on another socket after a reconnect.
         session = await session_store.get(session_id)
         if not session or session.user_id != user.id:
             await _send(
@@ -434,6 +481,13 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
                 },
             )
             return
+
+        # Refreshed so the teardown pass *revises* this note rather than writing a second one. The save
+        # recorded a `note_id` and a turn marker on the stored record, and the copy this socket is holding
+        # predates both.
+        refreshed = await session_store.get(session_id)
+        if refreshed is not None:
+            active_session = refreshed
 
         await _send(send_to_client, {"type": "note_saved", "session_id": session_id, **saved})
 
