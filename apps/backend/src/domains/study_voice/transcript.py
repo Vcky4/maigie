@@ -84,6 +84,20 @@ class SessionTranscript:
     def clear(self) -> None:
         self.turns.clear()
 
+    def snapshot(self) -> SessionTranscript:
+        """An independent copy, for a reader that outlives the socket.
+
+        The note written at the end of a session is a detached task doing a model call, and the socket
+        handler wipes this buffer in its own `finally` — so the two overlap. Without a copy the task checked
+        the length against a full buffer, awaited a credit check, and then rendered an emptied one, producing
+        a note whose entire content was the model observing that it had been given no transcript.
+
+        The `Turn` objects are rebuilt rather than shared, because `add` mutates the last turn's text in place
+        when the same speaker continues. Sharing them would leave a copy that a still-running relay could
+        still change underneath its reader.
+        """
+        return SessionTranscript(turns=[Turn(role=turn.role, text=turn.text) for turn in self.turns])
+
     def _trim(self) -> None:
         if len(self.turns) > MAX_TURNS:
             del self.turns[: len(self.turns) - MAX_TURNS]

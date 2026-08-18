@@ -555,3 +555,88 @@ async def test_running_out_of_credits_at_teardown_is_not_an_error(
     finalise_world.available = (False, "Out of credits")
 
     assert await notes.finalise_session_note(user, session, conversation) is None
+
+
+# ---------------------------------------------------------------------------
+# The transcript the note is written from
+# ---------------------------------------------------------------------------
+#
+# Second reported failure of the end-of-session note, and a more interesting one than the first. A note *was*
+# written — titled "No Session Transcript Provided", the model's account of being handed nothing.
+#
+# The socket handler wipes the transcript in its own `finally`, and the note is a detached task that reads it
+# across an `await`: it checks the length, awaits a credit check, and only then renders. So it measured a full
+# buffer, gave up control, and rendered an emptied one. Every existing test passed, because none of them ran
+# anything between those two reads.
+
+
+@pytest.mark.asyncio
+async def test_a_snapshot_is_independent_of_the_live_buffer(conversation):
+    """`snapshot` has to copy the turns, not alias them.
+
+    `add` mutates the last turn's text in place when the same speaker continues, so a shallow copy would leave
+    a snapshot a still-running relay could change underneath its reader.
+    """
+    snap = conversation.snapshot()
+    assert snap.turn_count == conversation.turn_count
+
+    conversation.clear()
+    assert conversation.turn_count == 0
+    assert snap.turn_count == 4, "clearing the original must not empty the snapshot"
+    assert "induction proves it" in snap.render()
+
+
+@pytest.mark.asyncio
+async def test_appending_to_the_original_does_not_reach_the_snapshot(conversation):
+    snap = conversation.snapshot()
+    conversation.add("assistant", "something said after the snapshot")
+
+    assert "after the snapshot" not in snap.render()
+
+
+@pytest.mark.asyncio
+async def test_the_note_survives_the_buffer_being_wiped_mid_write(
+    finalise_world, user, session, conversation, monkeypatch
+):
+    """The reported failure, reproduced by clearing the transcript during the credit check.
+
+    That is where the real interleaving happens: `save_session_note` checks the length, awaits
+    `check_credit_availability`, and renders afterwards. This makes the wipe land in that gap.
+    """
+    session.note_taking = True
+    finalise_world.stored_session = session
+
+    snapshot = conversation.snapshot()
+
+    async def check_and_wipe(_user, _cost, **_kwargs):
+        # Exactly what the socket handler's `finally` does, at exactly the moment it used to do it.
+        conversation.clear()
+        return finalise_world.available
+
+    monkeypatch.setattr(notes, "check_credit_availability", check_and_wipe)
+
+    saved = await notes.finalise_session_note(user, session, snapshot)
+
+    assert saved is not None
+    # The conversation reached the model, rather than the word "Transcript:" and nothing after it.
+    assert "induction proves it" in finalise_world.prompts[-1]
+
+
+@pytest.mark.asyncio
+async def test_writing_from_a_wiped_buffer_is_refused_rather_than_produced(
+    finalise_world, user, session
+):
+    """The other half: if a wiped transcript ever does reach this, it must not become a note.
+
+    Without the snapshot the model was asked to write from nothing and obliged, and the learner got a note
+    whose whole content was an observation that there was no conversation. An empty transcript is now short of
+    the floor and refused, which is the honest answer.
+    """
+    session.note_taking = True
+    finalise_world.stored_session = session
+
+    emptied = SessionTranscript()
+
+    assert await notes.finalise_session_note(user, session, emptied) is None
+    assert finalise_world.prompts == []
+    assert finalise_world.created == []

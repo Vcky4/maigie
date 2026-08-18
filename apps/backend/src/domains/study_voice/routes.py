@@ -323,7 +323,19 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
             _spawn(settlement.settle(user.id, session_id, snapshot))
             # The session object is passed, not its id. See `active_session`: looking it up here raced the
             # client's own `POST /conversation/{id}/stop`, which deletes the record, and the note lost.
-            _spawn(finalise_note(active_session))
+            #
+            # The transcript is **copied**, for the same class of reason and a different race. This hook runs
+            # while the socket handler is inside its own `finally`, which calls `transcript.clear()` a moment
+            # later — and the note task cannot read the whole thing in one go, because it awaits a credit
+            # check partway through. So it checked "is there enough conversation" against a full buffer, gave
+            # up control, and rendered an emptied one. The model received the word "Transcript:" and nothing
+            # after it, and produced a note titled *No Session Transcript Provided*, which is exactly what was
+            # reported.
+            #
+            # Copying is preferred to making the handler wait for the note: it costs a list of small objects,
+            # it needs no ordering agreement between two `finally` blocks, and it leaves the note task
+            # independent of state something else is entitled to wipe.
+            _spawn(finalise_note(active_session, transcript.snapshot()))
 
     def _spawn(coro: Any) -> None:
         """Run a teardown coroutine detached, keeping a reference so it cannot be collected mid-flight."""
@@ -379,7 +391,9 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
             )
         )
 
-    async def finalise_note(session: session_store.VoiceSession | None) -> None:
+    async def finalise_note(
+        session: session_store.VoiceSession | None, conversation: SessionTranscript
+    ) -> None:
         """Write the end-of-session note, and tell the learner if they are still on screen.
 
         Takes the session this socket has been holding rather than an id to look up. The lookup was the bug:
@@ -394,7 +408,8 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
         """
         if session is None:
             return
-        saved = await notes.finalise_session_note(user, session, transcript)
+        # `conversation`, not `transcript`: a snapshot taken at teardown, immune to the `clear()` below.
+        saved = await notes.finalise_session_note(user, session, conversation)
         if saved:
             await _send(
                 send_to_client,
@@ -570,6 +585,11 @@ async def voice_websocket(websocket: WebSocket, token: str = Query(...)) -> None
         # The conversation goes no further than this process. Explicit rather than left to the garbage
         # collector, because a pending task holding a reference is exactly how "we do not keep transcripts"
         # becomes untrue in practice.
+        #
+        # This used to race the end-of-session note, which reads the transcript across an await and so saw it
+        # emptied halfway through. The note now works from a snapshot taken at teardown, so clearing here is
+        # safe — and the privacy claim still holds: that snapshot lives only inside the task writing the note
+        # and is dropped when it finishes.
         transcript.clear()
         try:
             await websocket.close()
