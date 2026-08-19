@@ -4221,11 +4221,44 @@ class PersonalLearningRepository:
     # Reflections
     # -----------------------------------------------------------------------
 
-    async def create_reflection(
+    async def upsert_reflection(
         self, data: dict[str, Any], *, session: AsyncSession | None = None
     ) -> Reflection:
+        """Write one period's reflection, idempotent on ``(userId, type, periodStart)``.
+
+        Replaces `create_reflection`. Nothing stopped two rows existing for the same week,
+        and the library page counts rows — so the Sunday task plus one manual generate made
+        the count a count of generation attempts rather than of weeks reflected on.
+
+        Select-then-update rather than `ON CONFLICT`, matching `upsert_readiness_snapshot`.
+        The unique constraint is still what makes it correct under a race; this is what makes
+        the common path readable.
+
+        `openedAt` is deliberately not overwritten on re-generation: a learner who read this
+        week's reflection before it was regenerated has still read it.
+        """
+        mapped = self._map_reflection(data)
         async with self._use_session(session) as s:
-            reflection = Reflection(**self._map_reflection(data))
+            existing = (
+                await s.execute(
+                    select(Reflection).where(
+                        Reflection.user_id == mapped["user_id"],
+                        Reflection.type == mapped["type"],
+                        Reflection.period_start == mapped["period_start"],
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                for field, value in mapped.items():
+                    if field == "opened_at":
+                        continue
+                    setattr(existing, field, value)
+                await s.flush()
+                await s.refresh(existing)
+                return existing
+
+            reflection = Reflection(**mapped)
             s.add(reflection)
             await s.flush()
             await s.refresh(reflection)
@@ -4236,28 +4269,37 @@ class PersonalLearningRepository:
         user_id: str,
         *,
         type_filter: str | None = None,
+        period_from: datetime | None = None,
+        period_to: datetime | None = None,
+        sort: str = "newest",
         skip: int = 0,
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[Reflection], int]:
+        """A page of the learner's reflections, newest first by default.
+
+        `period_from` / `period_to` bound on `periodEnd`, which is the date the library
+        groups and labels by. Bounding on `periodStart` would put a month that began in June
+        outside a July filter, which is not what "July reflections" means to a reader.
+        """
         async with self._read_session(session) as s:
             conditions = [Reflection.user_id == user_id]
 
             if type_filter is not None:
                 conditions.append(Reflection.type == type_filter)
+            if period_from is not None:
+                conditions.append(Reflection.period_end >= period_from)
+            if period_to is not None:
+                conditions.append(Reflection.period_end <= period_to)
 
-            # Count
             count_stmt = select(func.count()).select_from(Reflection).where(*conditions)
             total = (await s.execute(count_stmt)).scalar() or 0
 
-            # Items
-            stmt = (
-                select(Reflection)
-                .where(*conditions)
-                .order_by(Reflection.period_end.desc())
-                .offset(skip)
-                .limit(take)
+            order = (
+                Reflection.period_end.asc() if sort == "oldest" else Reflection.period_end.desc()
             )
+
+            stmt = select(Reflection).where(*conditions).order_by(order).offset(skip).limit(take)
             result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
@@ -4273,6 +4315,78 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def update_reflection(
+        self,
+        reflection_id: str,
+        user_id: str,
+        data: dict[str, Any],
+        *,
+        session: AsyncSession | None = None,
+    ) -> Reflection | None:
+        """Apply a partial update, or return None if the row is not the caller's."""
+        async with self._use_session(session) as s:
+            reflection = (
+                await s.execute(
+                    select(Reflection).where(
+                        Reflection.id == reflection_id,
+                        Reflection.user_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if reflection is None:
+                return None
+
+            for field, value in self._map_reflection(data).items():
+                setattr(reflection, field, value)
+            await s.flush()
+            await s.refresh(reflection)
+            return reflection
+
+    async def delete_reflection(
+        self, reflection_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Delete the learner's reflection. False when it was not theirs or not there."""
+        async with self._use_session(session) as s:
+            result = await s.execute(
+                delete(Reflection).where(
+                    Reflection.id == reflection_id,
+                    Reflection.user_id == user_id,
+                )
+            )
+            return (result.rowcount or 0) > 0
+
+    async def mark_reflection_opened(
+        self,
+        reflection_id: str,
+        user_id: str,
+        *,
+        opened_at: datetime,
+        session: AsyncSession | None = None,
+    ) -> Reflection | None:
+        """Record the first time the learner opened this reflection.
+
+        First only — a later re-read leaves `openedAt` alone, because the field answers "did
+        they engage with this period", not "when did they last look". Overwriting it would
+        make the reflection streak a measure of recent browsing.
+        """
+        async with self._use_session(session) as s:
+            reflection = (
+                await s.execute(
+                    select(Reflection).where(
+                        Reflection.id == reflection_id,
+                        Reflection.user_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if reflection is None:
+                return None
+
+            if reflection.opened_at is None:
+                reflection.opened_at = opened_at
+                await s.flush()
+                await s.refresh(reflection)
+            return reflection
+
     # -----------------------------------------------------------------------
     # Field mapping helpers — Reflections
     # -----------------------------------------------------------------------
@@ -4284,11 +4398,12 @@ class PersonalLearningRepository:
             "type": "type",
             "periodStart": "period_start",
             "periodEnd": "period_end",
+            "title": "title",
             "summary": "summary",
-            "activitiesLayer": "activities_layer",
-            "progressLayer": "progress_layer",
-            "achievementsLayer": "achievements_layer",
+            "depth": "depth",
+            "metrics": "metrics",
             "recommendations": "recommendations",
+            "openedAt": "opened_at",
         }
         return map_fields(data, field_map, entity="_map_reflection")
 

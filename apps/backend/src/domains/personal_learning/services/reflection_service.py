@@ -1,160 +1,209 @@
 """
-Reflection service — AI-generated progress summaries.
+Reflection service — period summaries of a learner's progress.
 
-Uses the Three Layer Model (Activities -> Progress -> Achievements) to help
-learners see how far they've come and identify areas to improve.
+Presented with the Three Layer Model (Activities -> Progress -> Achievements), which is a
+grouping the client applies to `ReflectionMetrics`; it is not how the data is stored.
+
+**The model narrates. It never supplies a number.**
+
+That rule is the whole point of this module, and it was written the other way round. The
+previous prompt asked the model for `topics_studied`, `sessions_completed`, `notes_created`,
+`total_minutes`, `concepts_mastered`, `retention_score`, `streak_days` and `milestones`,
+while the only context it received was the behaviour profile — purpose, consistency score,
+average session minutes, maturity days. No session, note, topic, flashcard, quiz or
+achievement row was ever read. The model was inventing counts for data it had never seen,
+and `create_reflection` persisted them next to a real `periodStart` as though they had been
+measured. On failure it wrote hardcoded zeros, so a broken generation and a genuinely
+inactive week produced identical rows.
+
+This stage removes the fabrication without yet replacing it: `metrics` is written all-null,
+which is honest about knowing nothing, and the aggregate queries that fill it arrive next.
+An all-null metrics object is a worse *product* than invented numbers and a much better
+*record*, and only one of those is recoverable.
 """
 
-import json
 import logging
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from src.shared.exceptions import NotFoundError
 
+from .. import models
 from ..repository import personal_learning_repo as repo
 
 logger = logging.getLogger(__name__)
 
+#: How far back each reflection type looks.
+_PERIOD_DAYS: dict[models.ReflectionType, int] = {
+    models.ReflectionType.WEEKLY: 7,
+    models.ReflectionType.MONTHLY: 30,
+}
 
-async def generate_reflection(*, user_id: str, type: str) -> Any:
+
+def _fallback_title(type_: models.ReflectionType) -> str:
+    return (
+        "Your week in review" if type_ is models.ReflectionType.WEEKLY else "Your month in review"
+    )
+
+
+def _fallback_summary(type_: models.ReflectionType) -> str:
+    return (
+        f"Your {type_.value} reflection is ready. "
+        "The narrative could not be generated this time, so this is the short version."
+    )
+
+
+def _build_prompt(
+    *, type_: models.ReflectionType, period_start: datetime, period_end: datetime, deep: bool
+) -> str:
+    """A narration brief. Note what it does not ask for: any count, score or total.
+
+    It cannot ask for one honestly, because this stage has no measurements to hand it. Once
+    `reflection_metrics` lands, the numbers go *into* this prompt as facts and the model's job
+    stays exactly what it is here — wording.
     """
-    Generate an AI reflection (weekly or monthly).
+    depth = (
+        "Write with some depth: name a pattern in how the learner is working, and what it "
+        "suggests about where attention would pay off next.\n"
+        if deep
+        else "Keep it brief and plain.\n"
+    )
+    return (
+        f"Write an encouraging {type_.value} learning reflection for the period "
+        f"{period_start.strftime('%Y-%m-%d')} to {period_end.strftime('%Y-%m-%d')}.\n\n"
+        f"{depth}\n"
+        "You have no statistics about this learner, so do not state or imply any. Do not "
+        "mention counts, minutes, percentages, streaks or scores, and do not invent examples "
+        "of what they studied. Write about the value of returning to the work and of "
+        "reviewing it deliberately.\n\n"
+        "Return a JSON object with exactly two keys:\n"
+        '- "title": a short heading, at most eight words\n'
+        '- "summary": two short paragraphs\n\n'
+        "Return ONLY the JSON object."
+    )
 
-    Req 12.1: Weekly — topics studied, time invested, retention improvements, accomplishments.
-    Req 12.2: Monthly — compare to previous months, growth trends, patterns.
-    Req 12.3: Frame using Three Layer Model (Activities, Progress, Achievements).
-    Req 12.4: Include prescriptive recommendations; deliver without if LLM fails.
 
-    FREE: Activity summary (standard depth).
-    PLUS: Deep analysis with cross-topic patterns and specific actionable recommendations.
+async def generate_reflection(*, user_id: str, type: str | models.ReflectionType) -> Any:
+    """Generate and persist a reflection for the current period.
+
+    Idempotent on ``(userId, type, periodStart)``: regenerating a period updates the row
+    rather than adding a second one for the same week.
+
+    FREE: a standard-depth narrative. PLUS: a deeper one. Neither tier gets metrics from the
+    model, because no tier should be sold invented numbers.
     """
-    from src.domains.intelligence.reasoning.llm import generate_content
+    from src.domains.personal_learning.services.llm_resilient import generate_content_json
 
     from . import feature_tier_service, trial_service
 
+    type_ = models.ReflectionType(type.lower() if isinstance(type, str) else type.value)
+
     now = datetime.now(UTC)
-
-    # Determine period
-    if type == "weekly":
-        period_start = now - timedelta(days=7)
-    elif type == "monthly":
-        period_start = now - timedelta(days=30)
-    else:
-        period_start = now - timedelta(days=7)
-
+    period_start = now - timedelta(days=_PERIOD_DAYS[type_])
     period_end = now
 
-    # Determine quality tier for reflection depth
     quality_tier = await feature_tier_service.get_quality_tier(user_id)
-
-    # Gather data for the reflection (from profile and recent activity)
-    profile = await repo.get_profile_by_user(user_id)
-
-    # Build context for LLM
-    context = (
-        f"Period: {period_start.strftime('%Y-%m-%d')} to {period_end.strftime('%Y-%m-%d')}\n"
-        f"Type: {type}\n"
-        f"Learner profile: purpose={getattr(profile, 'purpose', 'unknown')}, "
-        f"consistency_score={getattr(profile, 'consistency_score', 'N/A')}, "
-        f"avg_session_minutes={getattr(profile, 'avg_session_minutes', 'N/A')}, "
-        f"streak days (maturity)={getattr(profile, 'maturity_days', 0)}"
-    )
-
-    # PLUS gets deeper analysis with cross-topic patterns
-    if quality_tier == "plus":
-        depth_instruction = (
-            "Provide DEEP ANALYSIS including:\n"
-            "- Cross-topic patterns: how different subjects connect and reinforce each other\n"
-            "- Specific actionable recommendations based on observed patterns\n"
-            "- Predictive insights: what the learner should focus on next based on trends\n"
-            "- Metacognitive observations: how their learning approach is evolving\n"
-        )
+    deep = quality_tier == "plus"
+    if deep:
         await trial_service.record_plus_feature_used(user_id, "reflection")
-    else:
-        depth_instruction = (
-            "Provide a clear activity summary of what was accomplished this period.\n"
-        )
 
-    prompt = (
-        f"Generate a learning reflection for this period:\n{context}\n\n"
-        f"{depth_instruction}\n"
-        f"Structure the reflection using three layers:\n"
-        f"1. ACTIVITIES: What the learner did (topics studied, sessions completed, notes created)\n"
-        f"2. PROGRESS: What changed because of those activities (concepts mastered, consistency improved, knowledge retained)\n"
-        f"3. ACHIEVEMENTS: What milestones were reached (streaks, completions, goals met)\n\n"
-        f"Return a JSON object with:\n"
-        f"- 'summary': 2-3 paragraph narrative reflection (encouraging, specific)\n"
-        f'- \'activitiesLayer\': {{"topics_studied": int, "sessions_completed": int, "notes_created": int, "total_minutes": float}}\n'
-        f'- \'progressLayer\': {{"concepts_mastered": int, "consistency_change": str, "retention_score": str}}\n'
-        f'- \'achievementsLayer\': {{"milestones": [str], "streak_days": int}}\n'
-        f"- 'recommendations': [str] (2-4 prescriptive next steps)\n\n"
-        f"Return ONLY the JSON object."
-    )
-
-    # Default layers if LLM fails (Req 12.3: all three layers always present)
-    activities_layer = {
-        "topics_studied": 0,
-        "sessions_completed": 0,
-        "notes_created": 0,
-        "total_minutes": 0.0,
-    }
-    progress_layer = {
-        "concepts_mastered": 0,
-        "consistency_change": "stable",
-        "retention_score": "N/A",
-    }
-    achievements_layer = {
-        "milestones": [],
-        "streak_days": getattr(profile, "maturity_days", 0) or 0,
-    }
-    summary = f"Your {type} learning reflection is ready. Keep going!"
-    recommendations = None
+    title = _fallback_title(type_)
+    summary = _fallback_summary(type_)
 
     try:
-        response = await generate_content(prompt, max_tokens=2000)
-        data = json.loads(response)
-        summary = data.get("summary", summary)
-        activities_layer = data.get("activitiesLayer", activities_layer)
-        progress_layer = data.get("progressLayer", progress_layer)
-        achievements_layer = data.get("achievementsLayer", achievements_layer)
-        recommendations = data.get("recommendations")
+        # `fallback={}` rather than `None`: passing None to this helper means "raise", and two
+        # routes have already taken a 500 from that reading of it.
+        data = await generate_content_json(
+            _build_prompt(type_=type_, period_start=period_start, period_end=period_end, deep=deep),
+            max_tokens=800,
+            fallback={},
+            user_id=user_id,
+        )
+        if isinstance(data, dict):
+            title = (data.get("title") or title).strip()[:200]
+            summary = (data.get("summary") or summary).strip()
     except Exception as e:
-        # Req 12.4: Deliver reflection even if recommendation generation fails
-        logger.warning(f"LLM reflection generation failed for user {user_id}: {e}")
+        # A reflection is still delivered without its narrative. What is *not* done here is
+        # substituting zeros for the metrics, which is what made the old failure path
+        # indistinguishable from an inactive week.
+        logger.warning("Reflection narrative generation failed for user %s: %s", user_id, e)
 
-    # Store the reflection
-    reflection = await repo.create_reflection(
+    return await repo.upsert_reflection(
         {
             "userId": user_id,
-            "type": type,
+            "type": type_.value,
             "periodStart": period_start,
             "periodEnd": period_end,
+            "title": title,
             "summary": summary,
-            "activitiesLayer": activities_layer,
-            "progressLayer": progress_layer,
-            "achievementsLayer": achievements_layer,
-            "recommendations": recommendations,
+            "depth": (
+                models.ReflectionDepth.DEEP.value if deep else models.ReflectionDepth.STANDARD.value
+            ),
+            # All-null until the aggregate queries land. Written as an empty object rather
+            # than omitted so the column is never NULL and no reader has to coerce it.
+            "metrics": models.ReflectionMetrics().model_dump(by_alias=True),
+            # Empty rather than model-authored: an action carries a navigation target, and
+            # the service picks that from measurements it does not yet have.
+            "recommendations": [],
         }
     )
 
-    return reflection
-
 
 async def list_reflections(
-    *, user_id: str, type_filter: str | None = None, page: int = 1, page_size: int = 20
+    *,
+    user_id: str,
+    type_filter: str | None = None,
+    period_from: datetime | None = None,
+    period_to: datetime | None = None,
+    sort: str = "newest",
+    page: int = 1,
+    page_size: int = 20,
 ) -> tuple[list[Any], int]:
-    """
-    List past reflections.
-    Req 12.5: Sorted by date with summary previews.
-    """
+    """A page of past reflections, sorted by period."""
     skip = (page - 1) * page_size
-    return await repo.list_reflections(user_id, type_filter=type_filter, skip=skip, take=page_size)
+    return await repo.list_reflections(
+        user_id,
+        type_filter=type_filter,
+        period_from=period_from,
+        period_to=period_to,
+        sort=sort,
+        skip=skip,
+        take=page_size,
+    )
 
 
 async def get_reflection(*, user_id: str, reflection_id: str) -> Any:
     """Get a single reflection."""
     reflection = await repo.get_reflection(reflection_id, user_id)
-    if not reflection:
+    if reflection is None:
+        raise NotFoundError("Reflection", reflection_id)
+    return reflection
+
+
+async def update_reflection(*, user_id: str, reflection_id: str, data: dict[str, Any]) -> Any:
+    """Rename a reflection or correct its summary."""
+    reflection = await repo.update_reflection(reflection_id, user_id, data)
+    if reflection is None:
+        raise NotFoundError("Reflection", reflection_id)
+    return reflection
+
+
+async def delete_reflection(*, user_id: str, reflection_id: str) -> None:
+    """Delete the learner's reflection."""
+    if not await repo.delete_reflection(reflection_id, user_id):
+        raise NotFoundError("Reflection", reflection_id)
+
+
+async def mark_reflection_read(*, user_id: str, reflection_id: str) -> Any:
+    """Record that the learner opened this reflection.
+
+    An explicit call rather than a side effect of the GET. A read that mutates is not
+    idempotent, defeats caching, and would count a dashboard prefetch as engagement — which
+    matters because this timestamp is what the reflection streak counts.
+    """
+    reflection = await repo.mark_reflection_opened(
+        reflection_id, user_id, opened_at=datetime.now(UTC)
+    )
+    if reflection is None:
         raise NotFoundError("Reflection", reflection_id)
     return reflection

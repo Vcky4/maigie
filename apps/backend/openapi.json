@@ -9634,12 +9634,99 @@
         "title": "RecommendationResponse",
         "type": "object"
       },
+      "ReflectionAction": {
+        "description": "One prescriptive next step.\n\nThe model writes `title`, `detail` and `label`. The service chooses `target` from the\nmetrics it already computed — a model free to name an entity would eventually cite one\nthe learner does not own, which is an authorization bug dressed as a recommendation.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ReflectionActionTarget"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "detail",
+          "label"
+        ],
+        "title": "ReflectionAction",
+        "type": "object"
+      },
+      "ReflectionActionKind": {
+        "description": "What a recommended action does. The client turns this into a URL.\n\nA closed set rather than a path string: a backend that emits `/prepare/x/practice/weak`\nowns the web client's routing, and the same value would be wrong on any other client.\n\n`NONE` is legitimate — an action can be advice with nowhere to go, and the card renders\nwithout a button.",
+        "enum": [
+          "preparation_practice",
+          "study_plan",
+          "schedule",
+          "flashcard_review",
+          "course",
+          "note",
+          "goal",
+          "none"
+        ],
+        "title": "ReflectionActionKind",
+        "type": "string"
+      },
+      "ReflectionActionTarget": {
+        "description": "Where an action points, as data rather than as a path.\n\nExplicit optional fields rather than a `params: dict`, because an untyped bag is the\ndefect `ReflectionMetrics` exists to remove and putting one back on the way out would be\nan odd trade.",
+        "properties": {
+          "entityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entityid"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ReflectionActionKind",
+            "default": "none"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          }
+        },
+        "title": "ReflectionActionTarget",
+        "type": "object"
+      },
+      "ReflectionDepth": {
+        "enum": [
+          "standard",
+          "deep"
+        ],
+        "title": "ReflectionDepth",
+        "type": "string"
+      },
       "ReflectionGenerateRequest": {
         "properties": {
           "type": {
-            "description": "weekly or monthly",
-            "title": "Type",
-            "type": "string"
+            "$ref": "#/components/schemas/ReflectionType",
+            "description": "weekly or monthly"
           }
         },
         "required": [
@@ -9648,40 +9735,256 @@
         "title": "ReflectionGenerateRequest",
         "type": "object"
       },
+      "ReflectionMetrics": {
+        "description": "Everything a reflection measures. Every field is derived from persisted rows.\n\nReplaces `activitiesLayer` / `progressLayer` / `achievementsLayer`, which were untyped\ndicts filled by a language model that had not been shown the data it was counting.\n\n**Every field is nullable and `None` means \"not measured\", never \"zero\".** A learner who\nreviewed no cards and a learner whose card count was never computed are different\nsituations, and a reflection that reports zeros for the second is making a judgement\nabout the first. The list fields follow the same rule: `[]` is \"measured, nothing\nfound\", `None` is \"not looked at\".\n\nAll-null is therefore a valid and honest state, and is what Phase 1 writes until the\naggregate queries land.",
+        "properties": {
+          "accuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accuracypercent"
+          },
+          "activeDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activedays"
+          },
+          "averageSessionMinutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averagesessionminutes"
+          },
+          "bestDay": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bestday"
+          },
+          "consistencyScore": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consistencyscore"
+          },
+          "flashcardsReviewed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flashcardsreviewed"
+          },
+          "focusedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focusedminutes"
+          },
+          "goalsAdvanced": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalsadvanced"
+          },
+          "masteryGainedPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masterygainedpercent"
+          },
+          "milestonesReached": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Milestonesreached"
+          },
+          "newTopicsMastered": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newtopicsmastered"
+          },
+          "notesCreated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notescreated"
+          },
+          "quizzesCompleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quizzescompleted"
+          },
+          "recallPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recallpercent"
+          },
+          "sessionsCompleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessionscompleted"
+          },
+          "streakBest": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streakbest"
+          },
+          "streakCurrent": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streakcurrent"
+          },
+          "topicsMastered": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicsmastered"
+          },
+          "topicsStudied": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topicsstudied"
+          }
+        },
+        "title": "ReflectionMetrics",
+        "type": "object"
+      },
       "ReflectionResponse": {
         "properties": {
-          "achievementsLayer": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Achievementslayer"
-          },
-          "activitiesLayer": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Activitieslayer"
-          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
             "type": "string"
           },
+          "depth": {
+            "$ref": "#/components/schemas/ReflectionDepth"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/ReflectionMetrics"
+          },
+          "openedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openedat"
           },
           "periodEnd": {
             "format": "date-time",
@@ -9693,43 +9996,30 @@
             "title": "Periodstart",
             "type": "string"
           },
-          "progressLayer": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Progresslayer"
-          },
           "recommendations": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Recommendations"
+            "items": {
+              "$ref": "#/components/schemas/ReflectionAction"
+            },
+            "title": "Recommendations",
+            "type": "array"
           },
           "summary": {
             "title": "Summary",
             "type": "string"
           },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "type": {
-            "title": "Type",
-            "type": "string"
+            "$ref": "#/components/schemas/ReflectionType"
           },
           "userId": {
             "title": "Userid",
@@ -9743,9 +10033,48 @@
           "periodStart",
           "periodEnd",
           "summary",
+          "depth",
           "createdAt"
         ],
         "title": "ReflectionResponse",
+        "type": "object"
+      },
+      "ReflectionType": {
+        "description": "Lowercase, because that is what the API filters on and what clients publish.\n\nAn unconstrained `String` let the Sunday task write `\"WEEKLY\"` past a service that\nbranches on `\"weekly\"`, so every scheduled reflection took the default period and then\nfailed the equality filter on the list endpoint.",
+        "enum": [
+          "weekly",
+          "monthly"
+        ],
+        "title": "ReflectionType",
+        "type": "string"
+      },
+      "ReflectionUpdate": {
+        "description": "Rename a reflection, or correct its summary. Metrics are not editable by anyone.\n\nNothing writes `metrics` through the API: it is measured, so a route that let a client\nset it would reopen the exact hole this stage closes.",
+        "properties": {
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ReflectionUpdate",
         "type": "object"
       },
       "RefreshTokenRequest": {
@@ -23882,7 +24211,7 @@
     },
     "/api/v1/learning/reflections": {
       "get": {
-        "description": "List reflections using the canonical pagination envelope.",
+        "description": "List reflections using the canonical pagination envelope.\n\nThe range bounds `periodEnd`, which is what the library groups and labels by.",
         "operationId": "list_reflections_api_v1_learning_reflections_get",
         "parameters": [
           {
@@ -23892,13 +24221,65 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "$ref": "#/components/schemas/ReflectionType"
                 },
                 {
                   "type": "null"
                 }
               ],
               "title": "Type"
+            }
+          },
+          {
+            "description": "Lower bound on periodEnd",
+            "in": "query",
+            "name": "periodFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Lower bound on periodEnd",
+              "title": "Periodfrom"
+            }
+          },
+          {
+            "description": "Upper bound on periodEnd",
+            "in": "query",
+            "name": "periodTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Upper bound on periodEnd",
+              "title": "Periodto"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "newest",
+              "enum": [
+                "newest",
+                "oldest"
+              ],
+              "title": "Sort",
+              "type": "string"
             }
           },
           {
@@ -23961,7 +24342,7 @@
     },
     "/api/v1/learning/reflections/generate": {
       "post": {
-        "description": "Generate a reflection.",
+        "description": "Generate a reflection for the current period.\n\nIdempotent: regenerating the same period updates that reflection rather than adding a\nsecond one, so the library keeps counting periods rather than generation attempts.",
         "operationId": "generate_reflection_api_v1_learning_reflections_generate_post",
         "requestBody": {
           "content": {
@@ -24008,8 +24389,48 @@
       }
     },
     "/api/v1/learning/reflections/{reflection_id}": {
+      "delete": {
+        "description": "Delete a reflection.",
+        "operationId": "delete_reflection_api_v1_learning_reflections__reflection_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reflection_id",
+            "required": true,
+            "schema": {
+              "title": "Reflection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Reflection",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
       "get": {
-        "description": "Get a specific reflection.",
+        "description": "Get a specific reflection. Does not mark it as read — see the `read` route.",
         "operationId": "get_reflection_api_v1_learning_reflections__reflection_id__get",
         "parameters": [
           {
@@ -24050,6 +24471,112 @@
           }
         ],
         "summary": "Get Reflection",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Rename a reflection or correct its summary. Metrics are measured and not editable.",
+        "operationId": "update_reflection_api_v1_learning_reflections__reflection_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reflection_id",
+            "required": true,
+            "schema": {
+              "title": "Reflection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReflectionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Reflection",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/reflections/{reflection_id}/read": {
+      "post": {
+        "description": "Record that the learner opened this reflection.\n\nExplicit rather than a side effect of the GET: a mutating read is not idempotent, defeats\ncaching, and would let a prefetch count as engagement. Only the first call writes.",
+        "operationId": "mark_reflection_read_api_v1_learning_reflections__reflection_id__read_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reflection_id",
+            "required": true,
+            "schema": {
+              "title": "Reflection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark Reflection Read",
         "tags": [
           "personal-learning",
           "personal-learning"

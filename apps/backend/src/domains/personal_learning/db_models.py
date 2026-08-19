@@ -13,6 +13,7 @@ from typing import Optional
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -1438,6 +1440,33 @@ class StudyPlanMaterial(Base, TimestampMixin):
 
 
 class Reflection(Base, TimestampMixin):
+    """One period summary for a learner: measured metrics plus an optional narrative.
+
+    The three JSON columns this table used to carry — `activitiesLayer`, `progressLayer`,
+    `achievementsLayer` — are gone as of migration 038, and the reason is worth keeping
+    because it is easy to reintroduce.
+
+    They were untyped `dict`, and the service filled them from a language model that had
+    been asked for `topics_studied`, `sessions_completed`, `notes_created` and the rest
+    while being shown only the learner's behaviour profile. The model was producing counts
+    for data it had never seen, and the row recorded them as though they had been measured.
+    Two consequences followed from the lack of a type: the keys were snake_case inside a
+    camelCase payload, so the one client reading them got `undefined` for every field, and
+    four of the fields that client wanted were never written under any spelling.
+
+    `metrics` replaces all three with a shape `ReflectionMetrics` validates, and it is
+    populated by SQL rather than by generation. The Three Layer Model is still how the
+    reflection is *presented* — activities, then progress, then achievements — but that is
+    a grouping the client applies, not a storage decision. Persisting the grouping is what
+    forced every field to belong to exactly one layer for good.
+
+    `metrics` and `recommendations` are NOT NULL with `{}` / `[]` defaults rather than
+    nullable. A response type of `ReflectionMetrics` over a nullable column means every
+    reader coerces the null itself, and the coercion gets forgotten somewhere. Absence is
+    expressed *inside* the object, by a null field, which is also how "not measured" stays
+    distinct from "measured as zero".
+    """
+
     __tablename__ = "Reflection"
 
     id: Mapped[str] = mapped_column(
@@ -1446,6 +1475,10 @@ class Reflection(Base, TimestampMixin):
     user_id: Mapped[str] = mapped_column(
         "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
     )
+    # Constrained to `weekly` / `monthly` by a CHECK, and lowercase. It was an
+    # unconstrained String, and the Sunday task wrote `"WEEKLY"` while the service branched
+    # on `"weekly"` — so every scheduled row silently took the fallback period and was then
+    # invisible to `GET /reflections?type=weekly`, which filters on equality.
     type: Mapped[str] = mapped_column(String, nullable=False)
     period_start: Mapped[datetime] = mapped_column(
         "periodStart", DateTime(timezone=True), nullable=False
@@ -1453,17 +1486,40 @@ class Reflection(Base, TimestampMixin):
     period_end: Mapped[datetime] = mapped_column(
         "periodEnd", DateTime(timezone=True), nullable=False
     )
+    # Nullable because a reflection written before titles existed has none, and because a
+    # generation whose narrative step failed still has real metrics worth keeping.
+    title: Mapped[str | None] = mapped_column(String, nullable=True)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
-    activities_layer: Mapped[dict | None] = mapped_column("activitiesLayer", JSON, nullable=True)
-    progress_layer: Mapped[dict | None] = mapped_column("progressLayer", JSON, nullable=True)
-    achievements_layer: Mapped[dict | None] = mapped_column(
-        "achievementsLayer", JSON, nullable=True
+    # Which depth the learner actually received. The tier already decided this and already
+    # recorded the entitlement spend; nothing published it, so a client could not label a
+    # standard reflection honestly.
+    depth: Mapped[str] = mapped_column(
+        String, nullable=False, default="standard", server_default="standard"
     )
-    recommendations: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metrics: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    # A list, and typed as one. The old annotation said `dict` while the writer put a list
+    # in it — the same mismatch `QuizQuestion.options` carried.
+    recommendations: Mapped[list[dict]] = mapped_column(
+        JSON, nullable=False, default=list, server_default=text("'[]'")
+    )
+    # Set by an explicit `POST /reflections/{id}/read`, never as a side effect of a GET.
+    # A mutating read breaks caching, stops the endpoint being idempotent, and would mark a
+    # reflection as engaged-with when a dashboard prefetches it.
+    opened_at: Mapped[datetime | None] = mapped_column(
+        "openedAt", DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         Index("Reflection_userId_type_idx", "userId", "type"),
         Index("Reflection_periodEnd_idx", "periodEnd"),
+        # What makes generation idempotent. Without it the Sunday task plus one manual
+        # `POST /reflections/generate` produces two rows for the same week, and the library
+        # page counts rows — so it would report a count of generation attempts.
+        UniqueConstraint("userId", "type", "periodStart", name="Reflection_userId_type_period_key"),
+        CheckConstraint("type IN ('weekly', 'monthly')", name="Reflection_type_check"),
+        CheckConstraint("depth IN ('standard', 'deep')", name="Reflection_depth_check"),
     )
 
     def __repr__(self) -> str:

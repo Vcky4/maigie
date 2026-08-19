@@ -58,7 +58,11 @@ async def _generate_reflections_async():
         for profile in profiles:
             user_id = profile.user_id
             try:
-                await reflection_service.generate_reflection(user_id=user_id, type="WEEKLY")
+                # Lowercase, and now enforced by both a Pydantic enum and a CHECK
+                # constraint. This said `"WEEKLY"` while the service branched on
+                # `"weekly"`, so every scheduled reflection silently took the fallback
+                # period and was then invisible to `GET /reflections?type=weekly`.
+                await reflection_service.generate_reflection(user_id=user_id, type="weekly")
                 generated += 1
             except Exception:
                 logger.exception(f"Failed to generate reflection for user {user_id}")

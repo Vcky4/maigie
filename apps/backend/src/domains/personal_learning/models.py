@@ -6,6 +6,7 @@ These are the learner's private artifacts.
 """
 
 from datetime import date, datetime
+from enum import Enum
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -2089,22 +2090,142 @@ class StudyPlanTodayItem(CamelModel):
 # ===========================================================================
 
 
+class ReflectionType(str, Enum):
+    """Lowercase, because that is what the API filters on and what clients publish.
+
+    An unconstrained `String` let the Sunday task write `"WEEKLY"` past a service that
+    branches on `"weekly"`, so every scheduled reflection took the default period and then
+    failed the equality filter on the list endpoint.
+    """
+
+    WEEKLY = "weekly"
+    MONTHLY = "monthly"
+
+
+class ReflectionDepth(str, Enum):
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
+class ReflectionActionKind(str, Enum):
+    """What a recommended action does. The client turns this into a URL.
+
+    A closed set rather than a path string: a backend that emits `/prepare/x/practice/weak`
+    owns the web client's routing, and the same value would be wrong on any other client.
+
+    `NONE` is legitimate — an action can be advice with nowhere to go, and the card renders
+    without a button.
+    """
+
+    PREPARATION_PRACTICE = "preparation_practice"
+    STUDY_PLAN = "study_plan"
+    SCHEDULE = "schedule"
+    FLASHCARD_REVIEW = "flashcard_review"
+    COURSE = "course"
+    NOTE = "note"
+    GOAL = "goal"
+    NONE = "none"
+
+
+class ReflectionActionTarget(CamelModel):
+    """Where an action points, as data rather than as a path.
+
+    Explicit optional fields rather than a `params: dict`, because an untyped bag is the
+    defect `ReflectionMetrics` exists to remove and putting one back on the way out would be
+    an odd trade.
+    """
+
+    kind: ReflectionActionKind = ReflectionActionKind.NONE
+    entity_id: str | None = None
+    #: Practice mode, meaningful only for the practice kinds.
+    mode: str | None = None
+
+
+class ReflectionAction(CamelModel):
+    """One prescriptive next step.
+
+    The model writes `title`, `detail` and `label`. The service chooses `target` from the
+    metrics it already computed — a model free to name an entity would eventually cite one
+    the learner does not own, which is an authorization bug dressed as a recommendation.
+    """
+
+    id: str
+    title: str
+    detail: str
+    label: str
+    target: ReflectionActionTarget = Field(default_factory=ReflectionActionTarget)
+
+
+class ReflectionMetrics(CamelModel):
+    """Everything a reflection measures. Every field is derived from persisted rows.
+
+    Replaces `activitiesLayer` / `progressLayer` / `achievementsLayer`, which were untyped
+    dicts filled by a language model that had not been shown the data it was counting.
+
+    **Every field is nullable and `None` means "not measured", never "zero".** A learner who
+    reviewed no cards and a learner whose card count was never computed are different
+    situations, and a reflection that reports zeros for the second is making a judgement
+    about the first. The list fields follow the same rule: `[]` is "measured, nothing
+    found", `None` is "not looked at".
+
+    All-null is therefore a valid and honest state, and is what Phase 1 writes until the
+    aggregate queries land.
+    """
+
+    # --- Activities: what the learner did
+    focused_minutes: int | None = None
+    active_days: int | None = None
+    sessions_completed: int | None = None
+    topics_studied: int | None = None
+    notes_created: int | None = None
+    flashcards_reviewed: int | None = None
+    quizzes_completed: int | None = None
+
+    # --- Progress: what changed because of it
+    topics_mastered: int | None = None
+    new_topics_mastered: list[str] | None = None
+    mastery_gained_percent: float | None = None
+    recall_percent: float | None = None
+    accuracy_percent: float | None = None
+    consistency_score: float | None = None
+    average_session_minutes: float | None = None
+    best_day: str | None = None
+    goals_advanced: int | None = None
+
+    # --- Achievements: what was reached
+    streak_current: int | None = None
+    streak_best: int | None = None
+    milestones_reached: list[str] | None = None
+
+
 class ReflectionResponse(CamelModel):
     id: str
     user_id: str
-    type: str
+    type: ReflectionType
     period_start: datetime
     period_end: datetime
+    title: str | None = None
     summary: str
-    activities_layer: dict | None = None
-    progress_layer: dict | None = None
-    achievements_layer: dict | None = None
-    recommendations: list[str] | dict | None = None
+    depth: ReflectionDepth
+    metrics: ReflectionMetrics = Field(default_factory=ReflectionMetrics)
+    recommendations: list[ReflectionAction] = Field(default_factory=list)
+    opened_at: datetime | None = None
     created_at: datetime
 
 
 class ReflectionGenerateRequest(CamelModel):
-    type: str = Field(description="weekly or monthly")
+    type: ReflectionType = Field(description="weekly or monthly")
+
+
+class ReflectionUpdate(CamelModel):
+    """Rename a reflection, or correct its summary. Metrics are not editable by anyone.
+
+    Nothing writes `metrics` through the API: it is measured, so a route that let a client
+    set it would reopen the exact hole this stage closes.
+    """
+
+    title: str | None = None
+    summary: str | None = None
 
 
 # ===========================================================================

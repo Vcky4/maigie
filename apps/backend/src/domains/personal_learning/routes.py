@@ -8,6 +8,7 @@ Mounted at: /api/v1/learning
 """
 
 import logging
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
@@ -2019,13 +2020,25 @@ async def get_behaviour_profile(current_user: CurrentUser):
 )
 async def list_reflections(
     current_user: CurrentUser,
-    type: str | None = Query(None),
+    type: models.ReflectionType | None = Query(None),
+    periodFrom: datetime | None = Query(None, description="Lower bound on periodEnd"),
+    periodTo: datetime | None = Query(None, description="Upper bound on periodEnd"),
+    sort: Literal["newest", "oldest"] = Query("newest"),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ):
-    """List reflections using the canonical pagination envelope."""
+    """List reflections using the canonical pagination envelope.
+
+    The range bounds `periodEnd`, which is what the library groups and labels by.
+    """
     items, total = await reflection_service.list_reflections(
-        user_id=current_user.id, type_filter=type, page=page, page_size=pageSize
+        user_id=current_user.id,
+        type_filter=type.value if type else None,
+        period_from=periodFrom,
+        period_to=periodTo,
+        sort=sort,
+        page=page,
+        page_size=pageSize,
     )
     pages = (total + pageSize - 1) // pageSize if total else 0
     return models.PaginatedResponse[models.ReflectionResponse](
@@ -2039,14 +2052,48 @@ async def list_reflections(
 
 @router.post("/reflections/generate", response_model=models.ReflectionResponse, status_code=201)
 async def generate_reflection(body: models.ReflectionGenerateRequest, current_user: CurrentUser):
-    """Generate a reflection."""
+    """Generate a reflection for the current period.
+
+    Idempotent: regenerating the same period updates that reflection rather than adding a
+    second one, so the library keeps counting periods rather than generation attempts.
+    """
     return await reflection_service.generate_reflection(user_id=current_user.id, type=body.type)
 
 
 @router.get("/reflections/{reflection_id}", response_model=models.ReflectionResponse)
 async def get_reflection(reflection_id: str, current_user: CurrentUser):
-    """Get a specific reflection."""
+    """Get a specific reflection. Does not mark it as read — see the `read` route."""
     return await reflection_service.get_reflection(
+        user_id=current_user.id, reflection_id=reflection_id
+    )
+
+
+@router.patch("/reflections/{reflection_id}", response_model=models.ReflectionResponse)
+async def update_reflection(
+    reflection_id: str, body: models.ReflectionUpdate, current_user: CurrentUser
+):
+    """Rename a reflection or correct its summary. Metrics are measured and not editable."""
+    return await reflection_service.update_reflection(
+        user_id=current_user.id,
+        reflection_id=reflection_id,
+        data=body.model_dump(by_alias=True, exclude_unset=True),
+    )
+
+
+@router.delete("/reflections/{reflection_id}", status_code=204)
+async def delete_reflection(reflection_id: str, current_user: CurrentUser):
+    """Delete a reflection."""
+    await reflection_service.delete_reflection(user_id=current_user.id, reflection_id=reflection_id)
+
+
+@router.post("/reflections/{reflection_id}/read", response_model=models.ReflectionResponse)
+async def mark_reflection_read(reflection_id: str, current_user: CurrentUser):
+    """Record that the learner opened this reflection.
+
+    Explicit rather than a side effect of the GET: a mutating read is not idempotent, defeats
+    caching, and would let a prefetch count as engagement. Only the first call writes.
+    """
+    return await reflection_service.mark_reflection_read(
         user_id=current_user.id, reflection_id=reflection_id
     )
 
