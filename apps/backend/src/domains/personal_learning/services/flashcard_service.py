@@ -48,6 +48,36 @@ INSIGHT_WINDOW_DAYS = 30
 #: Lapses before a card is worth calling out as one the learner keeps forgetting.
 LAPSING_CARD_THRESHOLD = 3
 
+#: What a server-created deck can be the deck *for*.
+#:
+#: Generation used to leave `deckId` null, which put cards in the one state the
+#: dashboard's deck list cannot render — it joins from `FlashcardDeck`, so a null
+#: `deckId` matches no row, while the header counts read from `Flashcard` and did
+#: include them. Every generating path now resolves one of these origins first.
+#:
+#: The scope per origin is a product decision, not a technical one:
+#:
+#: - `note` — one deck per note. A note is a single standalone artifact.
+#: - `topic` — one deck per topic, for generation the learner asked for from inside a
+#:   lesson. They are working on that lesson and expect the cards to be about it.
+#: - `course` — one deck per course, for generation the server starts on its own. A
+#:   course has many topics, and a background job filing per topic would turn one
+#:   course into forty decks the learner never asked for.
+#: - `prep` — one deck per preparation, used by onboarding, which has a preparation and
+#:   its subject to go on but no course.
+DeckOriginType = str
+DECK_ORIGIN_NOTE: DeckOriginType = "note"
+DECK_ORIGIN_TOPIC: DeckOriginType = "topic"
+DECK_ORIGIN_COURSE: DeckOriginType = "course"
+DECK_ORIGIN_PREP: DeckOriginType = "prep"
+
+#: Legacy only. Onboarding used to record the learner's subject *string* as a card's
+#: `sourceId`, so those cards point at no entity and cannot be grouped by one. The
+#: backfill files them under the subject text rather than guessing which preparation they
+#: belonged to — a title match against preparations would be a guess presented as a fact.
+#: Nothing writes this origin going forward; `auto_setup` now records the preparation id.
+DECK_ORIGIN_SUBJECT: DeckOriginType = "subject"
+
 
 class DeckNotFound(Exception):
     """A deck was referenced that the caller does not own, or that does not exist.
@@ -128,6 +158,24 @@ async def generate_from_note(
     if not note or not note.content:
         return []
 
+    # One deck per note, created on first generation and reused after.
+    #
+    # This used to fall through as `deckId = None`, and unfiled cards are invisible in
+    # the dashboard's deck list while still counting towards its header totals — the
+    # learner saw cards due with no deck holding them. Resolved after the note is known
+    # to exist, so a bad note id does not leave an empty deck behind, and before the
+    # model call, so cards are never created with nowhere to go.
+    #
+    # An explicit `deck_id` from the caller still wins: they asked for a specific deck.
+    if deck_id is None:
+        deck_id = await ensure_deck_for_origin(
+            user_id=user_id,
+            origin_type=DECK_ORIGIN_NOTE,
+            origin_id=note_id,
+            title=f"{note.title} — cards",
+            description="Cards generated from this note.",
+        )
+
     # Determine quality tier for generation
     quality_tier = await feature_tier_service.get_quality_tier(user_id)
 
@@ -179,12 +227,25 @@ async def generate_from_note(
 
 
 async def generate_from_topic(
-    *, user_id: str, topic_id: str, deck_id: str | None = None
+    *,
+    user_id: str,
+    topic_id: str,
+    deck_id: str | None = None,
+    deck_scope: str = DECK_ORIGIN_TOPIC,
 ) -> list[Any]:
     """
     Generate flashcards from a topic using AI.
 
     Req 5.3: Generate flashcards based on topic content and materials.
+
+    ``deck_scope`` decides which deck the cards are filed into when the caller names
+    none, and the two values answer to different situations:
+
+    - ``"topic"`` (default) — the learner pressed Generate inside a lesson. They are
+      working on that lesson and expect a deck about it.
+    - ``"course"`` — the server started this itself. A course has many topics, and
+      filing per topic would turn one course into a deck per lesson that the learner
+      never asked for, so everything lands in one course deck.
     """
     from sqlalchemy import select as sa_select
 
@@ -203,6 +264,25 @@ async def generate_from_topic(
 
     if not topic:
         return []
+
+    # Resolved after the topic is known to exist and before the model call, for the same
+    # reasons as the note path: no empty deck for a bad id, and no cards with nowhere to
+    # go. An explicit `deck_id` from the caller wins over both scopes.
+    if deck_id is None:
+        if deck_scope == DECK_ORIGIN_COURSE:
+            deck_id = await _course_deck_for_topic(user_id=user_id, topic_id=topic_id)
+        if deck_id is None:
+            # Either topic scope was asked for, or the course could not be resolved.
+            # Falling back to topic scope rather than failing: cards in a
+            # narrower-than-intended deck are recoverable, unfiled cards are what this
+            # change exists to stop.
+            deck_id = await ensure_deck_for_origin(
+                user_id=user_id,
+                origin_type=DECK_ORIGIN_TOPIC,
+                origin_id=topic_id,
+                title=f"{topic.title} — cards",
+                description="Cards generated from this lesson.",
+            )
 
     prompt = (
         f"Create flashcards for studying this topic:\n"
@@ -614,6 +694,8 @@ def _deck_payload(row: dict[str, Any]) -> dict[str, Any]:
         "courseId": deck.course_id,
         "topicId": deck.topic_id,
         "prepId": deck.prep_id,
+        "originType": deck.origin_type,
+        "originId": deck.origin_id,
         "cardCount": card_count,
         "dueCount": row["due_count"],
         "masteredCount": mastered,
@@ -655,9 +737,111 @@ async def create_deck(*, user_id: str, data: dict[str, Any]) -> dict[str, Any]:
     return _empty_deck_payload(deck)
 
 
-async def list_decks(*, user_id: str) -> list[dict[str, Any]]:
-    """List the learner's decks with every per-deck figure their library card shows."""
-    rows = await repo.list_decks_with_stats(user_id)
+async def ensure_deck_for_origin(
+    *,
+    user_id: str,
+    origin_type: DeckOriginType,
+    origin_id: str,
+    title: str,
+    description: str | None = None,
+    subject: str | None = None,
+) -> str:
+    """The id of the deck for this origin, creating it on first use.
+
+    What makes generation idempotent. Pressing Generate twice on the same note adds to
+    one deck instead of starting a second pile, because the deck is found by origin id
+    rather than by title — a learner may rename either the deck or the note, and a title
+    match would then miss or collide. Same reasoning, and same shape, as
+    ``study_plan_service.ensure_review_deck``.
+
+    ``title`` is used **only when the deck is created**. It is never written on a
+    subsequent call, so renaming the deck sticks, and renaming the source note does not
+    silently rename a deck the learner may have already titled themselves.
+
+    The ``IntegrityError`` path is the concurrency case, not a formality: two
+    generations for the same note can both miss the lookup, and the partial unique index
+    on ``(userId, originType, originId)`` is what stops the second from creating a
+    duplicate. The loser re-reads and uses the winner's deck.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    existing = await repo.find_deck_by_origin(user_id, origin_type, origin_id)
+    if existing is not None:
+        return existing.id
+
+    try:
+        created = await create_deck(
+            user_id=user_id,
+            data={
+                "title": title,
+                "description": description,
+                "subject": subject,
+                "originType": origin_type,
+                "originId": origin_id,
+            },
+        )
+        return created["id"]
+    except IntegrityError:
+        # Another request created it between the lookup and the insert. Its deck is as
+        # good as the one this call wanted, and it is the one the index kept.
+        raced = await repo.find_deck_by_origin(user_id, origin_type, origin_id)
+        if raced is None:
+            # The violation was not the origin uniqueness, so it is not ours to absorb.
+            raise
+        return raced.id
+
+
+async def _course_deck_for_topic(*, user_id: str, topic_id: str) -> str | None:
+    """The course-level deck for the course a topic belongs to, or ``None``.
+
+    Used by generation the server starts on its own, where filing per topic would turn
+    one course into a deck per lesson. Returns ``None`` when the topic or its course
+    cannot be resolved, and the caller falls back to topic scope rather than failing —
+    unfiled cards are what this whole change exists to prevent, so a missing course must
+    not put us back there.
+    """
+    from sqlalchemy import select as sa_select
+
+    from src.domains.knowledge.db_models import Course, Module, Topic
+    from src.shared.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        stmt = (
+            sa_select(Course.id, Course.title)
+            .join(Module, Module.course_id == Course.id)
+            .join(Topic, Topic.module_id == Module.id)
+            .where(Topic.id == topic_id)
+        )
+        row = (await session.execute(stmt)).first()
+
+    if row is None:
+        return None
+    course_id, course_title = row[0], row[1]
+    return await ensure_deck_for_origin(
+        user_id=user_id,
+        origin_type=DECK_ORIGIN_COURSE,
+        origin_id=course_id,
+        title=f"{course_title} — cards",
+        description="Cards generated from this course as you work through it.",
+    )
+
+
+async def list_decks(
+    *,
+    user_id: str,
+    origin_type: str | None = None,
+    origin_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """List the learner's decks with every per-deck figure their library card shows.
+
+    ``origin_type``/``origin_id`` narrow to the deck the server created for one source,
+    so a note page can ask for "the deck for this note" and get it with the aggregates
+    already attached — one request rather than a lookup followed by a count.
+    """
+    rows = await repo.list_decks_with_stats(
+        user_id, origin_type=origin_type, origin_id=origin_id
+    )
     return [_deck_payload(row) for row in rows]
 
 
@@ -703,19 +887,28 @@ async def list_flashcards(
     *,
     user_id: str,
     deck_id: str | None = None,
+    unfiled: bool = False,
     search: str | None = None,
     source_type: str | None = None,
+    source_id: str | None = None,
     state: str | None = None,
     sort: str = "recent",
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[list[Any], int]:
-    """A page of the learner's cards, with the total for the same filters."""
+    """A page of the learner's cards, with the total for the same filters.
+
+    ``unfiled`` asks for the cards in no deck — the ones the dashboard's deck list
+    cannot show. ``source_id`` narrows to one origin, which is how "the cards from this
+    note" stays answerable for cards created before decks were assigned by origin.
+    """
     return await repo.list_flashcards(
         user_id,
         deck_id=deck_id,
+        unfiled=unfiled,
         search=search,
         source_type=source_type,
+        source_id=source_id,
         state=state,
         sort=sort,
         skip=(page - 1) * page_size,
@@ -1006,6 +1199,7 @@ async def get_dashboard(
         repo.count_lapsing_flashcards(user_id, min_lapses=LAPSING_CARD_THRESHOLD),
         repo.list_graduation_events(user_id, since=insight_since),
         repo.list_card_creations(user_id, since=insight_since),
+        repo.count_unfiled_flashcards(user_id),
         return_exceptions=True,
     )
     source_names = (
@@ -1018,6 +1212,7 @@ async def get_dashboard(
         "lapsing",
         "graduations",
         "creations",
+        "unfiled",
     )
     if all(isinstance(result, BaseException) for result in results):
         for source, error in zip(source_names, results, strict=True):
@@ -1038,6 +1233,10 @@ async def get_dashboard(
         "lapsing": {"insight"},
         "graduations": {"activity"},
         "creations": {"activity"},
+        # Degrades `stats`, because the unfiled count is what reconciles the stat tiles
+        # with the deck list. Without it the tiles are still correct, but the page can no
+        # longer explain a gap between them.
+        "unfiled": {"stats"},
     }
     degraded: set[models.FlashcardsDashboardSection] = set()
     for source, result in zip(source_names, results, strict=True):
@@ -1056,6 +1255,7 @@ async def get_dashboard(
     lapsing_cards = 0 if isinstance(results[6], BaseException) else results[6]
     graduations: list[dict[str, Any]] = [] if isinstance(results[7], BaseException) else results[7]
     creations: list[dict[str, Any]] = [] if isinstance(results[8], BaseException) else results[8]
+    unfiled_cards = 0 if isinstance(results[9], BaseException) else results[9]
 
     due_today = max(0, int(stats.get("dueToday", 0)))
     total_cards = max(0, int(stats.get("total", 0)))
@@ -1076,6 +1276,7 @@ async def get_dashboard(
         new_cards=max(0, int(stats.get("newCount", 0))),
         average_ease=float(stats.get("averageEaseFactor", 2.5)),
         mastered_percent=mastery_percent(mastered_cards, total_cards) if total_cards else None,
+        unfiled_cards=max(0, unfiled_cards),
     )
 
     today = forecast_rows[0]["date"] if forecast_rows else None

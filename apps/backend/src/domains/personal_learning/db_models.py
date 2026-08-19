@@ -373,6 +373,32 @@ class FlashcardDeck(Base, TimestampMixin):
         "prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True
     )
 
+    # What this deck is the deck *for*, when the server created it rather than the
+    # learner. `("note", <noteId>)`, `("topic", <topicId>)`, `("course", <courseId>)`,
+    # `("prep", <prepId>)`. Null on a deck the learner made by hand.
+    #
+    # This is the lookup key that makes generation idempotent: "the deck for this note"
+    # has to be answerable before cards are written, or every press of Generate starts
+    # a new pile. Cards used to be created with `deckId = None`, which put them in a
+    # state the dashboard's deck list structurally cannot show — it joins *from*
+    # `FlashcardDeck`, so a null `deckId` matches no row — while the header counts read
+    # straight from `Flashcard` and did include them. The learner saw cards due and no
+    # deck holding them.
+    #
+    # A generic (type, id) pair rather than another nullable FK per kind, because the
+    # set of things cards get generated from is still growing; `courseId`/`topicId`/
+    # `prepId` above predate this and were never read by anything, and migration 037
+    # backfills this pair from them.
+    #
+    # Also the provenance flag: `originType IS NOT NULL` is what distinguishes a deck
+    # the server invented from one the learner authored, so no separate `isAuto` column
+    # is needed. Uniqueness is enforced by a partial unique index on
+    # `(userId, originType, originId)` — see migration 037 — which is what makes the
+    # get-or-create in `ensure_deck_for_origin` safe against two concurrent generations
+    # racing for the same slot.
+    origin_type: Mapped[str | None] = mapped_column("originType", String, nullable=True)
+    origin_id: Mapped[str | None] = mapped_column("originId", String, nullable=True)
+
     # Relationships
     #
     # No `delete-orphan`. It used to be declared here, which contradicted the

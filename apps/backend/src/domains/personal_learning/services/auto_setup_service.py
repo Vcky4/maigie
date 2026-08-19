@@ -54,7 +54,13 @@ async def auto_setup_for_learner(*, user_id: str) -> dict[str, Any]:
             created["topics"] = [t.id for t in topics]
 
             # Step 3: Generate initial flashcards from topics
-            flashcards = await _generate_initial_flashcards(user_id, subjects)
+            #
+            # `prep` is passed so the cards land in a deck. They used to be created
+            # unfiled, which is the one state the flashcards dashboard cannot show — its
+            # deck list joins from `FlashcardDeck`, so a null `deckId` matches no row —
+            # so onboarding generated a learner's first cards straight into a place they
+            # could not see them.
+            flashcards = await _generate_initial_flashcards(user_id, subjects, prep)
             created["flashcards"] = [f.id for f in flashcards]
 
             # Step 4: Generate study plan if there's a deadline context
@@ -121,8 +127,19 @@ async def _extract_topics(user_id: str, prep_id: str, subjects: list[str], goals
         return []
 
 
-async def _generate_initial_flashcards(user_id: str, subjects: list[str]) -> list[Any]:
-    """Generate starter flashcards for the learner's subjects."""
+async def _generate_initial_flashcards(
+    user_id: str, subjects: list[str], prep: Any = None
+) -> list[Any]:
+    """Generate starter flashcards for the learner's subjects.
+
+    Filed into a deck for ``prep`` when one was created. Onboarding has a preparation
+    and its subject to go on but no course, so the preparation is the honest scope —
+    and ``FlashcardDeck.prepId`` already existed for exactly this relationship.
+
+    ``prep`` is optional so the function still works if the preparation step failed;
+    in that case the cards are created unfiled, which is worse than a deck but better
+    than dropping the learner's first cards entirely. The backfill script picks those up.
+    """
     import json
 
     from src.domains.intelligence.reasoning.llm import generate_content
@@ -149,6 +166,24 @@ async def _generate_initial_flashcards(user_id: str, subjects: list[str]) -> lis
         logger.warning(f"Failed to generate initial flashcards: {e}")
         return []
 
+    # Resolved once, after generation succeeded, so a failed model call does not leave an
+    # empty deck behind for a learner who has no cards.
+    deck_id: str | None = None
+    if prep is not None:
+        try:
+            deck_id = await flashcard_service.ensure_deck_for_origin(
+                user_id=user_id,
+                origin_type=flashcard_service.DECK_ORIGIN_PREP,
+                origin_id=prep.id,
+                title=f"{prep.subject} — starter cards",
+                description="The first cards Maigie made for you when you started.",
+                subject=prep.subject,
+            )
+        except Exception as e:
+            # Not fatal. Unfiled cards are recoverable by the backfill; losing the
+            # learner's first cards is not.
+            logger.warning(f"Could not resolve starter deck, cards will be unfiled: {e}")
+
     created_cards = []
     for card in cards_data:
         if isinstance(card, dict) and "front" in card and "back" in card:
@@ -158,8 +193,11 @@ async def _generate_initial_flashcards(user_id: str, subjects: list[str]) -> lis
                     data={
                         "front": card["front"],
                         "back": card["back"],
+                        "deckId": deck_id,
                         "sourceType": "auto_setup",
-                        "sourceId": subject,
+                        # The prep id when there is one, so the cards point at an entity
+                        # rather than at a subject string that nothing can resolve.
+                        "sourceId": prep.id if prep is not None else subject,
                     },
                 )
                 created_cards.append(flashcard)

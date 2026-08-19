@@ -986,21 +986,35 @@ async def list_flashcards(
     deckId: str | None = Query(None),
     search: str | None = Query(None),
     sourceType: str | None = Query(None),
+    sourceId: str | None = Query(None),
     state: Literal["due", "new", "learning", "mastered"] | None = Query(None),
     sort: Literal["recent", "due"] = Query("recent"),
 ):
     """List the learner's cards. Cards were previously reachable only through the due
     queue or a deck, so a card that was neither due nor filed was unreachable.
 
+    `deckId=none` asks for the cards in no deck. A sentinel is needed because an omitted
+    `deckId` already means "every deck", so there was no way to express the question —
+    and unfiled cards are exactly the ones the dashboard's deck list cannot show, which
+    made them the hardest cards in the library to find. `none` is safe as a sentinel
+    because deck ids are 25-character uuid hex.
+
+    `sourceId` pairs with `sourceType` to ask for the cards from one source, which is how
+    "the cards from this note" is answerable for cards created before generation filed
+    them by origin.
+
     `sort` belongs to the server because ordering and paging are inseparable — a page
     boundary means nothing without a defined order, and a client re-sorting the page it
     received gets a list ordered within pages and unordered across them.
     """
+    unfiled = deckId == "none"
     items, total = await flashcard_service.list_flashcards(
         user_id=current_user.id,
-        deck_id=deckId,
+        deck_id=None if unfiled else deckId,
+        unfiled=unfiled,
         search=search,
         source_type=sourceType,
+        source_id=sourceId,
         state=state,
         sort=sort,
         page=page,
@@ -1098,9 +1112,22 @@ async def generate_from_topic(
 
 
 @router.get("/decks", response_model=list[models.DeckResponse])
-async def list_decks(current_user: CurrentUser):
-    """List all flashcard decks with their card, due, mastery and recall figures."""
-    return await flashcard_service.list_decks(user_id=current_user.id)
+async def list_decks(
+    current_user: CurrentUser,
+    originType: str | None = Query(None),
+    originId: str | None = Query(None),
+):
+    """List all flashcard decks with their card, due, mastery and recall figures.
+
+    `originType` and `originId` narrow to the deck the server created for one source —
+    `originType=note&originId=…` is how a note page asks for its own deck. The aggregates
+    come back with it, so the caller does not have to count the deck's cards separately.
+    Returns a list, empty when nothing has been generated from that source yet; at most
+    one deck can match, since a partial unique index covers the pair.
+    """
+    return await flashcard_service.list_decks(
+        user_id=current_user.id, origin_type=originType, origin_id=originId
+    )
 
 
 @router.post("/decks", response_model=models.DeckResponse, status_code=201)

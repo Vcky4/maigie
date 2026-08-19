@@ -1324,8 +1324,10 @@ class PersonalLearningRepository:
         user_id: str,
         *,
         deck_id: str | None = None,
+        unfiled: bool = False,
         search: str | None = None,
         source_type: str | None = None,
+        source_id: str | None = None,
         state: str | None = None,
         sort: str = "recent",
         skip: int = 0,
@@ -1350,14 +1352,27 @@ class PersonalLearningRepository:
         Both are tie-broken by id. Without it, rows sharing a timestamp can be returned
         in a different relative order on each query, which silently duplicates or drops
         cards across page boundaries.
+
+        ``unfiled`` asks for the cards in no deck. It is a separate flag rather than a
+        ``deck_id`` value because ``deck_id=None`` already means "do not filter by
+        deck", so there was previously no way to express the question at all — and
+        unfiled cards are precisely the ones missing from the deck list, so they were
+        unreachable from any listing surface.
+
+        ``source_id`` narrows to one origin, which is what makes "the cards from this
+        note" answerable for cards created before decks were assigned by origin.
         """
         async with self._read_session(session) as s:
             now = datetime.now(UTC)
             conditions: list[Any] = [Flashcard.user_id == user_id]
-            if deck_id is not None:
+            if unfiled:
+                conditions.append(Flashcard.deck_id.is_(None))
+            elif deck_id is not None:
                 conditions.append(Flashcard.deck_id == deck_id)
             if source_type:
                 conditions.append(Flashcard.source_type == source_type)
+            if source_id:
+                conditions.append(Flashcard.source_id == source_id)
             if search:
                 pattern = f"%{search}%"
                 conditions.append(
@@ -1436,6 +1451,52 @@ class PersonalLearningRepository:
             )
             return (await s.execute(stmt)).scalar_one_or_none()
 
+    async def find_deck_by_origin(
+        self,
+        user_id: str,
+        origin_type: str,
+        origin_id: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> FlashcardDeck | None:
+        """The deck the server created for this origin, or ``None``.
+
+        Backs the get-or-create that keeps generation idempotent: without a lookup by
+        origin, "the deck for this note" is unanswerable and every press of Generate
+        starts another pile. Matched on the origin id rather than on a title, because a
+        learner may rename either the deck or the note and a title match would then
+        miss or collide — the same reasoning as ``StudyPlan.reviewDeckId``.
+
+        At most one row can match: a partial unique index covers
+        ``(userId, originType, originId)``.
+        """
+        async with self._read_session(session) as s:
+            stmt = select(FlashcardDeck).where(
+                FlashcardDeck.user_id == user_id,
+                FlashcardDeck.origin_type == origin_type,
+                FlashcardDeck.origin_id == origin_id,
+            )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def count_unfiled_flashcards(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> int:
+        """Cards the learner owns that sit in no deck.
+
+        The dashboard needs this to be self-consistent. Its header figures come from
+        ``get_flashcard_stats``, which is scoped to ``userId`` and therefore counts
+        unfiled cards, while its deck list is a ``LEFT JOIN`` from ``FlashcardDeck`` and
+        structurally cannot. Reporting the count is what lets the page explain the gap
+        instead of leaving the learner to notice it.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(func.count())
+                .select_from(Flashcard)
+                .where(Flashcard.user_id == user_id, Flashcard.deck_id.is_(None))
+            )
+            return (await s.execute(stmt)).scalar_one() or 0
+
     async def update_deck(
         self,
         deck_id: str,
@@ -1499,6 +1560,8 @@ class PersonalLearningRepository:
         user_id: str,
         *,
         deck_id: str | None = None,
+        origin_type: str | None = None,
+        origin_id: str | None = None,
         session: AsyncSession | None = None,
     ) -> list[dict[str, Any]]:
         """Decks with every per-deck figure the library card shows, in one query.
@@ -1511,6 +1574,11 @@ class PersonalLearningRepository:
         Recall is the mean of each card's most recent grade over the 0-5 scale, and is
         ``None`` for a deck where nothing has been reviewed — an unreviewed deck has
         no recall, and reporting 0% would state that the learner is failing it.
+
+        ``origin_type``/``origin_id`` narrow to the deck the server created for one
+        source, so a note page can ask for "the deck for this note" and receive it with
+        the same aggregates the library card shows, rather than fetching the deck and
+        then counting its cards separately.
         """
         async with self._read_session(session) as s:
             now = datetime.now(UTC)
@@ -1541,6 +1609,10 @@ class PersonalLearningRepository:
             )
             if deck_id is not None:
                 stmt = stmt.where(FlashcardDeck.id == deck_id)
+            if origin_type is not None:
+                stmt = stmt.where(FlashcardDeck.origin_type == origin_type)
+            if origin_id is not None:
+                stmt = stmt.where(FlashcardDeck.origin_id == origin_id)
 
             rows = (await s.execute(stmt)).all()
             return [
@@ -1847,6 +1919,11 @@ class PersonalLearningRepository:
             "courseId": "course_id",
             "topicId": "topic_id",
             "prepId": "prep_id",
+            # This mapper is an allowlist — a key missing from it is accepted by the
+            # request model and silently dropped here, which is how a field reaches the
+            # contract and never reaches the database.
+            "originType": "origin_type",
+            "originId": "origin_id",
         }
         return map_fields(data, field_map, entity="_map_deck")
 

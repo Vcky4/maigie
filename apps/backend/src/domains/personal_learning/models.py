@@ -571,6 +571,14 @@ class DeckResponse(CamelModel):
     course_id: str | None = None
     topic_id: str | None = None
     prep_id: str | None = None
+    # What the server created this deck for, or null when the learner made it by hand.
+    # Deliberately absent from `DeckCreate`: origin is provenance the server assigns,
+    # and letting a client claim one would let it take another deck's origin slot.
+    #
+    # Doubles as the "created automatically" signal the clients label decks with, which
+    # is why there is no separate `isAuto` field.
+    origin_type: str | None = None
+    origin_id: str | None = None
     # Aggregated in a single grouped query by the deck listing.
     card_count: int
     due_count: int
@@ -644,6 +652,15 @@ class FlashcardLibraryStats(CamelModel):
     new_cards: int
     average_ease: float
     mastered_percent: int | None = None
+    # Cards in no deck, and the field that makes this payload self-consistent.
+    #
+    # Every figure above is scoped to the learner and therefore counts unfiled cards,
+    # while `decks` is a LEFT JOIN from `FlashcardDeck` and structurally cannot. Before
+    # this field the difference was unexplainable from the response: the page showed
+    # cards due with no deck holding them and nothing to say why. Generation now files
+    # cards by origin, so this should trend to zero, but it cannot be assumed zero —
+    # deleting a deck deliberately detaches its cards into exactly this state.
+    unfiled_cards: int = 0
 
 
 class FlashcardForecastDay(CamelModel):

@@ -1093,15 +1093,22 @@ async def generate_topic_content(
         raise HTTPException(status_code=400, detail="Topic path mismatch")
 
     if body.type == "flashcards":
-        if not body.deckId:
-            raise HTTPException(
-                status_code=422,
-                detail="deckId is required for flashcard generation, so the cards land in a deck.",
-            )
         from src.domains.personal_learning.services import flashcard_service
 
+        # `deckId` used to be mandatory here, rejected with a 422 reading "deckId is
+        # required for flashcard generation, so the cards land in a deck." The intent was
+        # right — cards must land somewhere — but it made the requirement the caller's
+        # problem, and the two other generation paths solved it by passing null and
+        # leaving the cards unfiled. The service now resolves a deck itself, so the
+        # guarantee holds without the client having to arrange it.
+        #
+        # Topic scope: this is a button inside a lesson, so the learner is working on
+        # that lesson and expects a deck about it.
         cards = await flashcard_service.generate_from_topic(
-            user_id=current_user.id, topic_id=topic_id, deck_id=body.deckId
+            user_id=current_user.id,
+            topic_id=topic_id,
+            deck_id=body.deckId,
+            deck_scope=flashcard_service.DECK_ORIGIN_TOPIC,
         )
         if not cards:
             raise HTTPException(status_code=502, detail="No flashcards could be generated")
