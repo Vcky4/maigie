@@ -153,24 +153,22 @@ def _build_prompt(
     )
 
 
-async def generate_reflection(*, user_id: str, type: str | models.ReflectionType) -> Any:
-    """Generate and persist a reflection for the current period.
+async def _compose_and_store(
+    *,
+    user_id: str,
+    type_: models.ReflectionType,
+    period_start: datetime,
+    period_end: datetime,
+) -> Any:
+    """Measure a period, narrate it, and store the result.
 
-    Idempotent on ``(userId, type, periodStart)``: regenerating a period updates the row
-    rather than adding a second one for the same week.
-
-    FREE: a standard-depth narrative. PLUS: a deeper one. Neither tier gets metrics from the
-    model, because no tier should be sold invented numbers.
+    Takes the period rather than deriving it, which is what lets an existing reflection be
+    regenerated against the window it already describes. Deriving it here would mean
+    regeneration silently retargeted the current week and left the old row untouched.
     """
     from src.domains.personal_learning.services.llm_resilient import generate_content_json
 
     from . import feature_tier_service, trial_service
-
-    type_ = models.ReflectionType(type.lower() if isinstance(type, str) else type.value)
-
-    now = datetime.now(UTC)
-    period_start = now - timedelta(days=_PERIOD_DAYS[type_])
-    period_end = now
 
     quality_tier = await feature_tier_service.get_quality_tier(user_id)
     deep = quality_tier == "plus"
@@ -198,7 +196,13 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
                 deep=deep,
                 metrics=metrics,
             ),
-            max_tokens=800,
+            # 2048, not the 800 this first used. `max_tokens` is a budget for the whole
+            # generation, and the configured models spend most of it on reasoning tokens before
+            # emitting anything — measured at ~0.8 characters of visible output per token of
+            # budget. At 800 the reply truncated mid-sentence on four of thirteen reflections,
+            # which `json.loads` then rejected, so the narrative silently fell back to the
+            # placeholder. The previous implementation used 2000 for the same reason.
+            max_tokens=2048,
             fallback={},
             user_id=user_id,
         )
@@ -229,6 +233,47 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
             # choosing targets belongs with the dashboard work that knows which entities exist.
             "recommendations": [],
         }
+    )
+
+
+async def generate_reflection(*, user_id: str, type: str | models.ReflectionType) -> Any:
+    """Generate and persist a reflection for the period ending now.
+
+    Idempotent on ``(userId, type, periodStart)``: regenerating a period updates the row rather
+    than adding a second one for the same week.
+
+    FREE: a standard-depth narrative. PLUS: a deeper one. Neither tier gets metrics from the
+    model, because no tier should be sold invented numbers.
+    """
+    type_ = models.ReflectionType(type.lower() if isinstance(type, str) else type.value)
+    now = datetime.now(UTC)
+    return await _compose_and_store(
+        user_id=user_id,
+        type_=type_,
+        period_start=now - timedelta(days=_PERIOD_DAYS[type_]),
+        period_end=now,
+    )
+
+
+async def regenerate_reflection(*, user_id: str, reflection_id: str) -> Any:
+    """Re-measure and re-narrate an existing reflection over **its own** period.
+
+    Exists because the reflections written before metrics were measured cannot be repaired by
+    calling `generate_reflection`: that targets the week ending now, so it would leave the old
+    row untouched and add a new one beside it.
+
+    The upsert key is `(userId, type, periodStart)` and all three are taken from the existing
+    row, so this updates that row in place rather than creating a sibling.
+    """
+    existing = await repo.get_reflection(reflection_id, user_id)
+    if existing is None:
+        raise NotFoundError("Reflection", reflection_id)
+
+    return await _compose_and_store(
+        user_id=user_id,
+        type_=models.ReflectionType(existing.type),
+        period_start=existing.period_start,
+        period_end=existing.period_end,
     )
 
 

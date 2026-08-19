@@ -20,10 +20,18 @@ than by generation. Absence is expressed by a null field *inside* the object, wh
 "not measured" distinct from "measured as zero" — a distinction the zero-filled failure path
 destroyed.
 
-The three columns are dropped rather than kept for a later migration to replace: there are
-no `Reflection` rows in production, so there is no fabricated history to preserve, and
-carrying dead columns through two migrations was only ever a concession to data that turns
-out not to exist. Non-production rows written by the Sunday task are dropped with them.
+The three columns are dropped rather than kept for a later migration to replace, because
+their contents are model-invented counts and nothing downstream can use them.
+
+**The shared database does hold 13 of these rows, across 6 users.** An earlier draft of this
+file said otherwise. Inspecting them changed two things here: the `recommendations` reset
+below had to be widened (see its comment), and `type` normalisation had to cope with a third
+value, `daily`, which no code path was supposed to produce.
+
+Ten of those thirteen rows also carry invented figures *inside the summary prose* — "averaging
+4.6 minutes", "completed 4 study sessions" — which dropping a JSON column cannot reach. Whether
+those rows survive is a product decision recorded in the plan, not something this migration
+takes on itself: it leaves every row in place and only repairs shapes.
 
 `type` gets a CHECK and is normalised to lowercase. It was an unconstrained String, and the
 task wrote `"WEEKLY"` past a service branching on `"weekly"` — so the row took the fallback
@@ -69,10 +77,20 @@ def upgrade() -> None:
     )
     op.add_column("Reflection", sa.Column("openedAt", sa.DateTime(timezone=True), nullable=True))
 
-    # --- `recommendations` becomes NOT NULL, holding a list -----------------
-    # It was nullable JSON annotated as `dict` while the writer put a list in it. A response
-    # typed `list[ReflectionAction]` over a nullable column means every reader coerces the
-    # null, and one of them eventually forgets.
+    # --- `recommendations` becomes NOT NULL, holding a list of objects ------
+    # It was nullable JSON annotated as `dict` while the writer stored a list of **strings**.
+    # The new response type is `list[ReflectionAction]`, so a surviving array of strings is
+    # not merely untidy: `ReflectionResponse.model_validate` raises on it, and any
+    # `GET /reflections` page containing such a row would return 500.
+    #
+    # An earlier draft reset only non-arrays, which let exactly that through — an array of
+    # strings is a perfectly good array. The check below resets anything that is not an array
+    # of objects.
+    #
+    # The prose is deliberately not converted into actions. A legacy recommendation reads
+    # "extend your average session length from 4.6 minutes", where 4.6 was invented by a model
+    # that had never seen a session, so preserving the text would republish a fabricated
+    # measurement inside a newly typed field.
     op.execute(
         sa.text("""UPDATE "Reflection" SET recommendations = '[]' WHERE recommendations IS NULL""")
     )
@@ -82,6 +100,11 @@ def upgrade() -> None:
             UPDATE "Reflection"
                SET recommendations = '[]'
              WHERE json_typeof(recommendations::json) <> 'array'
+                OR EXISTS (
+                    SELECT 1
+                      FROM json_array_elements(recommendations::json) AS element
+                     WHERE json_typeof(element) <> 'object'
+                )
             """
         )
     )
@@ -99,10 +122,14 @@ def upgrade() -> None:
 
     # --- Normalise `type`, then constrain it ------------------------------
     op.execute(sa.text("""UPDATE "Reflection" SET type = lower(type)"""))
-    # Anything that is neither weekly nor monthly cannot be repaired by guessing, and the
-    # CHECK below would refuse to build over it. The default period the old service applied
-    # to an unrecognised type was the weekly one, so `weekly` is what those rows already
-    # describe.
+    # Anything that is neither weekly nor monthly is relabelled `weekly`, and in this database
+    # that is not a guess. One row carries `type = 'daily'`, which no branch of the old service
+    # could produce a period for — it fell through to the weekly default — and its stored span
+    # is indeed 7 days. Every one of the 13 existing rows spans 7 days. So relabelling makes
+    # the row agree with the period it already has, rather than overwriting a real cadence.
+    #
+    # A future value that did carry its own period would need handling here rather than being
+    # swept into `weekly`, which is why this comment names the evidence it relied on.
     op.execute(
         sa.text(
             """UPDATE "Reflection" SET type = 'weekly' WHERE type NOT IN ('weekly', 'monthly')"""
