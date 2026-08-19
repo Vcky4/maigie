@@ -52,7 +52,7 @@ from src.domains.personal_learning.db_models import (  # noqa: E402
     StudyPlanItem,
 )
 from src.domains.personal_learning.services import flashcard_service  # noqa: E402
-from src.shared.database.session import get_session_factory  # noqa: E402
+from src.shared.database.session import connect_db, get_session_factory  # noqa: E402
 
 #: A group of unfiled cards that share an origin, and where they should go.
 #: ``origin_type``/``origin_id`` are ``None`` for a group we decline to place.
@@ -337,6 +337,10 @@ async def main() -> int:
     )
     parser.add_argument("--user-id", default=None, help="Restrict to one learner.")
     args = parser.parse_args()
+
+    # The engine is normally created during app startup. A standalone script has no
+    # startup, so it opens the pool itself.
+    await connect_db()
 
     plans = await build_plan(args.user_id)
     report(plans)

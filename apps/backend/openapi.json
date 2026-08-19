@@ -2131,6 +2131,28 @@
             ],
             "title": "Nextreviewat"
           },
+          "originId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originid"
+          },
+          "originType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origintype"
+          },
           "prepId": {
             "anyOf": [
               {
@@ -3024,6 +3046,11 @@
           },
           "totalCards": {
             "title": "Totalcards",
+            "type": "integer"
+          },
+          "unfiledCards": {
+            "default": 0,
+            "title": "Unfiledcards",
             "type": "integer"
           }
         },
@@ -18790,8 +18817,42 @@
     },
     "/api/v1/learning/decks": {
       "get": {
-        "description": "List all flashcard decks with their card, due, mastery and recall figures.",
+        "description": "List all flashcard decks with their card, due, mastery and recall figures.\n\n`originType` and `originId` narrow to the deck the server created for one source —\n`originType=note&originId=…` is how a note page asks for its own deck. The aggregates\ncome back with it, so the caller does not have to count the deck's cards separately.\nReturns a list, empty when nothing has been generated from that source yet; at most\none deck can match, since a partial unique index covers the pair.",
         "operationId": "list_decks_api_v1_learning_decks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "originType",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Origintype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "originId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Originid"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -18806,6 +18867,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -19812,7 +19883,7 @@
     },
     "/api/v1/learning/flashcards": {
       "get": {
-        "description": "List the learner's cards. Cards were previously reachable only through the due\nqueue or a deck, so a card that was neither due nor filed was unreachable.\n\n`sort` belongs to the server because ordering and paging are inseparable — a page\nboundary means nothing without a defined order, and a client re-sorting the page it\nreceived gets a list ordered within pages and unordered across them.",
+        "description": "List the learner's cards. Cards were previously reachable only through the due\nqueue or a deck, so a card that was neither due nor filed was unreachable.\n\n`deckId=none` asks for the cards in no deck. A sentinel is needed because an omitted\n`deckId` already means \"every deck\", so there was no way to express the question —\nand unfiled cards are exactly the ones the dashboard's deck list cannot show, which\nmade them the hardest cards in the library to find. `none` is safe as a sentinel\nbecause deck ids are 25-character uuid hex.\n\n`sourceId` pairs with `sourceType` to ask for the cards from one source, which is how\n\"the cards from this note\" is answerable for cards created before generation filed\nthem by origin.\n\n`sort` belongs to the server because ordering and paging are inseparable — a page\nboundary means nothing without a defined order, and a client re-sorting the page it\nreceived gets a list ordered within pages and unordered across them.",
         "operationId": "list_flashcards_api_v1_learning_flashcards_get",
         "parameters": [
           {
@@ -19884,6 +19955,22 @@
                 }
               ],
               "title": "Sourcetype"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sourceId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Sourceid"
             }
           },
           {
