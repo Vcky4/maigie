@@ -61,8 +61,16 @@ async def list_notes(
     topic_id: str | None = None,
     archived: bool | None = False,
     space_id: str | None = None,
+    sort: str = "recent",
 ) -> tuple[list, int]:
-    """List notes with filters and pagination."""
+    """List notes with filters, pagination and ordering.
+
+    ``sort`` belongs to the server for the same reason it does on the flashcard list: a
+    page boundary means nothing without a defined order, and a client re-sorting the page
+    it received gets a list ordered within pages and unordered across them. Both clients
+    used to sort locally over a single 100-row fetch, which was correct only while every
+    library fitted in one page.
+    """
     where: dict[str, Any] = {}
 
     if space_id:
@@ -85,7 +93,7 @@ async def list_notes(
         where["tags"] = {"some": {"tag": tag}}
 
     skip = (page - 1) * size
-    return await repo.list_notes(user_id, where=where, skip=skip, take=size)
+    return await repo.list_notes(user_id, where=where, skip=skip, take=size, sort=sort)
 
 
 async def _snapshot_note(note: Any) -> None:

@@ -223,8 +223,14 @@ async def list_notes(
     courseId: str | None = Query(None),
     topicId: str | None = Query(None),
     archived: bool | None = Query(False),
+    sort: Literal["recent", "title"] = Query("recent"),
 ):
-    """List notes using the canonical pagination envelope."""
+    """List notes using the canonical pagination envelope.
+
+    ``sort`` is the server's because ordering and paging are inseparable — see
+    `note_service.list_notes`. Both clients previously fetched one 100-row page and sorted
+    it in the browser, which silently capped every library at 100 notes.
+    """
     items, total = await note_service.list_notes(
         user_id=current_user.id,
         page=page,
@@ -234,6 +240,7 @@ async def list_notes(
         course_id=courseId,
         topic_id=topicId,
         archived=archived,
+        sort=sort,
     )
     pages = (total + pageSize - 1) // pageSize if total else 0
     return models.PaginatedResponse[models.NoteResponse](

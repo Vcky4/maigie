@@ -175,3 +175,59 @@ async def test_note_course_association(client: AsyncClient, auth_headers):
 
     await client.delete(f"{BASE}/{note['id']}", headers=auth_headers)
     await client.delete(f"/api/v1/knowledge/courses/{course_id}", headers=auth_headers)
+
+
+@pytest.mark.asyncio
+async def test_sort_and_paging_agree_across_pages(client: AsyncClient, auth_headers):
+    """`sort` orders the whole library, not the page the client happens to hold.
+
+    Both clients used to fetch one 100-row page and sort it locally, which capped every
+    library at 100 notes and made the A-Z toggle a claim about that page only. The point of
+    these assertions is the *second* page: an ordering applied per-page would put "Alpha"
+    on page two here.
+    """
+    titles = ["Delta", "Bravo", "Echo", "Alpha", "Charlie"]
+    created = [await _create(client, auth_headers, title=title) for title in titles]
+
+    try:
+        by_title = await client.get(f"{BASE}?sort=title&pageSize=100", headers=auth_headers)
+        assert by_title.status_code == 200, by_title.text
+        listed = [item["title"] for item in by_title.json()["items"] if item["title"] in titles]
+        assert listed == sorted(titles)
+
+        # Page one holds the first two in the *global* order, page two the next two.
+        first = await client.get(f"{BASE}?sort=title&pageSize=2&page=1", headers=auth_headers)
+        second = await client.get(f"{BASE}?sort=title&pageSize=2&page=2", headers=auth_headers)
+        assert first.status_code == 200 and second.status_code == 200
+        page_one = [item["title"] for item in first.json()["items"]]
+        page_two = [item["title"] for item in second.json()["items"]]
+        # No note appears twice across the two pages — the tiebreaker on `id` is what
+        # makes that true when two rows share a sort value.
+        assert not set(page_one) & set(page_two)
+        assert page_one + page_two == sorted(page_one + page_two)
+
+        # `total` describes the library, so a client can tell there is more to fetch.
+        assert first.json()["total"] >= len(titles)
+        assert first.json()["pages"] >= 3
+
+        recent = await client.get(f"{BASE}?sort=recent&pageSize=100", headers=auth_headers)
+        assert recent.status_code == 200
+        recent_titles = [
+            item["title"] for item in recent.json()["items"] if item["title"] in titles
+        ]
+        # Newest first, so the reverse of creation order.
+        assert recent_titles == list(reversed(titles))
+
+        # An unknown value is refused rather than silently ignored.
+        rejected = await client.get(f"{BASE}?sort=sideways", headers=auth_headers)
+        assert rejected.status_code == 422
+
+        # Omitting it keeps the previous behaviour.
+        default = await client.get(f"{BASE}?pageSize=100", headers=auth_headers)
+        assert default.status_code == 200
+        assert [
+            item["title"] for item in default.json()["items"] if item["title"] in titles
+        ] == recent_titles
+    finally:
+        for note in created:
+            await client.delete(f"{BASE}/{note['id']}", headers=auth_headers)

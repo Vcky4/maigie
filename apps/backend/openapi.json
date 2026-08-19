@@ -20746,7 +20746,7 @@
     },
     "/api/v1/learning/notes": {
       "get": {
-        "description": "List notes using the canonical pagination envelope.",
+        "description": "List notes using the canonical pagination envelope.\n\n``sort`` is the server's because ordering and paging are inseparable — see\n`note_service.list_notes`. Both clients previously fetched one 100-row page and sorted\nit in the browser, which silently capped every library at 100 notes.",
         "operationId": "list_notes_api_v1_learning_notes_get",
         "parameters": [
           {
@@ -20851,6 +20851,20 @@
               ],
               "default": false,
               "title": "Archived"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "recent",
+              "enum": [
+                "recent",
+                "title"
+              ],
+              "title": "Sort",
+              "type": "string"
             }
           }
         ],

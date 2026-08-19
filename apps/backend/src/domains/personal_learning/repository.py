@@ -350,6 +350,17 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one() or 0
 
+    #: Orderings the note list supports, each ending in `id` so paging is stable.
+    #:
+    #: Without the tiebreaker, rows sharing an `updatedAt` — or a title — have no defined
+    #: order between them, and the database is free to return them differently for page 1
+    #: and page 2. That loses and duplicates notes across a pager rather than merely
+    #: shuffling them.
+    NOTE_SORTS: dict[str, tuple[Any, ...]] = {
+        "recent": (Note.updated_at.desc(), Note.id.asc()),
+        "title": (func.lower(Note.title).asc(), Note.id.asc()),
+    }
+
     async def list_notes(
         self,
         user_id: str,
@@ -357,6 +368,7 @@ class PersonalLearningRepository:
         where: dict[str, Any],
         skip: int = 0,
         take: int = 20,
+        sort: str = "recent",
         session: AsyncSession | None = None,
     ) -> tuple[list[Note], int]:
         async with self._read_session(session) as s:
@@ -368,6 +380,7 @@ class PersonalLearningRepository:
             total = (await s.execute(count_stmt)).scalar() or 0
 
             # Items
+            order_by = self.NOTE_SORTS.get(sort, self.NOTE_SORTS["recent"])
             stmt = (
                 select(Note)
                 .options(
@@ -375,7 +388,7 @@ class PersonalLearningRepository:
                     selectinload(Note.attachments),
                 )
                 .where(*conditions)
-                .order_by(Note.updated_at.desc())
+                .order_by(*order_by)
                 .offset(skip)
                 .limit(take)
             )
