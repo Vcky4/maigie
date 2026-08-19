@@ -4315,6 +4315,36 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def list_opened_reflection_periods(
+        self,
+        user_id: str,
+        *,
+        type_filter: str | None = None,
+        limit: int = 60,
+        session: AsyncSession | None = None,
+    ) -> list[datetime]:
+        """`periodEnd` of every reflection the learner has actually opened, newest first.
+
+        Only opened ones, because the reflection streak counts engagement rather than
+        existence — the rows themselves are written by a Sunday task, so counting them would
+        measure the scheduler.
+
+        Bounded: a streak is a run at the end of the series, so the whole history is never
+        needed to find it.
+        """
+        async with self._read_session(session) as s:
+            conditions = [Reflection.user_id == user_id, Reflection.opened_at.is_not(None)]
+            if type_filter is not None:
+                conditions.append(Reflection.type == type_filter)
+
+            stmt = (
+                select(Reflection.period_end)
+                .where(*conditions)
+                .order_by(Reflection.period_end.desc())
+                .limit(limit)
+            )
+            return [row[0] for row in (await s.execute(stmt)).all()]
+
     async def update_reflection(
         self,
         reflection_id: str,

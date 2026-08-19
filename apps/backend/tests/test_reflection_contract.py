@@ -74,35 +74,42 @@ class TestMetricsAreNullNotZero:
 
 
 class TestTheModelSuppliesNoNumbers:
-    def test_the_prompt_asks_for_only_a_title_and_a_summary(self):
+    def test_the_prompt_never_asks_for_a_count(self):
+        """The prompt now *supplies* figures, so this asserts the shape of that: the model is
+        handed labelled facts and asked for two prose keys, never for the raw field names the
+        old prompt requested."""
         prompt = reflection_service._build_prompt(
             type_=models.ReflectionType.WEEKLY,
             period_start=datetime(2026, 8, 12, tzinfo=UTC),
             period_end=datetime(2026, 8, 19, tzinfo=UTC),
             deep=False,
+            metrics=models.ReflectionMetrics(focused_minutes=326, active_days=5),
         )
         for key in FABRICATED_KEYS:
             assert key not in prompt, f"the prompt asks the model for {key}"
         assert '"title"' in prompt
         assert '"summary"' in prompt
+        # And the measured values are present as facts rather than requests.
+        assert "Tracked focused minutes: 326" in prompt
 
-    def test_the_prompt_forbids_stating_statistics(self):
+    def test_a_learner_with_nothing_measured_gets_a_no_statistics_brief(self):
         prompt = reflection_service._build_prompt(
             type_=models.ReflectionType.MONTHLY,
             period_start=datetime(2026, 7, 20, tzinfo=UTC),
             period_end=datetime(2026, 8, 19, tzinfo=UTC),
             deep=True,
+            metrics=models.ReflectionMetrics(),
         )
-        assert "do not state or imply any" in prompt
+        assert "state no figures at all" in prompt
         assert "do not invent" in prompt.lower()
 
     @pytest.mark.anyio
     async def test_a_model_that_returns_counts_has_them_ignored(self, reflection_harness):
         """The load-bearing test.
 
-        A model will sometimes volunteer numbers whether or not it was asked. The service must
-        take its wording and nothing else, so a payload full of plausible counts reaches the
-        row as an all-null metrics object.
+        A model will volunteer numbers whether or not it was asked. The service must take its
+        wording and nothing else, so what reaches the row is the *measured* metrics — and none
+        of the plausible-looking counts in the response.
         """
         reflection_harness.llm_response = {
             "title": "A strong week",
@@ -112,8 +119,8 @@ class TestTheModelSuppliesNoNumbers:
             "progressLayer": {"concepts_mastered": 24, "retention_score": "89%"},
             "achievementsLayer": {"milestones": ["Ten-day rhythm"], "streak_days": 12},
             "recommendations": ["Keep going"],
-            "focusedMinutes": 326,
-            "consistencyScore": 86,
+            "focusedMinutes": 999,
+            "consistencyScore": 100,
         }
 
         await reflection_service.generate_reflection(user_id="u1", type="weekly")
@@ -121,12 +128,16 @@ class TestTheModelSuppliesNoNumbers:
         written = reflection_harness.written
         assert written["title"] == "A strong week"
         assert written["summary"] == "You studied often."
-        assert all(value is None for value in written["metrics"].values())
+        # The measurement survives; the model's version of it does not.
+        assert written["metrics"] == reflection_harness.measured.model_dump(by_alias=True)
+        assert written["metrics"]["focusedMinutes"] == 42
+        assert written["metrics"]["consistencyScore"] is None
         assert written["recommendations"] == []
 
     @pytest.mark.anyio
-    async def test_a_failed_generation_writes_no_metrics_at_all(self, reflection_harness):
-        """The old fallback wrote zeros. Nothing may fill a metric on the failure path."""
+    async def test_a_failed_generation_keeps_the_measurements(self, reflection_harness):
+        """The old fallback wrote zeros over everything. Now the numbers were taken before the
+        model was called, so a provider outage costs the prose and nothing else."""
 
         async def explode(*args, **kwargs):
             raise RuntimeError("provider down")
@@ -136,10 +147,18 @@ class TestTheModelSuppliesNoNumbers:
         result = await reflection_service.generate_reflection(user_id="u1", type="weekly")
 
         written = reflection_harness.written
-        assert all(value is None for value in written["metrics"].values())
+        assert written["metrics"] == reflection_harness.measured.model_dump(by_alias=True)
+        assert not any(value == 0 for value in written["metrics"].values())
         # A reflection is still delivered — the requirement was always to degrade, not to fail.
         assert written["summary"]
         assert result is reflection_harness.row
+
+    @pytest.mark.anyio
+    async def test_metrics_are_computed_before_the_model_is_called(self, reflection_harness):
+        """Ordering is the guarantee. If the model ran first, a hang or a crash could take the
+        measurements with it."""
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        assert reflection_harness.order == ["metrics", "llm"]
 
 
 class TestReflectionType:
@@ -314,10 +333,15 @@ class TestRoutes:
 
 
 class _Harness:
-    """Substitutes the two things `generate_reflection` reaches outside itself.
+    """Substitutes the three things `generate_reflection` reaches outside itself.
 
-    Captures the payload handed to the repository, which is the only place the decision
-    "what gets persisted" is observable without a database.
+    Captures the payload handed to the repository, which is the only place the decision "what
+    gets persisted" is observable without a database, and records call order so the guarantee
+    that measurement precedes generation is testable rather than merely intended.
+
+    `measured` deliberately mixes a real value with nulls: `focusedMinutes` proves the
+    measurement survives, and `consistencyScore` proves a null is not quietly replaced by
+    whatever the model offered for it.
     """
 
     def __init__(self):
@@ -325,9 +349,15 @@ class _Harness:
         self.llm = None
         self.written: dict = {}
         self.row = object()
+        self.order: list[str] = []
+        self.measured = models.ReflectionMetrics(focused_minutes=42, active_days=3)
 
     async def call_llm(self, prompt, **kwargs):
         return self.llm_response
+
+    async def compute_metrics(self, *, user_id, period_start, period_end):
+        self.order.append("metrics")
+        return self.measured
 
     async def upsert(self, data, *, session=None):
         self.written = data
@@ -350,12 +380,16 @@ def reflection_harness(monkeypatch):
     harness = _Harness()
 
     async def call_llm(prompt, **kwargs):
+        harness.order.append("llm")
         if harness.llm is not None:
             return await harness.llm(prompt, **kwargs)
         return await harness.call_llm(prompt, **kwargs)
 
     monkeypatch.setattr(llm_resilient, "generate_content_json", call_llm)
     monkeypatch.setattr(reflection_service.repo, "upsert_reflection", harness.upsert)
+    monkeypatch.setattr(
+        reflection_service.reflection_metrics, "compute_metrics", harness.compute_metrics
+    )
 
     async def free_tier(user_id):
         return "free"

@@ -30,6 +30,7 @@ from src.shared.exceptions import NotFoundError
 
 from .. import models
 from ..repository import personal_learning_repo as repo
+from . import reflection_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -53,29 +54,98 @@ def _fallback_summary(type_: models.ReflectionType) -> str:
     )
 
 
-def _build_prompt(
-    *, type_: models.ReflectionType, period_start: datetime, period_end: datetime, deep: bool
-) -> str:
-    """A narration brief. Note what it does not ask for: any count, score or total.
+#: Metric fields rendered into the prompt, with the label and unit the model should reuse.
+#: An explicit list rather than a dump of the whole object, so adding a metric does not
+#: silently change what the model is told.
+_PROMPT_FACTS: tuple[tuple[str, str, str], ...] = (
+    ("focused_minutes", "Tracked focused minutes", "min"),
+    ("active_days", "Days active in the period", ""),
+    ("sessions_completed", "Sessions completed", ""),
+    ("topics_studied", "Topics touched", ""),
+    ("topics_mastered", "Topics completed (count)", ""),
+    ("notes_created", "Notes written", ""),
+    ("flashcards_reviewed", "Flashcards reviewed", ""),
+    ("recall_percent", "Recall", "%"),
+    ("quizzes_completed", "Quizzes completed", ""),
+    ("accuracy_percent", "Quiz accuracy", "%"),
+    ("mastery_gained_percent", "Course completion gained", "percentage points"),
+    ("consistency_score", "Consistency score", "out of 100"),
+    ("average_session_minutes", "Average session length", "min"),
+    ("best_day", "Strongest day", ""),
+    ("streak_current", "Current streak", "days"),
+    ("streak_best", "Longest streak", "days"),
+)
 
-    It cannot ask for one honestly, because this stage has no measurements to hand it. Once
-    `reflection_metrics` lands, the numbers go *into* this prompt as facts and the model's job
-    stays exactly what it is here — wording.
+
+def _render_facts(metrics: models.ReflectionMetrics) -> str:
+    """The measured facts, as lines the model may reuse and must not exceed.
+
+    Null metrics are **omitted rather than rendered as unknown or zero**. A prompt that lists
+    "Recall: not measured" invites the model to explain the gap, and a learner does not need a
+    paragraph about a number we did not take. Omission also keeps the instruction below
+    truthful: every line present is a fact.
     """
+    lines: list[str] = []
+    for attribute, label, unit in _PROMPT_FACTS:
+        value = getattr(metrics, attribute)
+        if value is None:
+            continue
+        suffix = f" {unit}" if unit and not unit.startswith("%") else unit
+        lines.append(f"- {label}: {value}{suffix}")
+
+    if metrics.new_topics_mastered:
+        # A distinct label from the count above. Two lines both reading "Topics completed",
+        # one a number and one a list, is an invitation to add them together.
+        lines.append("- Names of topics completed: " + ", ".join(metrics.new_topics_mastered[:8]))
+    if metrics.milestones_reached:
+        lines.append("- Milestones reached: " + ", ".join(metrics.milestones_reached[:5]))
+
+    return "\n".join(lines)
+
+
+def _build_prompt(
+    *,
+    type_: models.ReflectionType,
+    period_start: datetime,
+    period_end: datetime,
+    deep: bool,
+    metrics: models.ReflectionMetrics,
+) -> str:
+    """A narration brief with the measurements supplied as facts.
+
+    The model's job is wording. It receives the numbers and is told, in the strongest terms
+    the format allows, not to produce any of its own — because the defect this replaced was
+    exactly that: a prompt asking for counts, given no data to count.
+    """
+    facts = _render_facts(metrics)
     depth = (
-        "Write with some depth: name a pattern in how the learner is working, and what it "
+        "Write with some depth: name a pattern in how the learner is working and what it "
         "suggests about where attention would pay off next.\n"
         if deep
         else "Keep it brief and plain.\n"
     )
+
+    if facts:
+        evidence = (
+            "These are the learner's measured figures for the period. They are the only "
+            "figures that exist:\n"
+            f"{facts}\n\n"
+            "Use them if they help. You may restate a figure exactly as given. You must not "
+            "compute a new one, estimate, round differently, compare against a period you "
+            "were not given, or mention any measurement absent from the list above.\n"
+        )
+    else:
+        evidence = (
+            "Nothing was measured for this learner in this period, so state no figures at "
+            "all. Do not mention counts, minutes, percentages, streaks or scores, and do not "
+            "invent examples of what they studied.\n"
+        )
+
     return (
-        f"Write an encouraging {type_.value} learning reflection for the period "
+        f"Write an encouraging {type_.value} learning reflection for "
         f"{period_start.strftime('%Y-%m-%d')} to {period_end.strftime('%Y-%m-%d')}.\n\n"
+        f"{evidence}\n"
         f"{depth}\n"
-        "You have no statistics about this learner, so do not state or imply any. Do not "
-        "mention counts, minutes, percentages, streaks or scores, and do not invent examples "
-        "of what they studied. Write about the value of returning to the work and of "
-        "reviewing it deliberately.\n\n"
         "Return a JSON object with exactly two keys:\n"
         '- "title": a short heading, at most eight words\n'
         '- "summary": two short paragraphs\n\n'
@@ -107,6 +177,13 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
     if deep:
         await trial_service.record_plus_feature_used(user_id, "reflection")
 
+    # Measured first, and independently of the narrative. The ordering is the guarantee: the
+    # metrics exist before the model is called, so nothing that happens to the model can
+    # affect them.
+    metrics = await reflection_metrics.compute_metrics(
+        user_id=user_id, period_start=period_start, period_end=period_end
+    )
+
     title = _fallback_title(type_)
     summary = _fallback_summary(type_)
 
@@ -114,7 +191,13 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
         # `fallback={}` rather than `None`: passing None to this helper means "raise", and two
         # routes have already taken a 500 from that reading of it.
         data = await generate_content_json(
-            _build_prompt(type_=type_, period_start=period_start, period_end=period_end, deep=deep),
+            _build_prompt(
+                type_=type_,
+                period_start=period_start,
+                period_end=period_end,
+                deep=deep,
+                metrics=metrics,
+            ),
             max_tokens=800,
             fallback={},
             user_id=user_id,
@@ -123,9 +206,9 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
             title = (data.get("title") or title).strip()[:200]
             summary = (data.get("summary") or summary).strip()
     except Exception as e:
-        # A reflection is still delivered without its narrative. What is *not* done here is
-        # substituting zeros for the metrics, which is what made the old failure path
-        # indistinguishable from an inactive week.
+        # The reflection is still delivered, with its metrics intact and a plain summary. What
+        # is *not* done here is substituting zeros for the metrics, which is what made the old
+        # failure path indistinguishable from an inactive week.
         logger.warning("Reflection narrative generation failed for user %s: %s", user_id, e)
 
     return await repo.upsert_reflection(
@@ -139,11 +222,11 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
             "depth": (
                 models.ReflectionDepth.DEEP.value if deep else models.ReflectionDepth.STANDARD.value
             ),
-            # All-null until the aggregate queries land. Written as an empty object rather
-            # than omitted so the column is never NULL and no reader has to coerce it.
-            "metrics": models.ReflectionMetrics().model_dump(by_alias=True),
-            # Empty rather than model-authored: an action carries a navigation target, and
-            # the service picks that from measurements it does not yet have.
+            # `by_alias=True` because the repository mapper speaks wire names, and the column
+            # stores exactly what the response publishes.
+            "metrics": metrics.model_dump(by_alias=True),
+            # Still empty. An action carries a navigation target chosen from the metrics, and
+            # choosing targets belongs with the dashboard work that knows which entities exist.
             "recommendations": [],
         }
     )
