@@ -140,9 +140,9 @@ class FakeKnowledge:
         self.course_takes.append(take)
         return self.owner.courses[:take], len(self.owner.courses)
 
-    async def get_course_dashboard_stats(self, user_id):
+    async def count_completed_topics(self, user_id):
         self.owner._boom("courses")
-        return self.owner.active_courses, self.owner.completed_topics
+        return self.owner.completed_topics
 
     async def recently_completed_topics(self, user_id, *, limit=5):
         self.owner._boom("featured")
@@ -158,13 +158,7 @@ class FakePersonalLearning:
     def __init__(self, owner: "FakeSources"):
         self.owner = owner
 
-    async def count_overdue_flashcards(self, user_id):
-        self.owner._boom("review")
-        return self.owner.overdue
 
-    async def count_user_notes(self, user_id):
-        self.owner._boom("notes")
-        return len(self.owner.notes)
 
     async def list_recent_resources(self, user_id, *, take=6):
         self.owner._boom("resources")
@@ -197,8 +191,12 @@ class FakeSources:
         self.plans: list[SimpleNamespace] = []
         self.preps: list[SimpleNamespace] = []
         self.progress: dict[str, SimpleNamespace] = {}
-        self.stats: dict[str, int] = {"dueToday": 0, "total": 0, "masteredCount": 0}
-        self.overdue = 0
+        self.stats: dict[str, int] = {
+            "dueToday": 0,
+            "total": 0,
+            "masteredCount": 0,
+            "overdueCount": 0,
+        }
         self.fail: set[str] = set()
         self.collections: list[dict] = []
         self.knowledge = FakeKnowledge(self)
@@ -277,8 +275,7 @@ def populated(sources):
     sources.progress = {
         "e1": SimpleNamespace(topics_strong=2, topics_total=8, progress_percent=25.0)
     }
-    sources.stats = {"dueToday": 12, "total": 40, "masteredCount": 10}
-    sources.overdue = 3
+    sources.stats = {"dueToday": 12, "total": 40, "masteredCount": 10, "overdueCount": 3}
     return sources
 
 
@@ -637,10 +634,43 @@ class TestQueryCount:
         assert len(sources.knowledge.course_takes) == 1
         assert sources.knowledge.course_lookups == []
 
-    async def test_the_featured_card_costs_one_extra_lookup(self, populated):
-        """One course fetched by id, whatever the size of the library."""
+    async def test_the_featured_card_costs_nothing_when_its_course_is_already_loaded(
+        self, populated
+    ):
+        """The common case, and it used to cost a full refetch.
+
+        The resume target is the course the learner last completed a topic in, which is usually one
+        of the recently-updated courses already on the page. Fetching it by id again reloads the
+        course with every module, every topic and — through the relationship defaults — every topic's
+        lesson sections, all of which the page already has.
+
+        Asserted on the call log rather than the output, because the output is identical either way,
+        which is exactly why the extra query went unnoticed.
+        """
         await _dashboard()
-        assert populated.knowledge.course_lookups == ["c1"]
+
+        assert populated.knowledge.course_lookups == []
+        # And the card is still produced from the reused course.
+        payload = await _dashboard()
+        assert payload.featured is not None
+        assert payload.featured.course_id == "c1"
+
+    async def test_the_featured_card_costs_one_lookup_when_its_course_is_off_the_page(self, sources):
+        """The case the reuse must not break.
+
+        The course page is only the few most recently *updated* courses, so the resume target can sit
+        outside it — and then it does have to be fetched. This is why the reuse is a fast path rather
+        than a replacement.
+        """
+        done = _topic("t-old", completed=True)
+        sources.courses = [
+            _course("c-visible", modules=[_module("m1", [_topic("t1", completed=False)])])
+        ]
+        sources.completions = [(done, "c-hidden", "Course c-hidden")]
+
+        await _dashboard()
+
+        assert sources.knowledge.course_lookups == ["c-hidden"]
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +693,7 @@ class TestAuthorization:
             seen.append(user_id)
             return await original_list_courses(user_id, **kwargs)
 
-        original_stats = sources.knowledge.get_course_dashboard_stats
+        original_stats = sources.knowledge.count_completed_topics
 
         async def stats(user_id):
             seen.append(user_id)
@@ -682,7 +712,7 @@ class TestAuthorization:
             return await original_find(course_id, user_id)
 
         monkeypatch.setattr(sources.knowledge, "list_courses", list_courses)
-        monkeypatch.setattr(sources.knowledge, "get_course_dashboard_stats", stats)
+        monkeypatch.setattr(sources.knowledge, "count_completed_topics", stats)
         monkeypatch.setattr(sources.knowledge, "recently_completed_topics", completions)
         monkeypatch.setattr(sources.knowledge, "find_course_with_modules", find)
 
@@ -702,3 +732,68 @@ class TestAuthorization:
         # `CurrentUser` is an annotated dependency, so it appears as a security requirement rather
         # than a query parameter. Its absence is what an unauthenticated `200` would look like.
         assert route.dependant.dependencies, "dashboard route declares no dependencies"
+
+
+class TestNoDuplicatedReads:
+    """The dashboard used to ask the same questions twice.
+
+    A live SQL log showed one request issuing ~54 statements, several of them the same figure computed
+    by two code paths. They were hard to spot as duplicates because they rendered differently — one
+    course count as `archived = false` from a `where` dict, the other as `archived IS false` from
+    `.is_(False)` — and impossible to spot from the response, which was correct either way.
+
+    Asserted on call counts, because output assertions pass against the duplicated version.
+    """
+
+    async def test_the_course_count_is_read_once_not_twice(self, populated, monkeypatch):
+        """`activeCourses` and the course tool count are the same number.
+
+        Both are `count(*) FROM Course WHERE userId = ? AND NOT archived`. The page total from
+        `list_courses` is now reused for both instead of `get_course_dashboard_stats` counting again,
+        and that method was split so the redundant half cannot come back.
+        """
+        calls: list[str] = []
+        original = populated.knowledge.count_completed_topics
+
+        async def counted(user_id):
+            calls.append(user_id)
+            return await original(user_id)
+
+        monkeypatch.setattr(populated.knowledge, "count_completed_topics", counted)
+
+        payload = await _dashboard()
+
+        # One call, and it no longer returns a course count at all.
+        assert len(calls) == 1
+        assert not hasattr(populated.knowledge, "get_course_dashboard_stats")
+        # The two figures still agree, which is the point of reusing one read.
+        assert payload.stats.active_courses == 1
+        course_tool = next(tool for tool in payload.tools if tool.type == "course")
+        assert course_tool.count == payload.stats.active_courses
+
+    async def test_the_note_total_comes_from_the_page_query(self, populated):
+        """`list_notes` already returns its total and it was being discarded.
+
+        The request paid for two note counts and used the second. It also used the *wrong* one:
+        `count_user_notes` counts every unarchived note including space-scoped ones, while the list
+        beside it is filtered to `spaceId IS NULL`, so a learner with notes in a space saw a total
+        larger than the library it described.
+        """
+        payload = await _dashboard()
+
+        assert payload.stats.personal_notes == len(populated.notes)
+        # The separate counter is gone from the read path entirely.
+        assert not hasattr(populated.repo, "count_user_notes")
+
+    async def test_overdue_cards_come_from_the_statistics_query(self, populated):
+        """Two questions about the same table, one round trip.
+
+        `overdueCards` (due before midnight) and `dueCards` (due by now) are genuinely different
+        figures and both are still shown — they are now two filtered aggregates in one statement
+        rather than two queries on two connections.
+        """
+        payload = await _dashboard()
+
+        assert payload.review.overdue_cards == 3
+        assert payload.review.due_cards == 12
+        assert not hasattr(populated.repo, "count_overdue_flashcards")

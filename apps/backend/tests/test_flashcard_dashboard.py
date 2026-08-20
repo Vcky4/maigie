@@ -123,6 +123,7 @@ def test_shape_statistics_publishes_every_field_it_computes():
     repository_row = {
         "total": 12,
         "due_today": 3,
+        "overdue_count": 2,
         "mastered_count": 4,
         "learning_count": 5,
         "new_count": 3,
@@ -138,6 +139,9 @@ def test_shape_statistics_publishes_every_field_it_computes():
     assert shaped == {
         "total": 12,
         "dueToday": 3,
+        # Due before the start of today, as distinct from `dueToday` (due by now). Published so the
+        # Learn dashboard can read it here instead of issuing its own count query for the same table.
+        "overdueCount": 2,
         "masteredCount": 4,
         "learningCount": 5,
         "newCount": 3,

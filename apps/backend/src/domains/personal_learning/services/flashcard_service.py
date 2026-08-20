@@ -629,6 +629,12 @@ def _shape_statistics(stats: dict[str, Any]) -> dict[str, Any]:
     return {
         "total": stats["total"],
         "dueToday": stats["due_today"],
+        # Cards due before the start of today, which is a different question from `dueToday`
+        # (due by now) and is read by the Learn dashboard. Carried through here so that dashboard
+        # stops issuing its own `count_overdue_flashcards` round trip for a figure this query
+        # already computed. `.get` with a default because a cached entry written before this key
+        # existed is still valid for everything else in the payload.
+        "overdueCount": stats.get("overdue_count", 0),
         "masteredCount": stats["mastered_count"],
         "learningCount": stats["learning_count"],
         "newCount": stats["new_count"],

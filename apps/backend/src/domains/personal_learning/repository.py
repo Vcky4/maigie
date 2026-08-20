@@ -19,7 +19,7 @@ from typing import Any
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, noload, selectinload
 
 from src.shared.database import get_session_factory, ilike_any
 from src.shared.field_mapping import map_fields
@@ -1122,35 +1122,53 @@ class PersonalLearningRepository:
             if deck_id is not None:
                 card_conditions.append(Flashcard.deck_id == deck_id)
 
-            def count_cards(*extra: Any) -> Any:
-                return select(func.count()).select_from(Flashcard).where(*card_conditions, *extra)
+            # Every card-level figure in one statement, as filtered aggregates over a single scan.
+            #
+            # This was six separate `SELECT`s against `Flashcard` with the same `WHERE` — total, due,
+            # mastered, new, average ease, recall — issued back to back on one session, so they could
+            # not even overlap. Six scans of the same rows, and six round trips: against a hosted
+            # database that is the dominant cost of the whole call, far more than the scans.
+            #
+            # `count().filter()` is standard `FILTER (WHERE ...)` on Postgres and is emulated with
+            # `CASE` on SQLite, so this runs unchanged under the test suite.
+            #
+            # `overdue` is folded in here too. It was a seventh query in a *different* repository
+            # method reached through a different branch of the dashboard's gather, asking about the
+            # same table with an almost identical predicate — due-before-midnight rather than
+            # due-by-now. Two genuinely different questions, but not two round trips' worth.
+            aggregate_row = (
+                await s.execute(
+                    select(
+                        func.count(),
+                        func.count().filter(Flashcard.next_review_at <= now),
+                        func.count().filter(Flashcard.next_review_at < _zone_midnight(today, timezone_name)),
+                        func.count().filter(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS),
+                        func.count().filter(Flashcard.last_reviewed_at.is_(None)),
+                        func.avg(Flashcard.ease_factor),
+                        func.avg(Flashcard.last_quality).filter(Flashcard.last_reviewed_at.is_not(None)),
+                        func.count().filter(Flashcard.last_reviewed_at.is_not(None)),
+                    )
+                    .select_from(Flashcard)
+                    .where(*card_conditions)
+                )
+            ).one()
 
-            total = (await s.execute(count_cards())).scalar() or 0
-            due_today = (
-                await s.execute(count_cards(Flashcard.next_review_at <= now))
-            ).scalar() or 0
-            mastered_count = (
-                await s.execute(count_cards(Flashcard.interval_days >= MASTERED_INTERVAL_DAYS))
-            ).scalar() or 0
+            total = aggregate_row[0] or 0
+            due_today = aggregate_row[1] or 0
+            overdue_count = aggregate_row[2] or 0
+            mastered_count = aggregate_row[3] or 0
             # "New" is never reviewed at all; "learning" is reviewed but not yet
             # mature. The two plus mastered partition the library exactly, which is
             # what lets the page show three tiles that add up to the total.
-            new_count = (
-                await s.execute(count_cards(Flashcard.last_reviewed_at.is_(None)))
-            ).scalar() or 0
+            new_count = aggregate_row[4] or 0
             learning_count = max(0, total - mastered_count - new_count)
-
-            avg_ease_stmt = select(func.avg(Flashcard.ease_factor)).where(*card_conditions)
-            avg_ease_factor = (await s.execute(avg_ease_stmt)).scalar() or 2.5
+            avg_ease_factor = aggregate_row[5] or 2.5
 
             # Recall across the library: the mean of each card's most recent grade,
             # as a percentage of the 0-5 scale. Negative `lastQuality` is the
             # never-reviewed sentinel and is excluded by the timestamp filter rather
             # than by value, because 0 is a real grade.
-            recall_stmt = select(func.avg(Flashcard.last_quality), func.count()).where(
-                *card_conditions, Flashcard.last_reviewed_at.is_not(None)
-            )
-            recall_row = (await s.execute(recall_stmt)).one()
+            recall_row = (aggregate_row[6], aggregate_row[7])
             reviewed_card_count = int(recall_row[1] or 0)
             recall_percent = (
                 round(float(recall_row[0]) / 5 * 100)
@@ -1162,18 +1180,20 @@ class PersonalLearningRepository:
             if deck_id is not None:
                 review_conditions.append(FlashcardReview.deck_id == deck_id)
 
-            reviewed_total = (
+            # Both review counts in one statement, for the same reason as the card aggregates above:
+            # same table, same `WHERE`, one of them a strict subset of the other.
+            review_row = (
                 await s.execute(
-                    select(func.count()).select_from(FlashcardReview).where(*review_conditions)
-                )
-            ).scalar() or 0
-            reviewed_this_week = (
-                await s.execute(
-                    select(func.count())
+                    select(
+                        func.count(),
+                        func.count().filter(FlashcardReview.reviewed_at >= week_start),
+                    )
                     .select_from(FlashcardReview)
-                    .where(*review_conditions, FlashcardReview.reviewed_at >= week_start)
+                    .where(*review_conditions)
                 )
-            ).scalar() or 0
+            ).one()
+            reviewed_total = review_row[0] or 0
+            reviewed_this_week = review_row[1] or 0
 
             # Distinct review days, newest first, bounded to a year. A streak longer
             # than that is not a figure any surface shows, and the bound keeps this a
@@ -1200,6 +1220,10 @@ class PersonalLearningRepository:
             return {
                 "total": total,
                 "due_today": due_today,
+                # Cards due before the start of today, as distinct from due by now. Published here so
+                # the Learn dashboard can stop asking `count_overdue_flashcards` for it in a separate
+                # round trip on a separate connection.
+                "overdue_count": overdue_count,
                 "mastered_count": mastered_count,
                 "learning_count": learning_count,
                 "new_count": new_count,
@@ -4920,10 +4944,32 @@ class PersonalLearningRepository:
     async def list_dashboard_collections(
         self, user_id: str, *, take: int = 6, session: AsyncSession | None = None
     ) -> list[dict[str, Any]]:
-        """Returns id, title, item_count, entity_types for the dashboard."""
+        """Returns id, title, item_count, entity_types for the dashboard.
+
+        Two queries regardless of how many collections come back. This was ``3 + 2N``: the
+        ``Collection`` select, its ``lazy="selectin"`` items load, and then a count query *and* a
+        distinct-types query **per collection** — fourteen round trips for six collections, to print
+        six numbers and six short lists.
+
+        That was survivable only because collection auto-seeding had never worked, so `N` was
+        almost always zero. Fixing the seeding query made this the dashboard's worst N+1 overnight,
+        which is the argument for grouping it now rather than later: a latent N+1 behind a broken
+        feature becomes a live one the moment the feature starts working.
+
+        Grouped by ``(collectionId, entityType)`` and folded in Python rather than aggregated with
+        ``array_agg``, which is Postgres-only — the test suite runs SQLite, and a query that cannot
+        execute there is a query no test can cover. Counting per type and summing loses nothing: the
+        per-type counts add up to the total by construction.
+
+        ``noload`` on the items relationship is load-bearing, not tidiness. It is ``lazy="selectin"``,
+        so selecting the collections would otherwise fetch **every item of every collection** —
+        entity ids and types for the whole set — purely to be discarded in favour of the counts
+        below.
+        """
         async with self._read_session(session) as s:
             stmt = (
                 select(Collection)
+                .options(noload(Collection.items))
                 .where(
                     Collection.user_id == user_id,
                     Collection.deleted_at.is_(None),
@@ -4932,31 +4978,39 @@ class PersonalLearningRepository:
                 .limit(take)
             )
             collections = list((await s.execute(stmt)).scalars().all())
+            if not collections:
+                return []
 
-            results: list[dict[str, Any]] = []
-            for collection in collections:
-                # Count items and get distinct entity types
-                count_stmt = select(func.count(CollectionItem.id)).where(
-                    CollectionItem.collection_id == collection.id
+            counts_by_collection: dict[str, int] = {}
+            types_by_collection: dict[str, list[str]] = {}
+            grouped = await s.execute(
+                select(
+                    CollectionItem.collection_id,
+                    CollectionItem.entity_type,
+                    func.count(CollectionItem.id),
                 )
-                item_count = (await s.execute(count_stmt)).scalar_one() or 0
+                .where(CollectionItem.collection_id.in_([c.id for c in collections]))
+                .group_by(CollectionItem.collection_id, CollectionItem.entity_type)
+            )
+            for collection_id, entity_type, count in grouped.all():
+                counts_by_collection[collection_id] = (
+                    counts_by_collection.get(collection_id, 0) + (count or 0)
+                )
+                if entity_type is not None:
+                    types_by_collection.setdefault(collection_id, []).append(entity_type)
 
-                types_stmt = (
-                    select(CollectionItem.entity_type)
-                    .where(CollectionItem.collection_id == collection.id)
-                    .distinct()
-                )
-                entity_types = [row[0] for row in (await s.execute(types_stmt)).all()]
-
-                results.append(
-                    {
-                        "id": collection.id,
-                        "title": collection.title,
-                        "item_count": item_count,
-                        "entity_types": entity_types,
-                    }
-                )
-            return results
+            return [
+                {
+                    "id": collection.id,
+                    "title": collection.title,
+                    # Absent from the grouping means an empty collection, which is a real state — a
+                    # freshly seeded one before its items are written — so it reports 0 rather than
+                    # being dropped from the dashboard.
+                    "item_count": counts_by_collection.get(collection.id, 0),
+                    "entity_types": sorted(types_by_collection.get(collection.id, [])),
+                }
+                for collection in collections
+            ]
 
 
 # Singleton

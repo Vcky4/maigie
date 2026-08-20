@@ -46,7 +46,15 @@ def _estimated_topic_minutes(estimated_hours: float | None) -> int | None:
 
 
 async def _load_courses(user_id: str, limit: int) -> tuple[list[Any], int, int, int]:
-    (courses, total), (active_courses, completed_topics) = await asyncio.gather(
+    """The course page plus the two course stats.
+
+    `total` is reused as `activeCourses` rather than counted twice. Both numbers are
+    `count(*) FROM "Course" WHERE userId = ? AND NOT archived` — `list_courses` renders it as
+    `archived = false` from its `where` dict and `get_course_dashboard_stats` rendered it as
+    `archived IS false` from `.is_(False)`, which is why two identical counts in one request did not
+    look like duplicates in the log. Same question, two spellings, two round trips.
+    """
+    (courses, total), completed_topics = await asyncio.gather(
         knowledge_repo.list_courses(
             user_id,
             where={"archived": False},
@@ -54,9 +62,9 @@ async def _load_courses(user_id: str, limit: int) -> tuple[list[Any], int, int, 
             take=limit,
             order={"updatedAt": "desc"},
         ),
-        knowledge_repo.get_course_dashboard_stats(user_id),
+        knowledge_repo.count_completed_topics(user_id),
     )
-    return courses, total, active_courses, completed_topics
+    return courses, total, total, completed_topics
 
 
 def _map_course(course: Any) -> models.LearnCourseSummary:
@@ -85,7 +93,9 @@ def _map_course(course: Any) -> models.LearnCourseSummary:
     )
 
 
-async def _load_featured(user_id: str) -> models.LearnFeaturedItem | None:
+async def _load_featured(
+    user_id: str, courses_task: asyncio.Task[tuple[list[Any], int, int, int]] | None = None
+) -> models.LearnFeaturedItem | None:
     """The thing to resume: the next unfinished topic of the course last made progress in.
 
     `featured` returned `null` unconditionally, with §7.1 recording that as deliberate "until a
@@ -98,15 +108,33 @@ async def _load_featured(user_id: str) -> models.LearnFeaturedItem | None:
     promote it above the one actually being worked through. A learner with no completions has nothing
     to resume and gets no card, rather than an arbitrary course.
 
-    Two bounded queries, and deliberately not read out of the course page loaded beside it: that page
-    is the four most recently updated courses, so resuming a fifth would silently produce no card.
+    Not read *only* out of the course page loaded beside it: that page is the four most recently
+    updated courses, so a resume target outside it would silently produce no card. But when the
+    course is already there — the common case, since the course you last completed a topic in is
+    usually one you recently updated — it is reused rather than refetched. The refetch is not cheap:
+    it reloads the course with every module, every topic, and (through the relationship defaults)
+    every topic's lesson sections.
     """
+    # Started before the course page is awaited, so the two still overlap: this query does not depend
+    # on the courses and blocking on them first would serialise two independent reads.
     recent = await knowledge_repo.recently_completed_topics(user_id, limit=1)
     if not recent:
         return None
 
     _, course_id, _ = recent[0]
-    course = await knowledge_repo.find_course_with_modules(course_id, user_id)
+
+    loaded_courses: list[Any] = []
+    if courses_task is not None:
+        try:
+            loaded_courses = (await courses_task)[0]
+        except Exception:
+            # The course branch failed. It reports its own degradation; featured falls back to
+            # fetching rather than disappearing because a neighbour broke.
+            loaded_courses = []
+
+    course = next((item for item in loaded_courses if item.id == course_id), None)
+    if course is None:
+        course = await knowledge_repo.find_course_with_modules(course_id, user_id)
     if course is None:
         return None
 
@@ -147,18 +175,29 @@ async def _load_featured(user_id: str) -> models.LearnFeaturedItem | None:
 
 
 async def _load_review(user_id: str) -> tuple[dict[str, Any], int]:
-    stats, overdue = await asyncio.gather(
-        flashcard_service.get_statistics(user_id=user_id),
-        personal_learning_repo.count_overdue_flashcards(user_id),
-    )
-    return stats, overdue
+    """Flashcard figures for the review card.
+
+    One call, not two. `count_overdue_flashcards` used to run beside this — a second round trip on a
+    second connection, asking the same table an almost identical question (due before midnight rather
+    than due by now). The two remain different figures and both are still shown; they are now two
+    filtered aggregates in the statistics query rather than two queries.
+    """
+    stats = await flashcard_service.get_statistics(user_id=user_id)
+    return stats, int(stats.get("overdueCount") or 0)
 
 
 async def _load_notes(user_id: str, limit: int) -> tuple[list[Any], int]:
-    (notes, _), total = await asyncio.gather(
-        note_service.list_notes(user_id=user_id, page=1, size=limit),
-        personal_learning_repo.count_user_notes(user_id),
-    )
+    """A page of recent notes and the note total.
+
+    One call. `list_notes` already returns its own total and that total was being **discarded** —
+    `(notes, _)` — in favour of `count_user_notes` running beside it, so the request paid for two
+    counts and used the second.
+
+    Using the first also corrects the number. `count_user_notes` counts every unarchived note
+    including space-scoped ones, while the list it sits next to is filtered to `spaceId IS NULL`;
+    a learner with notes in a space saw a total larger than the library it described.
+    """
+    notes, total = await note_service.list_notes(user_id=user_id, page=1, size=limit)
     return notes, total
 
 
@@ -274,14 +313,19 @@ async def _load_collections(user_id: str) -> list[dict]:
 async def get_dashboard(
     *, user_id: str, course_limit: int, path_limit: int, recent_limit: int
 ) -> models.LearnDashboardResponse:
+    # The course page is a task rather than a bare coroutine so `_load_featured` can await the same
+    # result instead of refetching the course it usually already contains. It still runs concurrently
+    # with everything else, and `gather` still reports its failure in its own slot.
+    courses_task = asyncio.create_task(_load_courses(user_id, course_limit))
+
     results = await asyncio.gather(
-        _load_courses(user_id, course_limit),
+        courses_task,
         _load_notes(user_id, recent_limit),
         personal_learning_repo.list_recent_resources(user_id, take=recent_limit),
         document_impl.list_documents(user_id=user_id, page=1, page_size=recent_limit),
         _load_review(user_id),
         _load_paths(user_id, path_limit),
-        _load_featured(user_id),
+        _load_featured(user_id, courses_task),
         _load_collections(user_id),
         return_exceptions=True,
     )

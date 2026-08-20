@@ -37,15 +37,20 @@ class KnowledgeRepository:
     async def _session(self) -> AsyncSession:
         return get_session_factory()()
 
-    async def get_course_dashboard_stats(self, user_id: str) -> tuple[int, int]:
-        """Return unarchived course and completed-topic counts for one user."""
+    async def count_completed_topics(self, user_id: str) -> int:
+        """Completed topics across the learner's unarchived courses.
+
+        Replaces `get_course_dashboard_stats`, which returned this **and** an unarchived course
+        count. The course count was the problem: its only caller already had the identical number
+        from `list_courses`' own count in the same `gather`, so every Learn dashboard load issued two
+        round trips for one figure. They were hard to spot as duplicates because they rendered
+        differently — `archived IS false` here against `archived = false` from the `where` dict.
+
+        Split rather than trimmed in place, because a method named for returning "stats" that returns
+        one number invites the second one being added back.
+        """
         async with await self._session() as session:
-            course_count_stmt = (
-                select(func.count())
-                .select_from(Course)
-                .where(Course.user_id == user_id, Course.archived.is_(False))
-            )
-            completed_topics_stmt = (
+            stmt = (
                 select(func.count())
                 .select_from(Topic)
                 .join(Module, Topic.module_id == Module.id)
@@ -56,9 +61,7 @@ class KnowledgeRepository:
                     Topic.completed.is_(True),
                 )
             )
-            active_courses = (await session.execute(course_count_stmt)).scalar_one() or 0
-            completed_topics = (await session.execute(completed_topics_stmt)).scalar_one() or 0
-            return active_courses, completed_topics
+            return (await session.execute(stmt)).scalar_one() or 0
 
     # -----------------------------------------------------------------------
     # Courses
