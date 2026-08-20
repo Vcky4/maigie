@@ -5,7 +5,7 @@ Encapsulates all queries for Course, Module, Topic, Resource.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, update
@@ -983,9 +983,50 @@ class KnowledgeRepository:
             await session.refresh(resource)
             return resource
 
-    async def update_resource(self, resource_id: str, data: dict[str, Any]) -> None:
+    # `update_resource` is deliberately gone rather than left unused.
+    #
+    # It was `values(**data)` over whatever dict a caller passed, with no field mapping and
+    # no validation, and its only caller handed it Prisma's `{"increment": 1}` — so every
+    # resource interaction raised and neither counter has ever moved. With that caller
+    # fixed the method had no callers at all, and keeping a dead passthrough that binds
+    # arbitrary dicts to columns preserves the trap for whoever needs a resource update
+    # next. Resource writes go through purpose-named methods; see
+    # `increment_resource_counter` below.
+
+    async def increment_resource_counter(
+        self,
+        resource_id: str,
+        *,
+        column: str,
+        touch_last_accessed: bool = False,
+    ) -> None:
+        """Add one to a resource's click or bookmark counter, in SQL.
+
+        Separate from ``update_resource`` because the caller used to express this as
+        ``{"clickCount": {"increment": 1}}`` — Prisma's dialect — and ``update_resource``
+        passes its dict straight into ``values(**data)``. That binds a dict to an integer
+        column, so **every click and bookmark interaction raised** and neither counter has
+        ever moved. The Prisma shape is not interpreted here on purpose: teaching a
+        SQLAlchemy repository to parse a second ORM's dialect is what produced the bug.
+
+        The read-modify-write is done in one statement (``column = column + 1``) rather
+        than by loading the row first, so two concurrent opens cannot both read 4 and
+        write 5.
+        """
+        counters = {
+            "clickCount": Resource.click_count,
+            "bookmarkCount": Resource.bookmark_count,
+        }
+        target = counters.get(column)
+        if target is None:
+            raise ValueError(f"Not a resource counter: {column!r}")
+
+        values: dict[str, Any] = {target.key: target + 1}
+        if touch_last_accessed:
+            values[Resource.last_accessed_at.key] = datetime.now(UTC)
+
         async with await self._session() as session:
-            stmt = update(Resource).where(Resource.id == resource_id).values(**data)
+            stmt = update(Resource).where(Resource.id == resource_id).values(**values)
             await session.execute(stmt)
             await session.commit()
 

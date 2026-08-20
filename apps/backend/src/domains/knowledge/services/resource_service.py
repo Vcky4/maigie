@@ -111,15 +111,20 @@ async def record_interaction(*, user_id: str, resource_id: str, interaction_type
     if not resource:
         raise NotFoundError("Resource", resource_id)
 
-    update_data: dict[str, Any] = {}
+    # Incremented in SQL through a dedicated repository method. This used to build
+    # `{"clickCount": {"increment": 1}}` — Prisma's dialect — and hand it to
+    # `update_resource`, which passes its dict into `values(**data)`; binding a dict to an
+    # integer column raised, so no interaction has ever been recorded and both counters
+    # are still zero for every resource. `clickCount` is also the *column* name, not the
+    # mapped attribute (`click_count`), which is the second half of why it could not work.
     if interaction_type == "RESOURCE_CLICK":
-        update_data["clickCount"] = {"increment": 1}
-        update_data["lastAccessedAt"] = datetime.now(UTC)
+        await knowledge_repo.increment_resource_counter(
+            resource_id, column="clickCount", touch_last_accessed=True
+        )
     elif interaction_type == "RESOURCE_BOOKMARK":
-        update_data["bookmarkCount"] = {"increment": 1}
-
-    if update_data:
-        await knowledge_repo.update_resource(resource_id, update_data)
+        await knowledge_repo.increment_resource_counter(
+            resource_id, column="bookmarkCount"
+        )
 
 
 async def delete_resource(*, user_id: str, resource_id: str) -> None:

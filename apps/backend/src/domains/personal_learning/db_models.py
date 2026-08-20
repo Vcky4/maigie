@@ -1527,6 +1527,115 @@ class Reflection(Base, TimestampMixin):
 
 
 # ---------------------------------------------------------------------------
+# DailyLearningSnapshot
+# ---------------------------------------------------------------------------
+
+
+class DailyLearningSnapshot(Base, TimestampMixin):
+    """One learner's day, frozen. The only history behind every Reflect trend.
+
+    Reflect asks for growth curves, per-subject `change`, `masteryChange`, `consistencyChange`
+    and a monthly rhythm. None of those are derivable from the tables that exist, because the
+    values they trend are **mutable in place**: `Course.progress` and
+    `LearningProfile.consistencyScore` are overwritten, so yesterday's number is gone the
+    instant it changes and no amount of query cleverness recovers it. `PrepReadinessSnapshot`
+    reached this conclusion first for the Prepare surface; this is the same pattern, and
+    following it was preferred over inventing a second approach to the same problem.
+
+    **A day, not an event log.** The surface asks "what was mastery on 12 July", not "what
+    changed at 14:22". A daily row answers that at a fraction of the volume, and
+    `ActivityFeedEntry` already covers the event-level need.
+
+    **The day is the learner's calendar day.** `snapshotDate` comes from `to_learner_local`,
+    not from `datetime.now(UTC).date()`: a session at 23:30 in Lagos is the next day in UTC,
+    so bucketing by UTC date either merges two of the learner's days or splits one across
+    two. `activeDay` and the rhythm chart are calendar questions, so they get the learner's
+    calendar. A learner whose timezone was never captured falls back to UTC — a limitation of
+    their data, recorded as such, rather than a claim.
+
+    **Nullable percentages stay nullable.** A learner who reviewed no cards has no recall
+    percentage, and `0.0` there would draw a line at the bottom of a chart asserting total
+    failure to remember. Not-measured is not zero, and the column type is where that is
+    enforced rather than in each reader.
+    """
+
+    __tablename__ = "DailyLearningSnapshot"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    # The learner's local calendar day. Unique with `userId` below, which is what makes the
+    # nightly writer idempotent: a retry, a re-run, or two workers on the same day update the
+    # row rather than duplicating the day.
+    snapshot_date: Mapped[date] = mapped_column("snapshotDate", Date, nullable=False)
+
+    # --- Effort and attendance ---
+    focused_minutes: Mapped[float | None] = mapped_column(
+        "focusedMinutes", Float, nullable=True
+    )
+    sessions_completed: Mapped[int] = mapped_column(
+        "sessionsCompleted", Integer, nullable=False, default=0, server_default="0"
+    )
+    # Whether the learner showed up at all. Stored rather than derived from the counters
+    # because "showed up" includes work none of these columns counts — opening a lesson,
+    # attempting a knowledge check — and the rhythm chart is a question about attendance.
+    active_day: Mapped[bool] = mapped_column(
+        "activeDay", Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    # --- Outcome ---
+    # Copied from `LearningProfile`, never recomputed here: one definition, one writer
+    # (Decision E). Null when the learner has no profile figure yet.
+    consistency_score: Mapped[float | None] = mapped_column(
+        "consistencyScore", Float, nullable=True
+    )
+    overall_mastery_percent: Mapped[float | None] = mapped_column(
+        "overallMasteryPercent", Float, nullable=True
+    )
+    cards_reviewed: Mapped[int] = mapped_column(
+        "cardsReviewed", Integer, nullable=False, default=0, server_default="0"
+    )
+    recall_percent: Mapped[float | None] = mapped_column("recallPercent", Float, nullable=True)
+    topics_completed: Mapped[int] = mapped_column(
+        "topicsCompleted", Integer, nullable=False, default=0, server_default="0"
+    )
+    # The third growth-curve series: volume of deliberate work, so the chart does not render
+    # focused minutes twice. Absolute with fixed caps rather than normalised against the
+    # learner's own trailing maximum — a moving denominator means a record-breaking day
+    # silently rewrites every earlier bar, and a trend whose history changes is not a trend
+    # (Decision U).
+    effort_score: Mapped[float | None] = mapped_column("effortScore", Float, nullable=True)
+
+    # `{courseId: masteryPercent}`. JSON rather than a row per subject per day: it is read
+    # whole, for one date range, and never queried by course — the trend differences two
+    # dicts. A `DailySubjectMastery` child table would multiply the row count by the
+    # learner's course count to serve no query that exists.
+    subject_mastery: Mapped[dict | None] = mapped_column("subjectMastery", JSON, nullable=True)
+
+    # True when this row was reconstructed by the backfill rather than recorded on the day.
+    # Only `overallMasteryPercent` and `subjectMastery` are approximate — the denominator is
+    # today's topic count, and a topic completed then reopened has lost its `completedAt` —
+    # and both distortions understate, so a reconstructed trend never invents growth that did
+    # not happen. Published per point so the client can footnote it: a learner told "mastery
+    # before this date is estimated from your completion history" has been told the truth,
+    # and a learner shown a seamless curve has not (Decision P).
+    reconstructed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("userId", "snapshotDate", name="DailyLearningSnapshot_unique"),
+        Index("DailyLearningSnapshot_userId_snapshotDate_idx", "userId", "snapshotDate"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DailyLearningSnapshot user={self.user_id} on={self.snapshot_date}>"
+
+
+# ---------------------------------------------------------------------------
 # DiscoveryRecommendation
 # ---------------------------------------------------------------------------
 
