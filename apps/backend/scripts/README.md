@@ -14,7 +14,7 @@ Main script that generates `.env` file from `.env.example` by checking for corre
 # Example:
 ./generate-env-from-secrets.sh .env .env.example
 ```
-
+ 
 **How it works:**
 1. Reads `.env.example` line by line
 2. For each `KEY=VALUE` line, checks if an environment variable with that key name exists
