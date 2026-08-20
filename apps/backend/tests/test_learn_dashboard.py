@@ -148,7 +148,7 @@ class FakeKnowledge:
         self.owner._boom("featured")
         return self.owner.completions[:limit]
 
-    async def find_course_with_modules(self, course_id, user_id):
+    async def find_course_outline(self, course_id, user_id):
         self.owner._boom("featured")
         self.course_lookups.append(course_id)
         return next((c for c in self.owner.courses if c.id == course_id), None)
@@ -705,7 +705,7 @@ class TestAuthorization:
             seen.append(user_id)
             return await original_completions(user_id, limit=limit)
 
-        original_find = sources.knowledge.find_course_with_modules
+        original_find = sources.knowledge.find_course_outline
 
         async def find(course_id, user_id):
             seen.append(user_id)
@@ -714,7 +714,7 @@ class TestAuthorization:
         monkeypatch.setattr(sources.knowledge, "list_courses", list_courses)
         monkeypatch.setattr(sources.knowledge, "count_completed_topics", stats)
         monkeypatch.setattr(sources.knowledge, "recently_completed_topics", completions)
-        monkeypatch.setattr(sources.knowledge, "find_course_with_modules", find)
+        monkeypatch.setattr(sources.knowledge, "find_course_outline", find)
 
         sources.completions = [(_topic("t1", completed=True), "c1", "Course c1")]
         sources.courses = [_course("c1", modules=[_module("m1", [_topic("t1", completed=True)])])]

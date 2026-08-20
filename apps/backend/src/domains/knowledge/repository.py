@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, defer, noload, selectinload
 
 from src.shared.database import get_session_factory, ilike_any
 from src.shared.field_mapping import map_fields
@@ -74,10 +74,42 @@ class KnowledgeRepository:
             return result.scalar_one_or_none()
 
     async def find_course_with_modules(self, course_id: str, user_id: str) -> Course | None:
+        """A course with its modules, topics and every topic's lesson sections.
+
+        The sections are not named in the options and are loaded all the same, because
+        `Topic.sections` is `lazy="selectin"`. That is correct here — `CourseResponse` serialises
+        `ModuleResponse.topics` as `TopicResponse`, which publishes `sections`, so course detail needs
+        them — but it is worth stating, because the same implicit load was pure waste on the two
+        callers that only wanted an outline. Those use `find_course_outline`.
+        """
         async with await self._session() as session:
             stmt = (
                 select(Course)
                 .options(selectinload(Course.modules).selectinload(Module.topics))
+                .where(Course.id == course_id, Course.user_id == user_id)
+            )
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
+    async def find_course_outline(self, course_id: str, user_id: str) -> Course | None:
+        """A course with its modules and topics, without the lesson sections.
+
+        For callers that need the shape of a course — how many topics, which are complete, which is
+        next — rather than its content. `find_course_with_modules` answers the same question and then
+        fetches every section's `paragraphs`, `steps`, `bullets` and `code`, which for a
+        fifty-topic course is most of the course text.
+
+        A separate method rather than a `with_sections=False` flag on the other one: the two answer
+        different questions and a boolean at the call site does not say which.
+        """
+        async with await self._session() as session:
+            stmt = (
+                select(Course)
+                .options(
+                    selectinload(Course.modules)
+                    .selectinload(Module.topics)
+                    .noload(Topic.sections)
+                )
                 .where(Course.id == course_id, Course.user_id == user_id)
             )
             result = await session.execute(stmt)
@@ -100,10 +132,53 @@ class KnowledgeRepository:
             count_stmt = select(func.count()).select_from(Course).where(*conditions)
             total = (await session.execute(count_stmt)).scalar() or 0
 
-            # Fetch. Deliberately without the modules and topics: the list response carries counts,
-            # not rows, and `course_progress_totals` produces them in one grouped query. Loading
-            # every topic of every course on the page to call `len()` on them is what this replaces.
-            stmt = select(Course).where(*conditions).offset(skip).limit(take)
+            # Modules and topics, but **not** their lesson sections.
+            #
+            # The comment that used to sit here said the modules and topics were deliberately not
+            # loaded. That was true of this statement and false of the request: `Course.modules`,
+            # `Module.topics` and `Topic.sections` are all `lazy="selectin"`, so leaving the options
+            # off did not skip them — it loaded all three implicitly, including every
+            # `TopicSection` row with its `paragraphs`, `steps`, `bullets` and `code` JSON. A page of
+            # four courses pulled the full lesson text of forty-seven topics to answer a question
+            # about counts.
+            #
+            # Stated explicitly now, which is the point: `selectin` defaults make the cost of a query
+            # invisible at the call site, and the only way to know what a `select` actually costs is
+            # for the loader strategy to be written down beside it.
+            #
+            # Sections are suppressed rather than the whole chain because the two consumers disagree:
+            # `CourseListItem` carries no modules or topics at all, while the Learn dashboard's
+            # `_map_course` counts them. Neither reads a section.
+            stmt = (
+                select(Course)
+                .options(
+                    selectinload(Course.modules)
+                    .selectinload(Module.topics)
+                    # The three heavy columns deferred, rather than the read ones allow-listed.
+                    #
+                    # `Topic.content` is a `Text` column holding the entire lesson body, fetched for
+                    # every topic of every course on the page — measured at **2.76 s for a single
+                    # statement** against the hosted database, the slowest thing the Learn dashboard
+                    # did, to answer a question about counts. `objectives` and `knowledgeCheck` are
+                    # JSON and equally unread here.
+                    #
+                    # **Deny-list, not allow-list, and the reason is a bug this had.** The first
+                    # version used `load_only` with the five columns the mappers read. That broke
+                    # `_load_featured`, which also reads `topic.summary`, with a
+                    # `DetachedInstanceError` at response time — and **every test still passed**,
+                    # because the dashboard suite's fakes are `SimpleNamespace` objects with no
+                    # deferred-column behaviour to exercise. An allow-list turns "someone reads one
+                    # more field" into a runtime error the tests cannot see; a deny-list of columns
+                    # nothing on this path could want turns it into a slightly larger row.
+                    .defer(Topic.content)
+                    .defer(Topic.objectives)
+                    .defer(Topic.knowledge_check)
+                    .noload(Topic.sections)
+                )
+                .where(*conditions)
+                .offset(skip)
+                .limit(take)
+            )
             if order:
                 col_name, direction = next(iter(order.items()))
                 col = getattr(Course, self._to_attr(col_name), Course.created_at)
@@ -265,11 +340,29 @@ class KnowledgeRepository:
         The course is joined in rather than fetched per row, which is what "recently active" needs to
         say where each item came from — a list of topic titles with no course beside them is not
         readable.
+
+        **Both current callers read only the course id** — `learn_dashboard_service._load_featured`
+        and the courses-dashboard route, which each use the tuple's second element to find the course
+        to resume. The topic is returned because the method is named for topics and a third caller
+        would reasonably want one, but it is loaded narrowly: fetching whole rows here meant pulling
+        `content`, the full lesson body, and it measured 1.5 s for a single row against the hosted
+        database. A caller that needs more columns should widen this deliberately rather than
+        discover them missing.
         """
         async with await self._session() as session:
             rows = (
                 await session.execute(
                     select(Topic, Course.id, Course.title)
+                    # `Topic.sections` is `lazy="selectin"`, so returning a `Topic` entity otherwise
+                    # fetches its lesson sections too — for a query whose callers read a course id.
+                    # Heavy columns deferred rather than the read ones allow-listed — see the note in
+                    # `list_courses` for why that direction, which a `DetachedInstanceError` taught.
+                    .options(
+                        defer(Topic.content),
+                        defer(Topic.objectives),
+                        defer(Topic.knowledge_check),
+                        noload(Topic.sections),
+                    )
                     .join(Module, Topic.module_id == Module.id)
                     .join(Course, Module.course_id == Course.id)
                     .where(

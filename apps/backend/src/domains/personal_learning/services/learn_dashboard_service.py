@@ -134,7 +134,8 @@ async def _load_featured(
 
     course = next((item for item in loaded_courses if item.id == course_id), None)
     if course is None:
-        course = await knowledge_repo.find_course_with_modules(course_id, user_id)
+        # The outline variant: this needs topic titles and completion flags, not lesson bodies.
+        course = await knowledge_repo.find_course_outline(course_id, user_id)
     if course is None:
         return None
 

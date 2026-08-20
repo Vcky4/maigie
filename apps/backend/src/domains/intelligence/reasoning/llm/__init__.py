@@ -96,6 +96,14 @@ class GroundedResult:
 
     text: str
     sources: list[GroundingSource]
+    #: True when the model ran out of output budget mid-reply.
+    #:
+    #: Carried because a truncated answer and an empty one are **not the same failure**, and used to
+    #: be indistinguishable to the caller. A reply cut off mid-string parses to nothing, so a parser
+    #: returning zero items reported "nothing found" for what was really "the reply was cut off" —
+    #: and the learner was advised to rephrase a query that had in fact worked. One is a reason to
+    #: try different words; the other is a reason to raise the token budget.
+    truncated: bool = False
 
     @property
     def grounded(self) -> bool:
@@ -105,7 +113,19 @@ class GroundedResult:
 async def generate_grounded_content(
     prompt: str,
     *,
-    max_tokens: int = 2048,
+    # 8192, from 2048, which truncated in practice — and it is the *third* call site in this
+    # codebase to arrive at this number by the same route. See `study_voice/diagram.py`, which
+    # reached it from 1200 and then 2048, and the lesson and outline routes before that.
+    #
+    # The output here is small: eight resources is maybe 1,500 characters. This looks absurdly
+    # generous until you account for where the budget goes — the configured model is a *thinking*
+    # model and reasoning tokens are drawn from the same output allowance. A measured failure on
+    # this route: `thoughts_token_count=1067` out of 2000, `finish_reason=MAX_TOKENS`, and a reply
+    # cut off mid-string after 364 characters. The JSON never closed, so the caller's parse
+    # returned nothing and the learner was told no resources existed.
+    #
+    # Costing nothing when unused: billing is on tokens actually produced, not on the ceiling.
+    max_tokens: int = 8192,
     temperature: float = 0.3,
 ) -> GroundedResult:
     """Generate text with Google Search grounding enabled.
@@ -155,7 +175,20 @@ async def generate_grounded_content(
         # Not an error, but worth seeing in logs: it means the answer is ungrounded and
         # anything the caller persists from it is unverified.
         logger.info("Grounded request returned no grounding metadata; answer is ungrounded.")
-    return GroundedResult(text=text, sources=sources)
+
+    # Truncation is reported rather than left for the caller to infer from a failed parse. It was
+    # silent before, and silence made it look like the model had nothing to say.
+    truncated = str(_extract_finish_reason(response) or "").upper().endswith("MAX_TOKENS")
+    if truncated:
+        logger.warning(
+            "Grounded reply hit the output budget and was cut off (max_tokens=%d, "
+            "text length=%d). Reasoning tokens draw from this same allowance, so the "
+            "visible answer can be truncated while the budget looks generous.",
+            max_tokens,
+            len(text),
+        )
+
+    return GroundedResult(text=text, sources=sources, truncated=truncated)
 
 
 def _extract_grounding_sources(response: Any) -> list[GroundingSource]:

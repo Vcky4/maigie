@@ -256,9 +256,24 @@ async def recommend_resources(
         "- score: 0-1, how strongly you recommend it"
     )
 
-    result = await generate_grounded_content(prompt, max_tokens=2000, temperature=0.3)
+    # The token budget is deliberately not narrowed here. This used to pass `max_tokens=2000`, which
+    # looked ample for eight resources and was not: the model is a thinking model, reasoning tokens
+    # come out of the same allowance, and a measured run spent 1,067 of 2,000 on thought and returned
+    # a reply cut off mid-string after 364 characters. The JSON never closed, the parse produced
+    # nothing, and the learner was told no resources existed for a perfectly good query.
+    result = await generate_grounded_content(prompt, temperature=0.3)
     candidates = _parse_recommendation_payload(result.text)[:limit]
     if not candidates:
+        if result.truncated:
+            # Distinguished in the log because the two causes need different responses: rephrasing
+            # helps one and only a bigger budget helps the other.
+            logger.warning(
+                "Recommendation for %r produced no parseable items because the reply was "
+                "truncated, not because nothing was found.",
+                query,
+            )
+        else:
+            logger.info("Recommendation for %r returned no parseable items.", query)
         return {
             "recommendations": [],
             "query": query,
