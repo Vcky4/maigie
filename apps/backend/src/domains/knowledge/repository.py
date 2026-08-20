@@ -956,6 +956,25 @@ class KnowledgeRepository:
             result = await session.execute(stmt)
             return list(result.scalars().all()), total
 
+    async def find_resources_by_urls(self, user_id: str, urls: list[str]) -> list[Resource]:
+        """The learner's resources matching any of these URLs.
+
+        Backs the dedupe on recommendation: searching twice for the same thing should not
+        put the same page in the library twice. Matched on URL rather than title, because a
+        title is the model's phrasing and varies between runs while the URL is the identity
+        of the thing.
+
+        One query rather than one per URL — a recommendation batch is up to twenty.
+        """
+        if not urls:
+            return []
+        async with await self._session() as session:
+            stmt = select(Resource).where(
+                Resource.user_id == user_id,
+                Resource.url.in_(urls),
+            )
+            return list((await session.execute(stmt)).scalars().all())
+
     async def find_resource(self, resource_id: str, user_id: str) -> Resource | None:
         async with await self._session() as session:
             stmt = select(Resource).where(Resource.id == resource_id, Resource.user_id == user_id)
@@ -974,6 +993,10 @@ class KnowledgeRepository:
                 is_recommended=data.get("isRecommended", False),
                 recommendation_score=data.get("recommendationScore"),
                 recommendation_source=data.get("recommendationSource"),
+                # `recommendationReason` was absent from this mapper, which is the second
+                # half of why the column had never been written: even a caller that sent it
+                # would have had it dropped here. The first half was that no caller sent it.
+                recommendation_reason=data.get("recommendationReason"),
                 course_id=data.get("courseId"),
                 topic_id=data.get("topicId"),
                 space_id=data.get("spaceId"),
@@ -1118,6 +1141,27 @@ class KnowledgeRepository:
             conditions.append(Resource.course_id == where["courseId"])
         if "type" in where:
             conditions.append(Resource.type == where["type"])
+        if "isRecommended" in where:
+            conditions.append(Resource.is_recommended.is_(bool(where["isRecommended"])))
+        # `OR` is the search clause, and it was being dropped on the floor. `list_resources` has
+        # always built `{"OR": [{"title": {"contains": ...}}, {"description": {...}}]}` from the
+        # `search` parameter, but nothing here read the key, so every search returned the
+        # unfiltered list — the request looked like it worked and the results were simply wrong.
+        # Kept in the caller's Prisma-ish shape rather than changing it, because that shape is what
+        # every other `where` builder in this file consumes.
+        if "OR" in where:
+            or_conditions = []
+            for clause in where["OR"]:
+                for field, predicate in clause.items():
+                    col = getattr(Resource, self._to_attr(field), None)
+                    if col is None:
+                        continue
+                    if isinstance(predicate, dict) and "contains" in predicate:
+                        or_conditions.append(col.ilike(f"%{predicate['contains']}%"))
+                    else:
+                        or_conditions.append(col == predicate)
+            if or_conditions:
+                conditions.append(or_(*or_conditions))
         return conditions
 
     def _map_course_data(self, data: dict[str, Any]) -> dict[str, Any]:

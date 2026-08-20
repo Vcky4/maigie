@@ -22,6 +22,7 @@ async def list_resources(
     topic_id: str | None = None,
     course_id: str | None = None,
     resource_type: str | None = None,
+    is_recommended: bool | None = None,
     search: str | None = None,
     page: int = 1,
     page_size: int = 20,
@@ -42,6 +43,10 @@ async def list_resources(
         where["courseId"] = course_id
     if resource_type:
         where["type"] = resource_type
+    # `is not None` rather than truthiness, so `isRecommended=false` filters to
+    # learner-saved resources instead of being read as "no filter".
+    if is_recommended is not None:
+        where["isRecommended"] = is_recommended
     if search:
         where["OR"] = [
             {"title": {"contains": search, "mode": "insensitive"}},
@@ -135,50 +140,195 @@ async def delete_resource(*, user_id: str, resource_id: str) -> None:
     await knowledge_repo.delete_resource(resource_id)
 
 
+#: Resource kinds a recommendation may claim. Anything else becomes ``OTHER`` rather than
+#: being written through: ``type`` has no constraint at the database level, so a typo from
+#: the model would become a stored value no filter chip can ever match.
+_RECOMMENDABLE_TYPES = {"VIDEO", "ARTICLE", "BOOK", "COURSE", "WEBSITE", "DOCUMENT", "OTHER"}
+
+
+def _parse_recommendation_payload(raw: str) -> list[dict[str, Any]]:
+    """Pull the JSON array out of a grounded reply.
+
+    Parsed out of prose because grounding and structured output are mutually exclusive in
+    this SDK — a response schema cannot be attached to a request that carries tools. Only
+    dicts survive, so a model that returns an array of strings yields nothing rather than
+    a list of items with no fields.
+    """
+    import json
+    import re
+
+    match = re.search(r"\[.*\]", raw, re.DOTALL)
+    if not match:
+        return []
+    try:
+        parsed = json.loads(match.group(0))
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def _coerce_score(value: Any) -> float:
+    """A recommendation score clamped to 0-1.
+
+    The model returns whatever it likes here — `0.9`, `90`, `"high"`. Unreadable values
+    become 0.5, which is the honest reading of "recommended, with nothing useful said about
+    how strongly".
+    """
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    if score > 1.0:
+        # A percentage rather than a fraction, which the model does often enough to handle.
+        score = score / 100 if score <= 100 else 1.0
+    return max(0.0, min(1.0, score))
+
+
 async def recommend_resources(
     *, user_id: str, query: str, limit: int = 5, context: dict | None = None
 ) -> dict[str, Any]:
-    """Generate AI-powered resource recommendations via RAG."""
+    """Find real resources for a query and add them to the learner's library.
+
+    This was a single ungrounded ``generate_content`` call whose output was returned and
+    then thrown away. Two things were wrong, and they compounded:
+
+    1. **It never looked anything up.** The docstring said "via RAG"; there was no retrieval
+       and no search anywhere in the backend. It asked the model to produce URLs from its
+       weights, which yields plausible URLs as readily as real ones, so a learner following
+       one often landed on a 404.
+    2. **Nothing was persisted.** ``Resource.isRecommended``, ``recommendationScore``,
+       ``recommendationSource`` and ``recommendationReason`` exist for precisely this and had
+       never been written by anything — one of them was not even mapped by
+       ``create_resource``. So there was no recommended-resources surface to build, and every
+       suggestion was lost the moment the screen changed.
+
+    Now: search-grounded generation, every URL resolved and checked, and the survivors stored
+    as real rows the learner can open, filter and keep.
+
+    **Checking is what makes storing safe.** An unverified URL in a row is worse than one in
+    a response: a row is permanent, accumulates counters, and can be filed into a collection.
+    So a recommendation earns its row by resolving, and the rest are counted and dropped.
+
+    Returns rows — newly created and pre-existing together — plus ``grounded`` (whether
+    search actually ran, since the tool is a request and not a guarantee) and ``discarded``
+    (how many were dropped as unreachable). ``personalized`` is gone: it was hardcoded
+    ``True`` including when the reply could not be parsed at all, so it never carried
+    information.
+    """
     from src.domains.intelligence.memory.memory_service import get_memory_context
+    from src.domains.intelligence.reasoning.llm import generate_grounded_content
+
+    from .url_validator import check_urls
 
     user_context = await get_memory_context(user_id)
     if context:
         user_context.update(context)
 
-    # Use intelligence domain's RAG capability
-    from src.domains.intelligence.reasoning.llm import generate_content
-
     prompt = (
-        f"Based on the user's learning context, recommend {limit} resources for: {query}\n\n"
-        f"User context: {str(user_context)[:500]}\n\n"
-        "Return as a JSON array of objects with: title, url, description, type, relevance, score."
+        f"Search the web for {limit} genuinely useful learning resources about: {query}\n\n"
+        f"Learner context — use it to pitch the level, do not treat it as the query: "
+        f"{str(user_context)[:500]}\n\n"
+        "Rules:\n"
+        "- Only include resources you actually found in search results. Do not construct, "
+        "guess or complete URLs.\n"
+        "- Give the direct page URL, never a search results page.\n"
+        "- Prefer primary sources, official documentation, university material and "
+        "established educational sites.\n\n"
+        'Return ONLY a JSON array of objects with keys: "title", "url", "description", '
+        '"type", "relevance", "score".\n'
+        f"- type: one of {sorted(_RECOMMENDABLE_TYPES)}\n"
+        "- relevance: one short sentence on why it helps with this specific query\n"
+        "- score: 0-1, how strongly you recommend it"
     )
 
-    import json
+    result = await generate_grounded_content(prompt, max_tokens=2000, temperature=0.3)
+    candidates = _parse_recommendation_payload(result.text)[:limit]
+    if not candidates:
+        return {
+            "recommendations": [],
+            "query": query,
+            "grounded": result.grounded,
+            "discarded": 0,
+        }
 
-    raw = await generate_content(prompt, max_tokens=1500, temperature=0.3)
-    try:
-        import re
+    # Every proposed URL resolved and checked at once. Following redirects is required
+    # rather than tidy: a grounding URI is usually a `grounding-api-redirect` indirection,
+    # and storing that instead of its destination would put a Google redirect in the
+    # learner's library.
+    proposed = [str(item.get("url") or "") for item in candidates]
+    checked = await check_urls([url for url in proposed if url])
 
-        match = re.search(r"\[.*\]", raw, re.DOTALL)
-        recommendations = json.loads(match.group(0)) if match else []
-    except Exception:
-        recommendations = []
+    # Deduped against what the learner already has, so searching twice for the same thing
+    # does not file the same page twice. Keyed on the *resolved* URL, because that is what
+    # gets stored, and matched on URL rather than title — a title is the model's phrasing
+    # and varies between runs, while the URL is the identity of the thing.
+    resolved_urls = [check.resolved for check in checked.values() if check.resolved]
+    existing_by_url = {
+        row.url: row for row in await knowledge_repo.find_resources_by_urls(user_id, resolved_urls)
+    }
+
+    recommendations: list[Any] = []
+    seen: set[str] = set()
+    discarded = 0
+
+    for item in candidates:
+        proposed_url = str(item.get("url") or "")
+        check = checked.get(proposed_url)
+        if check is None or check.resolved is None:
+            discarded += 1
+            logger.info(
+                "Dropped an unreachable recommendation for %r: %s (%s)",
+                query,
+                proposed_url or "<no url>",
+                check.reason if check else "no url given",
+            )
+            continue
+
+        url = check.resolved
+        if url in seen:
+            # Two suggestions that redirect to the same page.
+            continue
+        seen.add(url)
+
+        already = existing_by_url.get(url)
+        if already is not None:
+            recommendations.append(already)
+            continue
+
+        raw_type = str(item.get("type") or "OTHER").upper()
+        created = await knowledge_repo.create_resource(
+            {
+                "userId": user_id,
+                "title": str(item.get("title") or "Untitled"),
+                "url": url,
+                "description": item.get("description"),
+                "type": raw_type if raw_type in _RECOMMENDABLE_TYPES else "OTHER",
+                "isRecommended": True,
+                "recommendationScore": _coerce_score(item.get("score")),
+                # Distinguishes a checked citation from a checked guess. The search tool is
+                # a request, so an ungrounded reply can still produce URLs that happen to
+                # resolve, and the row must not claim those were found by search.
+                "recommendationSource": "gemini_grounded" if result.grounded else "gemini",
+                "recommendationReason": item.get("relevance"),
+            }
+        )
+        recommendations.append(created)
+
+    if discarded:
+        logger.info(
+            "Recommendation for %r kept %d of %d after link checking.",
+            query,
+            len(recommendations),
+            len(candidates),
+        )
 
     return {
-        "recommendations": [
-            {
-                "title": r.get("title", "Untitled"),
-                "url": r.get("url", ""),
-                "description": r.get("description"),
-                "type": r.get("type", "OTHER"),
-                "relevance": r.get("relevance"),
-                "score": r.get("score", 0.5),
-            }
-            for r in recommendations[:limit]
-        ],
+        "recommendations": recommendations,
         "query": query,
-        "personalized": True,
+        "grounded": result.grounded,
+        "discarded": discarded,
     }
 
 

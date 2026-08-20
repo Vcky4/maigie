@@ -6,6 +6,7 @@ without knowing about provider specifics.
 """
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from .errors import GeminiError, LLMError, LLMProviderError, LLMUnavailableError
@@ -17,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "generate_content",
+    "generate_grounded_content",
+    "GroundedResult",
+    "GroundingSource",
     "new_gemini_client",
     "gemini_types",
     "LlmTask",
@@ -64,6 +68,121 @@ async def generate_content(prompt: str, *, max_tokens: int = 2048, temperature: 
             f"empty response (finish_reason={finish_reason})",
         )
     return text
+
+
+@dataclass(frozen=True)
+class GroundingSource:
+    """One search result the model was actually shown.
+
+    ``url`` is frequently a ``vertexaisearch.cloud.google.com/grounding-api-redirect/...``
+    redirect rather than the destination, so it has to be resolved before it is stored or
+    shown. ``title`` is usually the site name rather than the page title.
+    """
+
+    url: str
+    title: str | None
+
+
+@dataclass(frozen=True)
+class GroundedResult:
+    """Text generated with search grounding, plus the sources behind it.
+
+    ``grounded`` is the field that matters and the reason this is not just a string. The
+    search tool is a *request*, not a guarantee: Gemini decides whether to call it, and
+    when it does not, the reply is ordinary generation — the model writing URLs out of its
+    weights. Callers that persist anything from this must be able to tell the two apart,
+    because one is a citation and the other is a guess.
+    """
+
+    text: str
+    sources: list[GroundingSource]
+
+    @property
+    def grounded(self) -> bool:
+        return bool(self.sources)
+
+
+async def generate_grounded_content(
+    prompt: str,
+    *,
+    max_tokens: int = 2048,
+    temperature: float = 0.3,
+) -> GroundedResult:
+    """Generate text with Google Search grounding enabled.
+
+    Use this instead of `generate_content` whenever the output is supposed to refer to
+    things that exist. Plain generation asked for a URL will produce a well-formed,
+    plausible, frequently non-existent one, because a URL is a string and predicting
+    strings is what the model does.
+
+    **Structured output is not available here.** `response_mime_type="application/json"`
+    and a schema cannot be combined with tools in this SDK, so the reply is prose and the
+    caller parses it. Worth the trade: a schema guarantees the *shape* of a URL, and
+    grounding is the only thing that speaks to whether it resolves.
+
+    A low default temperature, because this is a retrieval-and-summarise task and there is
+    nothing to be gained from creative variance in a citation.
+
+    Never raises for an ungrounded answer — it returns one with `grounded=False` and lets
+    the caller decide. Refusing would turn a degraded result into a failed request, and for
+    recommendations a smaller checked list beats an error.
+    """
+    client = new_gemini_client(gemini_api_key() or None)
+    response = await client.aio.models.generate_content(
+        model=default_model_for(LlmTask.CHAT_DEFAULT),
+        contents=prompt,
+        config=gemini_types.GenerateContentConfig(
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+            tools=[gemini_types.Tool(google_search=gemini_types.GoogleSearch())],
+        ),
+    )
+
+    text = _extract_text(response)
+    if not text:
+        finish_reason = _extract_finish_reason(response)
+        logger.warning(
+            "Gemini returned no text for a grounded request (finish_reason=%s). "
+            "Prompt length=%d, max_tokens=%d.",
+            finish_reason,
+            len(prompt),
+            max_tokens,
+        )
+        raise GeminiError(f"empty grounded response (finish_reason={finish_reason})")
+
+    sources = _extract_grounding_sources(response)
+    if not sources:
+        # Not an error, but worth seeing in logs: it means the answer is ungrounded and
+        # anything the caller persists from it is unverified.
+        logger.info("Grounded request returned no grounding metadata; answer is ungrounded.")
+    return GroundedResult(text=text, sources=sources)
+
+
+def _extract_grounding_sources(response: Any) -> list[GroundingSource]:
+    """Pull the web sources out of a response's grounding metadata.
+
+    Defensive throughout: grounding metadata is optional at every level, the shape has
+    changed across SDK versions, and a missing attribute here should degrade to "not
+    grounded" rather than raise inside a request that otherwise succeeded.
+    """
+    sources: list[GroundingSource] = []
+    seen: set[str] = set()
+
+    for candidate in getattr(response, "candidates", None) or []:
+        metadata = getattr(candidate, "grounding_metadata", None)
+        if metadata is None:
+            continue
+        for chunk in getattr(metadata, "grounding_chunks", None) or []:
+            web = getattr(chunk, "web", None)
+            if web is None:
+                continue
+            url = getattr(web, "uri", None)
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            sources.append(GroundingSource(url=url, title=getattr(web, "title", None)))
+
+    return sources
 
 
 def _extract_text(response: Any) -> str:

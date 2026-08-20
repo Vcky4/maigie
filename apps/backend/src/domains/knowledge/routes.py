@@ -1212,19 +1212,26 @@ async def list_resources(
     topicId: str | None = Query(None),
     courseId: str | None = Query(None),
     type: str | None = Query(None),
+    isRecommended: bool | None = Query(None),
     search: str | None = Query(None, max_length=255),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
     sortBy: str = Query("createdAt"),
     sortOrder: str = Query("desc"),
 ):
-    """List resources with filters and pagination."""
+    """List resources with filters and pagination.
+
+    `isRecommended` splits what Maigie found for the learner from what the learner saved
+    themselves. It is new because it was unusable before: the column was never written, so the
+    filter could only ever have returned everything or nothing.
+    """
     result = await resource_service.list_resources(
         user_id=current_user.id,
         space_id=circle_id,
         topic_id=topicId,
         course_id=courseId,
         resource_type=type,
+        is_recommended=isRecommended,
         search=search,
         page=page,
         page_size=pageSize,

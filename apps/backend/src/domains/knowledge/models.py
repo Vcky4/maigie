@@ -823,6 +823,10 @@ class ResourceResponse(CamelModel):
     is_recommended: bool = False
     recommendation_score: float | None = None
     recommendation_source: str | None = None
+    # Published because it is now written. The column existed unused alongside the other three
+    # recommendation fields, and this model had the other three but not this one, so even once
+    # `recommend_resources` started writing it the value would have stopped at the schema.
+    recommendation_reason: str | None = None
     click_count: int = 0
     bookmark_count: int = 0
     space_id: str | None = None
@@ -853,19 +857,31 @@ class ResourceRecommendationRequest(BaseModel):
     context: dict | None = None
 
 
-class ResourceRecommendationItem(CamelModel):
-    title: str
-    url: str
-    description: str | None = None
-    type: str = "OTHER"
-    relevance: str | None = None
-    score: float = 0.5
-
-
 class ResourceRecommendationResponse(CamelModel):
-    recommendations: list[ResourceRecommendationItem]
+    """Resources found for a query, as saved rows.
+
+    `recommendations` is `ResourceResponse`, not a bespoke item type. Recommendations are now
+    persisted, so they have ids and behave like every other resource — openable, filterable,
+    fileable into a collection — and a second shape would have meant a client rendering the same
+    thing two ways depending on where it came from. The `ResourceRecommendationItem` this
+    replaced described a response that was thrown away.
+
+    The two extra fields exist because a recommendation can be honestly partial:
+
+    - `grounded` — whether the model actually ran a web search. The search tool is a request, not
+      a guarantee; when it comes back false the URLs were produced from weights, and while they
+      still had to resolve to be stored, the client should say so rather than imply otherwise.
+    - `discarded` — how many proposals were dropped because their URLs did not resolve. Without
+      it, asking for five and receiving two looks like a bug instead of link checking working.
+
+    `personalized` is gone. It was hardcoded `True` on every response, including ones where the
+    reply could not be parsed and the list was empty, so it never carried information.
+    """
+
+    recommendations: list[ResourceResponse]
     query: str
-    personalized: bool = True
+    grounded: bool
+    discarded: int = 0
 
 
 # ===========================================================================

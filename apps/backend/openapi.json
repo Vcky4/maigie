@@ -10290,56 +10290,6 @@
         "title": "ResourceInteractionRequest",
         "type": "object"
       },
-      "ResourceRecommendationItem": {
-        "properties": {
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description"
-          },
-          "relevance": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Relevance"
-          },
-          "score": {
-            "default": 0.5,
-            "title": "Score",
-            "type": "number"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "type": {
-            "default": "OTHER",
-            "title": "Type",
-            "type": "string"
-          },
-          "url": {
-            "title": "Url",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "url"
-        ],
-        "title": "ResourceRecommendationItem",
-        "type": "object"
-      },
       "ResourceRecommendationRequest": {
         "properties": {
           "context": {
@@ -10375,10 +10325,15 @@
         "type": "object"
       },
       "ResourceRecommendationResponse": {
+        "description": "Resources found for a query, as saved rows.\n\n`recommendations` is `ResourceResponse`, not a bespoke item type. Recommendations are now\npersisted, so they have ids and behave like every other resource — openable, filterable,\nfileable into a collection — and a second shape would have meant a client rendering the same\nthing two ways depending on where it came from. The `ResourceRecommendationItem` this\nreplaced described a response that was thrown away.\n\nThe two extra fields exist because a recommendation can be honestly partial:\n\n- `grounded` — whether the model actually ran a web search. The search tool is a request, not\n  a guarantee; when it comes back false the URLs were produced from weights, and while they\n  still had to resolve to be stored, the client should say so rather than imply otherwise.\n- `discarded` — how many proposals were dropped because their URLs did not resolve. Without\n  it, asking for five and receiving two looks like a bug instead of link checking working.\n\n`personalized` is gone. It was hardcoded `True` on every response, including ones where the\nreply could not be parsed and the list was empty, so it never carried information.",
         "properties": {
-          "personalized": {
-            "default": true,
-            "title": "Personalized",
+          "discarded": {
+            "default": 0,
+            "title": "Discarded",
+            "type": "integer"
+          },
+          "grounded": {
+            "title": "Grounded",
             "type": "boolean"
           },
           "query": {
@@ -10387,7 +10342,7 @@
           },
           "recommendations": {
             "items": {
-              "$ref": "#/components/schemas/ResourceRecommendationItem"
+              "$ref": "#/components/schemas/ResourceResponse"
             },
             "title": "Recommendations",
             "type": "array"
@@ -10395,7 +10350,8 @@
         },
         "required": [
           "recommendations",
-          "query"
+          "query",
+          "grounded"
         ],
         "title": "ResourceRecommendationResponse",
         "type": "object"
@@ -10472,6 +10428,17 @@
               }
             ],
             "title": "Metadata"
+          },
+          "recommendationReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendationreason"
           },
           "recommendationScore": {
             "anyOf": [
@@ -17450,7 +17417,7 @@
     },
     "/api/v1/knowledge/resources": {
       "get": {
-        "description": "List resources with filters and pagination.",
+        "description": "List resources with filters and pagination.\n\n`isRecommended` splits what Maigie found for the learner from what the learner saved\nthemselves. It is new because it was unusable before: the column was never written, so the\nfilter could only ever have returned everything or nothing.",
         "operationId": "list_resources_api_v1_knowledge_resources_get",
         "parameters": [
           {
@@ -17515,6 +17482,22 @@
                 }
               ],
               "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "isRecommended",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Isrecommended"
             }
           },
           {
