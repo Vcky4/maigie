@@ -358,9 +358,17 @@ async def test_limit_is_enforced_against_an_overlong_reply(repo, recommend):
 
 async def test_an_unrecognised_type_becomes_other(repo, recommend):
     """`type` has no database-level constraint, so a value written through unchecked becomes
-    a stored string no filter chip can match."""
+    a stored string no filter chip can match.
+
+    `INTERACTIVE_SIMULATION` is the example rather than something plausible like `PODCAST`,
+    which this test used to use — `PODCAST` is in the enum and only looked unrecognised because
+    the allowlist here had drifted from it. A test asserting a real kind gets downgraded is a
+    test pinning the bug in place.
+    """
     run = recommend(
-        text=_payload({"title": "T", "url": "https://example.com/t", "type": "PODCAST"}),
+        text=_payload(
+            {"title": "T", "url": "https://example.com/t", "type": "INTERACTIVE_SIMULATION"}
+        ),
         reachable={"https://example.com/t": "https://example.com/t"},
     )
 
@@ -451,3 +459,146 @@ async def test_search_actually_filters(repo):
 
     assert [r.title for r in found["items"]] == ["Dijkstra explained"]
     assert found["total"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Sorting and search correctness
+#
+# Both bugs below returned a plausible page of resources rather than an error, which is why
+# neither was noticed. Asserting on order and on membership is the only thing that catches them.
+# ---------------------------------------------------------------------------
+
+
+async def test_sorting_by_click_count_actually_sorts_by_click_count(repo):
+    """`sortBy=clickCount` was accepted and ignored.
+
+    `_to_attr` mapped only `createdAt`/`updatedAt`, and the caller resolves the result with
+    `getattr(Resource, attr, Resource.created_at)` — so `clickCount`, which is the column name
+    rather than the mapped attribute `click_count`, fell through to the default and the list came
+    back newest-first. Mobile's "Most opened" and the web's "Popular" were both no-ops.
+
+    Creation order is deliberately the **reverse** of click order. An earlier version of this test
+    created them in the same order as their popularity and passed against the bug, because
+    `created_at DESC` and `clickCount DESC` happened to agree — the fallback has to be made to
+    disagree with the correct answer, or the assertion proves nothing.
+    """
+    from src.domains.knowledge.services import resource_service
+
+    # Most-clicked created first, least-clicked created last.
+    popular = await repo.create_resource(
+        {"userId": USER, "title": "Everyone opens this", "url": "https://example.com/popular"}
+    )
+    middling = await repo.create_resource(
+        {"userId": USER, "title": "Some open this", "url": "https://example.com/middling"}
+    )
+    await repo.create_resource(
+        {"userId": USER, "title": "Nobody opens this", "url": "https://example.com/quiet"}
+    )
+    for _ in range(5):
+        await repo.increment_resource_counter(popular.id, column="clickCount")
+    await repo.increment_resource_counter(middling.id, column="clickCount")
+
+    desc = await resource_service.list_resources(
+        user_id=USER, sort_by="clickCount", sort_order="desc"
+    )
+    # Under the bug this is created-at descending, i.e. exactly the reverse.
+    assert [r.title for r in desc["items"]] == [
+        "Everyone opens this",
+        "Some open this",
+        "Nobody opens this",
+    ]
+    assert [r.click_count for r in desc["items"]] == [5, 1, 0]
+
+    asc = await resource_service.list_resources(
+        user_id=USER, sort_by="clickCount", sort_order="asc"
+    )
+    assert [r.click_count for r in asc["items"]] == [0, 1, 5]
+
+
+async def test_search_treats_like_wildcards_as_literal_text(repo):
+    """`%` and `_` are `LIKE` syntax, and the search interpolated them unescaped.
+
+    So searching for `100%` matched every row and searching for `a_b` matched `axb`. The result
+    was a full page of confident, wrong answers rather than a failure.
+    """
+    from src.domains.knowledge.services import resource_service
+
+    await repo.create_resource(
+        {"userId": USER, "title": "Scoring 100% on finals", "url": "https://example.com/1"}
+    )
+    await repo.create_resource(
+        {"userId": USER, "title": "Unrelated study habits", "url": "https://example.com/2"}
+    )
+
+    # Under the bug this is `%%%` — matches everything.
+    percent = await resource_service.list_resources(user_id=USER, search="100%")
+    assert [r.title for r in percent["items"]] == ["Scoring 100% on finals"]
+
+    # A term whose only match would come from `_` acting as a single-character wildcard.
+    await repo.create_resource(
+        {"userId": USER, "title": "axb notation", "url": "https://example.com/3"}
+    )
+    underscore = await resource_service.list_resources(user_id=USER, search="a_b")
+    assert underscore["total"] == 0
+
+
+async def test_search_matches_description_as_well_as_title(repo):
+    """Both halves of the `OR`, not just the first."""
+    from src.domains.knowledge.services import resource_service
+
+    await repo.create_resource(
+        {
+            "userId": USER,
+            "title": "Untitled",
+            "url": "https://example.com/d",
+            "description": "A guide to Dijkstra's algorithm",
+        }
+    )
+    found = await resource_service.list_resources(user_id=USER, search="dijkstra")
+    assert found["total"] == 1
+
+
+async def test_a_zero_recommendation_score_is_stored_not_dropped(repo):
+    """`if data.get("recommendationScore"):` dropped `0.0`.
+
+    Zero is a real value on this scale — recommended, rated as weakly as possible — and storing
+    NULL instead made the weakest recommendation indistinguishable from an unscored resource.
+    """
+    from src.domains.identity.db_models import User as UserModel
+    from src.domains.knowledge.services import resource_service
+
+    created = await resource_service.create_resource(
+        user=UserModel(id=USER, email="learner@example.com"),
+        data={
+            "title": "Barely worth it",
+            "url": "https://example.com/meh",
+            "recommendationScore": 0.0,
+            "recommendationReason": "Tangentially related.",
+        },
+    )
+
+    assert created.recommendation_score == 0.0
+    # And the fourth field is settable at all, which it was not.
+    assert created.recommendation_reason == "Tangentially related."
+
+
+def test_recommendable_types_covers_the_published_enum():
+    """The allowlist is derived from the enum rather than restated.
+
+    The hand-written copy had already drifted — it omitted `PODCAST`, so a correctly identified
+    podcast was downgraded to `OTHER`. This fails if the two ever diverge again.
+    """
+    from src.domains.knowledge.models import ResourceType
+    from src.domains.knowledge.services.resource_service import _RECOMMENDABLE_TYPES
+
+    assert _RECOMMENDABLE_TYPES == {member.value for member in ResourceType}
+    assert "PODCAST" in _RECOMMENDABLE_TYPES
+
+
+async def test_a_podcast_recommendation_keeps_its_type(repo, recommend):
+    run = recommend(
+        text=_payload({"title": "A podcast", "url": "https://example.com/p", "type": "PODCAST"}),
+        reachable={"https://example.com/p": "https://example.com/p"},
+    )
+    result = await run(user_id=USER, query="x", limit=5)
+    assert result["recommendations"][0].type == "PODCAST"

@@ -1157,7 +1157,13 @@ class KnowledgeRepository:
                     if col is None:
                         continue
                     if isinstance(predicate, dict) and "contains" in predicate:
-                        or_conditions.append(col.ilike(f"%{predicate['contains']}%"))
+                        # Escaped, matching `_build_course_conditions`. Without it a search for
+                        # `100%` matches the entire library and `a_b` matches `axb` — the wrong
+                        # rows are returned rather than an error, which is the harder kind of
+                        # wrong to notice. `mode: "insensitive"` in the predicate is ignored
+                        # because `ilike` is already case-insensitive.
+                        pattern = f"%{self._escape_like(str(predicate['contains']))}%"
+                        or_conditions.append(col.ilike(pattern, escape="\\"))
                     else:
                         or_conditions.append(col == predicate)
             if or_conditions:
@@ -1207,9 +1213,25 @@ class KnowledgeRepository:
         return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     def _to_attr(self, col_name: str) -> str:
+        """A wire column name as its mapped attribute name.
+
+        Every camelCase sortable column has to be listed. The callers of this resolve the result
+        with `getattr(Model, attr, <default column>)`, so an unmapped name does not raise — it
+        **silently sorts by the default instead**, which is how `sortBy=clickCount` came to be
+        accepted and ignored: `clickCount` is the column name but `click_count` is the attribute,
+        so "Most opened" on mobile and "Popular" on web both quietly returned newest-first.
+
+        The single-word names (`title`, `type`, `progress`) are absent on purpose — their column
+        and attribute names are the same word, so the passthrough below is already correct.
+        """
         mapping = {
             "createdAt": "created_at",
             "updatedAt": "updated_at",
+            "clickCount": "click_count",
+            "bookmarkCount": "bookmark_count",
+            "lastAccessedAt": "last_accessed_at",
+            "recommendationScore": "recommendation_score",
+            "isRecommended": "is_recommended",
         }
         return mapping.get(col_name, col_name)
 

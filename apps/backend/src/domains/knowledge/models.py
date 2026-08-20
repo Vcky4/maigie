@@ -783,6 +783,10 @@ class ResourceCreate(BaseModel):
     isRecommended: bool = False
     recommendationScore: float | None = None
     recommendationSource: str | None = None
+    # Added for symmetry with the other three. Its absence meant a caller could say how strongly a
+    # resource was recommended and by what, but not why — the one field of the four that carries
+    # something a learner would actually read.
+    recommendationReason: str | None = None
     courseId: str | None = None
     topicId: str | None = None
     spaceId: str | None = None

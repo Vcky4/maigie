@@ -10206,6 +10206,17 @@
             ],
             "title": "Metadata"
           },
+          "recommendationReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendationreason"
+          },
           "recommendationScore": {
             "anyOf": [
               {

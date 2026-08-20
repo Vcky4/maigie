@@ -3,13 +3,13 @@ Resource management — create, list, interact, delete, recommend.
 """
 
 import logging
-from datetime import UTC, datetime, timezone
 from typing import Any
 
 from src.domains.identity.db_models import User
 from src.shared.exceptions import NotFoundError
 
 from ..events import emit_resource_added
+from ..models import ResourceType
 from ..repository import knowledge_repo
 
 logger = logging.getLogger(__name__)
@@ -89,10 +89,18 @@ async def create_resource(*, user: User, data: dict[str, Any]) -> Any:
         resource_data["description"] = data["description"]
     if data.get("metadata"):
         resource_data["metadata"] = data["metadata"]
-    if data.get("recommendationScore"):
+    # `is not None`, not truthiness. A score of `0.0` is a real value — "recommended, and rated
+    # as weakly as the scale allows" — and the truthiness test dropped it, storing NULL instead
+    # and making the weakest recommendation indistinguishable from an unscored one.
+    if data.get("recommendationScore") is not None:
         resource_data["recommendationScore"] = data["recommendationScore"]
     if data.get("recommendationSource"):
         resource_data["recommendationSource"] = data["recommendationSource"]
+    # Copied for the same reason the repository mapper now handles it: three of the four
+    # recommendation fields were settable here and this one was not, so a caller could describe
+    # how strongly a resource was recommended but not why.
+    if data.get("recommendationReason"):
+        resource_data["recommendationReason"] = data["recommendationReason"]
     if data.get("courseId"):
         resource_data["courseId"] = data["courseId"]
     if data.get("topicId"):
@@ -140,10 +148,15 @@ async def delete_resource(*, user_id: str, resource_id: str) -> None:
     await knowledge_repo.delete_resource(resource_id)
 
 
-#: Resource kinds a recommendation may claim. Anything else becomes ``OTHER`` rather than
-#: being written through: ``type`` has no constraint at the database level, so a typo from
-#: the model would become a stored value no filter chip can ever match.
-_RECOMMENDABLE_TYPES = {"VIDEO", "ARTICLE", "BOOK", "COURSE", "WEBSITE", "DOCUMENT", "OTHER"}
+#: Resource kinds a recommendation may claim. Anything else becomes ``OTHER`` rather than being
+#: written through: ``type`` has no constraint at the database level, so a typo from the model
+#: would become a stored value no filter chip can ever match.
+#:
+#: Derived from the published enum rather than restated. A hand-written copy of it here had
+#: already drifted — it omitted ``PODCAST``, which the enum accepts and the column stores, so a
+#: correctly identified podcast was silently downgraded to ``OTHER``. A duplicated allowlist only
+#: has to be updated once to be wrong.
+_RECOMMENDABLE_TYPES = {member.value for member in ResourceType}
 
 
 def _parse_recommendation_payload(raw: str) -> list[dict[str, Any]]:
