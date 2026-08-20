@@ -73,16 +73,42 @@ def recommend(monkeypatch):
     from src.domains.intelligence.reasoning import llm as llm_module
     from src.domains.knowledge.services import resource_service, url_validator
 
-    def configure(*, text: str, grounded: bool = True, reachable: dict[str, str | None]):
-        async def fake_generate(prompt, **kwargs):
+    #: Every prompt the fake models were given, so a test can assert on what was asked.
+    prompts: dict[str, str] = {}
+
+    def configure(
+        *,
+        text: str,
+        grounded: bool = True,
+        reachable: dict[str, str | None],
+        truncated: bool = False,
+        search_text: str = "Here are some resources I found.",
+    ):
+        """Both model calls, because there are two and they do different jobs.
+
+        Step 1 searches and answers in prose; step 2 carries no tools and transcribes that prose into
+        JSON. `text` is the **step 2** output, since that is what the parser reads — which keeps every
+        test below expressed in terms of the payload it cares about.
+
+        Mocking step 2 is not optional hygiene. Left real, this suite made live Gemini calls: the same
+        29 tests took 88 seconds and their results depended on what a model felt like returning.
+        """
+
+        async def fake_generate_grounded(prompt, **kwargs):
+            prompts["search"] = prompt
             return llm_module.GroundedResult(
-                text=text,
+                text=search_text,
                 sources=(
                     [llm_module.GroundingSource(url="https://s/x", title="Search")]
                     if grounded
                     else []
                 ),
+                truncated=truncated,
             )
+
+        async def fake_generate(prompt, **kwargs):
+            prompts["format"] = prompt
+            return text
 
         async def fake_check(urls):
             return {
@@ -95,9 +121,10 @@ def recommend(monkeypatch):
                 for url in urls
             }
 
-        # Patched where they are looked up. Both are imported inside the function body, so the
+        # Patched where they are looked up. All three are imported inside the function body, so the
         # binding that matters is the one on the defining module.
-        monkeypatch.setattr(llm_module, "generate_grounded_content", fake_generate)
+        monkeypatch.setattr(llm_module, "generate_grounded_content", fake_generate_grounded)
+        monkeypatch.setattr(llm_module, "generate_content", fake_generate)
         monkeypatch.setattr(url_validator, "check_urls", fake_check)
 
         async def fake_memory(_user_id):
@@ -108,6 +135,7 @@ def recommend(monkeypatch):
         monkeypatch.setattr(memory_service, "get_memory_context", fake_memory)
         return resource_service.recommend_resources
 
+    configure.prompts = prompts
     return configure
 
 
@@ -602,3 +630,98 @@ async def test_a_podcast_recommendation_keeps_its_type(repo, recommend):
     )
     result = await run(user_id=USER, query="x", limit=5)
     assert result["recommendations"][0].type == "PODCAST"
+
+
+# ---------------------------------------------------------------------------
+# The two-call structure
+#
+# These exist because the first version of this feature was never grounded, and nothing said so.
+# It asked for search and "return ONLY a JSON array" in one request, and Gemini responded to the
+# output contract by skipping the search: measured on `gemini-3.5-flash`, that prompt produced no
+# grounding metadata and no search queries, while the same request without the JSON demand issued
+# twelve searches and returned twenty-three grounding chunks.
+#
+# Nothing in the response distinguishes the two. `grounded` came back false, the URLs were the
+# model's own, and because they still had to resolve to be stored, most of them worked — so the
+# feature looked like it was functioning while doing exactly what it was written to stop doing.
+# ---------------------------------------------------------------------------
+
+
+async def test_the_search_prompt_demands_no_output_format(repo, recommend):
+    """The regression guard. A formatting instruction here silently disables the search.
+
+    Asserted on the prompt rather than on the result, because a suppressed search is invisible in
+    the output — the reply still contains plausible URLs and most of them still resolve.
+    """
+    run = recommend(
+        text=_payload({"title": "T", "url": "https://example.com/t"}),
+        reachable={"https://example.com/t": "https://example.com/t"},
+    )
+    await run(user_id=USER, query="statistics", limit=5)
+
+    search_prompt = recommend.prompts["search"].lower()
+
+    assert "json" not in search_prompt, (
+        "asking the search call for JSON makes Gemini skip the search; format in the second call"
+    )
+    assert "return only" not in search_prompt
+    # And it must still be a search request that constrains what may be returned.
+    assert "search the web" in search_prompt
+    assert "do not construct, guess or complete" in search_prompt
+
+
+async def test_the_format_prompt_transcribes_the_grounded_text(repo, recommend):
+    """Step 2 must be handed step 1's findings, not the original query.
+
+    If it were given the query instead, it would be generating rather than transcribing — the same
+    ungrounded invention, one call later.
+    """
+    run = recommend(
+        text=_payload({"title": "T", "url": "https://example.com/t"}),
+        reachable={"https://example.com/t": "https://example.com/t"},
+        search_text="I found Khan Academy at https://www.khanacademy.org/math/statistics",
+    )
+    await run(user_id=USER, query="statistics", limit=5)
+
+    format_prompt = recommend.prompts["format"]
+
+    assert "https://www.khanacademy.org/math/statistics" in format_prompt
+    assert "verbatim" in format_prompt.lower()
+    assert "do not add resources" in format_prompt.lower()
+
+
+async def test_an_empty_search_reply_does_not_reach_the_formatting_call(repo, recommend):
+    """No point transcribing nothing, and a formatting call on an empty list invites invention."""
+    run = recommend(text=_payload({"title": "T", "url": "https://example.com/t"}), reachable={}, search_text="   ")
+
+    result = await run(user_id=USER, query="x", limit=5)
+
+    assert result["recommendations"] == []
+    assert result["grounded"] is False
+    assert "format" not in recommend.prompts
+
+
+async def test_a_truncated_search_reply_is_reported_as_such(repo, recommend, caplog):
+    """A reply cut off mid-sentence parses to nothing, which used to be indistinguishable from
+    "nothing found" — so the learner was told to rephrase a query that had worked.
+
+    The wire response is still an empty list, which is honest. The log is where the difference has
+    to show, because rephrasing fixes one cause and only a larger token budget fixes the other.
+    """
+    import logging
+
+    run = recommend(text="not json at all", reachable={}, truncated=True)
+
+    with caplog.at_level(logging.WARNING):
+        result = await run(user_id=USER, query="x", limit=5)
+
+    assert result["recommendations"] == []
+    assert any("truncated" in record.message for record in caplog.records), caplog.text
+
+
+def test_the_grounded_result_reports_truncation():
+    """`truncated` is derived from the finish reason, not guessed from the text length."""
+    from src.domains.intelligence.reasoning.llm import GroundedResult
+
+    assert GroundedResult(text="x", sources=[]).truncated is False
+    assert GroundedResult(text="x", sources=[], truncated=True).truncated is True

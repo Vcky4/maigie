@@ -220,6 +220,14 @@ async def recommend_resources(
     Now: search-grounded generation, every URL resolved and checked, and the survivors stored
     as real rows the learner can open, filter and keep.
 
+    **Two model calls, and they cannot be one.** The search happens in a request with no output
+    format demanded, because asking for search and "return ONLY a JSON array" in the same breath
+    makes Gemini skip the search — measured, with the figures in the comment at the call site. A
+    second request, carrying no tools, transcribes the grounded prose into JSON, which is allowed to
+    have an output contract precisely *because* it has no tools. The first version of this rewrite did
+    both in one request and was therefore never grounded at all: it had reintroduced, in its own
+    prompt, the defect it existed to remove.
+
     **Checking is what makes storing safe.** An unverified URL in a row is worse than one in
     a response: a row is permanent, accumulates counters, and can be filed into a collection.
     So a recommendation earns its row by resolving, and the rest are counted and dropped.
@@ -231,7 +239,10 @@ async def recommend_resources(
     information.
     """
     from src.domains.intelligence.memory.memory_service import get_memory_context
-    from src.domains.intelligence.reasoning.llm import generate_grounded_content
+    from src.domains.intelligence.reasoning.llm import (
+        generate_content,
+        generate_grounded_content,
+    )
 
     from .url_validator import check_urls
 
@@ -239,37 +250,64 @@ async def recommend_resources(
     if context:
         user_context.update(context)
 
-    prompt = (
+    # ---- Step 1: search. Described in prose, with no output format demanded. ----
+    #
+    # **The formatting instruction has to be absent, and this is the whole reason there are two
+    # calls.** Asking for search and "return ONLY a JSON array" in one request makes Gemini skip the
+    # search entirely: measured on `gemini-3.5-flash`, the same prompt with the JSON demand came back
+    # with no grounding metadata and no search queries, while without it the model issued twelve
+    # searches and returned twenty-three grounding chunks. The model appears to treat a strict output
+    # contract as incompatible with calling a tool, and answers from its weights instead — which is
+    # precisely the failure this endpoint was rewritten to eliminate. The rewrite had reintroduced it
+    # in its own prompt.
+    search_prompt = (
         f"Search the web for {limit} genuinely useful learning resources about: {query}\n\n"
         f"Learner context — use it to pitch the level, do not treat it as the query: "
         f"{str(user_context)[:500]}\n\n"
-        "Rules:\n"
-        "- Only include resources you actually found in search results. Do not construct, "
-        "guess or complete URLs.\n"
-        "- Give the direct page URL, never a search results page.\n"
-        "- Prefer primary sources, official documentation, university material and "
-        "established educational sites.\n\n"
-        'Return ONLY a JSON array of objects with keys: "title", "url", "description", '
-        '"type", "relevance", "score".\n'
-        f"- type: one of {sorted(_RECOMMENDABLE_TYPES)}\n"
-        "- relevance: one short sentence on why it helps with this specific query\n"
-        "- score: 0-1, how strongly you recommend it"
+        "For each resource give its title, its direct URL, what it covers, and one sentence on why "
+        "it helps with this specific topic.\n\n"
+        "Only include resources you actually found in the search results — do not construct, guess "
+        "or complete a URL. Give the direct page URL, never a search results page. Prefer primary "
+        "sources, official documentation, university material and established educational sites."
     )
 
-    # The token budget is deliberately not narrowed here. This used to pass `max_tokens=2000`, which
-    # looked ample for eight resources and was not: the model is a thinking model, reasoning tokens
-    # come out of the same allowance, and a measured run spent 1,067 of 2,000 on thought and returned
-    # a reply cut off mid-string after 364 characters. The JSON never closed, the parse produced
-    # nothing, and the learner was told no resources existed for a perfectly good query.
-    result = await generate_grounded_content(prompt, temperature=0.3)
-    candidates = _parse_recommendation_payload(result.text)[:limit]
+    # The token budget is left at the function's default. This used to pass `max_tokens=2000`, which
+    # looked ample for eight resources and was not: the model is a thinking model and reasoning
+    # tokens come out of the same allowance. A measured run spent 1,067 of 2,000 on thought and
+    # returned a reply cut off mid-string after 364 characters — the JSON never closed, the parse
+    # produced nothing, and the learner was told no resources existed for a perfectly good query.
+    found = await generate_grounded_content(search_prompt, temperature=0.3)
+    if not found.text.strip():
+        logger.warning("Recommendation search for %r came back empty.", query)
+        return {"recommendations": [], "query": query, "grounded": False, "discarded": 0}
+
+    # ---- Step 2: format. No tools attached, so an output contract is allowed again. ----
+    #
+    # Transcription, not generation: everything it may say is already in the text above. Structured
+    # output is available here for exactly the reason it is not available in step 1 — this request
+    # carries no tools.
+    format_prompt = (
+        "Convert the resource list below into JSON. Copy the titles, URLs and descriptions "
+        "verbatim; do not add resources, do not invent or complete URLs, and drop any entry that "
+        "has no URL.\n\n"
+        'Return ONLY a JSON array of objects with keys: "title", "url", "description", "type", '
+        '"relevance", "score".\n'
+        f"- type: one of {sorted(_RECOMMENDABLE_TYPES)}, chosen from what the resource plainly is\n"
+        "- relevance: the sentence explaining why it helps, taken from the text\n"
+        "- score: 0-1, how strongly the text recommends it\n\n"
+        f"Resource list:\n{found.text}"
+    )
+    formatted = await generate_content(format_prompt, max_tokens=8192, temperature=0.0)
+
+    candidates = _parse_recommendation_payload(formatted)[:limit]
     if not candidates:
-        if result.truncated:
-            # Distinguished in the log because the two causes need different responses: rephrasing
-            # helps one and only a bigger budget helps the other.
+        if found.truncated:
+            # Logged apart because the two causes need different responses: rephrasing helps one and
+            # only a larger budget helps the other. Reported as the same empty list to the client,
+            # which is honest — nothing was found — but the server should not have to guess why.
             logger.warning(
-                "Recommendation for %r produced no parseable items because the reply was "
-                "truncated, not because nothing was found.",
+                "Recommendation for %r produced no items because the search reply was truncated, "
+                "not because nothing was found.",
                 query,
             )
         else:
@@ -277,7 +315,7 @@ async def recommend_resources(
         return {
             "recommendations": [],
             "query": query,
-            "grounded": result.grounded,
+            "grounded": found.grounded,
             "discarded": 0,
         }
 
@@ -338,7 +376,7 @@ async def recommend_resources(
                 # Distinguishes a checked citation from a checked guess. The search tool is
                 # a request, so an ungrounded reply can still produce URLs that happen to
                 # resolve, and the row must not claim those were found by search.
-                "recommendationSource": "gemini_grounded" if result.grounded else "gemini",
+                "recommendationSource": "gemini_grounded" if found.grounded else "gemini",
                 "recommendationReason": item.get("relevance"),
             }
         )
@@ -355,7 +393,7 @@ async def recommend_resources(
     return {
         "recommendations": recommendations,
         "query": query,
-        "grounded": result.grounded,
+        "grounded": found.grounded,
         "discarded": discarded,
     }
 
