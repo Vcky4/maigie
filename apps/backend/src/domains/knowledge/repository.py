@@ -13,7 +13,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from src.shared.database import get_session_factory
+from src.shared.database import get_session_factory, ilike_any
 from src.shared.field_mapping import map_fields
 
 from .db_models import (
@@ -1113,13 +1113,7 @@ class KnowledgeRepository:
             #
             # `ilike` with the term escaped, so a title containing `%` or `_` is searched for
             # literally instead of turning into a wildcard that matches most of the library.
-            pattern = f"%{self._escape_like(where['search'])}%"
-            conditions.append(
-                or_(
-                    Course.title.ilike(pattern, escape="\\"),
-                    Course.description.ilike(pattern, escape="\\"),
-                )
-            )
+            conditions.append(ilike_any(where["search"], Course.title, Course.description))
         if "createdAt" in where and isinstance(where["createdAt"], dict):
             gte = where["createdAt"].get("gte")
             if gte:
@@ -1157,13 +1151,12 @@ class KnowledgeRepository:
                     if col is None:
                         continue
                     if isinstance(predicate, dict) and "contains" in predicate:
-                        # Escaped, matching `_build_course_conditions`. Without it a search for
-                        # `100%` matches the entire library and `a_b` matches `axb` — the wrong
-                        # rows are returned rather than an error, which is the harder kind of
-                        # wrong to notice. `mode: "insensitive"` in the predicate is ignored
-                        # because `ilike` is already case-insensitive.
-                        pattern = f"%{self._escape_like(str(predicate['contains']))}%"
-                        or_conditions.append(col.ilike(pattern, escape="\\"))
+                        # `ilike_any` escapes the term. Without escaping, a search for `100%`
+                        # matches the entire library and `a_b` matches `axb` — the wrong rows come
+                        # back rather than an error, which is the harder kind of wrong to notice.
+                        # `mode: "insensitive"` in the predicate is ignored because `ilike` is
+                        # already case-insensitive.
+                        or_conditions.append(ilike_any(str(predicate["contains"]), col))
                     else:
                         or_conditions.append(col == predicate)
             if or_conditions:
@@ -1201,16 +1194,10 @@ class KnowledgeRepository:
             field_map.setdefault(own_name, own_name)
         return map_fields(data, field_map, entity="_map_course_data")
 
-    @staticmethod
-    def _escape_like(term: str) -> str:
-        """Escape the wildcards `LIKE` treats as syntax.
-
-        Without this, a learner searching for `100%` matches everything, and one searching for `a_b`
-        matches `axb` — the search silently returns the wrong rows rather than failing, which is the
-        harder kind of wrong to notice. The backslash is escaped first, or it would double-escape
-        the escapes added after it.
-        """
-        return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    # `_escape_like` used to live here as a private static method. It moved to
+    # `src.shared.database.search` because being private to one repository is what let the other
+    # eleven `ilike` call sites across the backend go unescaped — a search-safety helper that only
+    # one of twelve searches can reach is not a helper. Use `ilike_any`.
 
     def _to_attr(self, col_name: str) -> str:
         """A wire column name as its mapped attribute name.

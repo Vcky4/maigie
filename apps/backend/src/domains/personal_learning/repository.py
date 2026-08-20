@@ -21,7 +21,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from src.shared.database import get_session_factory
+from src.shared.database import get_session_factory, ilike_any
 from src.shared.field_mapping import map_fields
 
 from .db_models import (
@@ -532,8 +532,7 @@ class PersonalLearningRepository:
             if status:
                 filters.append(ExamPrep.status == status)
             if search:
-                pattern = f"%{search}%"
-                filters.append(ExamPrep.subject.ilike(pattern))
+                filters.append(ilike_any(search, ExamPrep.subject))
 
             total = (
                 await s.execute(select(func.count()).select_from(ExamPrep).where(*filters))
@@ -650,12 +649,8 @@ class PersonalLearningRepository:
         async with self._read_session(session) as s:
             conditions = [GeneratedDocument.user_id == user_id]
             if search:
-                term = f"%{search}%"
                 conditions.append(
-                    or_(
-                        GeneratedDocument.title.ilike(term),
-                        GeneratedDocument.filename.ilike(term),
-                    )
+                    ilike_any(search, GeneratedDocument.title, GeneratedDocument.filename)
                 )
             if doc_format:
                 conditions.append(GeneratedDocument.format == doc_format)
@@ -993,7 +988,7 @@ class PersonalLearningRepository:
         if "title" in where and isinstance(where["title"], dict):
             contains = where["title"].get("contains", "")
             if contains:
-                conditions.append(Note.title.ilike(f"%{contains}%"))
+                conditions.append(ilike_any(contains, Note.title))
         # OR search: match title OR content (case-insensitive)
         if "OR" in where:
             from sqlalchemy import or_
@@ -1003,11 +998,11 @@ class PersonalLearningRepository:
                 if "title" in clause and isinstance(clause["title"], dict):
                     text = clause["title"].get("contains", "")
                     if text:
-                        or_conditions.append(Note.title.ilike(f"%{text}%"))
+                        or_conditions.append(ilike_any(text, Note.title))
                 if "content" in clause and isinstance(clause["content"], dict):
                     text = clause["content"].get("contains", "")
                     if text:
-                        or_conditions.append(Note.content.ilike(f"%{text}%"))
+                        or_conditions.append(ilike_any(text, Note.content))
             if or_conditions:
                 conditions.append(or_(*or_conditions))
         # Tag filter: match notes that have a specific tag
@@ -1387,10 +1382,7 @@ class PersonalLearningRepository:
             if source_id:
                 conditions.append(Flashcard.source_id == source_id)
             if search:
-                pattern = f"%{search}%"
-                conditions.append(
-                    or_(Flashcard.front.ilike(pattern), Flashcard.back.ilike(pattern))
-                )
+                conditions.append(ilike_any(search, Flashcard.front, Flashcard.back))
             if state == "due":
                 conditions.append(Flashcard.next_review_at <= now)
             elif state == "new":
@@ -1970,7 +1962,7 @@ class PersonalLearningRepository:
             if source_type is not None:
                 conditions.append(SavedResource.source_type == source_type)
             if search:
-                conditions.append(SavedResource.title.ilike(f"%{search}%"))
+                conditions.append(ilike_any(search, SavedResource.title))
 
             # Count
             count_stmt = select(func.count()).select_from(SavedResource).where(*conditions)
@@ -3513,9 +3505,8 @@ class PersonalLearningRepository:
             if status:
                 conditions.append(StudyPlan.status == status)
             if search:
-                pattern = f"%{search}%"
                 conditions.append(
-                    or_(StudyPlan.title.ilike(pattern), StudyPlan.goal_description.ilike(pattern))
+                    ilike_any(search, StudyPlan.title, StudyPlan.goal_description)
                 )
 
             total = (
@@ -4785,7 +4776,26 @@ class PersonalLearningRepository:
     async def find_cross_type_tags(
         self, user_id: str, *, limit: int = 8, session: AsyncSession | None = None
     ) -> list[tuple[str, int]]:
-        """Tags appearing in >=2 entity types, excluding tags already used by a Collection."""
+        """Tags appearing in >=2 entity types, excluding tags already used by a Collection.
+
+        `SavedResource.tags` is a **`json` column**, not a Postgres array. This query used
+        `unnest(sr.tags)`, which only accepts arrays, so it raised
+        `UndefinedFunctionError: function unnest(json) does not exist` on every call — and since
+        `auto_seed_collections` wraps the whole thing in a logging `except`, collection
+        auto-seeding never once worked while appearing to run. It is reached from the learning
+        dashboard, so the failure was logged on every dashboard load.
+
+        The array operator is a leftover from Prisma, where `tags String[]` mapped to a real
+        `text[]`; the SQLAlchemy migration declared the column `JSON` and this raw SQL was never
+        revisited. Raw SQL is where that kind of drift hides, because no ORM layer complains and
+        the SQLite used in tests has neither function.
+
+        The `CASE` guard is not defensive padding: `json_array_elements_text` raises on any value
+        that is not a JSON array, and the column is typed `dict | None` on the ORM, so a
+        non-array is representable. Guarding inside the function argument rather than in a
+        `WHERE` matters — a `WHERE` clause is not guaranteed to be evaluated before a
+        set-returning function in the same query level.
+        """
         from sqlalchemy import text as sql_text
 
         async with self._read_session(session) as s:
@@ -4799,8 +4809,14 @@ class PersonalLearningRepository:
 
                     UNION ALL
 
-                    SELECT unnest(sr.tags) AS tag, 'saved_resource' AS entity_type
+                    SELECT elem.tag AS tag, 'saved_resource' AS entity_type
                     FROM "SavedResource" sr
+                    CROSS JOIN LATERAL json_array_elements_text(
+                        CASE WHEN json_typeof(sr.tags) = 'array'
+                             THEN sr.tags
+                             ELSE '[]'::json
+                        END
+                    ) AS elem(tag)
                     WHERE sr."userId" = :user_id AND sr.tags IS NOT NULL
                 ),
                 cross_tags AS (

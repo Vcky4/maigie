@@ -202,11 +202,31 @@ async def _find_items_for_tag(user_id: str, tag: str) -> list[dict[str, Any]]:
         for row in note_rows:
             items.append({"entityType": "note", "entityId": row[0]})
 
-        # Find resources with this tag
+        # Find resources with this tag.
+        #
+        # `= ANY(sr.tags)` was the same defect as the `unnest` in `find_cross_type_tags`: `ANY`
+        # needs a Postgres array and `tags` is a `json` column, a leftover from Prisma's
+        # `String[]`. It raised on every call, caught by the per-tag `except` in the caller — so
+        # even once the tag query is fixed, this one would have produced a collection created and
+        # then left permanently empty, which looks like "nothing matched that tag".
+        #
+        # The `CASE` guard is inside the function argument because `json_array_elements_text`
+        # raises on a non-array and the column is nullable and typed `dict | None`.
         resource_query = sql_text(
             """
             SELECT sr.id FROM "SavedResource" sr
-            WHERE sr."userId" = :user_id AND :tag = ANY(sr.tags)
+            WHERE sr."userId" = :user_id
+              AND sr.tags IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM json_array_elements_text(
+                      CASE WHEN json_typeof(sr.tags) = 'array'
+                           THEN sr.tags
+                           ELSE '[]'::json
+                      END
+                  ) AS elem(tag)
+                  WHERE elem.tag = :tag
+              )
         """
         )
         resource_rows = (await s.execute(resource_query, {"user_id": user_id, "tag": tag})).all()

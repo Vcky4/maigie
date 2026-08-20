@@ -14,7 +14,7 @@ from src.domains.personal_learning.models import (
     NoteUpdate,
 )
 from src.domains.personal_learning.repository import personal_learning_repo
-from src.shared.database import get_session_factory
+from src.shared.database import get_session_factory, ilike_any
 
 
 async def latest_note_for_topic(
@@ -113,9 +113,7 @@ async def list_notes(
         if topic_id:
             conditions.append(Note.topic_id == topic_id)
         if search:
-            conditions.append(
-                or_(Note.title.ilike(f"%{search}%"), Note.content.ilike(f"%{search}%"))
-            )
+            conditions.append(ilike_any(search, Note.title, Note.content))
         if tag:
             # Subquery for tag filter
             tag_subq = select(NoteTag.note_id).where(NoteTag.tag == tag).subquery()

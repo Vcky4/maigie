@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 
 from src.shared.auth import StaffUser, SuperAdminUser
-from src.shared.database import check_db_health, get_session_factory
+from src.shared.database import check_db_health, get_session_factory, ilike_any
 from src.shared.infrastructure import cache
 
 from . import models
@@ -124,9 +124,7 @@ async def list_users(
     async with factory() as session:
         conditions = [UserModel.role == "USER"]
         if search:
-            conditions.append(
-                (UserModel.email.ilike(f"%{search}%")) | (UserModel.name.ilike(f"%{search}%"))
-            )
+            conditions.append(ilike_any(search, UserModel.email, UserModel.name))
         if tier:
             conditions.append(UserModel.tier == tier)
 
