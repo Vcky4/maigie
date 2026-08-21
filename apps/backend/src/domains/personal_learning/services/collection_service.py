@@ -1,4 +1,12 @@
-"""Collection service — CRUD, item management, and auto-seeding."""
+"""Collection service — CRUD, item management, and auto-seeding.
+
+Note on the `NotFoundError` calls below: the first argument is the **resource name**, not the
+message. `NotFoundError.__init__` builds `f"{resource} not found"` and appends the id when one is
+given, so passing the sentence `"Collection not found"` — as every call here used to — published
+`"Collection not found not found"` in the 404 body. Every other domain passes a bare name and the
+id (`NotFoundError("Document", doc_id)`), which is what these now do; the id makes the message
+useful as well as grammatical. See `tests/test_collection_errors.py`.
+"""
 
 from __future__ import annotations
 
@@ -26,11 +34,11 @@ async def update_collection(
     """Update a collection's title or description."""
     existing = await repo.find_collection(collection_id, user_id)
     if not existing:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
 
     updated = await repo.update_collection(collection_id, data)
     if not updated:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
     return _to_response(updated)
 
 
@@ -38,7 +46,7 @@ async def delete_collection(user_id: str, collection_id: str) -> bool:
     """Soft-delete a collection."""
     deleted = await repo.soft_delete_collection(collection_id, user_id)
     if not deleted:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
     return True
 
 
@@ -50,7 +58,7 @@ async def add_item(
 
     collection = await repo.find_collection(collection_id, user_id)
     if not collection:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
 
     # Check for duplicate
     for existing_item in collection.items:
@@ -81,11 +89,11 @@ async def remove_item(user_id: str, collection_id: str, item_id: str) -> bool:
     """Remove an item from a collection."""
     collection = await repo.find_collection(collection_id, user_id)
     if not collection:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
 
     deleted = await repo.delete_collection_item(item_id, collection_id)
     if not deleted:
-        raise NotFoundError("Item not found")
+        raise NotFoundError("Collection item", item_id)
     return True
 
 
@@ -95,7 +103,7 @@ async def reorder_items(
     """Reorder items in a collection."""
     collection = await repo.find_collection(collection_id, user_id)
     if not collection:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
 
     await repo.reorder_collection_items(collection_id, item_ids)
     # Re-fetch to get updated state
@@ -107,7 +115,7 @@ async def get_detail(user_id: str, collection_id: str) -> models.CollectionDetai
     """Get a collection with its resolved items."""
     collection = await repo.find_collection(collection_id, user_id)
     if not collection:
-        raise NotFoundError("Collection not found")
+        raise NotFoundError("Collection", collection_id)
 
     items_with_titles = await repo.list_collection_items_with_titles(collection_id)
     entity_types = list({item["entity_type"] for item in items_with_titles})
