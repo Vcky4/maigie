@@ -1373,8 +1373,16 @@ async def list_plan_shapes():
     heading untrue: it previewed the client's phases while the plan was built with
     whatever the model returned. `generate_plan` now hands these titles to the generator,
     so both sides read from here.
+
+    The import is `.plan_shapes`, one dot. It was `..plan_shapes`, copied from
+    `services/study_plan_service.py` where that level is correct — the service is one
+    package deeper. From here it resolved to `src.domains.plan_shapes`, which does not
+    exist, so this route answered `500` on every call from the day it was written. A
+    function-level import is why nothing caught it at startup, and both wizards degrade to
+    "Maigie will choose the phases" on failure, so it looked like a design rather than a
+    fault. See `test_plan_shapes.py`.
     """
-    from ..plan_shapes import PLAN_SHAPES
+    from .plan_shapes import PLAN_SHAPES
 
     return PLAN_SHAPES
 

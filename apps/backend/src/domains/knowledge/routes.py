@@ -487,9 +487,7 @@ async def list_topic_illustrations(topic_id: str, current_user: CurrentUser):
     "/topics/{topic_id}/illustrations/{illustration_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_topic_illustration(
-    topic_id: str, illustration_id: str, current_user: CurrentUser
-):
+async def delete_topic_illustration(topic_id: str, illustration_id: str, current_user: CurrentUser):
     """Remove one illustration.
 
     Offered because a model-generated diagram is sometimes unhelpful or wrong, and a lesson the learner
@@ -1013,14 +1011,20 @@ async def update_topic(
         return models.TopicResponse.model_validate(topic, from_attributes=True)
     updated = await knowledge_repo.update_topic(topic_id, data)
 
-    # Emit completion events if status changed
+    # Emit completion events if status changed.
+    #
+    # `.events`, one dot: this module is already in `src.domains.knowledge`, and `..events`
+    # resolved to `src.domains.events`, which does not exist. Both branches therefore raised
+    # `ModuleNotFoundError` — a `500` on any topic update whose body carries `completed`.
+    # Function-level imports do not fail at startup, which is how it survived; the identical
+    # mistake was on the plan-shapes route in `personal_learning/routes.py`.
     if body.completed is not None:
         if body.completed:
-            from ..events import emit_topic_completed
+            from .events import emit_topic_completed
 
             await emit_topic_completed(current_user.id, topic_id, course_id)
         else:
-            from ..events import emit_topic_uncompleted
+            from .events import emit_topic_uncompleted
 
             await emit_topic_uncompleted(current_user.id, topic_id, course_id)
 
@@ -1203,9 +1207,7 @@ async def generate_topic_content(
 # ===========================================================================
 
 
-@router.get(
-    "/resources", response_model=models.PaginatedResponse[models.ResourceResponse]
-)
+@router.get("/resources", response_model=models.PaginatedResponse[models.ResourceResponse])
 async def list_resources(
     current_user: CurrentUser,
     circle_id: str | None = Query(None, alias="space_id"),
