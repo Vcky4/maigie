@@ -1649,19 +1649,47 @@ async def generate_document_async(body: models.DocumentGenerateRequest, current_
             detail="Document generation is temporarily unavailable",
         )
 
-    generate_document_task.apply_async(
-        task_id=task_id,
-        kwargs={
-            "user_id": current_user.id,
-            "doc_type": payload["type"],
-            "title": payload["title"],
-            "prompt": payload["prompt"],
-            "format": fmt,
-            "style": payload.get("style", "academic"),
-            "course_id": payload.get("courseId"),
-            "topic_id": payload.get("topicId"),
-        },
-    )
+    # Publishing is guarded, because it is a network call to the broker and it can refuse.
+    #
+    # It was not, and the failure it produces is the loudest kind: `kombu.exceptions.OperationalError`
+    # out of `apply_async`, reaching the client as a `500` with a stack trace in the log and nothing
+    # in the response a learner could be shown. The broker is also a *different* Redis from the cache
+    # — `CELERY_BROKER_URL` against `REDIS_URL` — so the owner-record write above can succeed while
+    # this fails, which is exactly what happens on a machine running the API against a hosted cache
+    # with no local Redis.
+    #
+    # The owner record is released first. It is keyed on a task id that now belongs to no job, so
+    # leaving it would hold a 24-hour claim on nothing.
+    try:
+        generate_document_task.apply_async(
+            task_id=task_id,
+            kwargs={
+                "user_id": current_user.id,
+                "doc_type": payload["type"],
+                "title": payload["title"],
+                "prompt": payload["prompt"],
+                "format": fmt,
+                "style": payload.get("style", "academic"),
+                "course_id": payload.get("courseId"),
+                "topic_id": payload.get("topicId"),
+            },
+        )
+    except Exception as e:
+        await cache.delete(_document_job_owner_key(task_id))
+        logger.error(
+            "Document job could not be queued",
+            extra={"user_id": current_user.id, "task_id": task_id, "error": str(e)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            # Says what is true and what to do. Nothing was generated, nothing was charged, and the
+            # brief the learner wrote is still in front of them.
+            detail=(
+                "Document generation is temporarily unavailable. Nothing was saved — "
+                "please try again in a moment."
+            ),
+        ) from e
+
     return models.DocumentJobQueuedResponse(task_id=task_id, status="queued")
 
 

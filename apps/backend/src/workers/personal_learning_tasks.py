@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
     time_limit=180,
     soft_time_limit=150,
     bind=True,
+    # **This task's result is the product.** `task_ignore_result=True` is set app-wide in
+    # `core/celery_app.py` — "we don't use results; avoids backend reliance" — which is right for
+    # every fire-and-forget task and wrong for this one: `GET /documents/jobs/{task_id}` reads
+    # `AsyncResult(task_id)` and answers from its state and its payload. Without the result stored,
+    # the state never leaves `PENDING`, so the poller reported `queued` forever and **no client could
+    # ever observe a generation finishing** — the document appeared in the library while the screen
+    # that asked for it went on waiting. Overridden here rather than globally, so nothing else starts
+    # depending on the result backend by accident.
+    ignore_result=False,
+    # Reported as `running` rather than sitting at `queued` for the whole generation. The route maps
+    # `started` to `running`, and without this that state is never published.
+    track_started=True,
 )
 def generate_document_task(
     self,

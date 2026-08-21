@@ -166,3 +166,83 @@ async def test_an_unsupported_format_is_still_refused_first(monkeypatch):
 
     assert raised.value.status_code == 400
     assert asked == []
+
+
+@pytest.mark.asyncio
+async def test_a_broker_that_refuses_is_a_503_and_releases_the_owner_record(monkeypatch):
+    """A broker outage is a `503`, not a `500` with a stack trace.
+
+    Reported from a live run: the API was pointed at a hosted cache and had no local Redis, so the
+    owner record was written against `REDIS_URL` and the publish failed against
+    `CELERY_BROKER_URL`. `apply_async` was unguarded, so `kombu.exceptions.OperationalError` reached
+    the client as a `500` with nothing in the body worth showing anyone.
+
+    The owner record has to go with it: it is keyed on a task id that now belongs to no job.
+    """
+    from src.domains.personal_learning import models, routes
+
+    _allow(monkeypatch)
+
+    deleted: list[str] = []
+
+    async def _set(*args, **kwargs):
+        return True
+
+    async def _delete(key):
+        deleted.append(key)
+        return True
+
+    def _refuse(*args, **kwargs):
+        from kombu.exceptions import OperationalError
+
+        raise OperationalError("Error 61 connecting to localhost:6379. Connection refused.")
+
+    monkeypatch.setattr("src.shared.infrastructure.cache.set", _set)
+    monkeypatch.setattr("src.shared.infrastructure.cache.delete", _delete)
+    monkeypatch.setattr(
+        "src.workers.personal_learning_tasks.generate_document_task.apply_async", _refuse
+    )
+
+    body = models.DocumentGenerateRequest(
+        type="essay", title="A short essay", prompt="Cover the basics", format="pdf"
+    )
+
+    with pytest.raises(HTTPException) as raised:
+        await routes.generate_document_async(body, SimpleNamespace(id=USER))
+
+    assert raised.value.status_code == 503
+    # The learner needs to know nothing was saved; the brief is still theirs to retry with.
+    assert "Nothing was saved" in raised.value.detail
+    # Exactly the one record this request wrote, and it is the owner key rather than some other key
+    # that happens to have been deleted.
+    assert len(deleted) == 1
+    assert deleted[0].startswith("personal_learning:document_job_owner:")
+
+
+def test_the_generation_task_stores_its_result():
+    """The poller reads `AsyncResult`, so the task has to store one.
+
+    `task_ignore_result=True` is set app-wide, with the comment "we don't use results; avoids backend
+    reliance" — correct for every fire-and-forget task and wrong for this one. Without the override,
+    the state never left `PENDING`, `result.successful()` was never true, and
+    `GET /documents/jobs/{task_id}` answered `queued` forever: the document was written and filed
+    while the screen that asked for it went on waiting. Nothing in a response body shows this, which
+    is why it is asserted on the configuration.
+    """
+    from src.workers.personal_learning_tasks import generate_document_task
+
+    assert generate_document_task.ignore_result is False
+    # `started` is what the route maps to `running`; unpublished, a job sits at `queued` throughout.
+    assert generate_document_task.track_started is True
+
+
+def test_eager_mode_stores_results_so_polling_can_settle():
+    """Running without a broker must not mean polling that never ends.
+
+    `CELERY_TASK_ALWAYS_EAGER` is the way this backend runs with no Redis, and eager tasks do not
+    store results by default — so the task would run inline, finish, and leave every polling route
+    waiting on a `PENDING` it can never leave.
+    """
+    from src.core.celery_app import celery_app
+
+    assert celery_app.conf.task_store_eager_result is True

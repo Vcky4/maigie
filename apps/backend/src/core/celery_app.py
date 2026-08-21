@@ -55,6 +55,12 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         timezone=settings.CELERY_TIMEZONE,
         enable_utc=settings.CELERY_ENABLE_UTC,
         task_always_eager=settings.CELERY_TASK_ALWAYS_EAGER,
+        # Eager tasks store their result too, which they do not by default. Without this,
+        # `CELERY_TASK_ALWAYS_EAGER=true` — the obvious way to run without a broker locally — makes
+        # every result-polling route hang: the task runs inline and completes, and `AsyncResult` still
+        # reports `PENDING` because nothing was written. Affects eager mode only, so it changes
+        # nothing in production.
+        task_store_eager_result=True,
         task_acks_late=settings.CELERY_TASK_ACKS_LATE,
         task_reject_on_worker_lost=settings.CELERY_TASK_REJECT_ON_WORKER_LOST,
         worker_prefetch_multiplier=settings.CELERY_WORKER_PREFETCH_MULTIPLIER,
