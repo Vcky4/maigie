@@ -2198,6 +2198,105 @@ class ReflectionMetrics(CamelModel):
     milestones_reached: list[str] | None = None
 
 
+# ---------------------------------------------------------------------------
+# The narrative — prose, with every number arriving from SQL beside it
+# ---------------------------------------------------------------------------
+#
+# Typed rather than a `dict`, and the reason is on the record: the three untyped JSON columns
+# this replaces were filled with snake_case keys inside a camelCase payload, so the one client
+# reading them got `undefined` for every field, and four of the keys it wanted were never
+# written under any spelling. A `dict` cannot be wrong, which is exactly the problem — nothing
+# can disagree with it, so nothing reports when it drifts.
+#
+# The split inside these models is Decision A and it is the whole point. Every prose field is
+# model-authored. Every numeric field is measured and passed *in* to the composer. A model that
+# is handed `mastery` and asked for `insight` cannot invent a figure; a model asked for both
+# will, and did — that is the defect this programme exists to close.
+
+
+class ReflectionSignal(CamelModel):
+    """One measured figure with a sentence explaining it."""
+
+    id: str
+    title: str
+    #: Measured. `None` when nothing observed it — never zero as a stand-in.
+    value: float | None = None
+    unit: str | None = None
+    #: Model-authored. What the figure means for this learner.
+    description: str | None = None
+    #: Model-authored, but constrained to restating figures it was given.
+    evidence: str | None = None
+
+
+class ReflectionSubjectInsight(CamelModel):
+    """A subject line on the reflection: its numbers, and a sentence about them."""
+
+    id: str
+    title: str
+    category: str | None = None
+    #: Both measured — `mastery` from the course's topics, `change` by differencing two daily
+    #: snapshots. The model receives them and supplies `insight` only.
+    mastery: float | None = None
+    change: float | None = None
+    insight: str | None = None
+
+
+class ReflectionRhythmDay(CamelModel):
+    """One day of the week strip. Entirely measured, from `DailyLearningSnapshot`."""
+
+    day: str
+    minutes: float | None = None
+    active: bool = False
+
+
+class ReflectionPattern(CamelModel):
+    """Something to keep doing, or to watch. Prose, with the figures it rests on named."""
+
+    title: str
+    body: str
+    evidence: str | None = None
+
+
+class ReflectionPatterns(CamelModel):
+    """`keep` and `watch`, each optional.
+
+    Optional because a learner with two days of history has no pattern yet, and asserting one
+    would be the model filling a slot rather than describing anything.
+    """
+
+    keep: ReflectionPattern | None = None
+    watch: ReflectionPattern | None = None
+
+
+class ReflectionNarrative(CamelModel):
+    """The written half of a reflection.
+
+    Persisted whole in one JSON column and never queried by field, which is why it is a column
+    rather than five tables: nothing filters on `closing`.
+
+    Null on the response when narration failed. That is a real and important state — Phase 1
+    established that a reflection whose prose could not be written still has genuine measured
+    metrics worth keeping, so the failure must be representable rather than papered over with an
+    apology sentence that reads like a reflection.
+    """
+
+    opening: list[str] = Field(default_factory=list)
+    #: A short label for the period's character, e.g. "consolidation". Model-authored.
+    theme: str | None = None
+    #: How the period compared with the one before, as words. The *number* behind it is in
+    #: `metrics`; this is the reading of it.
+    change_label: str | None = None
+    signals: list[ReflectionSignal] = Field(default_factory=list)
+    subjects: list[ReflectionSubjectInsight] = Field(default_factory=list)
+    rhythm: list[ReflectionRhythmDay] = Field(default_factory=list)
+    patterns: ReflectionPatterns = Field(default_factory=ReflectionPatterns)
+    #: Formatted from measurements, not written. `reflection_metrics.build_highlights` produces
+    #: these, because they read as bare facts — "12-day learning streak" — and a model writing
+    #: them would be inventing statistics in the place they look most credible.
+    highlights: list[str] = Field(default_factory=list)
+    closing: str | None = None
+
+
 class ReflectionResponse(CamelModel):
     id: str
     user_id: str
@@ -2208,6 +2307,10 @@ class ReflectionResponse(CamelModel):
     summary: str
     depth: ReflectionDepth
     metrics: ReflectionMetrics = Field(default_factory=ReflectionMetrics)
+    #: Null until a narrative has been composed for this row, and null when composing it
+    #: failed. Distinct from an empty narrative, which would claim prose was written and say
+    #: nothing.
+    narrative: ReflectionNarrative | None = None
     recommendations: list[ReflectionAction] = Field(default_factory=list)
     opened_at: datetime | None = None
     created_at: datetime
@@ -2226,6 +2329,43 @@ class ReflectionUpdate(CamelModel):
 
     title: str | None = None
     summary: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Reflection notes — what the learner wrote, not what was generated
+# ---------------------------------------------------------------------------
+
+
+class ReflectionNoteResponse(CamelModel):
+    id: str
+    user_id: str
+    body: str
+    prompt_used: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ReflectionNoteCreate(CamelModel):
+    """A note the learner typed, optionally against one of the starter prompts."""
+
+    #: Bounded at both ends. `min_length=1` because an empty note is a mis-click rather than a
+    #: thought, and accepting it would put a blank card in the learner's journal; the ceiling is
+    #: generous but present, since an unbounded Text field reachable by an authenticated POST is
+    #: a storage cost anyone can set.
+    body: str = Field(min_length=1, max_length=10_000)
+    #: The starter prompt this note answers, when one seeded it.
+    prompt_used: str | None = Field(default=None, max_length=500)
+
+
+class ReflectionNoteUpdate(CamelModel):
+    """Edit the text of a note.
+
+    `promptUsed` is deliberately absent. It records what the learner was answering when they
+    wrote, which is a fact about that moment; letting a later edit rewrite it would make the
+    field useless for the one question it exists to answer.
+    """
+
+    body: str = Field(min_length=1, max_length=10_000)
 
 
 # ===========================================================================

@@ -256,7 +256,9 @@ def _compute_preferred_times(
     }
 
 
-def _compute_consistency_score(local_times: list[datetime]) -> float:
+def _compute_consistency_score(
+    local_times: list[datetime], *, as_of: datetime | None = None
+) -> float:
     """Ratio of days practised to days in the period. Every day = 100.
 
     Takes times already converted to the learner's wall clock, because "how many
@@ -267,12 +269,25 @@ def _compute_consistency_score(local_times: list[datetime]) -> float:
     Still applies its own window even though the loader already does. Consistency
     is defined over a period, so a caller handing in older sessions should not get
     a score that silently describes a different period than the one named.
+
+    ``as_of`` is the instant the window ends, defaulting to now. It exists because
+    the daily snapshot has to answer "what was this learner's consistency on 12
+    July", and consistency is a pure function of the session set — so any past day
+    recomputes exactly, but only if the window moves with it. Without this the
+    window would always end today, every day older than
+    ``BEHAVIOUR_WINDOW_DAYS`` would fall outside it, and a 90-day reconstruction
+    would score almost every row ``0.0`` while looking like a measurement.
+
+    Sessions after ``as_of`` are excluded as well as those before the cutoff. A
+    score for a past day must not be able to see work the learner had not done
+    yet.
     """
     if not local_times:
         return 0.0
 
-    cutoff = datetime.now(UTC) - timedelta(days=BEHAVIOUR_WINDOW_DAYS)
-    in_window = [t for t in local_times if t >= cutoff]
+    window_end = as_of or datetime.now(UTC)
+    cutoff = window_end - timedelta(days=BEHAVIOUR_WINDOW_DAYS)
+    in_window = [t for t in local_times if cutoff <= t <= window_end]
     if not in_window:
         return 0.0
 
@@ -287,6 +302,48 @@ def _compute_consistency_score(local_times: list[datetime]) -> float:
         return 0.0
 
     return min((len(study_dates) / days_in_period) * 100, 100.0)
+
+
+async def load_local_session_times(
+    *, user_id: str, since: datetime, timezone_: LearnerTimezone
+) -> list[datetime]:
+    """The learner's practice start times, in their own wall clock, from `since` onwards.
+
+    Split out of `_load_practice_sessions` for the daily snapshot backfill, which needs the
+    same evidence over a longer window and then slices it per day *in memory*. Reconstructing
+    ninety days with a query per day would be ninety queries per learner; one query and ninety
+    filters is the same answer.
+
+    Returns local times because that is what `_compute_consistency_score` takes, and the
+    conversion has to happen once at the boundary rather than being repeated per day.
+    """
+    rows = await repo.list_quiz_sessions_since(user_id, since=since)
+    return [to_learner_local(row.created_at, timezone_) for row in rows if row.created_at]
+
+
+def consistency_score_from(
+    local_session_times: list[datetime], *, as_of: datetime
+) -> float | None:
+    """The learner's consistency as it stood at `as_of`, or `None` if nothing was measured.
+
+    The public entry point for asking the stored definition about a past day.
+    `LearningProfile.consistencyScore` holds only the present value and is overwritten nightly,
+    so a trend cannot read it historically — but consistency is a pure function of the session
+    set, so replaying the same function with the window ending on the day in question recovers
+    that day exactly (Decision P).
+
+    This is still one definition and one implementation, which is what Decision E asks for.
+    What moves is the window, not the arithmetic.
+
+    `None` rather than `0.0` when the learner had no sessions in the window, matching
+    `compute_behaviour` and the nullable column it is written to. A learner who had not started
+    yet has no consistency score; scoring them zero would show a floor on the chart they never
+    stood on.
+    """
+    window_start = as_of - timedelta(days=BEHAVIOUR_WINDOW_DAYS)
+    if not any(window_start <= t <= as_of for t in local_session_times):
+        return None
+    return _compute_consistency_score(local_session_times, as_of=as_of)
 
 
 def _compute_dropout_risk(sessions: list[PracticeSession]) -> float:

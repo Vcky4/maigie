@@ -6282,6 +6282,42 @@
         "title": "PaginatedResponse[PrepSummaryResponse]",
         "type": "object"
       },
+      "PaginatedResponse_ReflectionNoteResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionNoteResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "pageSize": {
+            "title": "Pagesize",
+            "type": "integer"
+          },
+          "pages": {
+            "title": "Pages",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "pages"
+        ],
+        "title": "PaginatedResponse[ReflectionNoteResponse]",
+        "type": "object"
+      },
       "PaginatedResponse_ReflectionResponse_": {
         "properties": {
           "items": {
@@ -9957,6 +9993,231 @@
         "title": "ReflectionMetrics",
         "type": "object"
       },
+      "ReflectionNarrative": {
+        "description": "The written half of a reflection.\n\nPersisted whole in one JSON column and never queried by field, which is why it is a column\nrather than five tables: nothing filters on `closing`.\n\nNull on the response when narration failed. That is a real and important state — Phase 1\nestablished that a reflection whose prose could not be written still has genuine measured\nmetrics worth keeping, so the failure must be representable rather than papered over with an\napology sentence that reads like a reflection.",
+        "properties": {
+          "changeLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changelabel"
+          },
+          "closing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closing"
+          },
+          "highlights": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Highlights",
+            "type": "array"
+          },
+          "opening": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Opening",
+            "type": "array"
+          },
+          "patterns": {
+            "$ref": "#/components/schemas/ReflectionPatterns"
+          },
+          "rhythm": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionRhythmDay"
+            },
+            "title": "Rhythm",
+            "type": "array"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionSignal"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectionSubjectInsight"
+            },
+            "title": "Subjects",
+            "type": "array"
+          },
+          "theme": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Theme"
+          }
+        },
+        "title": "ReflectionNarrative",
+        "type": "object"
+      },
+      "ReflectionNoteCreate": {
+        "description": "A note the learner typed, optionally against one of the starter prompts.",
+        "properties": {
+          "body": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "promptUsed": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promptused"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "ReflectionNoteCreate",
+        "type": "object"
+      },
+      "ReflectionNoteResponse": {
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "promptUsed": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promptused"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "userId": {
+            "title": "Userid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "userId",
+          "body",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "ReflectionNoteResponse",
+        "type": "object"
+      },
+      "ReflectionNoteUpdate": {
+        "description": "Edit the text of a note.\n\n`promptUsed` is deliberately absent. It records what the learner was answering when they\nwrote, which is a fact about that moment; letting a later edit rewrite it would make the\nfield useless for the one question it exists to answer.",
+        "properties": {
+          "body": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "ReflectionNoteUpdate",
+        "type": "object"
+      },
+      "ReflectionPattern": {
+        "description": "Something to keep doing, or to watch. Prose, with the figures it rests on named.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "body"
+        ],
+        "title": "ReflectionPattern",
+        "type": "object"
+      },
+      "ReflectionPatterns": {
+        "description": "`keep` and `watch`, each optional.\n\nOptional because a learner with two days of history has no pattern yet, and asserting one\nwould be the model filling a slot rather than describing anything.",
+        "properties": {
+          "keep": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReflectionPattern"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "watch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReflectionPattern"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ReflectionPatterns",
+        "type": "object"
+      },
       "ReflectionResponse": {
         "properties": {
           "createdAt": {
@@ -9973,6 +10234,16 @@
           },
           "metrics": {
             "$ref": "#/components/schemas/ReflectionMetrics"
+          },
+          "narrative": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReflectionNarrative"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "openedAt": {
             "anyOf": [
@@ -10037,6 +10308,162 @@
           "createdAt"
         ],
         "title": "ReflectionResponse",
+        "type": "object"
+      },
+      "ReflectionRhythmDay": {
+        "description": "One day of the week strip. Entirely measured, from `DailyLearningSnapshot`.",
+        "properties": {
+          "active": {
+            "default": false,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "minutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minutes"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "ReflectionRhythmDay",
+        "type": "object"
+      },
+      "ReflectionSignal": {
+        "description": "One measured figure with a sentence explaining it.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "ReflectionSignal",
+        "type": "object"
+      },
+      "ReflectionSubjectInsight": {
+        "description": "A subject line on the reflection: its numbers, and a sentence about them.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "insight": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Insight"
+          },
+          "mastery": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mastery"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "ReflectionSubjectInsight",
         "type": "object"
       },
       "ReflectionType": {
@@ -24197,6 +24624,261 @@
           }
         ],
         "summary": "Request Quiz Hint",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/reflection-notes": {
+      "get": {
+        "description": "The learner's notes, newest first, in the canonical pagination envelope.",
+        "operationId": "list_reflection_notes_api_v1_learning_reflection_notes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaginatedResponse_ReflectionNoteResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Reflection Notes",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "post": {
+        "description": "Store a note the learner wrote.\n\nThe quick-note box on `/reflections` posts here. Until this existed its own label read\n\"saved locally for now\" — honest, and it still meant a learner who wrote something and\nrefreshed lost it.",
+        "operationId": "create_reflection_note_api_v1_learning_reflection_notes_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReflectionNoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionNoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Reflection Note",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/reflection-notes/{note_id}": {
+      "delete": {
+        "description": "Delete a note.",
+        "operationId": "delete_reflection_note_api_v1_learning_reflection_notes__note_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Reflection Note",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "get": {
+        "description": "One of the learner's notes.",
+        "operationId": "get_reflection_note_api_v1_learning_reflection_notes__note_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionNoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Reflection Note",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      },
+      "patch": {
+        "description": "Edit the text of a note. `promptUsed` is not editable — see `ReflectionNoteUpdate`.",
+        "operationId": "update_reflection_note_api_v1_learning_reflection_notes__note_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "title": "Note Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReflectionNoteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectionNoteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Reflection Note",
         "tags": [
           "personal-learning",
           "personal-learning"

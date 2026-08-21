@@ -15,6 +15,7 @@ from celery.schedules import crontab
 from . import (  # noqa: F401
     behaviour,
     daily_plan,
+    daily_snapshots,
     engagement,
     notifications,
     preparation,
@@ -65,6 +66,15 @@ def get_beat_schedule() -> dict:
         "learning.capture_readiness_snapshots": {
             "task": "learning.capture_readiness_snapshots",
             "schedule": crontab(hour=0, minute=30),
+            "options": {"queue": "heavy"},
+        },
+        # Records each learner's last *finished* local day, so the hour only has to be one
+        # nobody else is using — 01:00 is taken by mark_completed_preparations. Which day gets
+        # written is decided per learner from their own timezone rather than by this clock,
+        # because a single UTC run cannot be "end of day" everywhere at once.
+        "learning.capture_daily_snapshots": {
+            "task": "learning.capture_daily_snapshots",
+            "schedule": crontab(hour=1, minute=15),
             "options": {"queue": "heavy"},
         },
         "learning.notification_delivery": {

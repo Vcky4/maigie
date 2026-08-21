@@ -135,7 +135,7 @@ def compute(evidence: MetricEvidence, timezone_: LearnerTimezone) -> models.Refl
         topics_mastered=len(evidence.topics_mastered) if had_activity else None,
         new_topics_mastered=evidence.topics_mastered if had_activity else None,
         mastery_gained_percent=_mastery_gain(evidence),
-        recall_percent=_recall_percent(evidence),
+        recall_percent=recall_percent(evidence),
         accuracy_percent=_accuracy_percent(evidence),
         consistency_score=evidence.consistency_score,
         average_session_minutes=evidence.average_session_minutes,
@@ -171,8 +171,14 @@ def _mastery_gain(evidence: MetricEvidence) -> float | None:
     return round(end - start, 1)
 
 
-def _recall_percent(evidence: MetricEvidence) -> float | None:
-    """Share of reviews the learner recalled, from the stored per-row verdict."""
+def recall_percent(evidence: MetricEvidence) -> float | None:
+    """Share of reviews the learner recalled, from the stored per-row verdict.
+
+    Public, unlike its siblings, because the daily snapshot writer needs the same figure for a
+    single day. One definition rather than two: a snapshot's recall and a reflection's recall
+    describe the same thing over different windows, and if they drifted apart the growth curve
+    would disagree with the reflection that narrates it.
+    """
     if evidence.reviews_total <= 0:
         return None
     recalled = evidence.reviews_total - evidence.reviews_lapsed

@@ -115,6 +115,84 @@ async def list_subject_mastery(*, user_id: str, limit: int | None = None) -> lis
     return subjects[:limit] if limit else subjects
 
 
+@dataclass(frozen=True)
+class MasteryOnDay:
+    """Mastery as it stood at one instant: per course, and overall across them."""
+
+    #: `{courseId: masteryPercent}`, exactly what the snapshot's `subjectMastery` stores.
+    by_course: dict[str, float]
+    #: Completed topics over all topics in the learner's own unarchived courses. `None` when
+    #: they have no topics, because a learner with nothing to master has no mastery percentage
+    #: — as against having zero.
+    overall_percent: float | None
+    topics_total: int
+    topics_completed: int
+
+
+async def subject_mastery_on(*, user_id: str, as_of: datetime) -> MasteryOnDay:
+    """Mastery as of an instant, for the daily snapshot.
+
+    The historical counterpart to `list_subject_mastery`, and it lives here so that "how
+    complete is this course" has one definition and one rounding rule regardless of which day
+    is being asked about.
+
+    **It counts `Topic.completedAt <= as_of` where the present-tense query counts
+    `Topic.completed`, and that difference is the approximation Decision P documents.** Two
+    ways it can understate a past day, both worth knowing before reading a curve:
+
+    - The denominator is the course's topic count *now*. Topics added since make earlier
+      progress look smaller than it felt at the time.
+    - A topic completed and later reopened has had its `completedAt` cleared, so it reads as
+      never completed — including for days when it genuinely was.
+
+    Both distortions push the same way, which is the redeeming part: a reconstructed trend
+    understates the past and therefore never invents growth that did not happen. Rows written
+    from this for a past day are flagged `reconstructed` so the client can say so.
+
+    For *today* the same query is exact, since "now" is the denominator the learner is
+    actually working against — which is why one function serves the nightly writer and the
+    backfill instead of two that could drift.
+    """
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = (
+            await session.execute(
+                select(
+                    Course.id,
+                    func.count(Topic.id),
+                    func.count(Topic.id).filter(
+                        Topic.completed_at.is_not(None), Topic.completed_at <= as_of
+                    ),
+                )
+                .select_from(Course)
+                .outerjoin(Module, Module.course_id == Course.id)
+                .outerjoin(Topic, Topic.module_id == Module.id)
+                .where(Course.user_id == user_id, Course.archived.is_(False))
+                .group_by(Course.id)
+            )
+        ).all()
+
+    by_course: dict[str, float] = {}
+    topics_total = 0
+    topics_completed = 0
+
+    for course_id, total, completed in rows:
+        total_count = int(total or 0)
+        completed_count = int(completed or 0)
+        topics_total += total_count
+        topics_completed += completed_count
+        # A course with no topics is recorded as 0.0 rather than omitted: the key tells the
+        # trend the course existed on that day, which is what makes a later delta meaningful.
+        by_course[course_id] = round(completed_count / total_count * 100, 1) if total_count else 0.0
+
+    return MasteryOnDay(
+        by_course=by_course,
+        overall_percent=(round(topics_completed / topics_total * 100, 1) if topics_total else None),
+        topics_total=topics_total,
+        topics_completed=topics_completed,
+    )
+
+
 async def get_goal_portfolio(*, user_id: str, now: datetime | None = None) -> GoalPortfolio:
     """Counts for the goals section, including how many are behind their own schedule."""
     moment = now or datetime.now(UTC)

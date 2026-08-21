@@ -335,3 +335,47 @@ async def mark_reflection_read(*, user_id: str, reflection_id: str) -> Any:
     if reflection is None:
         raise NotFoundError("Reflection", reflection_id)
     return reflection
+
+
+# ---------------------------------------------------------------------------
+# Reflection notes
+# ---------------------------------------------------------------------------
+#
+# Learner-authored, and kept apart from generated reflections on purpose (Decision F). Every
+# function here is ownership-scoped in its query rather than fetching and then checking, so a
+# note belonging to someone else is indistinguishable from one that does not exist — which is
+# what stops an id being probed.
+
+
+async def create_reflection_note(*, user_id: str, body: str, prompt_used: str | None = None) -> Any:
+    """Store a note the learner wrote."""
+    return await repo.create_reflection_note(user_id=user_id, body=body, prompt_used=prompt_used)
+
+
+async def list_reflection_notes(
+    *, user_id: str, page: int = 1, page_size: int = 20
+) -> tuple[list[Any], int]:
+    """A page of the learner's notes, newest first, with the total for the envelope."""
+    return await repo.list_reflection_notes(user_id, skip=(page - 1) * page_size, take=page_size)
+
+
+async def get_reflection_note(*, user_id: str, note_id: str) -> Any:
+    """One of the learner's notes."""
+    note = await repo.find_reflection_note(note_id, user_id)
+    if note is None:
+        raise NotFoundError("ReflectionNote", note_id)
+    return note
+
+
+async def update_reflection_note(*, user_id: str, note_id: str, body: str) -> Any:
+    """Edit the text of a note."""
+    note = await repo.update_reflection_note(note_id, user_id, body=body)
+    if note is None:
+        raise NotFoundError("ReflectionNote", note_id)
+    return note
+
+
+async def delete_reflection_note(*, user_id: str, note_id: str) -> None:
+    """Delete a note."""
+    if not await repo.delete_reflection_note(note_id, user_id):
+        raise NotFoundError("ReflectionNote", note_id)

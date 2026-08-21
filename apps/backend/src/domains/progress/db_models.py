@@ -11,7 +11,17 @@ Column names use camelCase to match the existing schema exactly.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -39,6 +49,29 @@ class Goal(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String, default="ACTIVE", server_default="ACTIVE")
     progress: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
+    # --- What the goal measures, and against what ---
+    #
+    # `metricKind` is the column that makes `currentValue` honest, and it is why these four
+    # arrived together. "Study 300 focused minutes" is measurable from `StudySession` and must
+    # never be a number the learner typed; "Reach 80% interview readiness" maps to prep readiness
+    # over a linked preparation; a goal with no measurable source is `manual` and says so.
+    # Without the discriminator, `currentValue` would be a column that is sometimes measured and
+    # sometimes asserted with no way to tell which — the fabricated-metrics defect this
+    # programme exists to close, one table over.
+    metric_kind: Mapped[str] = mapped_column(
+        "metricKind", String, nullable=False, default="manual", server_default="manual"
+    )
+    # What the learner is aiming at. Null when they never set a figure, which is why `pace` and
+    # `projectedOutcome` are null for such goals rather than computed against an invented target.
+    target_value: Mapped[float | None] = mapped_column("targetValue", Float, nullable=True)
+    # The unit the target is in — "minutes", "topics", "%". Stored rather than derived from
+    # `metricKind`, so a `manual` goal can name a unit only the learner knows.
+    unit: Mapped[str | None] = mapped_column(String, nullable=True)
+    # **Only written when `metricKind` is `manual`.** For every other kind it is derived on read
+    # from the measured source, because storing a copy would create a second version of a figure
+    # that already exists and it would start disagreeing the moment the source moved.
+    current_value: Mapped[float | None] = mapped_column("currentValue", Float, nullable=True)
+
     # Optional links
     course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
@@ -48,14 +81,88 @@ class Goal(Base, TimestampMixin):
     schedules: Mapped[list["ScheduleBlock"]] = relationship(
         "ScheduleBlock", back_populates="goal", lazy="selectin"
     )
+    # `delete-orphan`, unlike decks and their cards. A milestone is part of the goal's definition
+    # rather than work the learner produced, so it has no meaning once the goal is gone — there
+    # is nothing to detach it to. The deck rule went the other way precisely because cards are
+    # authored content with review history attached.
+    milestones: Mapped[list["GoalMilestone"]] = relationship(
+        "GoalMilestone",
+        back_populates="goal",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        order_by="GoalMilestone.order_index",
+    )
 
     __table_args__ = (
         Index("Goal_userId_status_idx", "userId", "status"),
         Index("Goal_targetDate_idx", "targetDate"),
+        # A closed set, enforced in the database as well as in Pydantic. `Reflection.type` is the
+        # precedent, and it is there because an unconstrained String let the Celery task write
+        # `"WEEKLY"` while the service branched on `"weekly"` for months.
+        CheckConstraint(
+            "\"metricKind\" IN ('focused_minutes', 'topics_mastered', 'cards_reviewed', "
+            "'course_progress', 'prep_readiness', 'manual')",
+            name="Goal_metricKind_check",
+        ),
     )
 
     def __repr__(self) -> str:
         return f"<Goal id={self.id} title={self.title}>"
+
+
+# ---------------------------------------------------------------------------
+# GoalMilestone
+# ---------------------------------------------------------------------------
+
+
+class GoalMilestone(Base, TimestampMixin):
+    """A checkpoint on the way to a goal.
+
+    `ReflectGoalDetailPage` has always rendered a milestone list; there was no table, so it came
+    from a fixture. Milestones are the learner's own breakdown of a goal, which is why they are
+    rows rather than something derived: nothing in the data can infer that "finish the syllabus"
+    divides into four stages, and inventing a division would be the surface asserting structure
+    the learner never described.
+
+    Not to be confused with `Achievement`, which Reflect reads for *milestones reached* (Decision
+    Q). An `Achievement` is unlocked by the system for something the learner did; a
+    `GoalMilestone` is a step they planned. Merging them would mean a planned step appearing in a
+    list of things accomplished.
+    """
+
+    __tablename__ = "GoalMilestone"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    # No `index=True`: the composite below leads with `goalId` and serves those lookups. The
+    # older tables in this module do carry both, but they are Prisma-era and their ORM-declared
+    # `ix_*` names do not match the `Table_col_idx` names actually in the database.
+    goal_id: Mapped[str] = mapped_column(
+        "goalId", String, ForeignKey("Goal.id", ondelete="CASCADE")
+    )
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The value of the goal's metric this milestone represents — 100 of 300 minutes. Null for a
+    # milestone that is a step rather than a threshold, which is most of them.
+    target_value: Mapped[float | None] = mapped_column("targetValue", Float, nullable=True)
+    # Explicit ordering, because milestones are a sequence the learner chose and `createdAt`
+    # records only the order they happened to type them in.
+    order_index: Mapped[int] = mapped_column(
+        "orderIndex", Integer, nullable=False, default=0, server_default="0"
+    )
+    # Null until reached. A timestamp rather than a boolean, so "when" is answerable — the goal
+    # trend needs it, and a boolean would have to be replaced by this column later anyway.
+    achieved_at: Mapped[datetime | None] = mapped_column(
+        "achievedAt", DateTime(timezone=True), nullable=True
+    )
+
+    goal: Mapped["Goal"] = relationship("Goal", back_populates="milestones")
+
+    __table_args__ = (Index("GoalMilestone_goalId_orderIndex_idx", "goalId", "orderIndex"),)
+
+    def __repr__(self) -> str:
+        return f"<GoalMilestone id={self.id} goal={self.goal_id}>"
 
 
 # ---------------------------------------------------------------------------

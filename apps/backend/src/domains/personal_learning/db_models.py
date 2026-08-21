@@ -1504,6 +1504,18 @@ class Reflection(Base, TimestampMixin):
     recommendations: Mapped[list[dict]] = mapped_column(
         JSON, nullable=False, default=list, server_default=text("'[]'")
     )
+    # The written half: opening, theme, signals, subjects, rhythm, patterns, highlights,
+    # closing. One column because it is read and written whole and nothing ever filters on
+    # `closing`; validated by `ReflectionNarrative` at the boundary so it is not the untyped
+    # `dict` the three layer columns were.
+    #
+    # **Nullable, unlike `metrics` and `recommendations`.** Those are NOT NULL with `{}` / `[]`
+    # defaults because absence belongs inside them, expressed by a null field. Here absence is
+    # the whole object: narration is a separate step from measurement and can fail on its own,
+    # and Phase 1 settled that a reflection with real metrics and no prose is worth keeping. An
+    # empty narrative would claim prose exists and say nothing, which is what the apology text
+    # used to do.
+    narrative: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # Set by an explicit `POST /reflections/{id}/read`, never as a side effect of a GET.
     # A mutating read breaks caching, stops the endpoint being idempotent, and would mark a
     # reflection as engaged-with when a dashboard prefetches it.
@@ -1524,6 +1536,51 @@ class Reflection(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"<Reflection id={self.id} type={self.type}>"
+
+
+# ---------------------------------------------------------------------------
+# ReflectionNote
+# ---------------------------------------------------------------------------
+
+
+class ReflectionNote(Base, TimestampMixin):
+    """A sentence the learner wrote, as against a period summary the system produced.
+
+    **Its own table rather than a `Reflection` row with a null narrative**, and the distinction
+    is worth defending because merging them looks tidier and is wrong. `Reflection` is written
+    by a weekly Celery task, is unique per `(userId, type, periodStart)`, and is what the
+    library page counts and `GET /reflections?type=weekly` filters. Putting learner prose in it
+    would mean journal entries appearing in a list of generated summaries, counted as though the
+    scheduler had produced them, and competing for a uniqueness slot that describes a period a
+    note does not have.
+
+    `promptUsed` records which of the three starter prompts seeded the note, when one did. It is
+    a nullable string because a learner can write unprompted, and it exists because it is the
+    only way to ever answer whether the prompts are worth offering.
+    """
+
+    __tablename__ = "ReflectionNote"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    # No `index=True`: the composite below leads with `userId`, so a standalone index would be a
+    # second structure over the same column — and the two disagree on name, since SQLAlchemy
+    # would call it `ix_ReflectionNote_userId` while this codebase's migrations use
+    # `Table_col_idx`. One index, one name, declared in one place.
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE")
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    # Which starter prompt seeded this note, or null when the learner wrote unprompted. Stored
+    # as the prompt text rather than an id: the prompt list is copy that will be reworded, and a
+    # note should keep the words the learner was actually answering.
+    prompt_used: Mapped[str | None] = mapped_column("promptUsed", String, nullable=True)
+
+    __table_args__ = (Index("ReflectionNote_userId_createdAt_idx", "userId", "createdAt"),)
+
+    def __repr__(self) -> str:
+        return f"<ReflectionNote id={self.id} user={self.user_id}>"
 
 
 # ---------------------------------------------------------------------------
@@ -1564,8 +1621,13 @@ class DailyLearningSnapshot(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
     )
+    # No `index=True`, which is a deliberate departure from the FK columns elsewhere in this
+    # module. The composite index below leads with `userId`, so a standalone one would be a
+    # redundant second structure over the same column — and declaring it here while the
+    # migration does not create it, which is what `PrepReadinessSnapshot` ends up doing, means
+    # the ORM asserts an index the database has never had.
     user_id: Mapped[str] = mapped_column(
-        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE")
     )
     # The learner's local calendar day. Unique with `userId` below, which is what makes the
     # nightly writer idempotent: a retry, a re-run, or two workers on the same day update the
@@ -1573,9 +1635,7 @@ class DailyLearningSnapshot(Base, TimestampMixin):
     snapshot_date: Mapped[date] = mapped_column("snapshotDate", Date, nullable=False)
 
     # --- Effort and attendance ---
-    focused_minutes: Mapped[float | None] = mapped_column(
-        "focusedMinutes", Float, nullable=True
-    )
+    focused_minutes: Mapped[float | None] = mapped_column("focusedMinutes", Float, nullable=True)
     sessions_completed: Mapped[int] = mapped_column(
         "sessionsCompleted", Integer, nullable=False, default=0, server_default="0"
     )

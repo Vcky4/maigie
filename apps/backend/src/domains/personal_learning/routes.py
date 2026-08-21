@@ -1618,6 +1618,18 @@ async def generate_document_async(body: models.DocumentGenerateRequest, current_
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    # Checked here for the same reason the format is: the gate ran inside the worker only, so a
+    # learner whose plan does not include Word or a non-academic style was given a `202` and spent
+    # a full generation waiting for a job that could never succeed. Worse, a queued failure reaches
+    # the client as `str(HTTPException)`, so the typed `upgradeRequired` payload arrived as the
+    # string "403: {'upgradeRequired': True, ...}" — unusable by any client. Raised synchronously,
+    # it is the same 403 the synchronous route returns.
+    await document_impl.ensure_document_capabilities(
+        user_id=current_user.id,
+        format=fmt,
+        style=payload.get("style", "academic"),
+    )
+
     task_id = uuid.uuid4().hex
 
     # Record ownership before queueing. If this fails the job is never queued,
@@ -2096,6 +2108,73 @@ async def mark_reflection_read(reflection_id: str, current_user: CurrentUser):
     return await reflection_service.mark_reflection_read(
         user_id=current_user.id, reflection_id=reflection_id
     )
+
+
+# ===========================================================================
+# Reflection notes
+# ===========================================================================
+#
+# `/reflection-notes`, deliberately not `/reflections/notes`, which would sit under the same
+# segment as `/reflections/{reflection_id}` and make the routes depend on declaration order to
+# disambiguate. Same reasoning as the `/reflect/` dashboard segment.
+
+
+@router.post("/reflection-notes", response_model=models.ReflectionNoteResponse, status_code=201)
+async def create_reflection_note(body: models.ReflectionNoteCreate, current_user: CurrentUser):
+    """Store a note the learner wrote.
+
+    The quick-note box on `/reflections` posts here. Until this existed its own label read
+    "saved locally for now" — honest, and it still meant a learner who wrote something and
+    refreshed lost it.
+    """
+    return await reflection_service.create_reflection_note(
+        user_id=current_user.id, body=body.body, prompt_used=body.prompt_used
+    )
+
+
+@router.get(
+    "/reflection-notes",
+    response_model=models.PaginatedResponse[models.ReflectionNoteResponse],
+)
+async def list_reflection_notes(
+    current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+):
+    """The learner's notes, newest first, in the canonical pagination envelope."""
+    items, total = await reflection_service.list_reflection_notes(
+        user_id=current_user.id, page=page, page_size=pageSize
+    )
+    pages = (total + pageSize - 1) // pageSize if total else 0
+    return models.PaginatedResponse[models.ReflectionNoteResponse](
+        items=items,
+        total=total,
+        page=page,
+        page_size=pageSize,
+        pages=pages,
+    )
+
+
+@router.get("/reflection-notes/{note_id}", response_model=models.ReflectionNoteResponse)
+async def get_reflection_note(note_id: str, current_user: CurrentUser):
+    """One of the learner's notes."""
+    return await reflection_service.get_reflection_note(user_id=current_user.id, note_id=note_id)
+
+
+@router.patch("/reflection-notes/{note_id}", response_model=models.ReflectionNoteResponse)
+async def update_reflection_note(
+    note_id: str, body: models.ReflectionNoteUpdate, current_user: CurrentUser
+):
+    """Edit the text of a note. `promptUsed` is not editable — see `ReflectionNoteUpdate`."""
+    return await reflection_service.update_reflection_note(
+        user_id=current_user.id, note_id=note_id, body=body.body
+    )
+
+
+@router.delete("/reflection-notes/{note_id}", status_code=204)
+async def delete_reflection_note(note_id: str, current_user: CurrentUser):
+    """Delete a note."""
+    await reflection_service.delete_reflection_note(user_id=current_user.id, note_id=note_id)
 
 
 # ===========================================================================

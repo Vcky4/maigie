@@ -28,6 +28,7 @@ from .db_models import (
     ActivityFeedEntry,
     Collection,
     CollectionItem,
+    DailyLearningSnapshot,
     DiscoveryRecommendation,
     ExamPrep,
     Flashcard,
@@ -50,6 +51,7 @@ from .db_models import (
     QuizSession,
     QuizSessionQuestion,
     Reflection,
+    ReflectionNote,
     SavedResource,
     StudyPlan,
     StudyPlanCourse,
@@ -3084,6 +3086,79 @@ class PersonalLearningRepository:
             )
             return list((await s.execute(stmt)).scalars().all())
 
+    # ------------------------------------------------------------------
+    # Daily learning snapshots (Reflect trends)
+    # ------------------------------------------------------------------
+
+    async def upsert_daily_snapshot(
+        self,
+        *,
+        user_id: str,
+        snapshot_date: date,
+        values: dict[str, Any],
+        session: AsyncSession | None = None,
+    ) -> DailyLearningSnapshot:
+        """Write one of a learner's days.
+
+        Idempotent on ``(userId, snapshotDate)``, so the nightly task retrying, a manual
+        re-run, a backfill crossing a day already recorded, or two workers on the same night
+        update the row instead of duplicating the day.
+
+        Select-then-set rather than an ``ON CONFLICT`` upsert, matching
+        ``upsert_readiness_snapshot``: the unique constraint is the backstop, not the
+        mechanism. ``values`` is keyed by Python attribute name because it is applied through
+        ``setattr`` and the constructor.
+        """
+        async with self._use_session(session) as s:
+            existing = (
+                await s.execute(
+                    select(DailyLearningSnapshot).where(
+                        DailyLearningSnapshot.user_id == user_id,
+                        DailyLearningSnapshot.snapshot_date == snapshot_date,
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if existing is not None:
+                for field, value in values.items():
+                    setattr(existing, field, value)
+                await s.flush()
+                return existing
+
+            snapshot = DailyLearningSnapshot(user_id=user_id, snapshot_date=snapshot_date, **values)
+            s.add(snapshot)
+            await s.flush()
+            await s.refresh(snapshot)
+            return snapshot
+
+    async def list_daily_snapshots(
+        self,
+        user_id: str,
+        *,
+        since: date,
+        until: date | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[DailyLearningSnapshot]:
+        """A learner's snapshots across a bounded range, oldest first.
+
+        Oldest first because a chart reads left to right. ``until`` is inclusive and optional;
+        the trend read leaves it open, and the backfill uses it to ask what a window already
+        holds without loading a learner's whole history.
+
+        Returns only days that were captured. A gap stays a gap — the caller must not fill it
+        by carrying the previous value forward, which would draw a flat line through days the
+        learner was never observed on.
+        """
+        async with self._read_session(session) as s:
+            stmt = select(DailyLearningSnapshot).where(
+                DailyLearningSnapshot.user_id == user_id,
+                DailyLearningSnapshot.snapshot_date >= since,
+            )
+            if until is not None:
+                stmt = stmt.where(DailyLearningSnapshot.snapshot_date <= until)
+            stmt = stmt.order_by(DailyLearningSnapshot.snapshot_date.asc())
+            return list((await s.execute(stmt)).scalars().all())
+
     async def upsert_question_flag(
         self,
         *,
@@ -4447,10 +4522,110 @@ class PersonalLearningRepository:
             "summary": "summary",
             "depth": "depth",
             "metrics": "metrics",
+            # Present so the column is writable at all. Without it the allowlist would reject
+            # `narrative` and name the mapper, which is the guard working correctly — but a
+            # column no writer can reach is a column that will be quietly worked around.
+            "narrative": "narrative",
             "recommendations": "recommendations",
             "openedAt": "opened_at",
         }
         return map_fields(data, field_map, entity="_map_reflection")
+
+    # -----------------------------------------------------------------------
+    # Reflection notes — learner-authored, distinct from generated reflections
+    # -----------------------------------------------------------------------
+
+    async def create_reflection_note(
+        self,
+        *,
+        user_id: str,
+        body: str,
+        prompt_used: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> ReflectionNote:
+        """Store a note the learner wrote."""
+        async with self._use_session(session) as s:
+            note = ReflectionNote(user_id=user_id, body=body, prompt_used=prompt_used)
+            s.add(note)
+            await s.flush()
+            await s.refresh(note)
+            return note
+
+    async def list_reflection_notes(
+        self,
+        user_id: str,
+        *,
+        skip: int = 0,
+        take: int = 20,
+        session: AsyncSession | None = None,
+    ) -> tuple[list[ReflectionNote], int]:
+        """A page of the learner's notes, newest first, with the total.
+
+        Newest first because the box that writes them sits at the top of the page and the
+        learner's last thought is the one they are still holding.
+        """
+        async with self._read_session(session) as s:
+            conditions = [ReflectionNote.user_id == user_id]
+            total = (
+                await s.execute(select(func.count()).select_from(ReflectionNote).where(*conditions))
+            ).scalar() or 0
+            stmt = (
+                select(ReflectionNote)
+                .where(*conditions)
+                .order_by(ReflectionNote.created_at.desc())
+                .offset(skip)
+                .limit(take)
+            )
+            items = list((await s.execute(stmt)).scalars().all())
+            return items, total
+
+    async def find_reflection_note(
+        self, note_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> ReflectionNote | None:
+        """One note, scoped to its owner. Ownership is in the query, not checked after."""
+        async with self._read_session(session) as s:
+            stmt = select(ReflectionNote).where(
+                ReflectionNote.id == note_id,
+                ReflectionNote.user_id == user_id,
+            )
+            return (await s.execute(stmt)).scalar_one_or_none()
+
+    async def update_reflection_note(
+        self, note_id: str, user_id: str, *, body: str, session: AsyncSession | None = None
+    ) -> ReflectionNote | None:
+        """Edit a note's text. `None` when it was not theirs or not there.
+
+        Only `body` moves. `promptUsed` records what the learner was answering at the time, so
+        an edit must not rewrite it.
+        """
+        async with self._use_session(session) as s:
+            note = (
+                await s.execute(
+                    select(ReflectionNote).where(
+                        ReflectionNote.id == note_id,
+                        ReflectionNote.user_id == user_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if note is None:
+                return None
+            note.body = body
+            await s.flush()
+            await s.refresh(note)
+            return note
+
+    async def delete_reflection_note(
+        self, note_id: str, user_id: str, *, session: AsyncSession | None = None
+    ) -> bool:
+        """Delete a note. False when it was not theirs or not there."""
+        async with self._use_session(session) as s:
+            result = await s.execute(
+                delete(ReflectionNote).where(
+                    ReflectionNote.id == note_id,
+                    ReflectionNote.user_id == user_id,
+                )
+            )
+            return (result.rowcount or 0) > 0
 
     # -----------------------------------------------------------------------
     # Discovery Recommendations

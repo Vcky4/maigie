@@ -1153,6 +1153,55 @@ document_generation_service = DocumentGenerationService()
 # ---------------------------------------------------------------------------
 
 
+async def ensure_document_capabilities(*, user_id: str, format: str, style: str) -> None:
+    """Refuse a format or style the learner's plan does not include.
+
+    FREE: PDF only, academic style only. PLUS: PDF/DOCX, all styles.
+
+    Extracted from ``create_from_prompt`` so the **async route can run it before queueing**. It
+    ran only inside the worker, which is the same defect the format check beside it already
+    documents: a request that could never succeed was accepted with a `202`, and the learner
+    waited out a thirty-to-sixty-second generation to be told about their plan. Worse than the
+    format case, in fact — a queued job's failure reaches the client as `str(HTTPException)`, so
+    the typed `upgradeRequired` payload arrived as the string ``"403: {'upgradeRequired': True,
+    ...}"``, which no client can act on and every client would show verbatim.
+
+    Still called from ``create_from_prompt`` as well as from the route. The route check is what
+    the learner sees; this one is what makes the rule true for every caller, the worker included.
+    """
+    from fastapi import HTTPException
+
+    from src.domains.personal_learning.services import feature_tier_service
+
+    # Only a departure from the free defaults is checked. Sending the free values through the
+    # capability service would be a round trip per request to be told what is already known.
+    requested_values = [
+        value
+        for value in (
+            format if format != "pdf" else None,
+            style if style != "academic" else None,
+        )
+        if value
+    ]
+
+    for requested_value in requested_values:
+        cap_result = await feature_tier_service.check_capability(
+            user_id, "document_generation", requested_value=requested_value
+        )
+        if not cap_result.allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "upgradeRequired": True,
+                    "reason": cap_result.reason,
+                    "capability": cap_result.capability,
+                    "upgradeUrl": cap_result.upgrade_url,
+                    "trialAvailable": cap_result.trial_available,
+                    "upgradeValue": cap_result.upgrade_value,
+                },
+            )
+
+
 async def create_from_prompt(
     *,
     user_id: str,
@@ -1176,47 +1225,9 @@ async def create_from_prompt(
     """
     from src.domains.intelligence.reasoning.llm import generate_content
     from src.domains.personal_learning.repository import personal_learning_repo as repo
-    from src.domains.personal_learning.services import feature_tier_service, trial_service
+    from src.domains.personal_learning.services import trial_service
 
-    # --- Commercial gate: check format access ---
-    if format != "pdf":
-        cap_result = await feature_tier_service.check_capability(
-            user_id, "document_generation", requested_value=format
-        )
-        if not cap_result.allowed:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "upgradeRequired": True,
-                    "reason": cap_result.reason,
-                    "capability": cap_result.capability,
-                    "upgradeUrl": cap_result.upgrade_url,
-                    "trialAvailable": cap_result.trial_available,
-                    "upgradeValue": cap_result.upgrade_value,
-                },
-            )
-
-    # --- Commercial gate: check style access ---
-    if style != "academic":
-        cap_result = await feature_tier_service.check_capability(
-            user_id, "document_generation", requested_value=style
-        )
-        if not cap_result.allowed:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "upgradeRequired": True,
-                    "reason": cap_result.reason,
-                    "capability": cap_result.capability,
-                    "upgradeUrl": cap_result.upgrade_url,
-                    "trialAvailable": cap_result.trial_available,
-                    "upgradeValue": cap_result.upgrade_value,
-                },
-            )
+    await ensure_document_capabilities(user_id=user_id, format=format, style=style)
 
     # Record PLUS feature usage if applicable
     if format != "pdf" or style != "academic":
