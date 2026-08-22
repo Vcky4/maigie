@@ -9,9 +9,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.shared.schemas import CamelModel, PaginatedResponse
+from src.shared.validation import require_safe_external_url
 
 # ===========================================================================
 # Enums
@@ -776,10 +777,14 @@ class CourseOutlineSatisfactionCreate(BaseModel):
 
 class ResourceCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
+    # Rendered into an `href` by the resource surfaces, so the scheme is checked here rather than
+    # trusted. See `src/shared/validation.py`.
     url: str
     description: str | None = None
     type: ResourceType = ResourceType.OTHER
     metadata: dict | None = None
+
+    _validate_url = field_validator("url")(require_safe_external_url)
     isRecommended: bool = False
     recommendationScore: float | None = None
     recommendationSource: str | None = None

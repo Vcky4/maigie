@@ -9,11 +9,12 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 # Imported rather than defined here: the knowledge domain needs the same base, and a second copy is
 # how the two would drift. See `src/shared/schemas.py` for the two failure modes it prevents.
 from src.shared.schemas import CamelModel, PaginatedResponse
+from src.shared.validation import require_safe_external_url
 
 # `PaginatedResponse` moved to `src/shared/schemas.py` when the knowledge domain needed it too. Still
 # re-exported here so the many `models.PaginatedResponse[...]` references keep working.
@@ -755,10 +756,17 @@ class FlashcardsDashboardResponse(CamelModel):
 
 class SavedResourceCreate(BaseModel):
     title: str
+    # Nullable: a resource can be saved from a source that had no address.
+    #
+    # Validated because this value is rendered into an `href` by both clients, so a stored
+    # `javascript:` address would execute on click in the app's own origin. It reached three surfaces
+    # unchecked — the web resources library, the web collection detail page and mobile's reader.
     url: str | None = None
     sourceType: str
     sourceId: str | None = None
     tags: list[str] | None = None
+
+    _validate_url = field_validator("url")(require_safe_external_url)
 
 
 class SavedResourceResponse(CamelModel):
