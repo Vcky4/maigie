@@ -674,6 +674,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
           }
         },
         "required": [
@@ -25720,7 +25731,7 @@
     },
     "/api/v1/learning/study-plans/shapes": {
       "get": {
-        "description": "The path shapes the create wizard offers, with the phases each one is built from.\n\nDeclared before `/study-plans/{plan_id}` so FastAPI does not read \"shapes\" as a plan\nid, and unauthenticated because it is a fixed catalogue with nothing learner-specific\nin it — the same reasoning as `/billing/plans/catalog`.\n\nThe wizard used to carry this list itself, which made step 4's \"Generated roadmap\"\nheading untrue: it previewed the client's phases while the plan was built with\nwhatever the model returned. `generate_plan` now hands these titles to the generator,\nso both sides read from here.",
+        "description": "The path shapes the create wizard offers, with the phases each one is built from.\n\nDeclared before `/study-plans/{plan_id}` so FastAPI does not read \"shapes\" as a plan\nid, and unauthenticated because it is a fixed catalogue with nothing learner-specific\nin it — the same reasoning as `/billing/plans/catalog`.\n\nThe wizard used to carry this list itself, which made step 4's \"Generated roadmap\"\nheading untrue: it previewed the client's phases while the plan was built with\nwhatever the model returned. `generate_plan` now hands these titles to the generator,\nso both sides read from here.\n\nThe import is `.plan_shapes`, one dot. It was `..plan_shapes`, copied from\n`services/study_plan_service.py` where that level is correct — the service is one\npackage deeper. From here it resolved to `src.domains.plan_shapes`, which does not\nexist, so this route answered `500` on every call from the day it was written. A\nfunction-level import is why nothing caught it at startup, and both wizards degrade to\n\"Maigie will choose the phases\" on failure, so it looked like a design rather than a\nfault. See `test_plan_shapes.py`.",
         "operationId": "list_plan_shapes_api_v1_learning_study_plans_shapes_get",
         "responses": {
           "200": {

@@ -5055,7 +5055,13 @@ class PersonalLearningRepository:
     async def list_collection_items_with_titles(
         self, collection_id: str, *, session: AsyncSession | None = None
     ) -> list[dict[str, Any]]:
-        """LEFT JOIN against artifact tables to resolve titles; exclude deleted artifacts."""
+        """LEFT JOIN against artifact tables to resolve titles; exclude deleted artifacts.
+
+        Also resolves `url` for saved resources. Only that type has an external address — a note, a
+        deck and a document are all opened inside the product — and it is selected here rather than
+        read per item because a client needs it at render time to make the row an anchor. See the
+        comment on `CollectionItemResponse.url`.
+        """
         async with self._read_session(session) as s:
             note_alias = aliased(Note)
             deck_alias = aliased(FlashcardDeck)
@@ -5072,6 +5078,7 @@ class PersonalLearningRepository:
                     note_alias.title.label("note_title"),
                     deck_alias.title.label("deck_title"),
                     resource_alias.title.label("resource_title"),
+                    resource_alias.url.label("resource_url"),
                     document_alias.title.label("document_title"),
                 )
                 .outerjoin(
@@ -5110,6 +5117,10 @@ class PersonalLearningRepository:
                         "entity_type": row.entity_type,
                         "entity_id": row.entity_id,
                         "title": title,
+                        # Only ever set for a saved resource. Read off the row rather than gated on
+                        # `entity_type` because the join predicate already restricts it: the resource
+                        # alias only matches when the type is `saved_resource`, so it is null otherwise.
+                        "url": row.resource_url,
                         "position": row.position,
                         "added_at": row.added_at,
                     }

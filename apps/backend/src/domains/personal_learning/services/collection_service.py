@@ -135,6 +135,7 @@ async def get_detail(user_id: str, collection_id: str) -> models.CollectionDetai
                 entity_type=item["entity_type"],
                 entity_id=item["entity_id"],
                 title=item["title"],
+                url=item.get("url"),
                 position=item["position"],
                 added_at=item["added_at"],
             )

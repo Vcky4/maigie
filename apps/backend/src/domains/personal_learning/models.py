@@ -2632,6 +2632,19 @@ class CollectionItemResponse(CamelModel):
     title: str
     position: int | None
     added_at: datetime
+    # The artifact's own external address, when it has one. Null for every type but `saved_resource`.
+    #
+    # Resolved by the same LEFT JOIN that resolves `title`, so it costs one more selected column and
+    # no extra query. It is here rather than behind a per-item read because a client can only open an
+    # external link from a user gesture: fetching the URL on click and *then* opening a tab puts an
+    # `await` between the two, which popup blockers treat as an unattended `window.open` and stop.
+    # Rendering the row as a plain anchor needs the URL in hand.
+    #
+    # Nullable even for a saved resource — `SavedResource.url` is itself nullable, so a resource saved
+    # from a source that had no address carries none, and the row simply is not a link.
+    #
+    # Defaulted so the add-item response, which builds this model without a join, stays valid.
+    url: str | None = None
 
 
 class CollectionResponse(CamelModel):
