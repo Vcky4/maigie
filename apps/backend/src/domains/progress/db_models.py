@@ -72,20 +72,38 @@ class Goal(Base, TimestampMixin):
     # that already exists and it would start disagreeing the moment the source moved.
     current_value: Mapped[float | None] = mapped_column("currentValue", Float, nullable=True)
 
-    # Optional links
-    course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
-    topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
-    space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    # Optional links.
+    #
+    # All four are `ON DELETE SET NULL`: a goal outlives the thing it was attached to. Deleting a
+    # course should detach the goal, not delete the learner's stated intention along with it — which
+    # is what `CASCADE` would do, and it is why `userId` above is the only cascading link on this row.
+    #
+    # These three were **already constrained in the database** and simply undeclared here, inherited
+    # from the Prisma schema (`Goal_courseId_fkey`, `Goal_topicId_fkey`, and `Goal_circleId_fkey` —
+    # still carrying its pre-rename name — all `SET NULL`). Declaring them changes no DDL; it stops
+    # the model claiming a looseness the database does not have, which is the kind of disagreement
+    # that gets discovered by a migration autogenerate trying to "add" what already exists.
+    course_id: Mapped[str | None] = mapped_column(
+        "courseId", String, ForeignKey("Course.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    topic_id: Mapped[str | None] = mapped_column(
+        "topicId", String, ForeignKey("Topic.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    space_id: Mapped[str | None] = mapped_column(
+        "spaceId", String, ForeignKey("Space.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # The preparation a `prep_readiness` goal measures. Added because without it that `metricKind`
     # was unreachable: the value was in the CHECK constraint and in the design's wording — "Reach
     # 80% interview readiness" maps to readiness over a linked preparation — while nothing on the
     # row said *which* preparation, so `currentValue` would have derived null forever. A metric kind
     # a learner can choose and the server can never measure is worse than not offering it.
     #
-    # Plain String with no FK, matching `courseId`/`topicId`/`spaceId` on this table rather than the
-    # constrained style used elsewhere. Consistency within the row wins here; the inherited looseness
-    # is noted in the plan rather than fixed for one column out of four.
-    prep_id: Mapped[str | None] = mapped_column("prepId", String, nullable=True, index=True)
+    # This is the one link that was genuinely unconstrained, because migration `043` added it as a
+    # plain String on the stated grounds that its three siblings were plain too. They were not; the
+    # constraints were in the database and missing only from this file. Migration `044` closes it.
+    prep_id: Mapped[str | None] = mapped_column(
+        "prepId", String, ForeignKey("ExamPrep.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Relationships
     schedules: Mapped[list["ScheduleBlock"]] = relationship(

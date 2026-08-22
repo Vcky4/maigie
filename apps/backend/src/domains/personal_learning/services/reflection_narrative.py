@@ -192,12 +192,18 @@ def build_prompt(
     Keyed by id so the reply can be matched back to the right row. A positional list would silently
     attach the wrong insight to the wrong subject the first time the model dropped an item.
     """
+    # `render_figure`, not `:g`. `%g` keeps six significant digits, which turned a consistency score
+    # of 400/7 into `57.1429` — and the model, permitted to restate it verbatim, printed exactly that.
     signal_lines = "\n".join(
-        f"- id \"{s.id}\": {s.title} = {s.value:g}{s.unit or ''}" for s in signals
+        f"- id \"{s.id}\": {s.title} = {render_figure(s.value)}{s.unit or ''}" for s in signals
     )
     subject_lines = "\n".join(
-        f'- id "{s.id}": {s.title}, mastery {s.mastery:g}%'
-        + (f", change {s.change:+g} points" if s.change is not None else ", change not measured")
+        f'- id "{s.id}": {s.title}, mastery {render_figure(s.mastery)}%'
+        + (
+            f", change {'+' if s.change >= 0 else ''}{render_figure(s.change)} points"
+            if s.change is not None
+            else ", change not measured"
+        )
         for s in subjects
         if s.mastery is not None
     )
@@ -228,8 +234,55 @@ def build_prompt(
     )
 
 
+def render_figure(value: Any) -> str:
+    """A measured figure as a human would write it.
+
+    Ratios arrive at full precision — `consistencyScore` is a division, so it reads
+    `57.14285714285714`. Both prompts tell the model it may restate a figure *exactly as given* and
+    forbid rounding differently, which makes the precision we supply an instruction. A live deep
+    narrative duly wrote "Your consistency score was 57.1429/100" into prose a learner reads.
+
+    Rounding here keeps that instruction honest: the figure the model may repeat is now the figure the
+    page would publish. One decimal, and no trailing `.0`, so a whole number of days does not read
+    `4.0 days`.
+
+    Shared by `reflection_service._render_facts` and `build_prompt` below, because a rule applied to
+    one prompt and not the other is the same defect waiting on the other code path.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return str(value)
+    if isinstance(value, int):
+        return str(value)
+    rounded = round(value, 1)
+    return str(int(rounded)) if rounded == int(rounded) else str(rounded)
+
+
 def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
+
+
+# Sentence terminators, plus the closers a quoted sentence can legitimately end on.
+_SENTENCE_END = ('.', '!', '?', '"', "'", '”', '’', '…')
+
+
+def _finished_sentence(value: Any) -> str | None:
+    """Prose the model actually finished, or `None`.
+
+    `generate_content_json` repairs a truncated reply by closing the JSON, which is the right call —
+    it rescues every field that did arrive whole. What it cannot do is tell that the *last* string it
+    rescued stops mid-word. A deep narrative was observed publishing "…you will start turning" as its
+    closing quote, which is the largest piece of text on the reflection page.
+
+    So a passage that does not end on a terminator is treated as absent. That is the same judgement
+    `_pattern` already makes about a title with no body: a fragment is worse than a gap, because a gap
+    is visibly nothing while a fragment looks like something the model meant to say.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text if text.endswith(_SENTENCE_END) else None
 
 
 def assemble(
@@ -270,7 +323,9 @@ def assemble(
     def _pattern(key: str) -> models.ReflectionPattern | None:
         entry = _as_dict(patterns_prose.get(key))
         title = str(entry.get("title") or "").strip()
-        body = str(entry.get("body") or "").strip()
+        # A body cut off by truncation counts as no body, so the pair is dropped whole rather than
+        # rendering a card whose prose stops mid-word.
+        body = _finished_sentence(entry.get("body"))
         # Both or neither. A titled pattern with no body renders as a heading over blank space.
         if not title or not body:
             return None
@@ -310,7 +365,7 @@ def assemble(
         rhythm=rhythm,
         patterns=models.ReflectionPatterns(keep=_pattern("keep"), watch=_pattern("watch")),
         highlights=highlights,
-        closing=(str(written.get("closing")).strip() or None) if written.get("closing") else None,
+        closing=_finished_sentence(written.get("closing")),
     )
 
 

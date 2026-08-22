@@ -319,32 +319,47 @@ async def get_dashboard(
     # with everything else, and `gather` still reports its failure in its own slot.
     courses_task = asyncio.create_task(_load_courses(user_id, course_limit))
 
-    results = await asyncio.gather(
+    # Two waves of four, not one flat gather of eight.
+    #
+    # These loaders do not share a connection: `document_impl`, `collection_service` and
+    # `personal_learning_repo` each acquire their own. Eight at once exhausted the session-mode pooler
+    # outright when Reflect's equivalent dashboard was first run against the real database
+    # (`EMAXCONNSESSION`, 15 clients), degrading sections that had nothing wrong with them. This
+    # endpoint has always had the same shape and the same exposure; it simply had not been the one to
+    # hit the ceiling. Halving the peak keeps the composition concurrent where it matters.
+    #
+    # The split is the page's spine first, then its side rails, so if the budget were ever exceeded
+    # again the sections that would suffer are the peripheral ones. `featured` is deliberately in the
+    # second wave: it awaits `courses_task`, which the first wave has already resolved, so it costs no
+    # extra query and cannot start a duplicate one.
+    wave_one = await asyncio.gather(
         courses_task,
         _load_notes(user_id, recent_limit),
-        personal_learning_repo.list_recent_resources(user_id, take=recent_limit),
-        document_impl.list_documents(user_id=user_id, page=1, page_size=recent_limit),
         _load_review(user_id),
         _load_paths(user_id, path_limit),
+        return_exceptions=True,
+    )
+    wave_two = await asyncio.gather(
+        personal_learning_repo.list_recent_resources(user_id, take=recent_limit),
+        document_impl.list_documents(user_id=user_id, page=1, page_size=recent_limit),
         _load_featured(user_id, courses_task),
         _load_collections(user_id),
         return_exceptions=True,
     )
-    if all(isinstance(result, BaseException) for result in results):
-        for source, error in zip(
-            (
-                "courses",
-                "notes",
-                "resources",
-                "documents",
-                "review",
-                "paths",
-                "featured",
-                "collections",
-            ),
-            results,
-            strict=True,
-        ):
+
+    # Keyed by source rather than read back positionally. The previous version indexed `results[0]`
+    # through `results[7]` while a separate dict supplied the section names in a matching order — two
+    # orderings that had to agree, silently, and splitting the gather would have broken that agreement
+    # with no signal beyond the wrong data in the wrong field.
+    outcomes: dict[str, Any] = dict(
+        zip(("courses", "notes", "review", "paths"), wave_one, strict=True)
+    )
+    outcomes.update(
+        zip(("resources", "documents", "featured", "collections"), wave_two, strict=True)
+    )
+
+    if all(isinstance(result, BaseException) for result in outcomes.values()):
+        for source, error in outcomes.items():
             _log_source_failure(user_id, source, error)
         raise MaigieError(
             "Learning dashboard is temporarily unavailable",
@@ -381,26 +396,32 @@ async def get_dashboard(
         "featured": {"featured"},
         "collections": {"collections"},
     }
-    for source, result in zip(source_sections, results, strict=True):
+    # Every source named in `source_sections` must have been gathered, and vice versa. Asserted rather
+    # than assumed: adding a loader to one and forgetting the other is the mistake this shape invites.
+    assert outcomes.keys() == source_sections.keys(), (
+        f"gathered {sorted(outcomes)} but mapped {sorted(source_sections)}"
+    )
+
+    for source, result in outcomes.items():
         if isinstance(result, BaseException):
             degraded.update(source_sections[source])
             _log_source_failure(user_id, source, result)
 
-    if not isinstance(results[0], BaseException):
-        courses, course_total, active_courses, completed_topics = results[0]
-    if not isinstance(results[1], BaseException):
-        notes, note_total = results[1]
-    if not isinstance(results[2], BaseException):
-        resources, resource_total = results[2]
-    if not isinstance(results[3], BaseException):
-        documents, document_total = results[3]
-    if not isinstance(results[4], BaseException):
-        flashcard_stats, overdue_cards = results[4]
-    if not isinstance(results[5], BaseException):
-        paths, paths_total = results[5]
-    if not isinstance(results[6], BaseException):
-        featured = results[6]
-    if not isinstance(results[7], BaseException):
+    if not isinstance(outcomes["courses"], BaseException):
+        courses, course_total, active_courses, completed_topics = outcomes["courses"]
+    if not isinstance(outcomes["notes"], BaseException):
+        notes, note_total = outcomes["notes"]
+    if not isinstance(outcomes["resources"], BaseException):
+        resources, resource_total = outcomes["resources"]
+    if not isinstance(outcomes["documents"], BaseException):
+        documents, document_total = outcomes["documents"]
+    if not isinstance(outcomes["review"], BaseException):
+        flashcard_stats, overdue_cards = outcomes["review"]
+    if not isinstance(outcomes["paths"], BaseException):
+        paths, paths_total = outcomes["paths"]
+    if not isinstance(outcomes["featured"], BaseException):
+        featured = outcomes["featured"]
+    if not isinstance(outcomes["collections"], BaseException):
         collections = [
             models.LearnCollectionSummary(
                 id=c["id"],
@@ -408,7 +429,7 @@ async def get_dashboard(
                 item_count=c["item_count"],
                 entity_types=c["entity_types"],
             )
-            for c in results[7]
+            for c in outcomes["collections"]
         ]
 
     due_cards = max(0, int(flashcard_stats.get("dueToday", 0)))

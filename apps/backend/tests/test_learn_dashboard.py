@@ -797,3 +797,75 @@ class TestNoDuplicatedReads:
         assert payload.review.overdue_cards == 3
         assert payload.review.due_cards == 12
         assert not hasattr(populated.repo, "count_overdue_flashcards")
+
+
+class TestConnectionBudget:
+    """The composition must not open eight connections at once.
+
+    Reflect's equivalent dashboard exhausted the session-mode pooler outright the first time it ran
+    against the real database — `EMAXCONNSESSION` at 15 clients — and degraded three sections that had
+    nothing wrong with them. This endpoint has always had the same shape and the same exposure; it had
+    simply never been the one to hit the ceiling. These tests are what stop a ninth loader being added
+    to a flat gather.
+    """
+
+    def test_the_loaders_run_in_waves_of_at_most_four(self):
+        """Read from the source, because the concurrency is not observable from the response.
+
+        A flat gather and a split gather return identical payloads. The only difference is how many
+        connections are held at the same moment, which no assertion on the output can see — so this
+        counts the `asyncio.gather` calls and the arguments handed to each.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        source = textwrap.dedent(inspect.getsource(learn_dashboard_service.get_dashboard))
+        tree = ast.parse(source)
+
+        gathers = [
+            node
+            for node in ast.walk(tree)
+            for func in [node.func if isinstance(node, ast.Call) else None]
+            if isinstance(node, ast.Call)
+            and isinstance(func, ast.Attribute)
+            and func.attr == "gather"
+        ]
+
+        assert len(gathers) >= 2, "the loaders were collapsed back into a single gather"
+        for call in gathers:
+            # `return_exceptions` is a keyword, so positional args are the awaitables.
+            assert len(call.args) <= 4, (
+                f"a gather takes {len(call.args)} awaitables; the pooler budget allows four"
+            )
+
+    def test_every_gathered_source_is_mapped_to_sections(self):
+        """The two orderings that used to have to agree silently.
+
+        Results were read back as `results[0]`..`results[7]` while a separate dict supplied the section
+        names, so splitting the gather would have attached the wrong data to the wrong field with no
+        signal at all. The service now keys by name and asserts the two sets match; this pins that the
+        assertion exists and that the names are the ones the reader expects.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        source = textwrap.dedent(inspect.getsource(learn_dashboard_service.get_dashboard))
+        tree = ast.parse(source)
+
+        assert any(isinstance(node, ast.Assert) for node in ast.walk(tree)), (
+            "the guard that gathered sources and mapped sections agree has been removed"
+        )
+
+        # Results are read by name. Subscripting a list of results is what the keying replaced, and it
+        # is checked on the AST rather than the text because a comment mentioning `results[0]` — this
+        # module has one — is not the same as code doing it.
+        numeric_subscripts = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, int)
+        ]
+        assert not numeric_subscripts, "gathered results are being read back positionally again"

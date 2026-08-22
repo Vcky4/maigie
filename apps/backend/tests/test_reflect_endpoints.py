@@ -27,6 +27,7 @@ from src.domains.personal_learning.services import (
     growth_service,
     reflect_dashboard_service,
     reflection_narrative,
+    reflection_service,
 )
 
 OWNER = "user-owner"
@@ -401,6 +402,72 @@ class TestNarrativeComposition:
             )
         ]
 
+    def test_a_ratio_is_rendered_at_one_decimal_not_full_precision(self):
+        """The brief permits restating a figure *exactly as given*, so precision is an instruction.
+
+        `consistencyScore` is a division and arrives as `57.14285714285714`. A live deep narrative
+        restated all fourteen decimals into prose a learner reads, which is the model obeying the
+        prompt rather than misbehaving. The figure it may repeat is now the figure we would publish.
+        """
+        facts = reflection_service._render_facts(
+            self._metrics(consistency_score=400 / 7, active_days=4)
+        )
+
+        assert "57.1" in facts
+        assert "57.14285714285714" not in facts
+        # And a whole number does not acquire a decimal point.
+        assert "4 days" in facts or "4" in facts
+
+    def test_an_integer_metric_keeps_no_trailing_decimal(self):
+        facts = reflection_service._render_facts(self._metrics(focused_minutes=120.0))
+
+        assert "120.0" not in facts
+        assert "120" in facts
+
+    def test_the_narrative_prompt_rounds_the_same_way_the_summary_prompt_does(self):
+        """`%g` kept six significant digits, so the narrative prompt leaked `57.1429` where the
+        summary prompt had already been fixed. One rule, both prompts."""
+        prompt = reflection_narrative.build_prompt(
+            type_=models.ReflectionType.WEEKLY,
+            period_start=NOW,
+            period_end=NOW,
+            facts="",
+            signals=reflection_narrative.build_signals(self._metrics(consistency_score=400 / 7)),
+            subjects=reflection_narrative.build_subjects(self._subjects()),
+            actions=[],
+        )
+
+        assert "57.1" in prompt
+        assert "57.1429" not in prompt
+        assert "57.14285714285714" not in prompt
+
+    def test_a_negative_subject_change_keeps_its_sign_in_the_prompt(self):
+        """`:+g` supplied the sign; `render_figure` does not, so the caller must."""
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        declining = [
+            reflect_aggregates.SubjectMastery(
+                course_id="course-1",
+                title="Linear Algebra",
+                category="maths",
+                mastery_percent=30.0,
+                topics_total=10,
+                topics_completed=3,
+                change=-3.0,
+            )
+        ]
+        prompt = reflection_narrative.build_prompt(
+            type_=models.ReflectionType.WEEKLY,
+            period_start=NOW,
+            period_end=NOW,
+            facts="",
+            signals=[],
+            subjects=reflection_narrative.build_subjects(declining),
+            actions=[],
+        )
+
+        assert "change -3 points" in prompt
+
     def test_only_measured_metrics_become_signals(self):
         """A null metric produces no card rather than a card reading zero."""
         signals = reflection_narrative.build_signals(
@@ -530,6 +597,52 @@ class TestNarrativeComposition:
             deep=True,
             summary="s",
             written={"patterns": {"keep": {"title": "Keep going"}}},
+            signals=[],
+            subjects=[],
+            rhythm=[],
+            highlights=[],
+        )
+
+        assert narrative.patterns.keep is None
+
+    def test_a_closing_cut_off_by_truncation_is_dropped(self):
+        """Found by running the deep path against a live model, not by reading the code.
+
+        `generate_content_json` repairs a truncated reply by closing the JSON, which rescues the
+        fields that arrived whole and leaves the last one mid-word. The observed result published
+        "…you will start turning" as the closing quote — the largest text block on the page.
+        """
+        narrative = reflection_narrative.assemble(
+            deep=True,
+            summary="s",
+            written={"closing": "Keep showing up and you will start turning"},
+            signals=[],
+            subjects=[],
+            rhythm=[],
+            highlights=[],
+        )
+
+        assert narrative.closing is None
+
+    def test_a_finished_closing_is_kept(self):
+        for ending in ("Well done.", "Well done!", "Keep going?", 'He said "go".', "Onwards…"):
+            narrative = reflection_narrative.assemble(
+                deep=True,
+                summary="s",
+                written={"closing": ending},
+                signals=[],
+                subjects=[],
+                rhythm=[],
+                highlights=[],
+            )
+            assert narrative.closing == ending
+
+    def test_a_pattern_body_cut_off_by_truncation_drops_the_whole_card(self):
+        """Same rule as the missing body: a fragment is worse than a gap."""
+        narrative = reflection_narrative.assemble(
+            deep=True,
+            summary="s",
+            written={"patterns": {"keep": {"title": "Short sessions", "body": "You built a streak of"}}},
             signals=[],
             subjects=[],
             rhythm=[],

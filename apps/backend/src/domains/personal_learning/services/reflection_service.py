@@ -30,7 +30,7 @@ from src.shared.exceptions import NotFoundError
 
 from .. import models
 from ..repository import personal_learning_repo as repo
-from . import reflection_metrics
+from . import reflection_metrics, reflection_narrative
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +91,7 @@ def _render_facts(metrics: models.ReflectionMetrics) -> str:
         if value is None:
             continue
         suffix = f" {unit}" if unit and not unit.startswith("%") else unit
-        lines.append(f"- {label}: {value}{suffix}")
+        lines.append(f"- {label}: {reflection_narrative.render_figure(value)}{suffix}")
 
     if metrics.new_topics_mastered:
         # A distinct label from the count above. Two lines both reading "Topics completed",
@@ -317,7 +317,13 @@ async def _compose_narrative(
                 # signal and per subject. The same reasoning applies as there: most of the budget is
                 # spent on reasoning tokens before any output appears, and a truncated reply is a
                 # `JSONDecodeError` that silently costs the whole narrative.
-                max_tokens=4096,
+                #
+                # 8192, not the 4096 this first used. A deep reply for a learner with five measured
+                # signals and two subjects was observed truncating at 4096 — `_repair_json` closed
+                # the JSON, which salvaged the earlier fields and left `closing` cut mid-sentence.
+                # `assemble` now refuses a half-sentence, but a budget that lets the reply finish is
+                # the better half of the fix; refusing it only stops the damage showing.
+                max_tokens=8192,
                 fallback={},
                 user_id=user_id,
             )

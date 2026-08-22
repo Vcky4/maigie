@@ -249,7 +249,10 @@ class TestThePromptCarriesFactsAndForbidsNewOnes:
     def test_measured_figures_are_supplied_to_the_model(self):
         prompt = self._prompt(metrics_module.compute(evidence(), LAGOS))
         assert "Flashcards reviewed: 128" in prompt
-        assert "Consistency score: 86.0" in prompt
+        # `86`, not `86.0`. The brief lets the model restate a figure verbatim, so a score that is a
+        # whole number must not be handed over wearing a decimal point it would then print.
+        assert "Consistency score: 86" in prompt
+        assert "Consistency score: 86.0" not in prompt
         assert "Graph representations" in prompt
 
     def test_the_model_is_forbidden_from_computing_a_new_figure(self):
