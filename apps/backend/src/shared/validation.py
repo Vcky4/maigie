@@ -27,6 +27,11 @@ def is_safe_external_url(value: str) -> bool:
     schemes that turn a stored address into script execution on whoever clicks it, and including
     scheme-relative (`//evil.example`) and relative addresses — a saved resource is somewhere else on
     the internet, so an address without a host is not one.
+
+    Marginally stricter than the clients' read-time guard, deliberately. ``urlparse`` gives
+    ``http:///nohost`` an empty netloc so it is refused here, while a browser's WHATWG parser normalises
+    it to ``http://nohost/`` and the clients accept it. Strict on the way in, tolerant of anything
+    genuinely safe on the way out — a row already stored that way still renders as a working link.
     """
     if not value:
         return False
