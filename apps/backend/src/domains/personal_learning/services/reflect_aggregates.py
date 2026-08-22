@@ -21,14 +21,17 @@ from sqlalchemy import func, select
 
 from src.domains.knowledge.db_models import Course, Module, Topic
 from src.domains.progress.db_models import Goal
+from src.domains.progress.services import goal_metrics
 from src.shared.database import get_session_factory
 
 logger = logging.getLogger(__name__)
 
-#: How far a goal may fall behind its own elapsed time before it is called at risk, in
-#: percentage points. One threshold, defined once, used by every surface that labels a goal —
-#: the alternative is `/goals` and `/reflect/goals` disagreeing about the same goal.
-AT_RISK_LAG_POINTS = 15.0
+#: Re-exported, **not** redefined. The threshold and the predicate live in
+#: `progress.services.goal_metrics` because `Goal` is a `progress` entity, and Decision N asks for
+#: one at-risk rule shared by `/progress/goals` and `/reflect/goals`. Importing here keeps the name
+#: available to existing callers while there is only ever one number and one implementation.
+AT_RISK_LAG_POINTS = goal_metrics.AT_RISK_LAG_POINTS
+is_at_risk = goal_metrics.is_at_risk
 
 
 @dataclass(frozen=True)
@@ -266,37 +269,9 @@ async def get_goal_portfolio(*, user_id: str, now: datetime | None = None) -> Go
     )
 
 
-def is_at_risk(
-    *,
-    progress: float,
-    created_at: datetime | None,
-    target_date: datetime | None,
-    now: datetime,
-) -> bool:
-    """Whether a goal has fallen behind the pace its own deadline implies.
-
-    Pure, because this is the arithmetic that decides a label the learner sees and it should
-    be testable without a database.
-
-    A goal with no `targetDate` is **never** at risk. There is no pace to fall behind when
-    there is no deadline, and calling an open-ended goal "needs attention" for making slow
-    progress would be inventing a commitment the learner never made.
-
-    A goal already past its deadline and unfinished is at risk regardless of progress.
-    """
-    if target_date is None or created_at is None:
-        return False
-    if progress >= 100:
-        return False
-    if now >= target_date:
-        return True
-
-    total = (target_date - created_at).total_seconds()
-    if total <= 0:
-        return False
-
-    elapsed_percent = (now - created_at).total_seconds() / total * 100
-    return (elapsed_percent - progress) > AT_RISK_LAG_POINTS
+# `is_at_risk` was defined here and is now imported at the top of this module. It moved rather than
+# being copied: two implementations of the label a learner reads on the same goal, one per surface,
+# is the exact failure Decision N's "one threshold" clause exists to prevent.
 
 
 async def subject_mastery_series(

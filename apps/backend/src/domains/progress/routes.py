@@ -1,4 +1,4 @@
-﻿"""
+"""
 Progress domain â€” API routes.
 
 Analytics, goals, study blocks, streaks, achievements,
@@ -16,7 +16,7 @@ from src.shared.auth import CurrentUser
 
 from . import models
 from .repository import progress_repo
-from .services import analytics_service, goal_service, schedule_service
+from .services import analytics_service, goal_metrics, goal_service, schedule_service
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ async def list_goals(
         sort_order=sortOrder,
     )
     skip = (page - 1) * pageSize
-    items = [_to_goal_response(g) for g in goals]
+    items = await _goal_responses(goals)
     return models.GoalListResponse(
         goals=items, total=total, page=page, pageSize=pageSize, hasMore=(skip + pageSize) < total
     )
@@ -120,14 +120,14 @@ async def create_goal(body: models.GoalCreate, current_user: CurrentUser):
     goal = await goal_service.create_goal(
         user_id=current_user.id, data=body.model_dump(exclude_unset=True)
     )
-    return _to_goal_response(goal)
+    return (await _goal_responses([goal]))[0]
 
 
 @router.get("/goals/{goal_id}", response_model=models.GoalResponse)
 async def get_goal(goal_id: str, current_user: CurrentUser):
     """Get a goal."""
     goal = await goal_service.get_goal(goal_id=goal_id, user_id=current_user.id)
-    return _to_goal_response(goal)
+    return (await _goal_responses([goal]))[0]
 
 
 @router.patch("/goals/{goal_id}", response_model=models.GoalResponse)
@@ -136,7 +136,7 @@ async def update_goal(goal_id: str, body: models.GoalUpdate, current_user: Curre
     goal = await goal_service.update_goal(
         goal_id=goal_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
     )
-    return _to_goal_response(goal)
+    return (await _goal_responses([goal]))[0]
 
 
 @router.post("/goals/{goal_id}/progress", response_model=models.GoalResponse)
@@ -147,13 +147,78 @@ async def record_goal_progress(
     goal = await goal_service.record_progress(
         goal_id=goal_id, user_id=current_user.id, progress=body.progress
     )
-    return _to_goal_response(goal)
+    return (await _goal_responses([goal]))[0]
 
 
 @router.delete("/goals/{goal_id}", status_code=204)
 async def delete_goal(goal_id: str, current_user: CurrentUser):
     """Delete a goal."""
     await goal_service.delete_goal(goal_id=goal_id, user_id=current_user.id)
+
+
+@router.get("/goals/{goal_id}/milestones", response_model=list[models.GoalMilestoneResponse])
+async def list_goal_milestones(goal_id: str, current_user: CurrentUser):
+    """A goal's milestones, in the learner's chosen order.
+
+    A bare list rather than a pagination envelope: milestones are a handful of steps the learner
+    typed, bounded by the goal, and the detail page renders all of them. An envelope here would
+    publish a `total` nobody reads and a `page` nobody can turn.
+    """
+    milestones = await goal_service.list_milestones(goal_id=goal_id, user_id=current_user.id)
+    return [_to_milestone_response(m) for m in milestones]
+
+
+@router.post(
+    "/goals/{goal_id}/milestones",
+    response_model=models.GoalMilestoneResponse,
+    status_code=201,
+)
+async def create_goal_milestone(
+    goal_id: str, body: models.GoalMilestoneCreate, current_user: CurrentUser
+):
+    """Add a milestone to a goal.
+
+    Milestones are rows because they cannot be derived: nothing in the data can infer that a goal
+    divides into four stages, and generating a division would assert a structure the learner never
+    described.
+    """
+    milestone = await goal_service.create_milestone(
+        goal_id=goal_id, user_id=current_user.id, data=body.model_dump(exclude_unset=True)
+    )
+    return _to_milestone_response(milestone)
+
+
+@router.patch(
+    "/goals/{goal_id}/milestones/{milestone_id}",
+    response_model=models.GoalMilestoneResponse,
+)
+async def update_goal_milestone(
+    goal_id: str,
+    milestone_id: str,
+    body: models.GoalMilestoneUpdate,
+    current_user: CurrentUser,
+):
+    """Edit a milestone, including marking it achieved.
+
+    `achievedAt` is a timestamp on this body rather than a `POST .../achieve` toggle, so a milestone
+    reached on Tuesday can be recorded on Thursday with Tuesday's date — and so an explicit `null`
+    un-achieves one that was ticked by mistake.
+    """
+    milestone = await goal_service.update_milestone(
+        goal_id=goal_id,
+        user_id=current_user.id,
+        milestone_id=milestone_id,
+        data=body.model_dump(exclude_unset=True),
+    )
+    return _to_milestone_response(milestone)
+
+
+@router.delete("/goals/{goal_id}/milestones/{milestone_id}", status_code=204)
+async def delete_goal_milestone(goal_id: str, milestone_id: str, current_user: CurrentUser):
+    """Remove a milestone."""
+    await goal_service.delete_milestone(
+        goal_id=goal_id, user_id=current_user.id, milestone_id=milestone_id
+    )
 
 
 @router.post("/goals/{goal_id}/regenerate-plan", response_model=models.GoalRegeneratePlanResponse)
@@ -282,7 +347,24 @@ async def submit_review(
 # ===========================================================================
 
 
-def _to_goal_response(goal) -> models.GoalResponse:
+def _to_goal_response(
+    goal,
+    *,
+    measurement: goal_metrics.GoalMeasurement | None = None,
+    milestones: tuple[int, int] = (0, 0),
+    now: datetime | None = None,
+) -> models.GoalResponse:
+    """Map a goal row onto the wire, deriving everything the row does not store.
+
+    `measurement` and `milestones` are passed in rather than fetched here, because a list of twenty
+    goals must not turn into twenty round trips per derived field. Callers batch them; a caller with
+    nothing to pass gets `currentValue` from the row, which is correct for a `manual` goal and null
+    for the rest — honest in both cases, and never a fabricated zero.
+    """
+    moment = now or datetime.now(UTC)
+    progress = goal.progress or 0.0
+    achieved, total = milestones
+
     return models.GoalResponse(
         id=goal.id,
         userId=goal.user_id,
@@ -290,12 +372,75 @@ def _to_goal_response(goal) -> models.GoalResponse:
         description=goal.description,
         targetDate=goal.target_date.isoformat() if goal.target_date else None,
         status=goal.status,
-        progress=goal.progress or 0.0,
+        progress=progress,
         courseId=goal.course_id,
         topicId=goal.topic_id,
+        prepId=goal.prep_id,
+        metricKind=goal.metric_kind,
+        targetValue=goal.target_value,
+        unit=goal.unit,
+        currentValue=(measurement.current_value if measurement else goal.current_value),
+        currentValueMeasured=(measurement.measured if measurement else False),
+        statusLabel=goal_metrics.status_label(
+            progress=progress,
+            status=goal.status,
+            created_at=goal.created_at,
+            target_date=goal.target_date,
+            now=moment,
+        ),
+        pacePercent=goal_metrics.pace_percent(
+            progress=progress,
+            created_at=goal.created_at,
+            target_date=goal.target_date,
+            now=moment,
+        ),
+        projectedOutcome=goal_metrics.projected_outcome(
+            progress=progress,
+            created_at=goal.created_at,
+            target_date=goal.target_date,
+            now=moment,
+        ),
+        milestonesTotal=total,
+        milestonesAchieved=achieved,
         createdAt=goal.created_at.isoformat(),
         updatedAt=goal.updated_at.isoformat(),
     )
+
+
+def _to_milestone_response(milestone) -> models.GoalMilestoneResponse:
+    return models.GoalMilestoneResponse(
+        id=milestone.id,
+        goalId=milestone.goal_id,
+        title=milestone.title,
+        detail=milestone.detail,
+        targetValue=milestone.target_value,
+        orderIndex=milestone.order_index,
+        achievedAt=milestone.achieved_at.isoformat() if milestone.achieved_at else None,
+        createdAt=milestone.created_at.isoformat(),
+        updatedAt=milestone.updated_at.isoformat(),
+    )
+
+
+async def _goal_responses(goals: list, *, now: datetime | None = None) -> list[models.GoalResponse]:
+    """Map several goals, batching the two derived reads across the whole set.
+
+    Two queries' worth of work for any number of goals — `derive_current_values` issues one per
+    metric kind present and `count_achieved_milestones` one in total — rather than per goal.
+    """
+    if not goals:
+        return []
+    moment = now or datetime.now(UTC)
+    measurements = await goal_metrics.derive_current_values(goals, now=moment)
+    milestone_counts = await goal_metrics.count_achieved_milestones([goal.id for goal in goals])
+    return [
+        _to_goal_response(
+            goal,
+            measurement=measurements.get(goal.id),
+            milestones=milestone_counts.get(goal.id, (0, 0)),
+            now=moment,
+        )
+        for goal in goals
+    ]
 
 
 def _to_block_response(block) -> models.StudyBlockResponse:

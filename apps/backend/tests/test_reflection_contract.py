@@ -187,11 +187,46 @@ class TestReflectionType:
         ("cadence", "days"),
         [("weekly", 7), ("monthly", 30)],
     )
-    async def test_each_cadence_gets_its_own_period(self, reflection_harness, cadence, days):
+    async def test_each_cadence_gets_its_own_period(
+        self, reflection_harness, plus_tier, cadence, days
+    ):
+        """Run as Plus, because monthly is a Plus cadence (Decision T).
+
+        The harness is Free by default and this test is about periods rather than tiers, so it opts
+        into Plus explicitly instead of the gate being loosened to keep it passing.
+        """
         await reflection_service.generate_reflection(user_id="u1", type=cadence)
         written = reflection_harness.written
         span = written["periodEnd"] - written["periodStart"]
         assert span == timedelta(days=days)
+
+    @pytest.mark.anyio
+    async def test_weekly_is_never_gated(self, reflection_harness):
+        """The learner's own weekly summary is free. Gating it is not defensible on its own terms."""
+        await reflection_service.generate_reflection(user_id="u1", type="weekly")
+        assert reflection_harness.written["type"] == "weekly"
+
+    @pytest.mark.anyio
+    async def test_monthly_on_free_is_refused_with_an_actionable_payload(self, reflection_harness):
+        """A `403`, unlike the locked trend range's `200`.
+
+        The difference is that this is a mutation the learner explicitly asked for: refusing it with a
+        typed upgrade payload is something the client can act on, and there is no chart left looking
+        broken. A locked *read* has to answer `200`, because the design renders the control and Free
+        must be able to press it.
+        """
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as caught:
+            await reflection_service.generate_reflection(user_id="u1", type="monthly")
+
+        assert caught.value.status_code == 403
+        detail = caught.value.detail
+        assert detail["upgradeRequired"] is True
+        assert detail["capability"] == "reflection"
+        assert "upgradeUrl" in detail
+        # And nothing was written — a refused generation must not leave a half-made row.
+        assert reflection_harness.written == {}
 
 
 class TestTheSchemaHasNoUntypedLayers:
@@ -397,7 +432,29 @@ def reflection_harness(monkeypatch):
     async def noop(*args, **kwargs):
         return None
 
+    async def trial_offered(user_id):
+        return True
+
     monkeypatch.setattr(feature_tier_service, "get_quality_tier", free_tier)
     monkeypatch.setattr(trial_service, "record_plus_feature_used", noop)
+    # Reached by the monthly cadence gate when it builds its upgrade payload. Stubbed here rather
+    # than in the one test that hits it, so a future gate cannot fall through to the database.
+    monkeypatch.setattr(feature_tier_service, "trial_available", trial_offered)
 
     return harness
+
+
+@pytest.fixture
+def plus_tier(monkeypatch):
+    """Run a test as a Plus learner.
+
+    Free is the harness default because it is the tier most rules have to be right for. A test that
+    needs Plus asks for it explicitly, which keeps the gate honest — the alternative is loosening a
+    gate so an old test keeps passing.
+    """
+    from src.domains.personal_learning.services import feature_tier_service
+
+    async def plus(user_id):
+        return "plus"
+
+    monkeypatch.setattr(feature_tier_service, "get_quality_tier", plus)

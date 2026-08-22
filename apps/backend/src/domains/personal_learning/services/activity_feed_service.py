@@ -5,7 +5,7 @@ Presents one continuous learning journey rather than separate products.
 """
 
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, date, datetime, timezone
 from typing import Any, Literal
 
 from ..repository import personal_learning_repo as repo
@@ -81,15 +81,62 @@ async def record(
     return entry
 
 
-async def list_feed(*, user_id: str, page: int = 1, page_size: int = 20) -> tuple[list[Any], int]:
+async def list_feed(
+    *,
+    user_id: str,
+    activity_types: list[str] | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[Any], int]:
     """
     List unified activity feed entries (paginated, sorted by occurred_at desc).
 
     Includes both personal study and collaborative activity.
     Req 16.5
+
+    The filters are optional and additive: omitting all three gives the previous behaviour exactly,
+    which is why extending this could not break the existing caller. The total is computed under the
+    same filters as the page — a filtered list beside an unfiltered count is a pagination control
+    that walks off the end of its own list.
     """
     skip = (page - 1) * page_size
-    return await repo.list_feed_entries(user_id, skip=skip, take=page_size)
+    return await repo.list_feed_entries(
+        user_id,
+        activity_types=activity_types,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
+        skip=skip,
+        take=page_size,
+    )
+
+
+async def list_daily_counts(
+    *,
+    user_id: str,
+    activity_types: list[str] | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+) -> list[tuple[date, int]]:
+    """How much happened on each day in the window, oldest first.
+
+    Its own read rather than a field on the paginated feed. The density strip covers a range far
+    wider than any one page, so folding it into the envelope would either mean the counts describing
+    only the current page — silently wrong — or the envelope carrying a whole-range aggregate that
+    changes as the learner turns pages.
+    """
+    return await repo.count_feed_entries_by_day(
+        user_id,
+        activity_types=activity_types,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
+    )
+
+
+async def list_activity_types(*, user_id: str) -> list[str]:
+    """The activity types this learner has, so the filter offers only what can return something."""
+    return await repo.list_feed_activity_types(user_id)
 
 
 async def _compute_current_streak(user_id: str) -> int:

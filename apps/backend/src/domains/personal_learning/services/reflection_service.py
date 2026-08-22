@@ -196,6 +196,10 @@ async def _compose_and_store(
                 deep=deep,
                 metrics=metrics,
             ),
+            # This first call asks only for the title and summary, which every tier gets and which
+            # the fallbacks above already cover. The narrative is a second, larger request made
+            # below — split so that a failure of the long one still leaves a titled, summarised
+            # reflection rather than losing both.
             # 2048, not the 800 this first used. `max_tokens` is a budget for the whole
             # generation, and the configured models spend most of it on reasoning tokens before
             # emitting anything — measured at ~0.8 characters of visible output per token of
@@ -215,6 +219,16 @@ async def _compose_and_store(
         # failure path indistinguishable from an inactive week.
         logger.warning("Reflection narrative generation failed for user %s: %s", user_id, e)
 
+    narrative, recommendations = await _compose_narrative(
+        user_id=user_id,
+        type_=type_,
+        period_start=period_start,
+        period_end=period_end,
+        deep=deep,
+        metrics=metrics,
+        summary=summary,
+    )
+
     return await repo.upsert_reflection(
         {
             "userId": user_id,
@@ -229,11 +243,135 @@ async def _compose_and_store(
             # `by_alias=True` because the repository mapper speaks wire names, and the column
             # stores exactly what the response publishes.
             "metrics": metrics.model_dump(by_alias=True),
-            # Still empty. An action carries a navigation target chosen from the metrics, and
-            # choosing targets belongs with the dashboard work that knows which entities exist.
-            "recommendations": [],
+            # `None` when the narrative could not be composed at all, which is a published, meaningful
+            # state — not an empty object claiming prose exists and then saying nothing.
+            "narrative": narrative.model_dump(by_alias=True) if narrative else None,
+            "recommendations": [action.model_dump(by_alias=True) for action in recommendations],
         }
     )
+
+
+async def _compose_narrative(
+    *,
+    user_id: str,
+    type_: models.ReflectionType,
+    period_start: datetime,
+    period_end: datetime,
+    deep: bool,
+    metrics: models.ReflectionMetrics,
+    summary: str,
+) -> tuple[models.ReflectionNarrative | None, list[models.ReflectionAction]]:
+    """Build the narrative and the recommendations, measured parts first.
+
+    Returns `(None, [])` only if even the measured skeleton could not be read, which means the daily
+    snapshot and the subject query both failed. A narrative that exists is therefore always at least
+    as truthful as the numbers behind it.
+
+    **The measured skeleton is assembled before the model is called, and the model is handed it.** It
+    receives each signal and subject with the figure already attached and is asked for a sentence
+    about it (Decision A). It is never asked what the figure is.
+
+    **The service picks every action target** (Decision O). A model free to emit an `entityId` would
+    eventually cite an entity the learner does not own.
+    """
+    from src.domains.personal_learning.services.llm_resilient import generate_content_json
+
+    from . import growth_service, reflection_narrative
+
+    try:
+        subjects_response = await growth_service.get_subjects(user_id=user_id, range_="30d")
+        subjects_source = subjects_response.items
+        snapshots = await repo.list_daily_snapshots(
+            user_id, since=period_start.date(), until=period_end.date()
+        )
+    except Exception as exc:
+        logger.warning("Reflection narrative skeleton unavailable for user %s: %s", user_id, exc)
+        return None, []
+
+    signals = reflection_narrative.build_signals(metrics)
+    subjects = reflection_narrative.build_subjects(subjects_source)
+    rhythm = reflection_narrative.build_rhythm(snapshots)
+    highlights = reflection_metrics.build_highlights(metrics)
+    chosen = reflection_narrative.choose_actions(
+        metrics=metrics,
+        subjects=subjects_source,
+        limit=reflection_narrative.recommendation_limit(deep=deep),
+    )
+
+    written: dict[str, Any] = {}
+    # Free receives no paid prose, so there is nothing to ask for and no reason to spend a call. The
+    # skeleton it does get is entirely measured (Decision T2).
+    if deep or chosen:
+        try:
+            reply = await generate_content_json(
+                reflection_narrative.build_prompt(
+                    type_=type_,
+                    period_start=period_start,
+                    period_end=period_end,
+                    facts=_render_facts(metrics),
+                    signals=signals,
+                    subjects=subjects,
+                    actions=chosen,
+                ),
+                # Larger than the summary call's budget because this reply carries a paragraph per
+                # signal and per subject. The same reasoning applies as there: most of the budget is
+                # spent on reasoning tokens before any output appears, and a truncated reply is a
+                # `JSONDecodeError` that silently costs the whole narrative.
+                max_tokens=4096,
+                fallback={},
+                user_id=user_id,
+            )
+            if isinstance(reply, dict):
+                written = reply
+        except Exception as exc:
+            # The measured skeleton survives. This is the difference between a reflection with real
+            # numbers and no prose, and no reflection at all.
+            logger.warning("Reflection narrative wording failed for user %s: %s", user_id, exc)
+
+    return (
+        reflection_narrative.assemble(
+            deep=deep,
+            summary=summary,
+            written=written,
+            signals=signals,
+            subjects=subjects,
+            rhythm=rhythm,
+            highlights=highlights,
+        ),
+        reflection_narrative.assemble_actions(chosen=chosen, written=written),
+    )
+
+
+async def _ensure_cadence_allowed(*, user_id: str, type_: models.ReflectionType) -> None:
+    """Monthly reflections are Plus (Decision T). Weekly is never gated.
+
+    **A `403` here, unlike the locked trend range's `200`.** The difference is that this is a
+    mutation the learner explicitly asked for: refusing it with a typed upgrade payload is
+    actionable, and there is no chart to leave looking broken. A locked *read* has to answer `200`
+    because the design renders the control and a Free learner must be able to press it.
+    """
+    if type_ is not models.ReflectionType.MONTHLY:
+        return
+
+    from fastapi import HTTPException
+
+    from . import feature_tier_service
+
+    # `get_quality_tier`, the same accessor `_compose_and_store` uses, rather than
+    # `get_effective_tier`. One way of asking "which tier is this learner on" across the module.
+    if await feature_tier_service.get_quality_tier(user_id) == "plus":
+        return
+
+    matrix = feature_tier_service.FEATURE_TIER_MATRIX.get("reflection", {})
+    detail = models.UpgradeRequiredDetail(
+        upgrade_required=True,
+        reason="Monthly reflections require Maigie Plus",
+        capability="reflection",
+        upgrade_url="/subscription",
+        trial_available=await feature_tier_service.trial_available(user_id),
+        upgrade_value=matrix.get("upgrade_value", ""),
+    )
+    raise HTTPException(status_code=403, detail=detail.model_dump(by_alias=True))
 
 
 async def generate_reflection(*, user_id: str, type: str | models.ReflectionType) -> Any:
@@ -246,6 +384,7 @@ async def generate_reflection(*, user_id: str, type: str | models.ReflectionType
     model, because no tier should be sold invented numbers.
     """
     type_ = models.ReflectionType(type.lower() if isinstance(type, str) else type.value)
+    await _ensure_cadence_allowed(user_id=user_id, type_=type_)
     now = datetime.now(UTC)
     return await _compose_and_store(
         user_id=user_id,

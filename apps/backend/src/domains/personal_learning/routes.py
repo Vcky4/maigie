@@ -7,6 +7,7 @@ flashcards, study plans, documents, notifications, and more.
 Mounted at: /api/v1/learning
 """
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Literal
@@ -2237,12 +2238,28 @@ async def send_chat_message(body: dict, current_user: CurrentUser):
 @router.get("/activity-feed", response_model=models.ActivityFeedResponse)
 async def get_activity_feed(
     current_user: CurrentUser,
+    type: list[str] | None = Query(None, description="Repeatable; filters by activityType"),
+    occurredFrom: datetime | None = Query(None, description="Lower bound on occurredAt"),
+    occurredTo: datetime | None = Query(None, description="Upper bound on occurredAt"),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
 ):
-    """Get unified activity feed (personal + collaborative)."""
+    """Get unified activity feed (personal + collaborative).
+
+    All three filters are optional and additive, so omitting them gives exactly the previous
+    behaviour. `type` is repeatable — the history page's filter is a multi-select, and a
+    comma-separated string would need parsing rules nobody would agree on.
+
+    The total is computed under the same filters as the page, so the pagination control cannot walk
+    off the end of a list it is describing.
+    """
     items, total = await activity_feed_service.list_feed(
-        user_id=current_user.id, page=page, page_size=pageSize
+        user_id=current_user.id,
+        activity_types=type,
+        occurred_from=occurredFrom,
+        occurred_to=occurredTo,
+        page=page,
+        page_size=pageSize,
     )
     return models.ActivityFeedResponse(
         items=items,
@@ -2250,6 +2267,134 @@ async def get_activity_feed(
         page=page,
         pageSize=pageSize,
         pages=max(1, (total + pageSize - 1) // pageSize),
+    )
+
+
+@router.get("/activity-feed/daily-counts", response_model=models.ActivityDayCountsResponse)
+async def get_activity_daily_counts(
+    current_user: CurrentUser,
+    type: list[str] | None = Query(None, description="Repeatable; filters by activityType"),
+    occurredFrom: datetime | None = Query(None),
+    occurredTo: datetime | None = Query(None),
+):
+    """How much happened on each day, for the history page's density strip.
+
+    Declared **before** nothing that could shadow it — `/activity-feed` is an exact path and
+    `/activity-feed/daily-counts` is another, so neither depends on ordering. Days with no activity
+    are absent rather than zero: the caller knows its own window and renders the gaps.
+    """
+    days, available = await asyncio.gather(
+        activity_feed_service.list_daily_counts(
+            user_id=current_user.id,
+            activity_types=type,
+            occurred_from=occurredFrom,
+            occurred_to=occurredTo,
+        ),
+        activity_feed_service.list_activity_types(user_id=current_user.id),
+    )
+    return models.ActivityDayCountsResponse(
+        days=[models.ActivityDayCount(day=day, count=count) for day, count in days],
+        total=sum(count for _, count in days),
+        available_types=available,
+    )
+
+
+# ===========================================================================
+# Reflect dashboard
+# ===========================================================================
+
+
+@router.get("/reflect/dashboard", response_model=models.ReflectDashboardResponse)
+async def get_reflect_dashboard(
+    current_user: CurrentUser,
+    range: models.GrowthRange = Query("30d", description="7d, 30d or 90d"),
+    subjectLimit: int = Query(4, ge=1, le=20),
+    goalLimit: int = Query(3, ge=1, le=20),
+    planLimit: int = Query(2, ge=1, le=10),
+    activityLimit: int = Query(4, ge=1, le=20),
+    achievementLimit: int = Query(3, ge=1, le=20),
+):
+    """Compose the authenticated learner's bounded Reflect dashboard.
+
+    Mounted under `/reflect/` rather than `/reflections/dashboard`, which would be ambiguous with
+    `/reflections/{reflection_id}` and would depend on route declaration order to resolve — the same
+    reasoning as `/prepare/dashboard` and `/reflection-notes`.
+
+    One request rather than eight: one authorization boundary, one consistent moment, and one place
+    where a failed section is reported as unavailable instead of as empty. `range` is a single range
+    per request; returning all three would triple the payload to serve one.
+    """
+    from .services import reflect_dashboard_service
+
+    return await reflect_dashboard_service.get_dashboard(
+        user_id=current_user.id,
+        range_=range,
+        subject_limit=subjectLimit,
+        goal_limit=goalLimit,
+        plan_limit=planLimit,
+        activity_limit=activityLimit,
+        achievement_limit=achievementLimit,
+    )
+
+
+# ===========================================================================
+# Growth — trends and subject mastery
+# ===========================================================================
+#
+# `/growth/` as its own segment, like `/prepare/` and `/reflect/`, so nothing here competes with an
+# id-shaped path for route resolution order.
+
+
+@router.get("/growth/trends", response_model=models.GrowthTrendsResponse)
+async def get_growth_trends(
+    current_user: CurrentUser,
+    range: models.GrowthRange = Query("30d", description="7d, 30d or 90d"),
+):
+    """The three growth series over a bounded range, from the daily snapshot.
+
+    **A range above the learner's plan returns `200` with a `locked` notice and an empty series, not
+    a `403`.** The design renders three toggles and Free must be able to press the third one; an
+    error would make it look broken, and substituting a shorter range under this one's label would be
+    a lie told in a chart.
+
+    Days without a snapshot are absent rather than zero. The learner was not observed then, and a
+    zero would assert they did nothing.
+    """
+    from .services import growth_service
+
+    return await growth_service.get_trends(user_id=current_user.id, range_=range)
+
+
+@router.get("/growth/subjects", response_model=models.GrowthSubjectsResponse)
+async def get_growth_subjects(
+    current_user: CurrentUser,
+    range: models.GrowthRange = Query("30d"),
+    limit: int | None = Query(None, ge=1, le=50),
+):
+    """Mastery by subject, with the change across the range.
+
+    A subject is a course. `change` is differenced from the daily snapshot, and this is where it
+    stops being the permanent `null` Phase 2 left it as.
+    """
+    from .services import growth_service
+
+    return await growth_service.get_subjects(user_id=current_user.id, range_=range, limit=limit)
+
+
+@router.get("/growth/subjects/{course_id}", response_model=models.GrowthSubjectDetailResponse)
+async def get_growth_subject_detail(
+    course_id: str,
+    current_user: CurrentUser,
+    range: models.GrowthRange = Query("30d"),
+):
+    """One subject with its own mastery series.
+
+    A course belonging to another learner answers `404`, not `403`: the id must not be probeable.
+    """
+    from .services import growth_service
+
+    return await growth_service.get_subject_detail(
+        user_id=current_user.id, course_id=course_id, range_=range
     )
 
 

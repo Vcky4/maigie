@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import Date, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, noload, selectinload
 
@@ -4788,21 +4788,49 @@ class PersonalLearningRepository:
             await s.refresh(entry)
             return entry
 
+    @staticmethod
+    def _feed_conditions(
+        user_id: str,
+        *,
+        activity_types: list[str] | None = None,
+        occurred_from: datetime | None = None,
+        occurred_to: datetime | None = None,
+    ) -> list[Any]:
+        """The filter shared by the page, the count and the per-day series.
+
+        One builder so the three cannot disagree. A filtered page beside an unfiltered total is a
+        pagination control that walks off the end of its own list.
+        """
+        conditions: list[Any] = [ActivityFeedEntry.user_id == user_id]
+        if activity_types:
+            conditions.append(ActivityFeedEntry.activity_type.in_(activity_types))
+        if occurred_from is not None:
+            conditions.append(ActivityFeedEntry.occurred_at >= occurred_from)
+        if occurred_to is not None:
+            conditions.append(ActivityFeedEntry.occurred_at <= occurred_to)
+        return conditions
+
     async def list_feed_entries(
         self,
         user_id: str,
         *,
+        activity_types: list[str] | None = None,
+        occurred_from: datetime | None = None,
+        occurred_to: datetime | None = None,
         skip: int = 0,
         take: int = 20,
         session: AsyncSession | None = None,
     ) -> tuple[list[ActivityFeedEntry], int]:
         async with self._read_session(session) as s:
-            conditions = [ActivityFeedEntry.user_id == user_id]
-
+            conditions = self._feed_conditions(
+                user_id,
+                activity_types=activity_types,
+                occurred_from=occurred_from,
+                occurred_to=occurred_to,
+            )
             # Count
             count_stmt = select(func.count()).select_from(ActivityFeedEntry).where(*conditions)
             total = (await s.execute(count_stmt)).scalar() or 0
-
             # Items
             stmt = (
                 select(ActivityFeedEntry)
@@ -4814,6 +4842,59 @@ class PersonalLearningRepository:
             result = await s.execute(stmt)
             items = list(result.scalars().all())
             return items, total
+
+    async def count_feed_entries_by_day(
+        self,
+        user_id: str,
+        *,
+        activity_types: list[str] | None = None,
+        occurred_from: datetime | None = None,
+        occurred_to: datetime | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[tuple[date, int]]:
+        """How many things happened on each day, oldest first.
+
+        Grouped in SQL rather than by paging the feed and counting in Python: the density strip spans
+        a range far longer than any page, so counting client-side would either need every row or
+        would silently describe only the newest page.
+
+        Days with nothing are **absent**, not zero — the same rule as the growth series. The caller
+        knows the window it asked for and renders an empty day itself; a zero row here could not be
+        told apart from a day that was genuinely counted as empty.
+        """
+        async with self._read_session(session) as s:
+            day = cast(ActivityFeedEntry.occurred_at, Date).label("day")
+            stmt = (
+                select(day, func.count(ActivityFeedEntry.id))
+                .where(
+                    *self._feed_conditions(
+                        user_id,
+                        activity_types=activity_types,
+                        occurred_from=occurred_from,
+                        occurred_to=occurred_to,
+                    )
+                )
+                .group_by(day)
+                .order_by(day.asc())
+            )
+            return [(row[0], int(row[1] or 0)) for row in (await s.execute(stmt)).all()]
+
+    async def list_feed_activity_types(
+        self, user_id: str, *, session: AsyncSession | None = None
+    ) -> list[str]:
+        """The activity types this learner actually has, for the filter control.
+
+        Published so the filter offers what exists rather than a hardcoded list that goes stale, and
+        so a learner is never offered a filter that can only ever return nothing.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(ActivityFeedEntry.activity_type)
+                .where(ActivityFeedEntry.user_id == user_id)
+                .distinct()
+                .order_by(ActivityFeedEntry.activity_type.asc())
+            )
+            return [row[0] for row in (await s.execute(stmt)).all() if row[0]]
 
     # -----------------------------------------------------------------------
     # Field mapping helpers — Activity Feed

@@ -17,6 +17,19 @@ from pydantic import BaseModel, ConfigDict, Field
 # ===========================================================================
 
 
+#: What a goal measures. Mirrors the `Goal_metricKind_check` constraint exactly; a test pins the two
+#: against each other, because a value Pydantic accepts and Postgres refuses is a 500 rather than
+#: the 422 the learner should get.
+GoalMetricKind = Literal[
+    "focused_minutes",
+    "topics_mastered",
+    "cards_reviewed",
+    "course_progress",
+    "prep_readiness",
+    "manual",
+]
+
+
 class GoalCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str | None = Field(None, max_length=1000)
@@ -24,6 +37,16 @@ class GoalCreate(BaseModel):
     status: Literal["ACTIVE", "COMPLETED", "ARCHIVED", "CANCELLED"] = "ACTIVE"
     courseId: str | None = None
     topicId: str | None = None
+    prepId: str | None = None
+
+    # --- What the goal measures ---
+    metricKind: GoalMetricKind = "manual"
+    targetValue: float | None = Field(None, ge=0.0)
+    unit: str | None = Field(None, max_length=40)
+    #: Only meaningful when `metricKind` is `manual`. The service **refuses** it for every other
+    #: kind rather than accepting and ignoring it, because a learner who types a current value and
+    #: watches it disappear has been silently overruled.
+    currentValue: float | None = Field(None, ge=0.0)
 
 
 class GoalUpdate(BaseModel):
@@ -34,10 +57,47 @@ class GoalUpdate(BaseModel):
     progress: float | None = Field(None, ge=0.0, le=100.0)
     courseId: str | None = None
     topicId: str | None = None
+    prepId: str | None = None
+    metricKind: GoalMetricKind | None = None
+    targetValue: float | None = Field(None, ge=0.0)
+    unit: str | None = Field(None, max_length=40)
+    currentValue: float | None = Field(None, ge=0.0)
 
 
 class GoalProgressUpdate(BaseModel):
     progress: float = Field(..., ge=0.0, le=100.0)
+
+
+class GoalMilestoneCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    detail: str | None = Field(None, max_length=2000)
+    targetValue: float | None = Field(None, ge=0.0)
+    orderIndex: int = Field(0, ge=0)
+
+
+class GoalMilestoneUpdate(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=200)
+    detail: str | None = Field(None, max_length=2000)
+    targetValue: float | None = Field(None, ge=0.0)
+    orderIndex: int | None = Field(None, ge=0)
+    #: Explicit rather than a `POST .../achieve` toggle, so a milestone reached on Tuesday can be
+    #: recorded on Thursday with Tuesday's date. `null` un-achieves it, which a learner who ticked
+    #: the wrong row needs.
+    achievedAt: datetime | None = None
+
+
+class GoalMilestoneResponse(BaseModel):
+    id: str
+    goalId: str
+    title: str
+    detail: str | None = None
+    targetValue: float | None = None
+    orderIndex: int = 0
+    achievedAt: str | None = None
+    createdAt: str
+    updatedAt: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class GoalResponse(BaseModel):
@@ -50,6 +110,34 @@ class GoalResponse(BaseModel):
     progress: float = 0.0
     courseId: str | None = None
     topicId: str | None = None
+    prepId: str | None = None
+
+    # --- What the goal measures ---
+    metricKind: str = "manual"
+    targetValue: float | None = None
+    unit: str | None = None
+    #: Stored for a `manual` goal, **measured** for every other kind. `null` when the goal's kind
+    #: needs a link it does not have — a `course_progress` goal with no `courseId` has nothing to
+    #: measure, and null says so where `0` would claim no progress.
+    currentValue: float | None = None
+    #: `true` when `currentValue` came from event rows rather than from the learner. Published so a
+    #: client never has to infer which of the two it is holding, which is the whole reason
+    #: `metricKind` exists.
+    currentValueMeasured: bool = False
+
+    # --- Derived, never stored ---
+    #: `COMPLETED` | `ON_TRACK` | `NEEDS_ATTENTION`. Distinct from `status`, which is the learner's
+    #: own lifecycle value. Derived because two of the three are questions about today: a stored
+    #: `ON_TRACK` is wrong by tomorrow morning.
+    statusLabel: str = "ON_TRACK"
+    #: Progress as a share of where the schedule says it should be; 100 is exactly on pace. `null`
+    #: without a `targetDate`, and `null` very early in the window where the ratio swings wildly.
+    pacePercent: float | None = None
+    #: Straight-line projection of where this lands by the deadline, capped at 100.
+    projectedOutcome: float | None = None
+    milestonesTotal: int = 0
+    milestonesAchieved: int = 0
+
     createdAt: str
     updatedAt: str
 

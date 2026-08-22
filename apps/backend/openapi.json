@@ -106,6 +106,52 @@
         "title": "AchievementResponse",
         "type": "object"
       },
+      "ActivityDayCount": {
+        "description": "One day and how much happened on it, for the history page's density strip.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "count"
+        ],
+        "title": "ActivityDayCount",
+        "type": "object"
+      },
+      "ActivityDayCountsResponse": {
+        "description": "The density strip's data, plus the filter vocabulary the learner actually has.\n\nIts own read rather than fields on the paginated feed: the strip spans a range far wider than one\npage, so folding it in would either describe only the current page or make the envelope change as\nthe learner turns pages.\n\nDays with nothing are **absent** rather than present with `count: 0`. The caller knows the window\nit asked for and renders the empty days; a zero row here could not be distinguished from a day\nthat was genuinely counted as empty.",
+        "properties": {
+          "availableTypes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Availabletypes",
+            "type": "array"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDayCount"
+            },
+            "title": "Days",
+            "type": "array"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "ActivityDayCountsResponse",
+        "type": "object"
+      },
       "ActivityFeedEntryResponse": {
         "properties": {
           "activityType": {
@@ -3651,6 +3697,18 @@
             ],
             "title": "Courseid"
           },
+          "currentValue": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentvalue"
+          },
           "description": {
             "anyOf": [
               {
@@ -3662,6 +3720,30 @@
               }
             ],
             "title": "Description"
+          },
+          "metricKind": {
+            "default": "manual",
+            "enum": [
+              "focused_minutes",
+              "topics_mastered",
+              "cards_reviewed",
+              "course_progress",
+              "prep_readiness",
+              "manual"
+            ],
+            "title": "Metrickind",
+            "type": "string"
+          },
+          "prepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prepid"
           },
           "status": {
             "default": "ACTIVE",
@@ -3686,6 +3768,18 @@
             ],
             "title": "Targetdate"
           },
+          "targetValue": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
           "title": {
             "maxLength": 200,
             "minLength": 1,
@@ -3702,6 +3796,18 @@
               }
             ],
             "title": "Topicid"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
           }
         },
         "required": [
@@ -3744,6 +3850,189 @@
           "hasMore"
         ],
         "title": "GoalListResponse",
+        "type": "object"
+      },
+      "GoalMilestoneCreate": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "orderIndex": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "targetValue": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "GoalMilestoneCreate",
+        "type": "object"
+      },
+      "GoalMilestoneResponse": {
+        "properties": {
+          "achievedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Achievedat"
+          },
+          "createdAt": {
+            "title": "Createdat",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "orderIndex": {
+            "default": 0,
+            "title": "Orderindex",
+            "type": "integer"
+          },
+          "targetValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updatedAt": {
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "goalId",
+          "title",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "GoalMilestoneResponse",
+        "type": "object"
+      },
+      "GoalMilestoneUpdate": {
+        "properties": {
+          "achievedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Achievedat"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "orderIndex": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orderindex"
+          },
+          "targetValue": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "GoalMilestoneUpdate",
         "type": "object"
       },
       "GoalProgressUpdate": {
@@ -3865,6 +4154,22 @@
             "title": "Createdat",
             "type": "string"
           },
+          "currentValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentvalue"
+          },
+          "currentValueMeasured": {
+            "default": false,
+            "title": "Currentvaluemeasured",
+            "type": "boolean"
+          },
           "description": {
             "anyOf": [
               {
@@ -3880,13 +4185,66 @@
             "title": "Id",
             "type": "string"
           },
+          "metricKind": {
+            "default": "manual",
+            "title": "Metrickind",
+            "type": "string"
+          },
+          "milestonesAchieved": {
+            "default": 0,
+            "title": "Milestonesachieved",
+            "type": "integer"
+          },
+          "milestonesTotal": {
+            "default": 0,
+            "title": "Milestonestotal",
+            "type": "integer"
+          },
+          "pacePercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pacepercent"
+          },
+          "prepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prepid"
+          },
           "progress": {
             "default": 0.0,
             "title": "Progress",
             "type": "number"
           },
+          "projectedOutcome": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Projectedoutcome"
+          },
           "status": {
             "title": "Status",
+            "type": "string"
+          },
+          "statusLabel": {
+            "default": "ON_TRACK",
+            "title": "Statuslabel",
             "type": "string"
           },
           "targetDate": {
@@ -3899,6 +4257,17 @@
               }
             ],
             "title": "Targetdate"
+          },
+          "targetValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
           },
           "title": {
             "title": "Title",
@@ -3914,6 +4283,17 @@
               }
             ],
             "title": "Topicid"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
           },
           "updatedAt": {
             "title": "Updatedat",
@@ -3948,6 +4328,18 @@
             ],
             "title": "Courseid"
           },
+          "currentValue": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentvalue"
+          },
           "description": {
             "anyOf": [
               {
@@ -3959,6 +4351,36 @@
               }
             ],
             "title": "Description"
+          },
+          "metricKind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "focused_minutes",
+                  "topics_mastered",
+                  "cards_reviewed",
+                  "course_progress",
+                  "prep_readiness",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrickind"
+          },
+          "prepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prepid"
           },
           "progress": {
             "anyOf": [
@@ -4002,6 +4424,18 @@
             ],
             "title": "Targetdate"
           },
+          "targetValue": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
           "title": {
             "anyOf": [
               {
@@ -4025,9 +4459,336 @@
               }
             ],
             "title": "Topicid"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
           }
         },
         "title": "GoalUpdate",
+        "type": "object"
+      },
+      "GrowthDelta": {
+        "description": "Change across the range for one series: first captured value against last.\n\n`None` when fewer than two days were captured. One point is not a trend, and reporting `0`\nchange from a single observation would claim a flat line that was never measured.",
+        "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "first": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First"
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last"
+          }
+        },
+        "title": "GrowthDelta",
+        "type": "object"
+      },
+      "GrowthSubject": {
+        "description": "One subject's mastery, and how it moved across the requested range.\n\nA subject is a course (Decision H).",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "courseId": {
+            "title": "Courseid",
+            "type": "string"
+          },
+          "masteryPercent": {
+            "title": "Masterypercent",
+            "type": "number"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topicsCompleted": {
+            "title": "Topicscompleted",
+            "type": "integer"
+          },
+          "topicsTotal": {
+            "title": "Topicstotal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "courseId",
+          "title",
+          "masteryPercent",
+          "topicsTotal",
+          "topicsCompleted"
+        ],
+        "title": "GrowthSubject",
+        "type": "object"
+      },
+      "GrowthSubjectDetailResponse": {
+        "description": "One subject, with its own mastery series across the range.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/GrowthTrendPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "range": {
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/GrowthSubject"
+          }
+        },
+        "required": [
+          "subject",
+          "range",
+          "days"
+        ],
+        "title": "GrowthSubjectDetailResponse",
+        "type": "object"
+      },
+      "GrowthSubjectsResponse": {
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GrowthSubject"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "range": {
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Range",
+            "type": "string"
+          }
+        },
+        "required": [
+          "range",
+          "days"
+        ],
+        "title": "GrowthSubjectsResponse",
+        "type": "object"
+      },
+      "GrowthTrendPoint": {
+        "description": "One captured day. Only days that were captured appear.\n\nA gap in the series is a gap: the learner was not observed that day, and the client draws no\npoint. Carrying the previous value forward or filling with zero would both invent history — the\nfirst by asserting a measurement nobody took, the second by asserting failure.",
+        "properties": {
+          "activeDay": {
+            "default": false,
+            "title": "Activeday",
+            "type": "boolean"
+          },
+          "cardsReviewed": {
+            "default": 0,
+            "title": "Cardsreviewed",
+            "type": "integer"
+          },
+          "consistencyScore": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consistencyscore"
+          },
+          "day": {
+            "format": "date",
+            "title": "Day",
+            "type": "string"
+          },
+          "effortScore": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effortscore"
+          },
+          "focusedMinutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focusedminutes"
+          },
+          "masteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masterypercent"
+          },
+          "recallPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recallpercent"
+          },
+          "reconstructed": {
+            "default": false,
+            "title": "Reconstructed",
+            "type": "boolean"
+          },
+          "topicsCompleted": {
+            "default": 0,
+            "title": "Topicscompleted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day"
+        ],
+        "title": "GrowthTrendPoint",
+        "type": "object"
+      },
+      "GrowthTrendsResponse": {
+        "properties": {
+          "activeDays": {
+            "default": 0,
+            "title": "Activedays",
+            "type": "integer"
+          },
+          "capturedDays": {
+            "default": 0,
+            "title": "Captureddays",
+            "type": "integer"
+          },
+          "consistency": {
+            "$ref": "#/components/schemas/GrowthDelta"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "effort": {
+            "$ref": "#/components/schemas/GrowthDelta"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockedNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mastery": {
+            "$ref": "#/components/schemas/GrowthDelta"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/GrowthTrendPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "range": {
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Range",
+            "type": "string"
+          },
+          "reconstructedDays": {
+            "default": 0,
+            "title": "Reconstructeddays",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "range",
+          "days"
+        ],
+        "title": "GrowthTrendsResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -5048,6 +5809,45 @@
           "provider"
         ],
         "title": "LlmProviderSetRequest",
+        "type": "object"
+      },
+      "LockedNotice": {
+        "description": "Why a section is unavailable on this plan, in the shape the upsell card already renders.\n\n**A locked section is a `200` with this attached, not a `403`.** The design renders three range\ntoggles and Free must be able to press the third one: an error would make the control look\nbroken, and quietly substituting the 30-day series would be a lie told in a chart. Fields mirror\n`CapabilityDenied` so the client has one shape to handle whether it arrives here or in a 403 from\na mutation.",
+        "properties": {
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "locked": {
+            "default": true,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "trialAvailable": {
+            "default": false,
+            "title": "Trialavailable",
+            "type": "boolean"
+          },
+          "upgradeUrl": {
+            "default": "/subscription",
+            "title": "Upgradeurl",
+            "type": "string"
+          },
+          "upgradeValue": {
+            "default": "",
+            "title": "Upgradevalue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "capability"
+        ],
+        "title": "LockedNotice",
         "type": "object"
       },
       "LoginRequest": {
@@ -9679,6 +10479,342 @@
           "reason"
         ],
         "title": "RecommendationResponse",
+        "type": "object"
+      },
+      "ReflectAchievement": {
+        "description": "One unlocked achievement. `Achievement` is Reflect's only milestone source (Decision Q).",
+        "properties": {
+          "achievementType": {
+            "title": "Achievementtype",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unlockedAt": {
+            "format": "date-time",
+            "title": "Unlockedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "achievementType",
+          "title",
+          "unlockedAt"
+        ],
+        "title": "ReflectAchievement",
+        "type": "object"
+      },
+      "ReflectDashboardMeta": {
+        "properties": {
+          "degradedSections": {
+            "items": {
+              "enum": [
+                "summary",
+                "reflection",
+                "trends",
+                "subjects",
+                "goals",
+                "studyPlans",
+                "activity",
+                "achievements"
+              ],
+              "type": "string"
+            },
+            "title": "Degradedsections",
+            "type": "array"
+          },
+          "generatedAt": {
+            "format": "date-time",
+            "title": "Generatedat",
+            "type": "string"
+          },
+          "range": {
+            "default": "30d",
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Range",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generatedAt"
+        ],
+        "title": "ReflectDashboardMeta",
+        "type": "object"
+      },
+      "ReflectDashboardResponse": {
+        "description": "One bounded read for the whole `/reflect` surface (Decision D2).\n\nOne request rather than eight, for the reasons Learn and Prepare already settled: one\nauthorization boundary, one consistent moment, server-side batching, controlled degradation, and a\ncontract shaped by what the page renders rather than by how it is stored.\n\nMounted at `/learning/reflect/dashboard` — its own segment, deliberately not\n`/reflections/dashboard`, which would sit under the same prefix as `/reflections/{reflection_id}`\nand leave the two depending on declaration order to disambiguate.",
+        "properties": {
+          "achievements": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectAchievement"
+            },
+            "title": "Achievements",
+            "type": "array"
+          },
+          "activity": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityFeedEntryResponse"
+            },
+            "title": "Activity",
+            "type": "array"
+          },
+          "goals": {
+            "items": {
+              "$ref": "#/components/schemas/ReflectGoal"
+            },
+            "title": "Goals",
+            "type": "array"
+          },
+          "latestReflection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReflectionResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ReflectDashboardMeta"
+          },
+          "studyPlans": {
+            "items": {
+              "$ref": "#/components/schemas/StudyPlanSummaryResponse"
+            },
+            "title": "Studyplans",
+            "type": "array"
+          },
+          "subjects": {
+            "items": {
+              "$ref": "#/components/schemas/GrowthSubject"
+            },
+            "title": "Subjects",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ReflectSummaryStats"
+          },
+          "trends": {
+            "$ref": "#/components/schemas/GrowthTrendsResponse"
+          }
+        },
+        "required": [
+          "meta",
+          "summary",
+          "trends"
+        ],
+        "title": "ReflectDashboardResponse",
+        "type": "object"
+      },
+      "ReflectGoal": {
+        "description": "A goal card on the Reflect surface.\n\nDefined here rather than reusing `progress.models.GoalResponse`, which is a plain `BaseModel` with\ncamelCase *field names* rather than a `CamelModel` with aliases. Embedding it would publish two\ndifferently-built shapes in one response and generate two styles of client type for the same\nconcept. The figures come from the same `goal_metrics` functions `/progress/goals` uses, so the two\nsurfaces cannot disagree about a goal even though they publish different projections of it.",
+        "properties": {
+          "currentValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentvalue"
+          },
+          "currentValueMeasured": {
+            "default": false,
+            "title": "Currentvaluemeasured",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "metricKind": {
+            "default": "manual",
+            "title": "Metrickind",
+            "type": "string"
+          },
+          "progress": {
+            "default": 0.0,
+            "title": "Progress",
+            "type": "number"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "statusLabel": {
+            "default": "ON_TRACK",
+            "title": "Statuslabel",
+            "type": "string"
+          },
+          "targetDate": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetdate"
+          },
+          "targetValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Targetvalue"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "title": "ReflectGoal",
+        "type": "object"
+      },
+      "ReflectSummaryStats": {
+        "description": "The rings and figures across the top. Every one measured, every one nullable.\n\n`None` throughout rather than `0`, because this surface exists to stop reporting figures nobody\nmeasured. A learner with no snapshot history has no consistency score; showing `0` would tell them\nthey were perfectly inconsistent.",
+        "properties": {
+          "activeDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activedays"
+          },
+          "consistencyScore": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Consistencyscore"
+          },
+          "focusedMinutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focusedminutes"
+          },
+          "goalsActive": {
+            "default": 0,
+            "title": "Goalsactive",
+            "type": "integer"
+          },
+          "goalsAtRisk": {
+            "default": 0,
+            "title": "Goalsatrisk",
+            "type": "integer"
+          },
+          "goalsAverageProgress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goalsaverageprogress"
+          },
+          "goalsCompleted": {
+            "default": 0,
+            "title": "Goalscompleted",
+            "type": "integer"
+          },
+          "overallMasteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overallmasterypercent"
+          },
+          "reflectionStreak": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reflectionstreak"
+          }
+        },
+        "title": "ReflectSummaryStats",
         "type": "object"
       },
       "ReflectionAction": {
@@ -18857,9 +19993,68 @@
     },
     "/api/v1/learning/activity-feed": {
       "get": {
-        "description": "Get unified activity feed (personal + collaborative).",
+        "description": "Get unified activity feed (personal + collaborative).\n\nAll three filters are optional and additive, so omitting them gives exactly the previous\nbehaviour. `type` is repeatable — the history page's filter is a multi-select, and a\ncomma-separated string would need parsing rules nobody would agree on.\n\nThe total is computed under the same filters as the page, so the pagination control cannot walk\noff the end of a list it is describing.",
         "operationId": "get_activity_feed_api_v1_learning_activity_feed_get",
         "parameters": [
+          {
+            "description": "Repeatable; filters by activityType",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable; filters by activityType",
+              "title": "Type"
+            }
+          },
+          {
+            "description": "Lower bound on occurredAt",
+            "in": "query",
+            "name": "occurredFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Lower bound on occurredAt",
+              "title": "Occurredfrom"
+            }
+          },
+          {
+            "description": "Upper bound on occurredAt",
+            "in": "query",
+            "name": "occurredTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Upper bound on occurredAt",
+              "title": "Occurredto"
+            }
+          },
           {
             "in": "query",
             "name": "page",
@@ -18912,6 +20107,101 @@
           }
         ],
         "summary": "Get Activity Feed",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/activity-feed/daily-counts": {
+      "get": {
+        "description": "How much happened on each day, for the history page's density strip.\n\nDeclared **before** nothing that could shadow it — `/activity-feed` is an exact path and\n`/activity-feed/daily-counts` is another, so neither depends on ordering. Days with no activity\nare absent rather than zero: the caller knows its own window and renders the gaps.",
+        "operationId": "get_activity_daily_counts_api_v1_learning_activity_feed_daily_counts_get",
+        "parameters": [
+          {
+            "description": "Repeatable; filters by activityType",
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeatable; filters by activityType",
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "occurredFrom",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurredfrom"
+            }
+          },
+          {
+            "in": "query",
+            "name": "occurredTo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Occurredto"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityDayCountsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Activity Daily Counts",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -21398,6 +22688,200 @@
           }
         ],
         "summary": "Review Flashcard",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/growth/subjects": {
+      "get": {
+        "description": "Mastery by subject, with the change across the range.\n\nA subject is a course. `change` is differenced from the daily snapshot, and this is where it\nstops being the permanent `null` Phase 2 left it as.",
+        "operationId": "get_growth_subjects_api_v1_learning_growth_subjects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 50,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrowthSubjectsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Growth Subjects",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/growth/subjects/{course_id}": {
+      "get": {
+        "description": "One subject with its own mastery series.\n\nA course belonging to another learner answers `404`, not `403`: the id must not be probeable.",
+        "operationId": "get_growth_subject_detail_api_v1_learning_growth_subjects__course_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrowthSubjectDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Growth Subject Detail",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/growth/trends": {
+      "get": {
+        "description": "The three growth series over a bounded range, from the daily snapshot.\n\n**A range above the learner's plan returns `200` with a `locked` notice and an empty series, not\na `403`.** The design renders three toggles and Free must be able to press the third one; an\nerror would make it look broken, and substituting a shorter range under this one's label would be\na lie told in a chart.\n\nDays without a snapshot are absent rather than zero. The learner was not observed then, and a\nzero would assert they did nothing.",
+        "operationId": "get_growth_trends_api_v1_learning_growth_trends_get",
+        "parameters": [
+          {
+            "description": "7d, 30d or 90d",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "description": "7d, 30d or 90d",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrowthTrendsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Growth Trends",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -24641,6 +26125,123 @@
         ]
       }
     },
+    "/api/v1/learning/reflect/dashboard": {
+      "get": {
+        "description": "Compose the authenticated learner's bounded Reflect dashboard.\n\nMounted under `/reflect/` rather than `/reflections/dashboard`, which would be ambiguous with\n`/reflections/{reflection_id}` and would depend on route declaration order to resolve — the same\nreasoning as `/prepare/dashboard` and `/reflection-notes`.\n\nOne request rather than eight: one authorization boundary, one consistent moment, and one place\nwhere a failed section is reported as unavailable instead of as empty. `range` is a single range\nper request; returning all three would triple the payload to serve one.",
+        "operationId": "get_reflect_dashboard_api_v1_learning_reflect_dashboard_get",
+        "parameters": [
+          {
+            "description": "7d, 30d or 90d",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "description": "7d, 30d or 90d",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subjectLimit",
+            "required": false,
+            "schema": {
+              "default": 4,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Subjectlimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "goalLimit",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Goallimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "planLimit",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Planlimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "activityLimit",
+            "required": false,
+            "schema": {
+              "default": 4,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Activitylimit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "achievementLimit",
+            "required": false,
+            "schema": {
+              "default": 3,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Achievementlimit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReflectDashboardResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Reflect Dashboard",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/reflection-notes": {
       "get": {
         "description": "The learner's notes, newest first, in the canonical pagination envelope.",
@@ -27003,6 +28604,233 @@
           }
         ],
         "summary": "Update Goal",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/milestones": {
+      "get": {
+        "description": "A goal's milestones, in the learner's chosen order.\n\nA bare list rather than a pagination envelope: milestones are a handful of steps the learner\ntyped, bounded by the goal, and the detail page renders all of them. An envelope here would\npublish a `total` nobody reads and a `page` nobody can turn.",
+        "operationId": "list_goal_milestones_api_v1_progress_goals__goal_id__milestones_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/GoalMilestoneResponse"
+                  },
+                  "title": "Response List Goal Milestones Api V1 Progress Goals  Goal Id  Milestones Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Goal Milestones",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      },
+      "post": {
+        "description": "Add a milestone to a goal.\n\nMilestones are rows because they cannot be derived: nothing in the data can infer that a goal\ndivides into four stages, and generating a division would assert a structure the learner never\ndescribed.",
+        "operationId": "create_goal_milestone_api_v1_progress_goals__goal_id__milestones_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalMilestoneCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalMilestoneResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Goal Milestone",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/milestones/{milestone_id}": {
+      "delete": {
+        "description": "Remove a milestone.",
+        "operationId": "delete_goal_milestone_api_v1_progress_goals__goal_id__milestones__milestone_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "milestone_id",
+            "required": true,
+            "schema": {
+              "title": "Milestone Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Goal Milestone",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      },
+      "patch": {
+        "description": "Edit a milestone, including marking it achieved.\n\n`achievedAt` is a timestamp on this body rather than a `POST .../achieve` toggle, so a milestone\nreached on Tuesday can be recorded on Thursday with Tuesday's date — and so an explicit `null`\nun-achieves one that was ticked by mistake.",
+        "operationId": "update_goal_milestone_api_v1_progress_goals__goal_id__milestones__milestone_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "milestone_id",
+            "required": true,
+            "schema": {
+              "title": "Milestone Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GoalMilestoneUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalMilestoneResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Goal Milestone",
         "tags": [
           "progress",
           "progress"

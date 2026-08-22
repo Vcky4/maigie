@@ -2451,6 +2451,259 @@ class ActivityFeedEntryResponse(CamelModel):
 ActivityFeedResponse = PaginatedResponse[ActivityFeedEntryResponse]
 
 
+class ActivityDayCount(CamelModel):
+    """One day and how much happened on it, for the history page's density strip."""
+
+    day: date
+    count: int
+
+
+class ActivityDayCountsResponse(CamelModel):
+    """The density strip's data, plus the filter vocabulary the learner actually has.
+
+    Its own read rather than fields on the paginated feed: the strip spans a range far wider than one
+    page, so folding it in would either describe only the current page or make the envelope change as
+    the learner turns pages.
+
+    Days with nothing are **absent** rather than present with `count: 0`. The caller knows the window
+    it asked for and renders the empty days; a zero row here could not be distinguished from a day
+    that was genuinely counted as empty.
+    """
+
+    days: list[ActivityDayCount] = Field(default_factory=list)
+    total: int = 0
+    #: Every `activityType` this learner has, so the filter offers only values that can return
+    #: something rather than a hardcoded list that goes stale.
+    available_types: list[str] = Field(default_factory=list)
+
+
+# ===========================================================================
+# Growth — trends and subjects over the daily snapshot
+# ===========================================================================
+
+
+#: The three ranges the design's toggles offer. `90d` is Plus-only (Decision T).
+GrowthRange = Literal["7d", "30d", "90d"]
+
+GROWTH_RANGE_DAYS: dict[str, int] = {"7d": 7, "30d": 30, "90d": 90}
+
+#: Ranges a Free learner may read. The third toggle is still pressable — it returns a locked
+#: response rather than an error, because a disabled-looking control reads as a broken one.
+FREE_GROWTH_RANGES: frozenset[str] = frozenset({"7d", "30d"})
+
+
+class LockedNotice(CamelModel):
+    """Why a section is unavailable on this plan, in the shape the upsell card already renders.
+
+    **A locked section is a `200` with this attached, not a `403`.** The design renders three range
+    toggles and Free must be able to press the third one: an error would make the control look
+    broken, and quietly substituting the 30-day series would be a lie told in a chart. Fields mirror
+    `CapabilityDenied` so the client has one shape to handle whether it arrives here or in a 403 from
+    a mutation.
+    """
+
+    locked: bool = True
+    reason: str
+    capability: str
+    upgrade_url: str = "/subscription"
+    trial_available: bool = False
+    upgrade_value: str = ""
+
+
+class GrowthTrendPoint(CamelModel):
+    """One captured day. Only days that were captured appear.
+
+    A gap in the series is a gap: the learner was not observed that day, and the client draws no
+    point. Carrying the previous value forward or filling with zero would both invent history — the
+    first by asserting a measurement nobody took, the second by asserting failure.
+    """
+
+    day: date
+    focused_minutes: float | None = None
+    effort_score: float | None = None
+    consistency_score: float | None = None
+    mastery_percent: float | None = None
+    cards_reviewed: int = 0
+    recall_percent: float | None = None
+    topics_completed: int = 0
+    active_day: bool = False
+    #: `true` when this day was rebuilt by the backfill rather than recorded on the day. Only
+    #: `masteryPercent` is affected, and only ever understated — the client footnotes it rather than
+    #: hiding it (Decision P).
+    reconstructed: bool = False
+
+
+class GrowthDelta(CamelModel):
+    """Change across the range for one series: first captured value against last.
+
+    `None` when fewer than two days were captured. One point is not a trend, and reporting `0`
+    change from a single observation would claim a flat line that was never measured.
+    """
+
+    first: float | None = None
+    last: float | None = None
+    change: float | None = None
+
+
+class GrowthTrendsResponse(CamelModel):
+    range: GrowthRange
+    days: int
+    #: Present only when this range is above the learner's plan. `points` is then empty and every
+    #: delta null — never a substituted shorter range.
+    locked: LockedNotice | None = None
+    points: list[GrowthTrendPoint] = Field(default_factory=list)
+    mastery: GrowthDelta = Field(default_factory=GrowthDelta)
+    consistency: GrowthDelta = Field(default_factory=GrowthDelta)
+    effort: GrowthDelta = Field(default_factory=GrowthDelta)
+    #: Days in the window that hold a snapshot. Published so the client can say "building from
+    #: today" honestly rather than rendering an empty chart as a flat zero.
+    captured_days: int = 0
+    #: How many of those were reconstructed, for the footnote.
+    reconstructed_days: int = 0
+    active_days: int = 0
+
+
+class GrowthSubject(CamelModel):
+    """One subject's mastery, and how it moved across the requested range.
+
+    A subject is a course (Decision H).
+    """
+
+    course_id: str
+    title: str
+    category: str | None = None
+    mastery_percent: float
+    topics_total: int
+    topics_completed: int
+    #: Percentage points gained across the range, from the daily snapshot. **This is the field that
+    #: has been `None` since Phase 2** — `Course.progress` is mutable in place, so a delta was not
+    #: derivable until there was stored history to difference. `None` still, when the range holds no
+    #: comparable snapshot or when the earliest one could not date the learner's completions.
+    change: float | None = None
+
+
+class GrowthSubjectsResponse(CamelModel):
+    range: GrowthRange
+    days: int
+    items: list[GrowthSubject] = Field(default_factory=list)
+
+
+class GrowthSubjectDetailResponse(CamelModel):
+    """One subject, with its own mastery series across the range."""
+
+    subject: GrowthSubject
+    range: GrowthRange
+    days: int
+    points: list[GrowthTrendPoint] = Field(default_factory=list)
+
+
+# ===========================================================================
+# Reflect dashboard (Decision D2)
+# ===========================================================================
+
+
+ReflectDashboardSection = Literal[
+    "summary",
+    "reflection",
+    "trends",
+    "subjects",
+    "goals",
+    "studyPlans",
+    "activity",
+    "achievements",
+]
+
+
+class ReflectDashboardMeta(CamelModel):
+    generated_at: datetime
+    #: Sections that could not be loaded. Rendered as unavailable rather than as empty — an empty
+    #: state and a failed load look identical to a learner and mean opposite things.
+    degraded_sections: list[ReflectDashboardSection] = Field(default_factory=list)
+    range: GrowthRange = "30d"
+
+
+class ReflectSummaryStats(CamelModel):
+    """The rings and figures across the top. Every one measured, every one nullable.
+
+    `None` throughout rather than `0`, because this surface exists to stop reporting figures nobody
+    measured. A learner with no snapshot history has no consistency score; showing `0` would tell them
+    they were perfectly inconsistent.
+    """
+
+    consistency_score: float | None = None
+    overall_mastery_percent: float | None = None
+    focused_minutes: float | None = None
+    active_days: int | None = None
+    #: Consecutive periods the learner *engaged with*, counted from `openedAt` rather than from rows
+    #: existing — a weekly reflection is produced for them by a scheduler, so counting rows would
+    #: measure the scheduler (Decision M).
+    reflection_streak: int | None = None
+    goals_active: int = 0
+    goals_completed: int = 0
+    goals_at_risk: int = 0
+    goals_average_progress: float | None = None
+
+
+class ReflectGoal(CamelModel):
+    """A goal card on the Reflect surface.
+
+    Defined here rather than reusing `progress.models.GoalResponse`, which is a plain `BaseModel` with
+    camelCase *field names* rather than a `CamelModel` with aliases. Embedding it would publish two
+    differently-built shapes in one response and generate two styles of client type for the same
+    concept. The figures come from the same `goal_metrics` functions `/progress/goals` uses, so the two
+    surfaces cannot disagree about a goal even though they publish different projections of it.
+    """
+
+    id: str
+    title: str
+    status: str
+    progress: float = 0.0
+    target_date: datetime | None = None
+    #: `COMPLETED` | `ON_TRACK` | `NEEDS_ATTENTION`, from the one at-risk threshold (Decision N).
+    status_label: str = "ON_TRACK"
+    metric_kind: str = "manual"
+    target_value: float | None = None
+    unit: str | None = None
+    current_value: float | None = None
+    current_value_measured: bool = False
+
+
+class ReflectAchievement(CamelModel):
+    """One unlocked achievement. `Achievement` is Reflect's only milestone source (Decision Q)."""
+
+    id: str
+    achievement_type: str
+    title: str
+    description: str | None = None
+    icon: str | None = None
+    unlocked_at: datetime
+
+
+class ReflectDashboardResponse(CamelModel):
+    """One bounded read for the whole `/reflect` surface (Decision D2).
+
+    One request rather than eight, for the reasons Learn and Prepare already settled: one
+    authorization boundary, one consistent moment, server-side batching, controlled degradation, and a
+    contract shaped by what the page renders rather than by how it is stored.
+
+    Mounted at `/learning/reflect/dashboard` — its own segment, deliberately not
+    `/reflections/dashboard`, which would sit under the same prefix as `/reflections/{reflection_id}`
+    and leave the two depending on declaration order to disambiguate.
+    """
+
+    meta: ReflectDashboardMeta
+    summary: ReflectSummaryStats
+    #: The most recent reflection, or `None` when none has been generated. Carries its own
+    #: `narrative` and `depth`, so the dashboard hero needs no second request.
+    latest_reflection: ReflectionResponse | None = None
+    trends: GrowthTrendsResponse
+    subjects: list[GrowthSubject] = Field(default_factory=list)
+    goals: list[ReflectGoal] = Field(default_factory=list)
+    study_plans: list[StudyPlanSummaryResponse] = Field(default_factory=list)
+    activity: list[ActivityFeedEntryResponse] = Field(default_factory=list)
+    achievements: list[ReflectAchievement] = Field(default_factory=list)
+
+
 # ===========================================================================
 # Course Study
 # ===========================================================================

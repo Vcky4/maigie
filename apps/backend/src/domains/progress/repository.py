@@ -19,6 +19,7 @@ from src.shared.field_mapping import map_fields
 from .db_models import (
     Achievement,
     Goal,
+    GoalMilestone,
     ReviewItem,
     ScheduleBehaviourLog,
     ScheduleBlock,
@@ -97,6 +98,60 @@ class ProgressRepository:
         async with await self._session() as session:
             stmt = delete(Goal).where(Goal.id == goal_id)
             await session.execute(stmt)
+            await session.commit()
+
+    # -----------------------------------------------------------------------
+    # Goal milestones
+    # -----------------------------------------------------------------------
+    #
+    # Every read and write is reached through the goal, and the goal is scoped to its owner by the
+    # caller. A milestone has no `userId` of its own, so ownership is only ever established by way
+    # of `find_goal(goal_id, user_id)` — which is why none of these methods takes a user id and why
+    # the service must never call them without that check first.
+
+    async def list_milestones(self, goal_id: str) -> list[GoalMilestone]:
+        """A goal's milestones in the learner's chosen order."""
+        async with await self._session() as session:
+            stmt = (
+                select(GoalMilestone)
+                .where(GoalMilestone.goal_id == goal_id)
+                .order_by(GoalMilestone.order_index.asc(), GoalMilestone.created_at.asc())
+            )
+            return list((await session.execute(stmt)).scalars().all())
+
+    async def find_milestone(self, milestone_id: str, goal_id: str) -> GoalMilestone | None:
+        """One milestone, scoped to its goal so an id from another goal cannot be reached."""
+        async with await self._session() as session:
+            stmt = select(GoalMilestone).where(
+                GoalMilestone.id == milestone_id, GoalMilestone.goal_id == goal_id
+            )
+            return (await session.execute(stmt)).scalar_one_or_none()
+
+    async def create_milestone(self, data: dict[str, Any]) -> GoalMilestone:
+        async with await self._session() as session:
+            milestone = GoalMilestone(**self._map_milestone_data(data))
+            session.add(milestone)
+            await session.commit()
+            await session.refresh(milestone)
+            return milestone
+
+    async def update_milestone(self, milestone_id: str, data: dict[str, Any]) -> GoalMilestone:
+        async with await self._session() as session:
+            mapped = self._map_milestone_data(data)
+            if mapped:
+                await session.execute(
+                    update(GoalMilestone).where(GoalMilestone.id == milestone_id).values(**mapped)
+                )
+                await session.commit()
+        async with await self._session() as session:
+            result = await session.execute(
+                select(GoalMilestone).where(GoalMilestone.id == milestone_id)
+            )
+            return result.scalar_one()
+
+    async def delete_milestone(self, milestone_id: str) -> None:
+        async with await self._session() as session:
+            await session.execute(delete(GoalMilestone).where(GoalMilestone.id == milestone_id))
             await session.commit()
 
     # -----------------------------------------------------------------------
@@ -409,6 +464,26 @@ class ProgressRepository:
         "courseId": "course_id",
         "topicId": "topic_id",
         "spaceId": "space_id",
+        "prepId": "prep_id",
+        # What the goal measures and against what. Absent from this map, `map_fields` refuses the
+        # write and names the mapper — which is the guard working, and would have meant four columns
+        # migration 042 added being unreachable through the API.
+        "metricKind": "metric_kind",
+        "targetValue": "target_value",
+        "unit": "unit",
+        # Accepted here because a `manual` goal's current value is the learner's own figure. The
+        # service refuses it for every other `metricKind`, where the value is derived on read —
+        # storing one would create a second version of a number that already exists.
+        "currentValue": "current_value",
+    }
+
+    _MILESTONE_FIELD_MAP = {
+        "goalId": "goal_id",
+        "title": "title",
+        "detail": "detail",
+        "targetValue": "target_value",
+        "orderIndex": "order_index",
+        "achievedAt": "achieved_at",
     }
 
     _BLOCK_FIELD_MAP = {
@@ -479,6 +554,9 @@ class ProgressRepository:
 
     def _map_goal_data(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._GOAL_FIELD_MAP, entity="_map_goal_data")
+
+    def _map_milestone_data(self, data: dict[str, Any]) -> dict[str, Any]:
+        return map_fields(data, self._MILESTONE_FIELD_MAP, entity="_map_milestone_data")
 
     def _map_block_data(self, data: dict[str, Any]) -> dict[str, Any]:
         return map_fields(data, self._BLOCK_FIELD_MAP, entity="_map_block_data")

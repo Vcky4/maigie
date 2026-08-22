@@ -76,6 +76,16 @@ class Goal(Base, TimestampMixin):
     course_id: Mapped[str | None] = mapped_column("courseId", String, nullable=True, index=True)
     topic_id: Mapped[str | None] = mapped_column("topicId", String, nullable=True, index=True)
     space_id: Mapped[str | None] = mapped_column("spaceId", String, nullable=True, index=True)
+    # The preparation a `prep_readiness` goal measures. Added because without it that `metricKind`
+    # was unreachable: the value was in the CHECK constraint and in the design's wording — "Reach
+    # 80% interview readiness" maps to readiness over a linked preparation — while nothing on the
+    # row said *which* preparation, so `currentValue` would have derived null forever. A metric kind
+    # a learner can choose and the server can never measure is worse than not offering it.
+    #
+    # Plain String with no FK, matching `courseId`/`topicId`/`spaceId` on this table rather than the
+    # constrained style used elsewhere. Consistency within the row wins here; the inherited looseness
+    # is noted in the plan rather than fixed for one column out of four.
+    prep_id: Mapped[str | None] = mapped_column("prepId", String, nullable=True, index=True)
 
     # Relationships
     schedules: Mapped[list["ScheduleBlock"]] = relationship(
