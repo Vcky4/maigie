@@ -12,6 +12,7 @@ Session management:
 """
 
 import logging
+import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -3130,6 +3131,65 @@ class PersonalLearningRepository:
             await s.flush()
             await s.refresh(snapshot)
             return snapshot
+
+    async def bulk_upsert_daily_snapshots(
+        self,
+        *,
+        user_id: str,
+        rows: list[tuple[date, dict[str, Any]]],
+        session: AsyncSession | None = None,
+    ) -> int:
+        """Write many of a learner's days in one statement. Returns rows written.
+
+        For the backfill, which produces ninety days at once. Going through
+        ``upsert_daily_snapshot`` per day is a select plus an insert each — 180 round trips per
+        learner, and at a ~209 ms round trip that alone is most of an hour for a handful of
+        learners.
+
+        A real ``ON CONFLICT DO UPDATE`` on ``(userId, snapshotDate)``, unlike the single-day
+        writer's select-then-set. The unique constraint stops being merely a backstop here and
+        becomes the mechanism, which is what makes one statement possible and keeps a re-run
+        idempotent.
+        """
+        if not rows:
+            return 0
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        # A core-level insert names **database** columns, and every caller here speaks ORM attribute
+        # names — `focused_minutes` against `focusedMinutes`. The mapper is the translation, and it
+        # has to be applied to the payload keys, the conflict target and the `excluded` lookups
+        # alike; getting any one of the three wrong produces an `UndefinedColumn` from Postgres
+        # rather than anything SQLAlchemy catches.
+        mapper = DailyLearningSnapshot.__mapper__
+
+        def column_of(attribute: str) -> str:
+            return mapper.columns[attribute].key
+
+        keys = ("id", "user_id", "snapshot_date", *rows[0][1])
+        payload = [
+            {
+                column_of("id"): uuid.uuid4().hex[:25],
+                column_of("user_id"): user_id,
+                column_of("snapshot_date"): snapshot_date,
+                **{column_of(attribute): value for attribute, value in values.items()},
+            }
+            for snapshot_date, values in rows
+        ]
+        updatable = [
+            column_of(attribute)
+            for attribute in keys
+            if attribute not in {"id", "user_id", "snapshot_date"}
+        ]
+
+        async with self._use_session(session) as s:
+            statement = pg_insert(DailyLearningSnapshot.__table__).values(payload)
+            statement = statement.on_conflict_do_update(
+                index_elements=[column_of("user_id"), column_of("snapshot_date")],
+                set_={column: statement.excluded[column] for column in updatable},
+            )
+            await s.execute(statement)
+            return len(payload)
 
     async def list_daily_snapshots(
         self,

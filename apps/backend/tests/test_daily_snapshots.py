@@ -47,6 +47,38 @@ NEW_YORK = LearnerTimezone(
 )
 
 
+async def _mastery_from_rows(
+    rows: list[tuple[str, int, int, int]], *, undated_are_complete: bool
+) -> reflect_aggregates.MasteryOnDay:
+    """Run `subject_mastery_on`'s folding over given `(courseId, total, dated, undated)` counts.
+
+    The grouped query itself needs Postgres; the decision that follows it is what these tests are
+    about, so the counts are supplied and only the arithmetic and the null rule run.
+    """
+    from unittest.mock import patch
+
+    class _Result:
+        def all(self):
+            return rows
+
+    class _Session:
+        async def execute(self, *_args, **_kwargs):
+            return _Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+        return await reflect_aggregates.subject_mastery_on(
+            user_id="u",
+            as_of=datetime(2026, 7, 12, tzinfo=UTC),
+            undated_are_complete=undated_are_complete,
+        )
+
+
 def _evidence(**overrides) -> SimpleNamespace:
     """A `MetricEvidence` stand-in. Only the fields `snapshot_values` reads."""
     defaults = {
@@ -69,6 +101,7 @@ class FakeRepo:
         self.snapshots: dict[tuple[str, date], dict] = {}
         self.profiles: list[SimpleNamespace] = []
         self.upserts = 0
+        self.bulk_calls = 0
         #: Days and learners the write refuses, so failure isolation can be exercised.
         self.fail_on: set[date] = set()
         self.fail_users: set[str] = set()
@@ -85,6 +118,16 @@ class FakeRepo:
         self.upserts += 1
         self.snapshots[(user_id, snapshot_date)] = dict(values)
         return SimpleNamespace(user_id=user_id, snapshot_date=snapshot_date, **values)
+
+    async def bulk_upsert_daily_snapshots(
+        self, *, user_id: str, rows: list[tuple[date, dict]]
+    ) -> int:
+        if user_id in self.fail_users or any(day in self.fail_on for day, _ in rows):
+            raise RuntimeError("bulk write refused")
+        self.bulk_calls += 1
+        for snapshot_date, values in rows:
+            self.snapshots[(user_id, snapshot_date)] = dict(values)
+        return len(rows)
 
     async def list_daily_snapshots(self, user_id: str, *, since: date, until: date | None = None):
         rows = [
@@ -118,17 +161,25 @@ def sources(monkeypatch):
         mastery=reflect_aggregates.MasteryOnDay(
             by_course={"course-1": 50.0}, overall_percent=50.0, topics_total=4, topics_completed=2
         ),
+        historical_mastery=None,
         timezone=LAGOS,
         session_times=[],
         days_asked=[],
+        undated_asked=[],
+        evidence_by_day={},
+        window_loads=[],
+        session_loads=[],
     )
 
     async def _load_evidence(*, user_id, period_start, period_end):
         state.days_asked.append((period_start, period_end))
         return state.evidence
 
-    async def _mastery_on(*, user_id, as_of):
-        return state.mastery
+    async def _mastery_on(*, user_id, as_of, undated_are_complete):
+        state.undated_asked.append(undated_are_complete)
+        if undated_are_complete:
+            return state.mastery
+        return state.historical_mastery or state.mastery
 
     async def _resolve_many(user_ids):
         return {user_id: state.timezone for user_id in user_ids}
@@ -137,13 +188,25 @@ def sources(monkeypatch):
         return state.timezone
 
     async def _load_session_times(*, user_id, since, timezone_):
+        state.session_loads.append(since)
         return list(state.session_times)
+
+    async def _load_daily_evidence(*, user_id, period_start, period_end, timezone_):
+        state.window_loads.append((period_start, period_end))
+        return dict(state.evidence_by_day)
+
+    async def _mastery_series(*, user_id, days, undated_are_complete):
+        state.undated_asked.append(undated_are_complete)
+        historical = state.historical_mastery or state.mastery
+        return {day: historical for day in days}
 
     from src.domains.personal_learning.services import reflection_metrics
     from src.shared import time as shared_time
 
     monkeypatch.setattr(reflection_metrics, "load_evidence", _load_evidence)
+    monkeypatch.setattr(reflection_metrics, "load_daily_evidence", _load_daily_evidence)
     monkeypatch.setattr(reflect_aggregates, "subject_mastery_on", _mastery_on)
+    monkeypatch.setattr(reflect_aggregates, "subject_mastery_series", _mastery_series)
     monkeypatch.setattr(shared_time, "resolve_many", _resolve_many)
     monkeypatch.setattr(shared_time, "resolve_learner_timezone", _resolve_one)
     monkeypatch.setattr(behaviour_service, "load_local_session_times", _load_session_times)
@@ -618,36 +681,169 @@ class TestBackfill:
         assert written == 0
         assert repo.upserts == 0
 
-    async def test_session_history_is_loaded_once_for_the_whole_window(
-        self, repo, sources, monkeypatch
-    ):
-        """Ninety days reconstructed with a query per day would be ninety queries per learner."""
-        calls = []
+    async def test_every_read_is_window_wide_and_the_write_is_one_call(self, repo, sources):
+        """The whole point of the backfill's shape, and the reason it finishes.
 
-        async def _counting_loader(*, user_id, since, timezone_):
-            calls.append(since)
-            return []
-
-        monkeypatch.setattr(behaviour_service, "load_local_session_times", _counting_loader)
-
+        Reconstructing through `capture_day` issues about fourteen queries *per day*, so ninety days
+        is roughly 1,260 round trips per learner over the same rows — measured at 26 minutes for six
+        learners against this database's ~209 ms round trip. Three window-wide reads and one bulk
+        write is the fix, and a regression here would not fail anything else: the data would still be
+        correct, just unusably slow to produce.
+        """
         await snapshots.backfill_for_user(
-            user_id=OWNER, days=10, now=datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+            user_id=OWNER, days=30, now=datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
         )
 
-        assert len(calls) == 1
+        assert len(sources.session_loads) == 1
+        assert len(sources.window_loads) == 1
+        assert len(sources.undated_asked) == 1
+        assert repo.bulk_calls == 1
+        # And emphatically not the per-day writer.
+        assert repo.upserts == 0
+        assert len([key for key in repo.snapshots if key[0] == OWNER]) == 30
 
-    async def test_one_bad_day_does_not_abandon_the_rest(self, repo, sources):
-        repo.fail_on = {date(2026, 7, 11)}
+    async def test_the_evidence_window_spans_the_whole_missing_range(self, repo, sources):
+        await snapshots.backfill_for_user(
+            user_id=OWNER, days=3, now=datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+        )
+
+        period_start, period_end = sources.window_loads[0]
+        assert period_start == snapshots.local_day_bounds(date(2026, 7, 10), LAGOS).start
+        assert period_end == snapshots.local_day_bounds(date(2026, 7, 12), LAGOS).end
+
+    async def test_a_day_with_no_evidence_still_gets_a_row(self, repo, sources):
+        """A day off is a fact about the learner's week. `activeDay` needs somewhere to be false."""
+        sources.evidence_by_day = {}
 
         written = await snapshots.backfill_for_user(
             user_id=OWNER, days=3, now=datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
         )
 
-        assert written == 2
-        assert (OWNER, date(2026, 7, 11)) not in repo.snapshots
-        assert (OWNER, date(2026, 7, 10)) in repo.snapshots
-        assert (OWNER, date(2026, 7, 12)) in repo.snapshots
+        assert written == 3
+        for values in repo.snapshots.values():
+            assert values["active_day"] is False
+            assert values["focused_minutes"] is None
+            assert values["effort_score"] == 0.0
+
+    async def test_a_failed_write_costs_the_learner_not_the_run(self, repo, sources):
+        """The trade the bulk write makes, stated so it is not mistaken for the old behaviour.
+
+        Per-day isolation is gone: one statement means one learner's batch succeeds or fails whole.
+        That is acceptable only because the write is idempotent and recorded days are skipped, so
+        re-running picks up exactly the gap — and it buys the run finishing at all. What must not
+        happen is the exception escaping and taking the other learners with it.
+        """
+        repo.fail_users = {OWNER}
+
+        written = await snapshots.backfill_for_user(
+            user_id=OWNER, days=3, now=datetime(2026, 7, 13, 12, 0, tzinfo=UTC)
+        )
+
+        assert written == 0
+        assert not repo.snapshots
 
     async def test_the_default_window_is_the_longest_range_the_design_offers(self):
         assert snapshots.BACKFILL_DAYS == 90
         assert snapshots.MAX_TREND_DAYS == 90
+
+    def test_nullable_json_columns_store_sql_null_not_json_null(self):
+        """Otherwise "which days have unknown mastery" finds nothing.
+
+        SQLAlchemy's default is to write Python `None` into a JSON column as the JSON scalar
+        `null`, which reads back as `None` in Python — so the API looks right — while
+        `IS NULL` matches nothing. Caught in the live table: `overallMasteryPercent` was SQL
+        `NULL` beside a `subjectMastery` holding the four characters `null`.
+        """
+        from src.domains.personal_learning.db_models import (
+            DailyLearningSnapshot,
+            Reflection,
+        )
+
+        for model, attribute in (
+            (DailyLearningSnapshot, "subject_mastery"),
+            (Reflection, "narrative"),
+        ):
+            column = model.__mapper__.columns[attribute]
+            assert column.type.none_as_null is True, f"{model.__name__}.{attribute}"
+
+
+# ---------------------------------------------------------------------------
+# TestUndatedCompletions
+# ---------------------------------------------------------------------------
+
+
+class TestUndatedCompletions:
+    """A topic marked complete with no `completedAt` cannot be placed in time.
+
+    Found by reading the rows the first real backfill wrote: mastery came back `0.0` across 456
+    topics for a learner who had completed 21, because none of those completions carried a date.
+    Half the completed topics in the database are in that state. Decision P allowed for the
+    reopened-topic case; it did not allow for a flat-zero series presented as history.
+    """
+
+    async def test_asking_about_now_counts_an_undated_completion(self):
+        """The nightly writer's question, and the one where undated completions must count.
+
+        It records the day that just ended, so a completion with no timestamp certainly happened
+        before then — and counting it is what keeps the stored figure in agreement with the
+        dashboard's `list_subject_mastery`, which counts `Topic.completed`.
+        """
+        mastery = await _mastery_from_rows([("course-1", 10, 0, 4)], undated_are_complete=True)
+
+        assert mastery.by_course == {"course-1": 40.0}
+        assert mastery.overall_percent == 40.0
+        assert mastery.undated_completions == 4
+
+    async def test_asking_about_a_past_day_reports_unknown_rather_than_zero(self):
+        """The backfill's question. `0.0` would draw a floor the learner never stood on."""
+        mastery = await _mastery_from_rows([("course-1", 10, 0, 4)], undated_are_complete=False)
+
+        assert mastery.by_course is None
+        assert mastery.overall_percent is None
+        assert mastery.undated_completions == 4
+
+    async def test_a_past_day_is_exact_when_every_completion_is_dated(self):
+        """Nothing is withheld when there is nothing unknown — the flag only guards the gap."""
+        mastery = await _mastery_from_rows([("course-1", 10, 3, 0)], undated_are_complete=False)
+
+        assert mastery.by_course == {"course-1": 30.0}
+        assert mastery.overall_percent == 30.0
+        assert mastery.undated_completions == 0
+
+    async def test_no_topics_at_all_is_null_not_zero(self):
+        """A learner with nothing to master has no mastery percentage, as against zero."""
+        mastery = await _mastery_from_rows([("course-1", 0, 0, 0)], undated_are_complete=True)
+
+        assert mastery.overall_percent is None
+        # The course still appears, so a later delta has something to compare against.
+        assert mastery.by_course == {"course-1": 0.0}
+
+    async def test_the_nightly_writer_and_the_backfill_ask_different_questions(self, repo, sources):
+        """The flag that already means "reconstructed" is what selects the question."""
+        await snapshots.capture_for_users([OWNER], now=datetime(2026, 7, 13, 1, 15, tzinfo=UTC))
+        assert sources.undated_asked[-1] is True
+
+        sources.undated_asked.clear()
+        await snapshots.backfill_for_user(
+            user_id=OWNER, days=2, now=datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+        )
+        assert sources.undated_asked
+        assert all(asked is False for asked in sources.undated_asked)
+
+    async def test_an_unmeasurable_day_stores_null_mastery_not_zero(self, repo, sources):
+        sources.historical_mastery = reflect_aggregates.MasteryOnDay(
+            by_course=None,
+            overall_percent=None,
+            topics_total=456,
+            topics_completed=0,
+            undated_completions=21,
+        )
+
+        await snapshots.backfill_for_user(
+            user_id=OWNER, days=1, now=datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
+        )
+
+        stored = next(iter(repo.snapshots.values()))
+        assert stored["overall_mastery_percent"] is None
+        assert stored["subject_mastery"] is None
+        assert stored["reconstructed"] is True

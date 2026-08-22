@@ -263,7 +263,15 @@ async def capture_day(
     from .reflection_metrics import load_evidence
 
     evidence = await load_evidence(user_id=user_id, period_start=day.start, period_end=day.end)
-    mastery = await reflect_aggregates.subject_mastery_on(user_id=user_id, as_of=day.end)
+    # `reconstructed` decides which mastery question is being asked, because it already means
+    # exactly that. Recording the day that just ended asks "what is complete now", and an
+    # undated completion certainly happened before a few hours ago — so it counts, and the figure
+    # agrees with the dashboard. Reconstructing a day months back asks what was complete *then*,
+    # which undated completions cannot answer, so mastery comes back null rather than as a number
+    # that silently omits work the learner did.
+    mastery = await reflect_aggregates.subject_mastery_on(
+        user_id=user_id, as_of=day.end, undated_are_complete=not reconstructed
+    )
 
     await repo.upsert_daily_snapshot(
         user_id=user_id,
@@ -397,13 +405,23 @@ async def backfill_for_user(
     the backfill overwrite would degrade real measurements into estimates and flip their flag to
     say so. It also makes re-running cheap, which matters for a job that can be interrupted.
 
-    Session history is loaded **once** for the whole window and sliced per day in memory. A
-    query per day would be ninety per learner to answer ninety questions about the same rows.
+    **Every read is window-wide, and this is the difference between a job that finishes and one
+    that does not.** Reconstructing through `capture_day` — which is the right shape for the nightly
+    task's single day — issues about fourteen queries per day, so ninety days is roughly 1,260 round
+    trips per learner over the same rows. Measured against this database's ~209 ms round trip that
+    was 26 minutes for six learners, and would be on the order of seventy hours at a thousand. It is
+    now three reads and one write per learner: the session history, the evidence bucketed by day, the
+    mastery series, and a single bulk upsert.
     """
     from src.shared.time import resolve_learner_timezone
 
     from ..repository import personal_learning_repo as repo
-    from .behaviour_service import BEHAVIOUR_WINDOW_DAYS, load_local_session_times
+    from . import reflect_aggregates
+    from .behaviour_service import (
+        BEHAVIOUR_WINDOW_DAYS,
+        consistency_score_from,
+        load_local_session_times,
+    )
 
     reference = now or datetime.now(UTC)
     timezone_ = await resolve_learner_timezone(user_id)
@@ -432,24 +450,51 @@ async def backfill_for_user(
         timezone_=timezone_,
     )
 
-    written = 0
+    # Three window-wide reads and one write, rather than fourteen queries per day. `capture_day` is
+    # the right shape for the nightly task, which does one day; calling it ninety times re-reads the
+    # same rows ninety times, which measured at 26 minutes for six learners and would be some
+    # seventy hours at a thousand.
+    from .reflection_metrics import MetricEvidence, load_daily_evidence
+
+    evidence_by_day = await load_daily_evidence(
+        user_id=user_id,
+        period_start=missing[0].start,
+        period_end=missing[-1].end,
+        timezone_=timezone_,
+    )
+    mastery_by_day = await reflect_aggregates.subject_mastery_series(
+        user_id=user_id,
+        days=[day.day for day in missing],
+        undated_are_complete=False,
+    )
+
+    rows: list[tuple[date, dict[str, Any]]] = []
     for day in missing:
-        try:
-            await capture_day(
-                user_id=user_id,
-                day=day,
-                local_session_times=session_times,
-                reconstructed=True,
+        mastery = mastery_by_day[day.day]
+        rows.append(
+            (
+                day.day,
+                snapshot_values(
+                    # A day with no evidence still gets a row: a day off is a fact about the
+                    # learner's week, and `activeDay` would carry no information without it.
+                    evidence_by_day.get(day.day, MetricEvidence()),
+                    consistency_score=consistency_score_from(session_times, as_of=day.end),
+                    overall_mastery_percent=mastery.overall_percent,
+                    subject_mastery=mastery.by_course,
+                    reconstructed=True,
+                ),
             )
-            written += 1
-        except Exception:
-            # One day failing must not abandon the rest of the learner's history. The write is
-            # idempotent and existing days are skipped, so re-running picks up only the gap.
-            logger.exception(
-                "Failed to reconstruct daily learning snapshot",
-                extra={"user_id": user_id, "snapshot_date": str(day.day)},
-            )
-    return written
+        )
+
+    try:
+        return await repo.bulk_upsert_daily_snapshots(user_id=user_id, rows=rows)
+    except Exception:
+        # One learner failing must not abandon the run. The write is idempotent and recorded days
+        # are skipped, so re-running picks up exactly the gap this left.
+        logger.exception(
+            "Failed to reconstruct daily learning snapshots", extra={"user_id": user_id}
+        )
+        return 0
 
 
 async def backfill_all(

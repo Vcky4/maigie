@@ -1515,7 +1515,12 @@ class Reflection(Base, TimestampMixin):
     # and Phase 1 settled that a reflection with real metrics and no prose is worth keeping. An
     # empty narrative would claim prose exists and say nothing, which is what the apology text
     # used to do.
-    narrative: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #
+    # `none_as_null=True` for the same reason as `DailyLearningSnapshot.subjectMastery`: without
+    # it, storing `None` writes the JSON scalar `null` rather than SQL `NULL`, and "which
+    # reflections have no narrative" — the query that finds rows still needing one — silently
+    # returns nothing.
+    narrative: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     # Set by an explicit `POST /reflections/{id}/read`, never as a side effect of a GET.
     # A mutating read breaks caching, stops the endpoint being idempotent, and would mark a
     # reflection as engaged-with when a dashboard prefetches it.
@@ -1673,7 +1678,16 @@ class DailyLearningSnapshot(Base, TimestampMixin):
     # whole, for one date range, and never queried by course — the trend differences two
     # dicts. A `DailySubjectMastery` child table would multiply the row count by the
     # learner's course count to serve no query that exists.
-    subject_mastery: Mapped[dict | None] = mapped_column("subjectMastery", JSON, nullable=True)
+    #
+    # `none_as_null=True` is load-bearing, not tidiness. By default SQLAlchemy writes Python
+    # `None` into a JSON column as the JSON scalar `null`, which is **not** SQL `NULL`: the value
+    # reads back as `None` in Python, so the API looks correct, while `WHERE "subjectMastery" IS
+    # NULL` matches nothing. Days whose mastery is unknown are exactly what the trend endpoint has
+    # to find, and this column is null precisely when a reconstruction could not date a learner's
+    # completions — so a null that SQL cannot see would hide the one state it exists to record.
+    subject_mastery: Mapped[dict | None] = mapped_column(
+        "subjectMastery", JSON(none_as_null=True), nullable=True
+    )
 
     # True when this row was reconstructed by the backfill rather than recorded on the day.
     # Only `overallMasteryPercent` and `subjectMastery` are approximate — the denominator is
