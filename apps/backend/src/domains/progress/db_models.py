@@ -1,19 +1,20 @@
 """
 Progress domain — SQLAlchemy models.
 
-Goal, ScheduleBlock, StudySession, UserStreak, Achievement,
-ReviewItem, ScheduleBehaviourLog.
+Goal, GoalMilestone, GoalProgressSnapshot, ScheduleBlock, StudySession,
+UserStreak, Achievement, ReviewItem, ScheduleBehaviourLog.
 
 Maps to existing PostgreSQL tables created by Prisma.
 Column names use camelCase to match the existing schema exactly.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -242,6 +243,23 @@ class ScheduleBlock(Base, TimestampMixin):
         "examPrepId", String, nullable=True, index=True
     )
 
+    #: When the learner recorded this block as done. `None` means not done — **not** "we do not know",
+    #: because a block is only ever completed by an explicit action.
+    #:
+    #: Added because nothing on this row recorded whether a planned session happened, which made
+    #: "planned versus completed" — a chart the goal pages have always drawn — unanswerable. The
+    #: alternatives were both worse: infer completion from a `StudySession` overlapping the block's
+    #: window, which is a time coincidence wearing the word "completed" and would credit a learner who
+    #: studied something else entirely; or read `ScheduleBehaviourLog`, which has exactly the right
+    #: planned-versus-actual shape and which nothing in the application has ever written.
+    #:
+    #: A timestamp rather than a boolean, so a Tuesday session marked done on Thursday keeps Tuesday's
+    #: date, and so un-completing is expressible by setting it back to null. The same reasoning
+    #: `GoalMilestone.achievedAt` already follows.
+    completed_at: Mapped[datetime | None] = mapped_column(
+        "completedAt", DateTime(timezone=True), nullable=True
+    )
+
     # Relationships
     goal: Mapped[Optional["Goal"]] = relationship("Goal", back_populates="schedules")
     review_item: Mapped[Optional["ReviewItem"]] = relationship(
@@ -251,6 +269,8 @@ class ScheduleBlock(Base, TimestampMixin):
     __table_args__ = (
         Index("ScheduleBlock_userId_startAt_idx", "userId", "startAt"),
         Index("ScheduleBlock_startAt_endAt_idx", "startAt", "endAt"),
+        # The goal momentum read: every block for one goal, bucketed by the week it was planned for.
+        Index("ScheduleBlock_goalId_startAt_idx", "goalId", "startAt"),
     )
 
     def __repr__(self) -> str:
@@ -447,6 +467,86 @@ class Achievement(Base):
 
     def __repr__(self) -> str:
         return f"<Achievement id={self.id} type={self.achievement_type}>"
+
+
+# ---------------------------------------------------------------------------
+# GoalProgressSnapshot
+# ---------------------------------------------------------------------------
+
+
+class GoalProgressSnapshot(Base, TimestampMixin):
+    """One day's progress for one goal. The only history behind a goal's trajectory.
+
+    `ReflectGoalDetailPage` renders a progress trajectory and nothing recorded one. `Goal.progress`
+    is mutated in place, so yesterday's value is gone the moment it changes — the same problem
+    `PrepReadinessSnapshot` solved for Prepare and `DailyLearningSnapshot` for Reflect, and this
+    follows those rather than inventing a third approach.
+
+    **It cannot be backfilled, and that is the difference from its two siblings.** Decision P
+    reconstructed historical mastery from `Topic.completedAt`, because completion leaves a dated
+    trail. A goal's progress leaves none: it is a float the learner or a service overwrites, with no
+    per-event source to replay. So this table starts empty and fills from the day it ships, the chart
+    says it is building rather than drawing a flat line at today's value, and no row is ever invented
+    for a day nobody observed (Decision Y).
+
+    **The day is the learner's calendar day**, from `to_learner_local`, matching
+    `DailyLearningSnapshot`. `PrepReadinessSnapshot` truncates to a UTC date and its own docstring
+    records that as a bug; this does not repeat it.
+
+    **The previous local day, matching `DailyLearningSnapshot`.** Progress is pure state, so reading
+    it shortly after a learner's day ends gives that day's *closing* value — which is what a daily
+    point should mean. Dating it today instead would produce a newest point whose meaning changed with
+    every run ("as of whenever the task last fired"), and would put this table's x-axis half a day out
+    from the one Reflect's other charts use. The cost is that work done today appears on the chart
+    tomorrow, which is the same lag the learning snapshot already accepts.
+
+    **`currentValue` is stored alongside `progress`.** They answer different questions — `progress` is
+    the learner's percentage, `currentValue` the measured figure behind it — and `currentValueMeasured`
+    records which of the two kinds it was, because a `manual` goal's value is asserted and every other
+    kind's is derived. Recomputing the measurement on read is impossible for the same reason the table
+    exists.
+    """
+
+    __tablename__ = "GoalProgressSnapshot"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    goal_id: Mapped[str] = mapped_column(
+        "goalId", String, ForeignKey("Goal.id", ondelete="CASCADE"), index=True
+    )
+    #: Denormalised from `Goal.userId` so a learner's whole history is one predicate and
+    #: authorisation does not need a join. `DailyLearningSnapshot` carries `userId` for the same
+    #: reason. `CASCADE` because a snapshot of a deleted learner's goal is not a record of anything.
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    #: A day, not an instant — the unit of the trend, and what makes the writer idempotent through
+    #: the unique index below.
+    captured_on: Mapped[date] = mapped_column("capturedOn", Date, nullable=False)
+
+    #: The learner's percentage, as `Goal.progress` stood on that day.
+    progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    #: The measured figure behind the percentage. Null when the goal's kind has no source to measure
+    #: — a `course_progress` goal with no `courseId` has nothing, and null says so where `0` would
+    #: claim no progress (Decision I).
+    current_value: Mapped[float | None] = mapped_column("currentValue", Float, nullable=True)
+    #: `True` when `currentValue` came from event rows rather than from the learner. Stored because a
+    #: reader cannot infer it later: `metricKind` can be edited after the fact.
+    current_value_measured: Mapped[bool] = mapped_column(
+        "currentValueMeasured", Boolean, nullable=False, default=False
+    )
+    #: The goal's lifecycle value on that day, so a chart can show where it was completed or
+    #: abandoned rather than just stopping.
+    status: Mapped[str] = mapped_column(String, nullable=False, default="ACTIVE")
+
+    __table_args__ = (
+        Index("GoalProgressSnapshot_goalId_capturedOn_key", "goalId", "capturedOn", unique=True),
+        Index("GoalProgressSnapshot_userId_capturedOn_idx", "userId", "capturedOn"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<GoalProgressSnapshot goal={self.goal_id} on={self.captured_on}>"
 
 
 # Import Topic for relationship resolution (avoid circular at module level)

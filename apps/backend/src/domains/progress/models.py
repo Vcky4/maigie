@@ -144,6 +144,251 @@ class GoalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class GoalMomentumWeek(BaseModel):
+    """One week of a goal's plan."""
+
+    #: The Monday of the week, `YYYY-MM-DD`.
+    weekStart: str
+    #: Blocks scheduled for that week.
+    planned: int
+    #: Blocks the learner marked done. Reads `0` until learners start marking them — the column that
+    #: records it was added for this chart, because completion was previously stored nowhere.
+    completed: int
+
+
+class GoalSummaryResponse(BaseModel):
+    """The counts above the goals list, over the **whole** portfolio.
+
+    Its own endpoint rather than fields on `GoalListResponse`, because the list is paginated and
+    these are not. Folding them into the list envelope would mean either recomputing the portfolio on
+    every page request or publishing counts that quietly described only page one — and the second is
+    the kind of number that looks right until a learner has twenty-one goals.
+    """
+
+    active: int
+    completed: int
+    #: Active goals that have fallen further behind their own schedule than `AT_RISK_LAG_POINTS`.
+    atRisk: int
+    #: Active goals whose deadline is inside the next `DUE_SOON_DAYS` and still ahead.
+    dueSoon: int
+    #: Active, unfinished goals whose deadline has already passed. Separate from `dueSoon` so a goal
+    #: three weeks late cannot be reported as "due this week".
+    overdue: int
+    #: Mean progress across active and completed goals. `null` when the learner has none, never `0` —
+    #: no goals is not the same as no progress. Archived and cancelled goals are excluded.
+    averageProgress: float | None = None
+    #: Which situation the page should lead with: `none` | `overdue` | `at_risk` | `due_soon` |
+    #: `all_complete` | `strong` | `steady`.
+    #:
+    #: **A token, not a sentence.** The fixture's hero baked two numbers into prose — "You have 4 active
+    #: goals with an average progress of 58%…" — which is a claim that can disagree with the tiles
+    #: beneath it. The counts above and this token are enough for a client to write the sentence from the
+    #: same data it renders, and the wording then belongs to the client, which is right because a mobile
+    #: hero and a web hero want different lengths.
+    #:
+    #: The *choice* of which fact leads is still the server's, for the reason Decision O gives about
+    #: action targets: it is a judgement about the learner's data, and two clients making it
+    #: independently would eventually disagree about whether an overdue goal outranks a slipping one.
+    headline: str = "steady"
+    #: Planned versus completed sessions per week across every goal, oldest week first, for the chart
+    #: above the list. Counts only blocks attached to a goal, so this cannot exceed the sum of the
+    #: per-goal charts.
+    momentum: list[GoalMomentumWeek] = Field(default_factory=list)
+    #: `true` once any goal-plan block has **ever** been marked done, asked of the learner's whole
+    #: history. Lets the client caption a flat-zero `completed` series "not tracked yet" rather than
+    #: "you completed nothing" (Decision Y).
+    momentumTracked: bool = False
+
+
+class GoalEvidenceItem(BaseModel):
+    """One dated thing the learner did that counts towards a goal.
+
+    Mirrors `personal_learning.models.EvidenceItem` in a plain `BaseModel` because this domain does not
+    use `CamelModel` — the field names are the wire names here. The shape is deliberately identical so a
+    client can render subject evidence and goal evidence with one component.
+    """
+
+    id: str
+    #: `topic_completed` | `section_completed` | `study_session` | `knowledge_check`.
+    kind: str
+    title: str
+    detail: str | None = None
+    occurredAt: str
+    #: Numeric rather than pre-formatted, so it cannot disagree with the figure beside it.
+    value: float | None = None
+    unit: str | None = None
+    #: Only meaningful for `knowledge_check`.
+    correct: bool | None = None
+
+
+class GoalEvidenceResponse(BaseModel):
+    """The work behind a goal, and which of its links produced it."""
+
+    goalId: str
+    #: Which link answered. Published so a client can say "from Linear Algebra" rather than implying the
+    #: goal recorded this work directly.
+    linkedCourseId: str | None = None
+    linkedTopicId: str | None = None
+    #: Present for a `prep_readiness` goal, but **prep evidence is not yet read** — `ExamPrep` has no
+    #: join to `Course` anywhere, so it needs its own reader over the prep tables. Published so the gap
+    #: is visible rather than looking like a goal with no activity.
+    linkedPrepId: str | None = None
+    items: list[GoalEvidenceItem] = []
+
+
+#: How this goal is travelling, as a token rather than display copy. Derived from `statusLabel` and
+#: `pacePercent` — both already published on `GoalResponse` — so the badge beside the insight cannot
+#: disagree with the badge on the goal card. `not_paced` is a real state: a goal with no target date has
+#: no schedule to be ahead or behind of, and calling that "on track" would be an unmeasured claim.
+GoalInsightSignal = Literal["achieved", "ahead", "on_track", "behind", "not_paced"]
+
+
+class LockedNoticeResponse(BaseModel):
+    """Why a panel is unavailable on this plan, in the shape the upsell card already renders.
+
+    Mirrors `personal_learning.models.LockedNotice` for the same reason `GoalNextActionTarget` mirrors
+    its counterpart: one client component renders both, and this domain serialises with literal
+    camelCase names rather than through `CamelModel`.
+    """
+
+    locked: bool = True
+    reason: str
+    capability: str
+    upgradeUrl: str = "/subscription"
+    trialAvailable: bool = False
+    upgradeValue: str = ""
+
+
+class GoalInsight(BaseModel):
+    """The written interpretation of one goal's figures.
+
+    **Plus, delivered as a `200` with a `locked` notice** (Decision Z). `title` is a heading and is
+    trimmed; `detail` is a sentence and is `null` when the model did not finish one, because a fragment
+    beside a progress ring reads as a finding rather than as a gap.
+
+    `signal` is computed, not written. It is a classification of measured pace, which is arithmetic.
+    """
+
+    title: str
+    detail: str | None = None
+    signal: GoalInsightSignal
+
+
+class GoalNextActionTarget(BaseModel):
+    """Where a recommended action points, as data rather than as a path.
+
+    Mirrors `personal_learning.models.ReflectionActionTarget` field for field, deliberately: the web
+    client already turns that shape into a URL in one place, and a second shape would mean a second
+    route table free to drift from the first. Restated here rather than imported because this domain's
+    models are plain `BaseModel` with literal camelCase names, and importing a `CamelModel` would give
+    one response two serialisation conventions.
+
+    `kind` is the same closed vocabulary — `preparation_practice`, `study_plan`, `schedule`,
+    `flashcard_review`, `course`, `note`, `goal`, `none`. A backend that emitted `/prepare/x/practice`
+    would own the web client's routing and be wrong on every other client.
+    """
+
+    kind: str = "none"
+    entityId: str | None = None
+    #: Practice mode, meaningful only for the practice kinds.
+    mode: str | None = None
+
+
+class GoalNextAction(BaseModel):
+    """The recommended next move on a goal.
+
+    **`target` and `label` are both chosen by the service** (Decision O). The target because a model
+    free to name an entity would eventually cite one this learner does not own; the label because a
+    model-written button caption over a service-chosen destination is a button that lies about where it
+    goes. `label` is `""` for a `none` target, where the card renders without a button at all.
+    """
+
+    title: str
+    detail: str | None = None
+    label: str = ""
+    target: GoalNextActionTarget = Field(default_factory=GoalNextActionTarget)
+
+
+class GoalInsightResponse(BaseModel):
+    """The insight and next-action panels on the goal detail page.
+
+    **Its own endpoint rather than fields on `GoalResponse`.** The goals list returns many goals and
+    `GoalResponse` is what it returns them as; composing prose there would mean one language model call
+    per goal per page load. Here it is one call per goal, cached against the figures it was written
+    from, and the detail page's numbers paint without waiting for it.
+    """
+
+    goalId: str
+    #: Present for a learner on Free, with `insight` and `nextAction` both null.
+    locked: LockedNoticeResponse | None = None
+    #: `null` for Free, and also when composition failed. The page renders an absent panel, which it
+    #: already handles, rather than an error over figures that are all perfectly fine.
+    insight: GoalInsight | None = None
+    nextAction: GoalNextAction | None = None
+
+
+class GoalMomentumResponse(BaseModel):
+    """Planned versus completed sessions per week, oldest week first.
+
+    **Weeks with nothing planned are included at zero**, unlike the activity feed's daily counts where
+    a missing day is omitted. The difference is what the absence means: there, no row means nothing was
+    recorded; here, a week the learner scheduled nothing is itself part of the answer to "did the plan
+    get done".
+    """
+
+    goalId: str
+    weeks: int
+    #: `true` once any block for this goal has **ever** been marked done — asked of the goal's whole
+    #: history, not just the requested weeks. Lets the client caption a flat-zero `completed` series as
+    #: "not tracked yet" rather than "you completed nothing", which are very different messages to put
+    #: in front of a learner (Decision Y). Scoped to the window it would have answered the wrong
+    #: question for anyone who worked their plan and then paused.
+    completionTracked: bool = False
+    points: list[GoalMomentumWeek] = []
+
+
+class GoalProgressPoint(BaseModel):
+    """One recorded day for one goal."""
+
+    #: `YYYY-MM-DD`, the learner's own calendar day.
+    day: str
+    progress: float
+    #: The measured figure behind the percentage. `null` when the goal's kind had no source to
+    #: measure on that day — never `0`, which would claim no progress (Decision I).
+    currentValue: float | None = None
+    #: `true` when `currentValue` came from event rows rather than from the learner.
+    currentValueMeasured: bool = False
+    #: The goal's lifecycle value on that day, so a chart can show where it completed rather than
+    #: simply stopping.
+    status: str = "ACTIVE"
+
+
+class GoalProgressHistoryResponse(BaseModel):
+    """A goal's trajectory, and an honest account of how much of one exists yet.
+
+    **`points` may legitimately be empty, and that means two different things** — hence
+    `firstCapturedOn`. A goal created this morning has no history because nothing has been recorded
+    yet; a goal whose window predates the feature has none because the table did not exist. Both are
+    "building", and neither is a flat line at today's value, which is what interpolating would have
+    drawn (Decision Y).
+
+    There is no `reconstructed` flag as `GrowthTrendPoint` carries, because there is nothing to
+    reconstruct from: `Goal.progress` is overwritten in place with no dated event trail. Every point
+    here was observed on the day it is dated.
+    """
+
+    goalId: str
+    #: The requested window in days.
+    days: int
+    #: Days inside the window that actually have a row. `0` with a non-null `firstCapturedOn` means
+    #: the goal has history, just not in this window.
+    capturedDays: int
+    #: The earliest day ever recorded for this goal, or `null` if none is. Lets the client say
+    #: "building since 23 August" rather than showing an empty chart with no explanation.
+    firstCapturedOn: str | None = None
+    points: list[GoalProgressPoint] = []
+
+
 class GoalListResponse(BaseModel):
     goals: list[GoalResponse]
     total: int
@@ -192,6 +437,13 @@ class StudyBlockUpdate(BaseModel):
     courseId: str | None = None
     topicId: str | None = None
     goalId: str | None = None
+    #: Marking a planned session done, or undoing it with an explicit `null`.
+    #:
+    #: There is no separate `/complete` route: `update_block` already distinguishes an explicit null
+    #: from an omitted key, so one field on the existing `PUT` gives both directions. A timestamp
+    #: rather than a boolean because a Tuesday session can be marked done on Thursday and should keep
+    #: Tuesday's date — the learner's own clock is the right authority for when they studied.
+    completedAt: datetime | None = None
 
 
 class StudyBlockResponse(BaseModel):
@@ -208,6 +460,9 @@ class StudyBlockResponse(BaseModel):
     reviewItemId: str | None = None
     googleCalendarEventId: str | None = None
     googleCalendarSyncedAt: str | None = None
+    #: When the learner recorded this block as done. `null` means not done, rather than unknown — a
+    #: block is only ever completed by an explicit action.
+    completedAt: str | None = None
     createdAt: str
     updatedAt: str
 

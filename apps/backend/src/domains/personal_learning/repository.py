@@ -4879,6 +4879,48 @@ class PersonalLearningRepository:
             )
             return [(row[0], int(row[1] or 0)) for row in (await s.execute(stmt)).all()]
 
+    async def count_feed_entries_by_type(
+        self,
+        user_id: str,
+        *,
+        activity_types: list[str] | None = None,
+        occurred_from: datetime | None = None,
+        occurred_to: datetime | None = None,
+        session: AsyncSession | None = None,
+    ) -> list[tuple[str, int]]:
+        """How many entries of each `activityType`, largest first.
+
+        Uses the **same** `_feed_conditions` as the paged read and the per-day counts, so the three
+        cannot disagree about what is in the window — the reason that builder is shared rather than
+        each reader writing its own predicate.
+
+        A consequence worth stating: because the `type` filter applies here too, these counts always
+        sum to `total` in the same response. A caller that wants the whole mix rather than the
+        filtered one asks without a `type`, which is a decision it is better placed to make than this
+        function is.
+
+        Types with nothing are absent rather than zero, matching the per-day counts. The full
+        vocabulary is published separately by `list_feed_activity_types`, so a caller that wants to
+        render an empty bar for an unused type can.
+        """
+        async with self._read_session(session) as s:
+            stmt = (
+                select(ActivityFeedEntry.activity_type, func.count(ActivityFeedEntry.id))
+                .where(
+                    *self._feed_conditions(
+                        user_id,
+                        activity_types=activity_types,
+                        occurred_from=occurred_from,
+                        occurred_to=occurred_to,
+                    )
+                )
+                .group_by(ActivityFeedEntry.activity_type)
+                .order_by(func.count(ActivityFeedEntry.id).desc())
+            )
+            return [
+                (row[0], int(row[1] or 0)) for row in (await s.execute(stmt)).all() if row[0]
+            ]
+
     async def list_feed_activity_types(
         self, user_id: str, *, session: AsyncSession | None = None
     ) -> list[str]:

@@ -19,7 +19,7 @@ import os
 
 os.environ.setdefault("SKIP_DB_FIXTURE", "1")
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -292,3 +292,455 @@ class TestDerivedCurrentValue:
 
         assert results["goal-1"].current_value is None
         assert results["goal-1"].measured is False
+
+
+NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
+
+
+async def _portfolio_from_rows(rows) -> goal_metrics.GoalPortfolio:
+    """Run `get_goal_portfolio`'s folding over given `(status, progress, createdAt, targetDate)` rows.
+
+    The query needs Postgres; the counting rules are what these tests are about, so the rows are
+    supplied and only the arithmetic runs. Same device as `test_daily_snapshots._mastery_from_rows`.
+    """
+    from unittest.mock import patch
+
+    class _Result:
+        def all(self):
+            return rows
+
+    class _Session:
+        async def execute(self, *_args, **_kwargs):
+            return _Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    with patch.object(goal_metrics, "get_session_factory", lambda: _Session):
+        return await goal_metrics.get_goal_portfolio(user_id="u", now=NOW)
+
+
+class TestDueSoonAndOverdue:
+    """`dueSoon` and `overdue` are separate counts, and the split is the point.
+
+    Merging them would let a goal three weeks late be reported as "due this week", which is the one
+    reading of that tile that would make a learner relax about it.
+    """
+
+    def _kwargs(self, **overrides):
+        defaults = {
+            "status": "ACTIVE",
+            "progress": 40.0,
+            "target_date": NOW + timedelta(days=3),
+            "now": NOW,
+        }
+        return {**defaults, **overrides}
+
+    def test_a_deadline_inside_the_window_is_due_soon(self):
+        assert goal_metrics.is_due_soon(**self._kwargs()) is True
+
+    def test_the_window_boundary_is_inclusive(self):
+        exactly = NOW + timedelta(days=goal_metrics.DUE_SOON_DAYS)
+        assert goal_metrics.is_due_soon(**self._kwargs(target_date=exactly)) is True
+        just_outside = exactly + timedelta(seconds=1)
+        assert goal_metrics.is_due_soon(**self._kwargs(target_date=just_outside)) is False
+
+    def test_a_passed_deadline_is_overdue_and_not_due_soon(self):
+        passed = self._kwargs(target_date=NOW - timedelta(days=21))
+        assert goal_metrics.is_due_soon(**passed) is False
+        assert goal_metrics.is_overdue(**passed) is True
+
+    def test_an_open_ended_goal_is_neither(self):
+        none_dated = self._kwargs(target_date=None)
+        assert goal_metrics.is_due_soon(**none_dated) is False
+        assert goal_metrics.is_overdue(**none_dated) is False
+
+    def test_finished_work_creates_no_deadline_pressure(self):
+        """100% with nobody having marked it complete. Chasing it would tell the learner to do
+        something they have already done."""
+        done = self._kwargs(progress=100.0, target_date=NOW - timedelta(days=1))
+        assert goal_metrics.is_due_soon(**done) is False
+        assert goal_metrics.is_overdue(**done) is False
+
+    @pytest.mark.parametrize("status", ["COMPLETED", "ARCHIVED", "CANCELLED"])
+    def test_only_active_goals_have_deadlines_that_count(self, status):
+        assert goal_metrics.is_due_soon(**self._kwargs(status=status)) is False
+        assert (
+            goal_metrics.is_overdue(
+                **self._kwargs(status=status, target_date=NOW - timedelta(days=2))
+            )
+            is False
+        )
+
+
+class TestGoalPortfolio:
+    async def test_a_cancelled_goal_no_longer_drags_the_average_down(self):
+        """The bug this fixes: a cancelled goal counted towards `averageProgress` while appearing in
+        neither `active` nor `completed`, so abandoning a goal at 5% moved the average with no
+        visible cause. Archived goals were already excluded on exactly this reasoning."""
+        created = NOW - timedelta(days=10)
+        rows = [
+            ("ACTIVE", 80.0, created, None),
+            ("CANCELLED", 5.0, created, None),
+        ]
+        portfolio = await _portfolio_from_rows(rows)
+
+        assert portfolio.active == 1
+        assert portfolio.completed == 0
+        assert portfolio.average_progress == 80.0
+
+    async def test_archived_goals_are_excluded_too(self):
+        created = NOW - timedelta(days=10)
+        rows = [("ACTIVE", 60.0, created, None), ("ARCHIVED", 0.0, created, None)]
+        portfolio = await _portfolio_from_rows(rows)
+
+        assert portfolio.active == 1
+        assert portfolio.average_progress == 60.0
+
+    async def test_no_goals_averages_to_null_rather_than_zero(self):
+        """No goals is not the same as no progress (Decision I)."""
+        portfolio = await _portfolio_from_rows([])
+
+        assert portfolio.average_progress is None
+        assert portfolio.active == 0
+        assert portfolio.due_soon == 0
+        assert portfolio.overdue == 0
+
+    async def test_the_five_counts_are_independent(self):
+        created = NOW - timedelta(days=30)
+        rows = [
+            # Active, on pace, deadline far off.
+            ("ACTIVE", 90.0, created, NOW + timedelta(days=60)),
+            # Active and due in three days.
+            ("ACTIVE", 50.0, created, NOW + timedelta(days=3)),
+            # Active and three weeks late.
+            ("ACTIVE", 20.0, created, NOW - timedelta(days=21)),
+            ("COMPLETED", 100.0, created, None),
+        ]
+        portfolio = await _portfolio_from_rows(rows)
+
+        assert portfolio.active == 3
+        assert portfolio.completed == 1
+        assert portfolio.due_soon == 1
+        assert portfolio.overdue == 1
+        # The overdue one and the behind-pace one are both at risk; the 90% one is not.
+        assert portfolio.at_risk == 2
+
+
+class TestPortfolioHasOneHome:
+    def test_reflect_aggregates_re_exports_rather_than_reimplements(self):
+        """Same guard as `is_at_risk`: two implementations of a count the learner reads on two
+        surfaces is what Decision N's one-threshold clause exists to prevent."""
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        assert reflect_aggregates.get_goal_portfolio is goal_metrics.get_goal_portfolio
+        assert reflect_aggregates.GoalPortfolio is goal_metrics.GoalPortfolio
+
+
+class TestSummaryRouteOrdering:
+    def test_summary_is_declared_before_the_goal_id_route(self):
+        """FastAPI matches in declaration order, so `/goals/summary` must come first.
+
+        The other way round, the literal path arrives as a goal called "summary" and the endpoint
+        404s — with nothing in the code looking wrong, which is why this is pinned rather than left to
+        a reviewer noticing the order of two decorators.
+        """
+        from src.domains.progress.routes import router
+
+        paths = [route.path for route in router.routes]
+        assert "/goals/summary" in paths, "the summary route is gone"
+        assert "/goals/{goal_id}" in paths
+        assert paths.index("/goals/summary") < paths.index("/goals/{goal_id}")
+
+
+async def _momentum_from_rows(rows, *, weeks: int, now: datetime) -> list:
+    """Run `get_goal_momentum`'s bucketing over given `(startAt, completedAt)` rows."""
+    from unittest.mock import patch
+
+    class _Result:
+        def all(self):
+            return rows
+
+    class _Session:
+        async def execute(self, *_a, **_k):
+            return _Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    with patch.object(goal_metrics, "get_session_factory", lambda: _Session):
+        return await goal_metrics.get_goal_momentum(
+            user_id="u", goal_id="g", weeks=weeks, now=now
+        )
+
+
+class TestGoalMomentum:
+    """Planned versus completed, per week.
+
+    `planned` was always derivable — a count of `ScheduleBlock` rows for the goal. `completed` was
+    recorded nowhere until `completedAt` was added for this, so it reads zero rather than being inferred
+    from a `StudySession` that happens to overlap the block's window (Decision Y).
+    """
+
+    # A Wednesday, so the bucketing has to find the Monday rather than getting it for free.
+    WEDNESDAY = datetime(2026, 8, 26, 10, 0, tzinfo=UTC)
+
+    async def test_buckets_by_the_monday_of_each_week(self):
+        rows = [
+            # Two in the current week (Mon 24 Aug), one completed.
+            (datetime(2026, 8, 24, 9, 0, tzinfo=UTC), datetime(2026, 8, 24, 10, 0, tzinfo=UTC)),
+            (datetime(2026, 8, 26, 9, 0, tzinfo=UTC), None),
+            # One the week before (Mon 17 Aug).
+            (datetime(2026, 8, 19, 9, 0, tzinfo=UTC), None),
+        ]
+        weeks = await _momentum_from_rows(rows, weeks=2, now=self.WEDNESDAY)
+
+        assert [w.week_start for w in weeks] == [date(2026, 8, 17), date(2026, 8, 24)]
+        assert [w.planned for w in weeks] == [1, 2]
+        assert [w.completed for w in weeks] == [0, 1]
+
+    async def test_a_week_with_nothing_planned_is_included_at_zero(self):
+        """The opposite of the activity feed's daily counts, where a missing day is omitted. There an
+        absent row means nothing was recorded; here a week the learner scheduled nothing is itself part
+        of the answer to "did the plan get done"."""
+        rows = [(datetime(2026, 8, 24, 9, 0, tzinfo=UTC), None)]
+        weeks = await _momentum_from_rows(rows, weeks=3, now=self.WEDNESDAY)
+
+        assert len(weeks) == 3
+        assert [w.planned for w in weeks] == [0, 0, 1]
+        assert [w.week_start for w in weeks] == [
+            date(2026, 8, 10),
+            date(2026, 8, 17),
+            date(2026, 8, 24),
+        ]
+
+    async def test_the_series_always_ends_with_the_current_week(self):
+        weeks = await _momentum_from_rows([], weeks=4, now=self.WEDNESDAY)
+
+        assert weeks[-1].week_start == date(2026, 8, 24)
+        assert len(weeks) == 4
+
+    async def test_a_block_beyond_the_window_is_not_folded_into_the_nearest_week(self):
+        """Counting it anywhere would overstate that week's plan."""
+        rows = [
+            (datetime(2026, 8, 24, 9, 0, tzinfo=UTC), None),
+            # Six weeks earlier, outside a two-week window.
+            (datetime(2026, 7, 13, 9, 0, tzinfo=UTC), None),
+        ]
+        weeks = await _momentum_from_rows(rows, weeks=2, now=self.WEDNESDAY)
+
+        assert sum(w.planned for w in weeks) == 1
+
+    async def test_completed_counts_only_blocks_with_a_timestamp(self):
+        rows = [
+            (datetime(2026, 8, 24, 9, 0, tzinfo=UTC), None),
+            (datetime(2026, 8, 25, 9, 0, tzinfo=UTC), None),
+            (datetime(2026, 8, 26, 9, 0, tzinfo=UTC), datetime(2026, 8, 27, 8, 0, tzinfo=UTC)),
+        ]
+        weeks = await _momentum_from_rows(rows, weeks=1, now=self.WEDNESDAY)
+
+        assert weeks[0].planned == 3
+        # Marked done the day after it was scheduled — still counts for the week it was planned for.
+        assert weeks[0].completed == 1
+
+    async def test_an_empty_plan_returns_zeroed_weeks_rather_than_nothing(self):
+        """A goal with no plan yet still gets an axis, so the chart renders empty rather than absent."""
+        weeks = await _momentum_from_rows([], weeks=4, now=self.WEDNESDAY)
+
+        assert len(weeks) == 4
+        assert all(w.planned == 0 and w.completed == 0 for w in weeks)
+
+
+async def _portfolio_momentum_from_rows(rows, *, weeks: int, now: datetime) -> list:
+    """Run `get_portfolio_momentum`'s bucketing over given `(startAt, completedAt)` rows."""
+    from unittest.mock import patch
+
+    class _Result:
+        def all(self):
+            return rows
+
+    class _Session:
+        async def execute(self, *_a, **_k):
+            return _Result()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    with patch.object(goal_metrics, "get_session_factory", lambda: _Session):
+        return await goal_metrics.get_portfolio_momentum(user_id="u", weeks=weeks, now=now)
+
+
+class TestPortfolioMomentum:
+    """The chart above the goals list, across every goal rather than one.
+
+    Its own reader rather than a client summing per-goal calls: the page draws one chart, and summing
+    responses would cost one request per goal to do it.
+    """
+
+    WEDNESDAY = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+
+    async def test_blocks_from_several_goals_land_in_one_series(self):
+        rows = [
+            (datetime(2026, 8, 24, 9, 0, tzinfo=UTC), None),
+            (datetime(2026, 8, 25, 9, 0, tzinfo=UTC), datetime(2026, 8, 25, 10, 0, tzinfo=UTC)),
+            (datetime(2026, 8, 26, 9, 0, tzinfo=UTC), None),
+        ]
+        weeks = await _portfolio_momentum_from_rows(rows, weeks=1, now=self.WEDNESDAY)
+
+        assert len(weeks) == 1
+        assert (weeks[0].planned, weeks[0].completed) == (3, 1)
+
+    async def test_it_shares_the_bucketing_with_the_per_goal_read(self):
+        """One implementation, so the portfolio chart and the goal charts cannot disagree.
+
+        If these diverged, the total above the list would stop matching the sum of the charts beneath
+        it and nothing on the page would explain the gap.
+        """
+        rows = [(datetime(2026, 8, 24, 9, 0, tzinfo=UTC), None)]
+        portfolio = await _portfolio_momentum_from_rows(rows, weeks=4, now=self.WEDNESDAY)
+        per_goal = await _momentum_from_rows(rows, weeks=4, now=self.WEDNESDAY)
+
+        assert [(w.week_start, w.planned, w.completed) for w in portfolio] == [
+            (w.week_start, w.planned, w.completed) for w in per_goal
+        ]
+
+    async def test_it_reads_only_blocks_attached_to_a_goal(self):
+        """`ScheduleBlock.goalId` is nullable, and an unattached block is not part of any goal's plan.
+
+        Counting it would make this chart taller than the sum of the per-goal charts beneath it.
+        """
+        import inspect
+
+        source = inspect.getsource(goal_metrics.get_portfolio_momentum)
+        body = source.split('"""')[-1]
+        assert "goal_id.is_not(None)" in body
+
+    async def test_an_empty_portfolio_still_gets_an_axis(self):
+        weeks = await _portfolio_momentum_from_rows([], weeks=4, now=self.WEDNESDAY)
+
+        assert len(weeks) == 4
+        assert all(w.planned == 0 and w.completed == 0 for w in weeks)
+
+
+def _portfolio(**overrides) -> goal_metrics.GoalPortfolio:
+    defaults = {
+        "active": 2,
+        "completed": 1,
+        "at_risk": 0,
+        "due_soon": 0,
+        "overdue": 0,
+        "average_progress": 50.0,
+    }
+    defaults.update(overrides)
+    return goal_metrics.GoalPortfolio(**defaults)
+
+
+class TestPortfolioHeadline:
+    """Which fact the goals page leads with.
+
+    **A token, not a sentence.** The fixture's hero baked two numbers into prose — "You have 4 active
+    goals with an average progress of 58%…" — which is a claim free to disagree with the tiles beneath
+    it. The counts and this token let the client write the sentence from the same fields it renders.
+
+    The *ladder* is server-side for the reason Decision O gives about action targets: which fact is most
+    urgent is a judgement about the learner's data, and two clients making it separately would
+    eventually disagree.
+    """
+
+    def test_no_goals_is_not_steady_at_zero(self):
+        """A portfolio that does not exist must not be described as one that is holding level."""
+        assert (
+            goal_metrics.portfolio_headline(
+                _portfolio(active=0, completed=0, average_progress=None)
+            )
+            == "none"
+        )
+
+    def test_overdue_outranks_at_risk(self):
+        """Already true beats projected."""
+        assert (
+            goal_metrics.portfolio_headline(_portfolio(overdue=1, at_risk=1, due_soon=1))
+            == "overdue"
+        )
+
+    def test_at_risk_outranks_due_soon(self):
+        assert goal_metrics.portfolio_headline(_portfolio(at_risk=1, due_soon=1)) == "at_risk"
+
+    def test_due_soon_when_nothing_is_wrong_yet(self):
+        assert goal_metrics.portfolio_headline(_portfolio(due_soon=2)) == "due_soon"
+
+    def test_everything_finished_is_its_own_state(self):
+        """The only case where the next move is to set a goal rather than to work on one."""
+        assert (
+            goal_metrics.portfolio_headline(
+                _portfolio(active=0, completed=3, average_progress=100.0)
+            )
+            == "all_complete"
+        )
+
+    def test_a_low_average_is_steady_not_strong(self):
+        """The page must not congratulate a portfolio sitting at 12%."""
+        assert goal_metrics.portfolio_headline(_portfolio(average_progress=12.0)) == "steady"
+
+    def test_a_high_average_is_strong(self):
+        assert goal_metrics.portfolio_headline(_portfolio(average_progress=80.0)) == "strong"
+
+    def test_the_strong_boundary_is_inclusive(self):
+        at_threshold = goal_metrics.STRONG_PORTFOLIO_PROGRESS
+        assert goal_metrics.portfolio_headline(_portfolio(average_progress=at_threshold)) == "strong"
+        assert (
+            goal_metrics.portfolio_headline(_portfolio(average_progress=at_threshold - 0.1))
+            == "steady"
+        )
+
+    def test_every_headline_is_reachable(self):
+        """A token nothing can produce is a contract the client would handle for no reason."""
+        produced = {
+            goal_metrics.portfolio_headline(_portfolio(**kwargs))
+            for kwargs in (
+                {"active": 0, "completed": 0, "average_progress": None},
+                {"overdue": 1},
+                {"at_risk": 1},
+                {"due_soon": 1},
+                {"active": 0, "completed": 2, "average_progress": 100.0},
+                {"average_progress": 90.0},
+                {"average_progress": 10.0},
+            )
+        }
+        assert produced == {
+            "none",
+            "overdue",
+            "at_risk",
+            "due_soon",
+            "all_complete",
+            "strong",
+            "steady",
+        }
+
+    def test_it_reads_no_figure_the_response_does_not_publish(self):
+        """The greeting and the tiles are rendered from one set of fields, so they cannot disagree."""
+        published = {"active", "completed", "at_risk", "due_soon", "overdue", "average_progress"}
+        import inspect
+
+        source = inspect.getsource(goal_metrics.portfolio_headline)
+        body = source.split('"""')[-1]
+        # `dataclasses.fields`, not `dir`: these fields have no defaults, so they are annotations
+        # rather than class attributes and never appear in `dir` of the class.
+        import dataclasses
+
+        read = {
+            field.name
+            for field in dataclasses.fields(goal_metrics.GoalPortfolio)
+            if f"portfolio.{field.name}" in body
+        }
+        assert read
+        assert read <= published

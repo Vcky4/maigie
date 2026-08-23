@@ -8,7 +8,7 @@ Mounted at: /api/v1/progress
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Body, HTTPException, Query, status
 
@@ -16,7 +16,14 @@ from src.shared.auth import CurrentUser
 
 from . import models
 from .repository import progress_repo
-from .services import analytics_service, goal_metrics, goal_service, schedule_service
+from .services import (
+    analytics_service,
+    goal_insight_service,
+    goal_metrics,
+    goal_service,
+    goal_snapshot_service,
+    schedule_service,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +130,54 @@ async def create_goal(body: models.GoalCreate, current_user: CurrentUser):
     return (await _goal_responses([goal]))[0]
 
 
+@router.get("/goals/summary", response_model=models.GoalSummaryResponse)
+async def get_goals_summary(
+    current_user: CurrentUser,
+    momentumWeeks: int = Query(4, ge=1, le=26),
+):
+    """Everything above the goals list: the portfolio counts, the momentum chart, and what to lead with.
+
+    **Declared before `/goals/{goal_id}`** deliberately: FastAPI matches in declaration order, so the
+    other way round this path would arrive as a goal called "summary" and 404.
+
+    The counts come from one query over the whole portfolio. The list endpoint cannot answer them — it is
+    paginated, so its twenty rows would give an average that changed as the learner paged.
+
+    **`headline` is a token and the client writes the sentence.** The fixture's hero baked two numbers
+    into prose, which is a claim that can disagree with the tiles beneath it; the token says which
+    situation applies and the counts beside it supply every figure the sentence needs.
+
+    `momentum` is composed here rather than in a sibling endpoint because it is part of the same header:
+    the chart, the tiles and the greeting are one block of the page and are better read in one request
+    than assembled from three that could describe different moments.
+    """
+    portfolio = await goal_metrics.get_goal_portfolio(user_id=current_user.id)
+    momentum = await goal_metrics.get_portfolio_momentum(
+        user_id=current_user.id, weeks=momentumWeeks
+    )
+    # Asked of the learner's whole history, not of the window: someone who worked their plan two months
+    # ago must not be told completion is "not tracked yet".
+    tracked = await goal_metrics.portfolio_completion_ever_recorded(user_id=current_user.id)
+    return models.GoalSummaryResponse(
+        active=portfolio.active,
+        completed=portfolio.completed,
+        atRisk=portfolio.at_risk,
+        dueSoon=portfolio.due_soon,
+        overdue=portfolio.overdue,
+        averageProgress=portfolio.average_progress,
+        headline=goal_metrics.portfolio_headline(portfolio),
+        momentumTracked=tracked,
+        momentum=[
+            models.GoalMomentumWeek(
+                weekStart=week.week_start.isoformat(),
+                planned=week.planned,
+                completed=week.completed,
+            )
+            for week in momentum
+        ],
+    )
+
+
 @router.get("/goals/{goal_id}", response_model=models.GoalResponse)
 async def get_goal(goal_id: str, current_user: CurrentUser):
     """Get a goal."""
@@ -154,6 +209,172 @@ async def record_goal_progress(
 async def delete_goal(goal_id: str, current_user: CurrentUser):
     """Delete a goal."""
     await goal_service.delete_goal(goal_id=goal_id, user_id=current_user.id)
+
+
+@router.get("/goals/{goal_id}/history", response_model=models.GoalProgressHistoryResponse)
+async def get_goal_history(
+    goal_id: str,
+    current_user: CurrentUser,
+    range: str = Query("30d", pattern="^(7d|30d|90d)$"),
+):
+    """A goal's progress trajectory, from `GoalProgressSnapshot`.
+
+    `get_goal` first, so a goal belonging to someone else 404s here exactly as it does everywhere
+    else — the history read is scoped by `userId` as well, but ownership is established once, in the
+    same place as every other goal route.
+
+    **The window ends yesterday**, matching `growth_service._window` and for the same reason: the
+    nightly writer records each learner's most recently *finished* local day, so including today asks
+    for a row that by definition does not exist and makes every range report one fewer captured day
+    than it has.
+
+    An empty `points` is a legitimate answer, and `firstCapturedOn` is what makes it readable —
+    nothing recorded yet, versus history that exists outside this window (Decision Y). Neither is
+    filled in with an interpolated line.
+    """
+    # Ownership. Raises `NotFoundError` for another learner's goal.
+    await goal_service.get_goal(goal_id=goal_id, user_id=current_user.id)
+
+    days = {"7d": 7, "30d": 30, "90d": 90}[range]
+    until = (datetime.now(UTC) - timedelta(days=1)).date()
+    since = until - timedelta(days=days - 1)
+
+    rows = await goal_snapshot_service.list_history(
+        user_id=current_user.id, goal_id=goal_id, since=since, until=until
+    )
+    first = await goal_snapshot_service.first_captured_on(
+        user_id=current_user.id, goal_id=goal_id
+    )
+
+    return models.GoalProgressHistoryResponse(
+        goalId=goal_id,
+        days=days,
+        capturedDays=len(rows),
+        firstCapturedOn=first.isoformat() if first else None,
+        points=[
+            models.GoalProgressPoint(
+                day=row.captured_on.isoformat(),
+                progress=row.progress,
+                currentValue=row.current_value,
+                currentValueMeasured=row.current_value_measured,
+                status=row.status,
+            )
+            for row in rows
+        ],
+    )
+
+
+@router.get("/goals/{goal_id}/evidence", response_model=models.GoalEvidenceResponse)
+async def get_goal_evidence(
+    goal_id: str,
+    current_user: CurrentUser,
+    limit: int = Query(12, ge=1, le=50),
+):
+    """Recent dated work behind a goal, newest first.
+
+    A goal is not itself measurable — it points at a course, a topic or a preparation, and the evidence
+    is the work done on *that*. `linkedCourseId` publishes which link answered, so a client can say
+    "from Linear Algebra" rather than implying the goal recorded this directly.
+
+    **A goal with no link returns an empty list, not the learner's general activity.** Falling back to
+    everything they did would attach unrelated work to a goal and make the panel look informative while
+    being wrong.
+
+    Reads the domain tables, not `ActivityFeedEntry` — the feed has no course column and nothing has ever
+    tagged an entry with one (§7.2), so a filter there returns nothing for everyone.
+    """
+    from src.domains.personal_learning.services import reflect_aggregates
+
+    goal = await goal_service.get_goal(goal_id=goal_id, user_id=current_user.id)
+    items = await reflect_aggregates.list_goal_evidence(
+        user_id=current_user.id, goal=goal, limit=limit
+    )
+
+    return models.GoalEvidenceResponse(
+        goalId=goal_id,
+        linkedCourseId=goal.course_id,
+        linkedTopicId=goal.topic_id,
+        linkedPrepId=goal.prep_id,
+        items=[
+            models.GoalEvidenceItem(
+                id=item.id,
+                kind=item.kind,
+                title=item.title,
+                detail=item.detail,
+                occurredAt=item.occurred_at.isoformat(),
+                value=item.value,
+                unit=item.unit,
+                correct=item.correct,
+            )
+            for item in items
+        ],
+    )
+
+
+@router.get("/goals/{goal_id}/insight", response_model=models.GoalInsightResponse)
+async def get_goal_insight(goal_id: str, current_user: CurrentUser):
+    """One goal's written interpretation and recommended next action.
+
+    **Its own endpoint rather than fields on `GoalResponse`.** The goals list returns many goals as that
+    model, so composing prose there would mean one language model call per goal per page load. Here it
+    is one per goal, stored against the figures it was written from.
+
+    **Plus, as a `200` with a `locked` notice** (Decision Z), never a `403`. Every number on the goal
+    detail page is free and only the interpretation is paid, so a Free page renders an upgrade card where
+    the panel would be rather than an error over figures that are all perfectly fine.
+
+    The recommended action's destination and button text are chosen by the service from what was
+    measured (Decision O) and published as a `target` rather than a path, so the client keeps owning its
+    route table. `signal` is derived from the same `statusLabel` and `pacePercent` the goal card shows.
+    """
+    goal = await goal_service.get_goal(goal_id=goal_id, user_id=current_user.id)
+    # The assembled response, so the prose is written from the same derived pace and projection the page
+    # prints beside it rather than from a second derivation that could differ.
+    responses = await _goal_responses([goal])
+    return await goal_insight_service.get_goal_insight(
+        user_id=current_user.id, goal=goal, goal_response=responses[0]
+    )
+
+
+@router.get("/goals/{goal_id}/momentum", response_model=models.GoalMomentumResponse)
+async def get_goal_momentum(
+    goal_id: str,
+    current_user: CurrentUser,
+    weeks: int = Query(4, ge=1, le=26),
+):
+    """Planned versus completed sessions per week for one goal.
+
+    Reads the goal's `ScheduleBlock` rows — a *goal plan*, which Decision R keeps distinct from a
+    `StudyPlan`. Ownership is established by `get_goal` first, as on every other goal route.
+
+    `completionTracked` is what makes a flat-zero `completed` series readable: until a learner marks a
+    block done, "you completed nothing" and "nothing is being tracked yet" are indistinguishable from
+    the numbers alone, and only one of them is true (Decision Y).
+    """
+    await goal_service.get_goal(goal_id=goal_id, user_id=current_user.id)
+
+    momentum = await goal_metrics.get_goal_momentum(
+        user_id=current_user.id, goal_id=goal_id, weeks=weeks
+    )
+    # Asked of the goal's whole history, not of the window: a learner who worked through their plan two
+    # months ago must not be told completion is "not tracked yet".
+    tracked = await goal_metrics.completion_ever_recorded(
+        user_id=current_user.id, goal_id=goal_id
+    )
+
+    return models.GoalMomentumResponse(
+        goalId=goal_id,
+        weeks=weeks,
+        completionTracked=tracked,
+        points=[
+            models.GoalMomentumWeek(
+                weekStart=week.week_start.isoformat(),
+                planned=week.planned,
+                completed=week.completed,
+            )
+            for week in momentum
+        ],
+    )
 
 
 @router.get("/goals/{goal_id}/milestones", response_model=list[models.GoalMilestoneResponse])
@@ -460,6 +681,7 @@ def _to_block_response(block) -> models.StudyBlockResponse:
         googleCalendarSyncedAt=(
             block.google_calendar_synced_at.isoformat() if block.google_calendar_synced_at else None
         ),
+        completedAt=block.completed_at.isoformat() if block.completed_at else None,
         createdAt=block.created_at.isoformat(),
         updatedAt=block.updated_at.isoformat(),
     )

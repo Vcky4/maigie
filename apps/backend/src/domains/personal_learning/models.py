@@ -2458,6 +2458,13 @@ class ActivityDayCount(CamelModel):
     count: int
 
 
+class ActivityTypeCount(CamelModel):
+    """One `activityType` and how many of it happened in the window."""
+
+    activity_type: str
+    count: int
+
+
 class ActivityDayCountsResponse(CamelModel):
     """The density strip's data, plus the filter vocabulary the learner actually has.
 
@@ -2472,6 +2479,16 @@ class ActivityDayCountsResponse(CamelModel):
 
     days: list[ActivityDayCount] = Field(default_factory=list)
     total: int = 0
+    #: What the window's activity consisted of, largest kind first. `days` says *when* things happened;
+    #: this says *what*.
+    #:
+    #: Subject to the same filters as everything else in this response, so these counts always sum to
+    #: `total`. A caller wanting the whole mix rather than the filtered one omits `type` — a decision
+    #: the caller is better placed to make than the server is.
+    #:
+    #: Grouped by raw `activityType`, **not** into categories. The client already owns that map — it
+    #: needs one to pick an icon and label per entry — and a second grouping here would drift from it.
+    by_type: list[ActivityTypeCount] = Field(default_factory=list)
     #: Every `activityType` this learner has, so the filter offers only values that can return
     #: something rather than a hardcoded list that goes stale.
     available_types: list[str] = Field(default_factory=list)
@@ -2545,6 +2562,27 @@ class GrowthDelta(CamelModel):
     change: float | None = None
 
 
+class GrowthMilestone(CamelModel):
+    """One thing the learner unlocked, from either milestone table.
+
+    **Two inputs, one list.** Decision Q asked for a single milestone source and named `Achievement`;
+    the audit found nothing writes that table — its four rows are Prisma-era and belong to one learner —
+    while `LearningMilestone` is written live for five. Reading only the first would publish a
+    permanently empty panel for almost everyone; reading only the second would drop four real records.
+    `source` says which table a row came from, so live records are distinguishable from frozen ones.
+    """
+
+    id: str
+    #: `conditionType` for a milestone, `achievementType` for a legacy achievement. The client groups
+    #: and colours by it.
+    kind: str
+    title: str
+    description: str | None = None
+    icon: str | None = None
+    unlocked_at: datetime
+    source: Literal["milestone", "achievement"]
+
+
 class GrowthTrendsResponse(CamelModel):
     range: GrowthRange
     days: int
@@ -2561,6 +2599,37 @@ class GrowthTrendsResponse(CamelModel):
     #: How many of those were reconstructed, for the footnote.
     reconstructed_days: int = 0
     active_days: int = 0
+    #: What the learner unlocked inside this range, newest first — the "moments that changed the
+    #: trajectory" beneath the chart. Scoped to the same window as `points`, so the two cannot disagree
+    #: about where the range starts. Empty when nothing was unlocked, which for most learners is the
+    #: honest answer rather than a gap.
+    milestones: list[GrowthMilestone] = Field(default_factory=list)
+
+
+class SubjectActivitySummary(CamelModel):
+    """What the learner did on one subject across the range, as opposed to how far through it they are.
+
+    Every figure is `null` when nothing recorded it rather than `0` (Decision I), with one converse:
+    once the learner records study time anywhere in the range, `0` for a particular subject is a real
+    finding — they did not work on it — and is published as `0`.
+    """
+
+    #: Study sittings recorded against this course.
+    sessions: int | None = None
+    #: Minutes of tracked study on this course.
+    focused_minutes: float | None = None
+    #: Distinct learner-local days with a session on this course.
+    active_days: int | None = None
+    #: Knowledge checks first answered during the range, on this course's topics.
+    knowledge_checks_answered: int = 0
+    #: Share of those first attempts that were correct, or `null` when there were none.
+    #:
+    #: **Not "recall", and the name is the point.** Quiz accuracy is not attributable to a course —
+    #: `QuizSession` belongs to an `ExamPrep` and its `topicId` to a `PrepTopic`, with no join to
+    #: `Course` anywhere — and flashcard reviews attribute only to a deck. `TopicCheckAttempt` is the
+    #: one correctness signal that reaches a course, and it counts each topic's *first* attempt only,
+    #: because the answer key ships to the browser and later attempts are near-always correct.
+    knowledge_check_accuracy_percent: float | None = None
 
 
 class GrowthSubject(CamelModel):
@@ -2580,12 +2649,74 @@ class GrowthSubject(CamelModel):
     #: derivable until there was stored history to difference. `None` still, when the range holds no
     #: comparable snapshot or when the earliest one could not date the learner's completions.
     change: float | None = None
+    #: What the learner *did* on this subject across the range, as opposed to how far through it they
+    #: are. A nested object rather than five more fields on this model, because the two halves come from
+    #: unrelated tables and have different null rules — mastery is always measurable from topic counts,
+    #: while activity depends on `StudySession`, which most learners have no rows in.
+    activity: SubjectActivitySummary | None = None
 
 
 class GrowthSubjectsResponse(CamelModel):
     range: GrowthRange
     days: int
     items: list[GrowthSubject] = Field(default_factory=list)
+
+
+ConceptStatus = Literal["not_started", "needs_attention", "growing", "strong"]
+ConceptMasterySource = Literal["sections", "completion"]
+
+
+class SubjectConcept(CamelModel):
+    """One topic of a subject, and how far through it the learner is.
+
+    **`Topic` stores no mastery score** — unlike `PrepTopic`, which has `masteryScore` and
+    `targetMastery`. Everything here is derived, and `source` says from what, because the two sources are
+    not equally informative.
+    """
+
+    topic_id: str
+    title: str
+    #: 0-100, derived. Read `source` before treating it as a smooth percentage.
+    mastery_percent: float | None = None
+    #: `sections` is a real gradation — part-way through the sections is part-way through the topic.
+    #: `completion` is **binary**: a topic with no sections can only read 0 or 100, so its middle band is
+    #: unreachable. Most topics are in the second group, which is why this field is published rather than
+    #: left for a client to guess.
+    source: ConceptMasterySource = "completion"
+    sections_total: int = 0
+    sections_completed: int = 0
+    completed: bool = False
+    #: `not_started` exists because `0%` means two different things. The shared three-band ladder maps
+    #: `0` to "needs attention", which is right for a topic worked and not grasped and wrong for one
+    #: never opened — and without this state every topic in a new course would render as a problem.
+    status: ConceptStatus = "not_started"
+
+
+EvidenceKind = Literal["topic_completed", "section_completed", "study_session", "knowledge_check"]
+
+
+class EvidenceItem(CamelModel):
+    """One dated thing the learner did, attributable to a course.
+
+    **Not from the activity feed.** `ActivityFeedEntry` has no course column — `entityType`/`entityId`
+    live inside a nullable `context` JSON — and no writer has ever tagged an entry with `course` or
+    `topic`, so a feed filter would return nothing for everyone (§7.2). These come from the tables that
+    record the link.
+
+    `value`/`unit` are numeric rather than pre-formatted prose. A number the client formats cannot
+    disagree with the figure beside it, and a string like `"34 min"` cannot be summed or compared.
+    """
+
+    id: str
+    kind: EvidenceKind
+    title: str
+    #: The context that makes the title meaningful — a topic's module, a section's topic.
+    detail: str | None = None
+    occurred_at: datetime
+    value: float | None = None
+    unit: str | None = None
+    #: Only meaningful for `knowledge_check`. A study session is not correct or incorrect.
+    correct: bool | None = None
 
 
 class GrowthSubjectDetailResponse(CamelModel):
@@ -2595,6 +2726,113 @@ class GrowthSubjectDetailResponse(CamelModel):
     range: GrowthRange
     days: int
     points: list[GrowthTrendPoint] = Field(default_factory=list)
+    #: Recent dated work on this subject, newest first.
+    #:
+    #: **Undated completions are omitted rather than backdated.** `Topic.completedAt` is null for about
+    #: half the completed topics in this database, and an evidence list is a timeline — an item with no
+    #: date has nowhere to sit on it, and substituting `updatedAt` would place the learner's work on the
+    #: day a row was last touched by anything.
+    evidence: list[EvidenceItem] = Field(default_factory=list)
+    #: Every topic of the course, in the course's own order. Included here rather than behind its own
+    #: endpoint because the detail page renders the list on first paint, and a second round trip for
+    #: data this cheap to join would show the page assembling itself.
+    concepts: list[SubjectConcept] = Field(default_factory=list)
+
+
+# ===========================================================================
+# The written interpretation (Decision Z) — Plus, delivered as a locked read
+# ===========================================================================
+
+
+#: Which measured series a driver is about. Doubles as the driver's id, because a second identifier
+#: would only ever be this value spelled differently.
+GrowthDriverMeasure = Literal["consistency", "effort", "mastery", "retrieval"]
+
+#: How much the measure moved, as a token rather than a phrase. `"High impact"` is display copy, and
+#: the client already owns the labels for every other classification on these pages.
+GrowthDriverImpact = Literal["high", "growing", "steady", "slipping"]
+
+
+class GrowthDriver(CamelModel):
+    """One reason the curve moved, with the figures it moved by.
+
+    **The service supplies `evidence`, `impact` and `change`; the model supplies only `title` and
+    `detail`.** `evidence` is a rendered string of figures the service measured, not a sentence — a
+    model asked to write "19 active days" from a brief containing 19 will eventually write 20, and this
+    string sits directly under a chart showing the real number. `impact` is a claim about magnitude,
+    which is arithmetic.
+
+    A driver only exists when its measure was actually captured across the range. There is no driver
+    for a series with fewer than two days in it, because one observation is not a movement.
+    """
+
+    id: GrowthDriverMeasure
+    title: str
+    #: The interpretation. `null` when the model did not finish the sentence — a fragment beneath a
+    #: chart reads as a finding, so it is dropped rather than shown (the guard Phase 6 added).
+    detail: str | None = None
+    #: Measured figures, rendered. Always present: it is the part that does not depend on the model.
+    evidence: str
+    impact: GrowthDriverImpact
+    #: Points moved across the range, signed. Published so the client need not parse `evidence`.
+    change: float | None = None
+
+
+class GrowthDriversResponse(CamelModel):
+    """What moved the curve, for the panel beneath the growth chart.
+
+    **Its own endpoint rather than a field on `GrowthTrendsResponse`.** Composing prose takes seconds
+    on a cache miss, and the chart is the primary content of that page — folding this in would make
+    three measured series wait on an optional interpretation. The client fetches both and the chart
+    paints first.
+    """
+
+    range: GrowthRange
+    days: int
+    #: Present for a learner on Free. `items` is then empty — never a substituted or generic list.
+    locked: LockedNotice | None = None
+    items: list[GrowthDriver] = Field(default_factory=list)
+
+
+class SubjectInsight(CamelModel):
+    """What is working on this subject and where to look next, as the detail page renders it.
+
+    Two headings with a paragraph each. The headings are phrases and are truncated rather than
+    dropped; the paragraphs are sentences and are dropped when unfinished, which is the same split
+    `reflection_narrative.assemble` makes between `theme` and `closing`.
+    """
+
+    strength: str
+    strength_detail: str | None = None
+    focus: str
+    focus_detail: str | None = None
+
+
+class SubjectNextStep(CamelModel):
+    """The recommended next move on a subject.
+
+    **`target` and `label` are both chosen by the service** (Decision O). The target because a model
+    free to name an entity would eventually cite one the learner does not own; the label because a
+    model-written "Practice Statistics" over a service-chosen schedule route is a button that lies
+    about where it goes. `ReflectionActionTarget` rather than a path, so the client's existing route
+    table is the only place a URL is written.
+    """
+
+    title: str
+    detail: str | None = None
+    label: str
+    target: ReflectionActionTarget = Field(default_factory=ReflectionActionTarget)
+
+
+class SubjectInsightResponse(CamelModel):
+    course_id: str
+    range: GrowthRange
+    #: Present for a learner on Free, with `insight` and `nextStep` both null.
+    locked: LockedNotice | None = None
+    #: `null` for Free, and also when composition failed — the page renders the panel as absent, which
+    #: it already does, rather than as an error over figures that are all perfectly fine.
+    insight: SubjectInsight | None = None
+    next_step: SubjectNextStep | None = None
 
 
 # ===========================================================================

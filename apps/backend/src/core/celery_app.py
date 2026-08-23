@@ -152,6 +152,19 @@ except Exception as e:
     logger.exception("Failed to import personal learning task modules: %s", e)
     print(f"[celery_app] Failed to import personal learning task modules: {e}")
 
+# Progress domain beat entries. Its tasks self-register through the `src.workers` import above; this
+# is only the schedule, kept in the domain's own module rather than folded into personal learning's so
+# a goal task is not scheduled from the learning package.
+try:
+    from src.workers import progress_tasks as _progress_tasks
+
+    if not hasattr(celery_app.conf, "beat_schedule") or celery_app.conf.beat_schedule is None:
+        celery_app.conf.beat_schedule = {}
+    celery_app.conf.beat_schedule.update(_progress_tasks.get_beat_schedule())
+except Exception as e:
+    logger.exception("Failed to load progress beat schedule: %s", e)
+    print(f"[celery_app] Failed to load progress beat schedule: {e}")
+
 
 def get_celery_app() -> Celery:
     """Get Celery application instance for dependency injection.

@@ -118,25 +118,36 @@ async def _load_latest_reflection(user_id: str) -> Any | None:
 
 
 async def _load_achievements(user_id: str, *, limit: int) -> list[models.ReflectAchievement]:
-    """Recent achievements.
+    """Recent milestones, from both tables that hold them.
 
-    Sliced here rather than in the query because `progress_repo.list_achievements` takes no limit. A
-    learner's achievement list is small and already ordered newest-first, so this costs nothing worth
-    a repository change; noted so it is a choice rather than an oversight.
+    **This used to read `Achievement` alone, and that was Decision Q's instruction — but the table
+    nothing writes.** `create_achievement` is called from nowhere in `src`; the four rows that exist are
+    Prisma-era and belong to a single learner. `LearningMilestone` is the one written live, by
+    `milestone_service._record_milestone`, and it holds rows for five. So this section was showing four
+    frozen records to one learner and an empty list to everybody else — indistinguishable, on screen,
+    from having achieved nothing.
+
+    Decision Q's *concern* was two milestone lists that could disagree, and that still holds: there is
+    one list here. What needed correcting was its *choice* of table, and reading both is what keeps the
+    legacy records visible while making the live ones appear at all. `source` on each item says which is
+    which.
+
+    Sliced after the merge rather than per table, so the newest few of one kind cannot crowd out newer
+    entries of the other.
     """
-    from src.domains.progress.repository import progress_repo
+    from . import reflect_aggregates
 
-    rows = await progress_repo.list_achievements(user_id)
+    items = await reflect_aggregates.list_growth_milestones(user_id=user_id, limit=limit)
     return [
         models.ReflectAchievement(
-            id=row.id,
-            achievement_type=row.achievement_type,
-            title=row.title,
-            description=row.description,
-            icon=row.icon,
-            unlocked_at=row.unlocked_at,
+            id=item.id,
+            achievement_type=item.kind,
+            title=item.title,
+            description=item.description,
+            icon=item.icon,
+            unlocked_at=item.unlocked_at,
         )
-        for row in rows[:limit]
+        for item in items
     ]
 
 

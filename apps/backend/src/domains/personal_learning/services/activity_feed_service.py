@@ -134,9 +134,78 @@ async def list_daily_counts(
     )
 
 
+async def list_type_counts(
+    *,
+    user_id: str,
+    activity_types: list[str] | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+) -> list[tuple[str, int]]:
+    """What the learner's activity in the window consisted of, largest kind first.
+
+    The history page draws an "activity mix" panel that the per-day counts cannot answer: those say
+    *when* things happened, this says *what*. Both go through the same `_feed_conditions`, so the
+    figures in one response always reconcile.
+
+    **No category grouping here.** The client already owns the activityType-to-category map — it needs
+    one to choose an icon and a label per entry, and it has had one since the feed page was built.
+    Adding a second grouping in the service would mean two definitions of "practice" drifting apart,
+    and the page would eventually show a bar chart that disagreed with its own filter chips.
+    """
+    return await repo.count_feed_entries_by_type(
+        user_id,
+        activity_types=activity_types,
+        occurred_from=occurred_from,
+        occurred_to=occurred_to,
+    )
+
+
 async def list_activity_types(*, user_id: str) -> list[str]:
     """The activity types this learner has, so the filter offers only what can return something."""
     return await repo.list_feed_activity_types(user_id)
+
+
+async def list_activity_breakdown(
+    *,
+    user_id: str,
+    activity_types: list[str] | None = None,
+    occurred_from: datetime | None = None,
+    occurred_to: datetime | None = None,
+) -> tuple[list[tuple[date, int]], list[tuple[str, int]], list[str]]:
+    """`(days, byType, availableTypes)` — the whole density-strip payload, on one connection.
+
+    **One session, three sequential queries, rather than three concurrent reads.** The route used to
+    `asyncio.gather` these, which opened a connection per leg. The configured database is reached
+    through Supabase's session-mode pooler, whose tenant allowance is far smaller than this
+    application's own pool ceiling, so fanning out multiplies a request's connection cost for no
+    benefit — and the route began returning intermittent `500`s once a third leg was added to the
+    gather. All three read `ActivityFeedEntry` through the same `_feed_conditions`; they were never
+    independent work.
+
+    Sequential also removes a subtler hazard: three coroutines sharing one `AsyncSession` would be
+    concurrent use of a single connection, which SQLAlchemy rejects outright. Passing one session and
+    awaiting in turn is the only arrangement that is both cheap and correct.
+    """
+    from src.shared.database import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        days = await repo.count_feed_entries_by_day(
+            user_id,
+            activity_types=activity_types,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+            session=session,
+        )
+        by_type = await repo.count_feed_entries_by_type(
+            user_id,
+            activity_types=activity_types,
+            occurred_from=occurred_from,
+            occurred_to=occurred_to,
+            session=session,
+        )
+        available = await repo.list_feed_activity_types(user_id, session=session)
+    return days, by_type, available
 
 
 async def _compute_current_streak(user_id: str) -> int:

@@ -7,7 +7,6 @@ flashcards, study plans, documents, notifications, and more.
 Mounted at: /api/v1/learning
 """
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Literal
@@ -2283,18 +2282,25 @@ async def get_activity_daily_counts(
     `/activity-feed/daily-counts` is another, so neither depends on ordering. Days with no activity
     are absent rather than zero: the caller knows its own window and renders the gaps.
     """
-    days, available = await asyncio.gather(
-        activity_feed_service.list_daily_counts(
-            user_id=current_user.id,
-            activity_types=type,
-            occurred_from=occurredFrom,
-            occurred_to=occurredTo,
-        ),
-        activity_feed_service.list_activity_types(user_id=current_user.id),
+    # One session, three sequential queries — not an `asyncio.gather`. All three read the same table
+    # through the same conditions, so fanning out only multiplied the request's connection cost, and
+    # against the session-mode pooler's small tenant allowance a third concurrent leg was enough to
+    # make this route return intermittent `500`s. See `list_activity_breakdown`.
+    days, by_type, available = await activity_feed_service.list_activity_breakdown(
+        user_id=current_user.id,
+        activity_types=type,
+        occurred_from=occurredFrom,
+        occurred_to=occurredTo,
     )
     return models.ActivityDayCountsResponse(
         days=[models.ActivityDayCount(day=day, count=count) for day, count in days],
+        # Summed from the per-day counts rather than queried again, so the strip and the figure above
+        # it cannot disagree — the same rule `reflect_dashboard_service` follows for its summary.
         total=sum(count for _, count in days),
+        by_type=[
+            models.ActivityTypeCount(activity_type=activity_type, count=count)
+            for activity_type, count in by_type
+        ],
         available_types=available,
     )
 
@@ -2394,6 +2400,56 @@ async def get_growth_subject_detail(
     from .services import growth_service
 
     return await growth_service.get_subject_detail(
+        user_id=current_user.id, course_id=course_id, range_=range
+    )
+
+
+@router.get("/growth/drivers", response_model=models.GrowthDriversResponse)
+async def get_growth_drivers(
+    current_user: CurrentUser,
+    range: models.GrowthRange = Query("30d", description="7d, 30d or 90d"),
+):
+    """What drove the movement in the growth series, written about the figures the chart shows.
+
+    **A separate call from `/growth/trends`, on purpose.** Composing prose can take seconds on a first
+    read, and the chart is the page. The client fetches both and paints the three series immediately.
+
+    **Plus, as a `200` with a `locked` notice** (Decision Z), never a `403`: every figure on the page
+    is free and only the interpretation is paid, so Free sees an upgrade card where the panel would be.
+    A range above the learner's plan reports *that* lock instead, since an empty series has no drivers
+    to explain.
+
+    `evidence` and `impact` on each driver are measured here; only the heading and the sentence come
+    from a model, and a sentence it did not finish arrives as `null` rather than as a fragment.
+    """
+    from .services import growth_service
+
+    return await growth_service.get_drivers(user_id=current_user.id, range_=range)
+
+
+@router.get(
+    "/growth/subjects/{course_id}/insight", response_model=models.SubjectInsightResponse
+)
+async def get_growth_subject_insight(
+    course_id: str,
+    current_user: CurrentUser,
+    range: models.GrowthRange = Query("30d"),
+):
+    """One subject's strength, focus and recommended next step.
+
+    Separate from `/growth/subjects/{course_id}` for the same reason as the drivers: the mastery
+    series, the topic list and the evidence timeline must not wait on an optional interpretation.
+
+    A course belonging to another learner answers `404`, not `403` — the ownership check is the one
+    inside the detail read, so the id is no more probeable here than there.
+
+    The recommended step's destination and button text are chosen by the service from what was
+    measured (Decision O), and published as a `target` rather than a path so the client keeps owning
+    its route table.
+    """
+    from .services import growth_service
+
+    return await growth_service.get_subject_insight(
         user_id=current_user.id, course_id=course_id, range_=range
     )
 

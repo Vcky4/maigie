@@ -500,6 +500,7 @@ class ProgressRepository:
         "goalId": "goal_id",
         "reviewItemId": "review_item_id",
         "examPrepId": "exam_prep_id",
+        "completedAt": "completed_at",
     }
 
     _SESSION_FIELD_MAP = {

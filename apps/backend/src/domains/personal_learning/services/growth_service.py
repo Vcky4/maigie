@@ -110,6 +110,41 @@ def _window(range_: str, *, now: datetime | None = None) -> tuple[date, date, in
     return until - timedelta(days=days - 1), until, days
 
 
+def to_growth_milestone(item) -> models.GrowthMilestone:
+    """Map a `GrowthMilestone` dataclass onto the wire. Shared by the trends read and the dashboard."""
+    return models.GrowthMilestone(
+        id=item.id,
+        kind=item.kind,
+        title=item.title,
+        description=item.description,
+        icon=item.icon,
+        unlocked_at=item.unlocked_at,
+        source=item.source,
+    )
+
+
+async def _range_milestones(*, user_id: str, since: date, until: date) -> list[models.GrowthMilestone]:
+    """What the learner unlocked inside the trend window.
+
+    Scoped to the same `since`/`until` as `points`, so the list beneath the chart cannot describe a
+    different period from the chart itself.
+
+    Failures degrade to an empty list rather than propagating: the three series are the point of this
+    response, and losing them because a milestone read failed would be the wrong trade — the same
+    reasoning `_subject_activity` follows.
+    """
+    from . import reflect_aggregates
+
+    try:
+        items = await reflect_aggregates.list_growth_milestones(
+            user_id=user_id, since=since, until=until
+        )
+    except Exception as exc:  # noqa: BLE001 — the series must survive a milestone failure
+        logger.warning("Growth milestones unavailable for user %s: %s", user_id, exc)
+        return []
+    return [to_growth_milestone(item) for item in items]
+
+
 async def get_trends(
     *, user_id: str, range_: str = "30d", now: datetime | None = None
 ) -> models.GrowthTrendsResponse:
@@ -127,11 +162,13 @@ async def get_trends(
 
     snapshots = await repo.list_daily_snapshots(user_id, since=since, until=until)
     points = [_point(snapshot) for snapshot in snapshots]
+    milestones = await _range_milestones(user_id=user_id, since=since, until=until)
 
     return models.GrowthTrendsResponse(
         range=range_,
         days=days,
         points=points,
+        milestones=milestones,
         mastery=_delta([p.mastery_percent for p in points if p.mastery_percent is not None]),
         consistency=_delta(
             [p.consistency_score for p in points if p.consistency_score is not None]
@@ -167,6 +204,63 @@ async def _subject_changes(*, user_id: str, since: date, until: date) -> dict[st
     }
 
 
+def _to_activity_summary(activity) -> models.SubjectActivitySummary | None:
+    """Map a `SubjectActivity` onto the wire.
+
+    `None` only when the activity read itself failed, which is why callers go through
+    `SubjectActivityMap.for_course` rather than `dict.get`: a course with no row still needs a row on
+    the wire, correctly nulled or correctly zeroed depending on whether the learner tracks time at all.
+    Returning `None` for "no sessions on this subject" would show a dash where `0` is the truth.
+    """
+    if activity is None:
+        return None
+    return models.SubjectActivitySummary(
+        sessions=activity.sessions,
+        focused_minutes=activity.focused_minutes,
+        active_days=activity.active_days,
+        knowledge_checks_answered=activity.knowledge_checks_answered,
+        knowledge_check_accuracy_percent=activity.knowledge_check_accuracy_percent,
+    )
+
+
+def _to_evidence_item(item) -> models.EvidenceItem:
+    """Map an `EvidenceItem` dataclass onto the wire. Shared by the subject and goal reads."""
+    return models.EvidenceItem(
+        id=item.id,
+        kind=item.kind,
+        title=item.title,
+        detail=item.detail,
+        occurred_at=item.occurred_at,
+        value=item.value,
+        unit=item.unit,
+        correct=item.correct,
+    )
+
+
+async def _subject_activity(*, user_id: str, since, until) -> dict:
+    """Per-course activity for the window, resolved in the learner's own timezone.
+
+    Its own helper because both subject reads need it and both must agree. Failures degrade to an empty
+    map rather than propagating: activity is an addition to a response whose mastery half is independent,
+    and losing the whole subjects list because `StudySession` could not be read would be the wrong
+    trade — the same reasoning `_compose_narrative` uses for its skeleton.
+    """
+    from src.shared.time import resolve_learner_timezone
+
+    from . import reflect_aggregates
+
+    try:
+        timezone_ = await resolve_learner_timezone(user_id)
+        return await reflect_aggregates.list_subject_activity(
+            user_id=user_id, since=since, until=until, timezone_=timezone_
+        )
+    except Exception as exc:  # noqa: BLE001 — mastery must survive an activity failure
+        logger.warning("Subject activity unavailable for user %s: %s", user_id, exc)
+        # `tracked_any_session=False` so every subject reads as unmeasured rather than as zero. A
+        # failed read must not be published as "you did nothing".
+        return reflect_aggregates.SubjectActivityMap(by_course={}, tracked_any_session=False)
+
+
 async def get_subjects(
     *, user_id: str, range_: str = "30d", limit: int | None = None, now: datetime | None = None
 ) -> models.GrowthSubjectsResponse:
@@ -180,6 +274,7 @@ async def get_subjects(
     since, until, days = _window(range_, now=now)
     subjects = await reflect_aggregates.list_subject_mastery(user_id=user_id, limit=limit)
     changes = await _subject_changes(user_id=user_id, since=since, until=until)
+    activity = await _subject_activity(user_id=user_id, since=since, until=until)
 
     return models.GrowthSubjectsResponse(
         range=range_,
@@ -193,6 +288,7 @@ async def get_subjects(
                 topics_total=subject.topics_total,
                 topics_completed=subject.topics_completed,
                 change=changes.get(subject.course_id),
+                activity=_to_activity_summary(activity.for_course(subject.course_id)),
             )
             for subject in subjects
         ],
@@ -218,6 +314,9 @@ async def get_subject_detail(
 
     snapshots = await repo.list_daily_snapshots(user_id, since=since, until=until)
     changes = await _subject_changes(user_id=user_id, since=since, until=until)
+    activity = await _subject_activity(user_id=user_id, since=since, until=until)
+    concepts = await reflect_aggregates.list_concept_mastery(user_id=user_id, course_id=course_id)
+    evidence = await reflect_aggregates.list_course_evidence(user_id=user_id, course_id=course_id)
 
     # The per-subject series carries this course's mastery in `masteryPercent`, not the learner's
     # overall figure. Everything else on the point describes the day rather than the subject, since
@@ -245,8 +344,144 @@ async def get_subject_detail(
             topics_total=subject.topics_total,
             topics_completed=subject.topics_completed,
             change=changes.get(course_id),
+            activity=_to_activity_summary(activity.for_course(course_id)),
         ),
         range=range_,
         days=days,
         points=points,
+        concepts=[
+            models.SubjectConcept(
+                topic_id=concept.topic_id,
+                title=concept.title,
+                mastery_percent=concept.mastery_percent,
+                source=concept.source,
+                sections_total=concept.sections_total,
+                sections_completed=concept.sections_completed,
+                completed=concept.completed,
+                status=concept.status,
+            )
+            for concept in concepts
+        ],
+        evidence=[_to_evidence_item(item) for item in evidence],
+    )
+
+
+# ---------------------------------------------------------------------------
+# The written interpretation (Decision Z)
+# ---------------------------------------------------------------------------
+
+
+async def get_drivers(
+    *, user_id: str, range_: str = "30d", now: datetime | None = None
+) -> models.GrowthDriversResponse:
+    """What moved the curve, as prose over figures this module already measured.
+
+    **Reads `get_trends` rather than the snapshots.** The drivers panel sits under the chart, so the
+    two must agree about what changed; deriving the same deltas a second time would make that a
+    coincidence rather than a guarantee. It is the rule `reflect_dashboard_service` follows for its
+    summary ring.
+
+    **Plus, delivered as a `200` with a `LockedNotice`** (Decision Z). Free keeps every figure on the
+    page and loses only the interpretation, so the panel becomes an upgrade card rather than an error.
+
+    Two locks can apply and the range one wins: a Free learner asking for 90 days has no series to
+    write about, so the notice explains the range rather than the prose. Composing an interpretation of
+    an empty series would be the more confusing answer.
+    """
+    from . import growth_narrative, narrative_cache
+
+    trends = await get_trends(user_id=user_id, range_=range_, now=now)
+    if trends.locked is not None:
+        return models.GrowthDriversResponse(
+            range=trends.range, days=trends.days, locked=trends.locked
+        )
+
+    locked = await narrative_cache.plus_gate(
+        user_id, reason="Reading what drove your growth requires Maigie Plus"
+    )
+    if locked is not None:
+        return models.GrowthDriversResponse(range=trends.range, days=trends.days, locked=locked)
+
+    skeleton = growth_narrative.build_drivers(trends)
+    if not skeleton:
+        # Nothing moved measurably. An empty panel, and no generation spent asking a model to
+        # explain a movement that was not observed.
+        return models.GrowthDriversResponse(range=trends.range, days=trends.days)
+
+    async def _compose() -> dict[str, Any] | None:
+        return await narrative_cache.compose_json(
+            user_id=user_id,
+            prompt=growth_narrative.build_drivers_prompt(range_=range_, skeleton=skeleton),
+            what="growth drivers",
+        )
+
+    written = await narrative_cache.resolve(
+        user_id=user_id,
+        kind="growth_drivers",
+        scope=range_,
+        inputs=skeleton,
+        compose=_compose,
+    )
+    return models.GrowthDriversResponse(
+        range=trends.range,
+        days=trends.days,
+        items=growth_narrative.assemble_drivers(skeleton=skeleton, written=written),
+    )
+
+
+async def get_subject_insight(
+    *, user_id: str, course_id: str, range_: str = "30d", now: datetime | None = None
+) -> models.SubjectInsightResponse:
+    """One subject's strength, focus and next step.
+
+    Raises `NotFoundError` for a course that is not the learner's, because it reads
+    `get_subject_detail` — so ownership is checked by the same predicate that produces the figures,
+    rather than by a second check that could drift from it.
+
+    The next step's target and label are chosen here, from the measurement, before the model is asked
+    for anything (Decision O). The chosen step's grounds are then put *into* the prompt so the focus
+    paragraph argues for the button beneath it.
+    """
+    from . import growth_narrative, narrative_cache
+
+    detail = await get_subject_detail(
+        user_id=user_id, course_id=course_id, range_=range_, now=now
+    )
+    locked = await narrative_cache.plus_gate(
+        user_id, reason="Subject insight and recommendations require Maigie Plus"
+    )
+    if locked is not None:
+        return models.SubjectInsightResponse(
+            course_id=course_id, range=detail.range, locked=locked
+        )
+
+    reason, label, target = growth_narrative.choose_next_step(detail)
+    skeleton = growth_narrative.build_subject_skeleton(detail)
+    # The chosen step is part of the fingerprint, not just of the prompt. The prose argues for the
+    # step, so a subject whose figures moved it from "plan a session" to "revisit a topic" needs a new
+    # paragraph even in the impossible case that every other figure held still.
+    inputs = {"subject": skeleton, "step": {"reason": reason, "kind": target.kind.value}}
+
+    async def _compose() -> dict[str, Any] | None:
+        return await narrative_cache.compose_json(
+            user_id=user_id,
+            prompt=growth_narrative.build_subject_prompt(
+                skeleton=skeleton, range_=range_, reason=reason
+            ),
+            what="subject insight",
+        )
+
+    written = await narrative_cache.resolve(
+        user_id=user_id,
+        kind="subject_insight",
+        entity_id=course_id,
+        scope=range_,
+        inputs=inputs,
+        compose=_compose,
+    )
+    insight, next_step = growth_narrative.assemble_subject(
+        written=written, label=label, target=target, reason=reason
+    )
+    return models.SubjectInsightResponse(
+        course_id=course_id, range=detail.range, insight=insight, next_step=next_step
     )

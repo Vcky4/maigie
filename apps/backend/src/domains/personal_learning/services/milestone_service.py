@@ -35,6 +35,7 @@ MAX_MONTHLY_REFERRALS = 10
 MILESTONES: list[dict[str, Any]] = [
     {
         "id": "first_prep_complete",
+        "description": "Finished an exam preparation from start to end.",
         "title": "First Preparation Complete",
         "condition_type": "prep_completed",
         "threshold": 1,
@@ -43,6 +44,7 @@ MILESTONES: list[dict[str, Any]] = [
     },
     {
         "id": "7_day_streak",
+        "description": "Studied on seven consecutive days.",
         "title": "7-Day Study Streak",
         "condition_type": "streak",
         "threshold": 7,
@@ -51,6 +53,7 @@ MILESTONES: list[dict[str, Any]] = [
     },
     {
         "id": "quiz_90_plus",
+        "description": "Scored 90% or higher on a quiz.",
         "title": "Quiz Master",
         "condition_type": "quiz_score",
         "threshold": 90,
@@ -59,6 +62,7 @@ MILESTONES: list[dict[str, Any]] = [
     },
     {
         "id": "plan_complete",
+        "description": "Worked through every item of a study plan.",
         "title": "Study Plan Complete",
         "condition_type": "plan_completion",
         "threshold": 100,
@@ -67,6 +71,7 @@ MILESTONES: list[dict[str, Any]] = [
     },
     {
         "id": "50_flashcards_reviewed",
+        "description": "Reviewed fifty flashcards.",
         "title": "Flashcard Warrior",
         "condition_type": "flashcard_reviews",
         "threshold": 50,
@@ -75,6 +80,7 @@ MILESTONES: list[dict[str, Any]] = [
     },
     {
         "id": "first_document",
+        "description": "Generated a study document from your own material.",
         "title": "First Document Generated",
         "condition_type": "document_generated",
         "threshold": 1,

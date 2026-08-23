@@ -37,6 +37,10 @@ NON_ORM_VARS = {
     "req",
     "settings",
     "self",
+    # An assembled `progress.models.GoalResponse`, not an ORM row. That domain's response models use
+    # literal camelCase field names rather than an alias generator, so `goal_response.targetDate` is the
+    # attribute and the snake_case spelling would be the AttributeError.
+    "goal_response",
 }
 
 #: Matches SQLAlchemy's column accessor — `subquery.c.someColumn` — where a camelCase name is the

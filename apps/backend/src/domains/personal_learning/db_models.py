@@ -1901,3 +1901,63 @@ class ValueSummaryRecord(Base):
 
     def __repr__(self) -> str:
         return f"<ValueSummaryRecord id={self.id} userId={self.user_id}>"
+
+
+# ---------------------------------------------------------------------------
+# NarrativeCache
+# ---------------------------------------------------------------------------
+
+
+class NarrativeCache(Base, TimestampMixin):
+    """One composed passage of prose, kept against the figures it was written about.
+
+    Three surfaces need a written interpretation of numbers they already publish: the growth
+    chart's drivers, a subject's strength/focus pair, and a goal's insight and next action. All
+    three are read on page load, and all three are Plus (Decision Z). Composing on every read
+    would mean an LLM call each time a learner opened a goal — so the prose is stored and reused.
+
+    **The key is what the prose is *about*, and `inputsHash` is what it was written *from*.** A
+    cache keyed only by entity would keep yesterday's sentence beside today's figure, which is the
+    worse failure of the two available: stale prose next to a fresh number reads as a statement
+    about the fresh number. So the measured skeleton is hashed, and a changed measurement is a
+    miss. Nothing expires on a timer, because a figure that has not moved has no new sentence to
+    be written about it.
+
+    **`entityId` and `scope` are NOT NULL with an empty-string default, and that is deliberate.**
+    Postgres treats NULLs as distinct in a unique index, so `(userId, kind, NULL, NULL)` would
+    admit unlimited duplicate rows for the growth drivers — the one kind that has no entity. An
+    empty string is a real value and the constraint holds for every kind.
+
+    `payload` is the assembled response fragment rather than the raw model reply: the truncation
+    guard and the id-matching have already been applied, so a reader cannot re-apply them
+    differently. `CASCADE` on the learner because prose about a deleted learner is not a record of
+    anything, and there is nothing here that could not be composed again.
+    """
+
+    __tablename__ = "NarrativeCache"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: __import__("uuid").uuid4().hex[:25]
+    )
+    user_id: Mapped[str] = mapped_column(
+        "userId", String, ForeignKey("User.id", ondelete="CASCADE"), index=True
+    )
+    #: Which surface asked. Free text rather than an enum column so a new panel needs no migration;
+    #: the permitted values live with the callers in `narrative_cache.py`.
+    kind: Mapped[str] = mapped_column("kind", String, nullable=False)
+    #: The course or goal the prose is about. `""` for a learner-wide passage — see the class note.
+    entity_id: Mapped[str] = mapped_column("entityId", String, nullable=False, default="")
+    #: A qualifier within the kind, such as the growth range. `""` when the kind has only one.
+    scope: Mapped[str] = mapped_column("scope", String, nullable=False, default="")
+    #: Fingerprint of the measured figures this was written from. A change here is a cache miss.
+    inputs_hash: Mapped[str] = mapped_column("inputsHash", String, nullable=False)
+    payload: Mapped[dict] = mapped_column("payload", JSON, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "userId", "kind", "entityId", "scope", name="NarrativeCache_key_key"
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return f"<NarrativeCache id={self.id} kind={self.kind} entityId={self.entity_id}>"

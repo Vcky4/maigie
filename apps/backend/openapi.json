@@ -136,6 +136,13 @@
             "title": "Availabletypes",
             "type": "array"
           },
+          "byType": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityTypeCount"
+            },
+            "title": "Bytype",
+            "type": "array"
+          },
           "days": {
             "items": {
               "$ref": "#/components/schemas/ActivityDayCount"
@@ -229,6 +236,25 @@
           "occurredAt"
         ],
         "title": "ActivityFeedEntryResponse",
+        "type": "object"
+      },
+      "ActivityTypeCount": {
+        "description": "One `activityType` and how many of it happened in the window.",
+        "properties": {
+          "activityType": {
+            "title": "Activitytype",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "activityType",
+          "count"
+        ],
+        "title": "ActivityTypeCount",
         "type": "object"
       },
       "AnswerResultResponse": {
@@ -2799,6 +2825,86 @@
         "title": "DueReviewResponse",
         "type": "object"
       },
+      "EvidenceItem": {
+        "description": "One dated thing the learner did, attributable to a course.\n\n**Not from the activity feed.** `ActivityFeedEntry` has no course column — `entityType`/`entityId`\nlive inside a nullable `context` JSON — and no writer has ever tagged an entry with `course` or\n`topic`, so a feed filter would return nothing for everyone (§7.2). These come from the tables that\nrecord the link.\n\n`value`/`unit` are numeric rather than pre-formatted prose. A number the client formats cannot\ndisagree with the figure beside it, and a string like `\"34 min\"` cannot be summed or compared.",
+        "properties": {
+          "correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "topic_completed",
+              "section_completed",
+              "study_session",
+              "knowledge_check"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurredAt": {
+            "format": "date-time",
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "occurredAt"
+        ],
+        "title": "EvidenceItem",
+        "type": "object"
+      },
       "ExamDetailsRequest": {
         "properties": {
           "examDate": {
@@ -3816,6 +3922,215 @@
         "title": "GoalCreate",
         "type": "object"
       },
+      "GoalEvidenceItem": {
+        "description": "One dated thing the learner did that counts towards a goal.\n\nMirrors `personal_learning.models.EvidenceItem` in a plain `BaseModel` because this domain does not\nuse `CamelModel` — the field names are the wire names here. The shape is deliberately identical so a\nclient can render subject evidence and goal evidence with one component.",
+        "properties": {
+          "correct": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correct"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "occurredAt": {
+            "title": "Occurredat",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "occurredAt"
+        ],
+        "title": "GoalEvidenceItem",
+        "type": "object"
+      },
+      "GoalEvidenceResponse": {
+        "description": "The work behind a goal, and which of its links produced it.",
+        "properties": {
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "items": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GoalEvidenceItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "linkedCourseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedcourseid"
+          },
+          "linkedPrepId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedprepid"
+          },
+          "linkedTopicId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linkedtopicid"
+          }
+        },
+        "required": [
+          "goalId"
+        ],
+        "title": "GoalEvidenceResponse",
+        "type": "object"
+      },
+      "GoalInsight": {
+        "description": "The written interpretation of one goal's figures.\n\n**Plus, delivered as a `200` with a `locked` notice** (Decision Z). `title` is a heading and is\ntrimmed; `detail` is a sentence and is `null` when the model did not finish one, because a fragment\nbeside a progress ring reads as a finding rather than as a gap.\n\n`signal` is computed, not written. It is a classification of measured pace, which is arithmetic.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "signal": {
+            "enum": [
+              "achieved",
+              "ahead",
+              "on_track",
+              "behind",
+              "not_paced"
+            ],
+            "title": "Signal",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "signal"
+        ],
+        "title": "GoalInsight",
+        "type": "object"
+      },
+      "GoalInsightResponse": {
+        "description": "The insight and next-action panels on the goal detail page.\n\n**Its own endpoint rather than fields on `GoalResponse`.** The goals list returns many goals and\n`GoalResponse` is what it returns them as; composing prose there would mean one language model call\nper goal per page load. Here it is one call per goal, cached against the figures it was written\nfrom, and the detail page's numbers paint without waiting for it.",
+        "properties": {
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "insight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GoalInsight"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockedNoticeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextAction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GoalNextAction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "goalId"
+        ],
+        "title": "GoalInsightResponse",
+        "type": "object"
+      },
       "GoalListResponse": {
         "properties": {
           "goals": {
@@ -4033,6 +4348,212 @@
           }
         },
         "title": "GoalMilestoneUpdate",
+        "type": "object"
+      },
+      "GoalMomentumResponse": {
+        "description": "Planned versus completed sessions per week, oldest week first.\n\n**Weeks with nothing planned are included at zero**, unlike the activity feed's daily counts where\na missing day is omitted. The difference is what the absence means: there, no row means nothing was\nrecorded; here, a week the learner scheduled nothing is itself part of the answer to \"did the plan\nget done\".",
+        "properties": {
+          "completionTracked": {
+            "default": false,
+            "title": "Completiontracked",
+            "type": "boolean"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "points": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GoalMomentumWeek"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "weeks": {
+            "title": "Weeks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "goalId",
+          "weeks"
+        ],
+        "title": "GoalMomentumResponse",
+        "type": "object"
+      },
+      "GoalMomentumWeek": {
+        "description": "One week of a goal's plan.",
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "planned": {
+            "title": "Planned",
+            "type": "integer"
+          },
+          "weekStart": {
+            "title": "Weekstart",
+            "type": "string"
+          }
+        },
+        "required": [
+          "weekStart",
+          "planned",
+          "completed"
+        ],
+        "title": "GoalMomentumWeek",
+        "type": "object"
+      },
+      "GoalNextAction": {
+        "description": "The recommended next move on a goal.\n\n**`target` and `label` are both chosen by the service** (Decision O). The target because a model\nfree to name an entity would eventually cite one this learner does not own; the label because a\nmodel-written button caption over a service-chosen destination is a button that lies about where it\ngoes. `label` is `\"\"` for a `none` target, where the card renders without a button at all.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "label": {
+            "default": "",
+            "title": "Label",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/GoalNextActionTarget"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "GoalNextAction",
+        "type": "object"
+      },
+      "GoalNextActionTarget": {
+        "description": "Where a recommended action points, as data rather than as a path.\n\nMirrors `personal_learning.models.ReflectionActionTarget` field for field, deliberately: the web\nclient already turns that shape into a URL in one place, and a second shape would mean a second\nroute table free to drift from the first. Restated here rather than imported because this domain's\nmodels are plain `BaseModel` with literal camelCase names, and importing a `CamelModel` would give\none response two serialisation conventions.\n\n`kind` is the same closed vocabulary — `preparation_practice`, `study_plan`, `schedule`,\n`flashcard_review`, `course`, `note`, `goal`, `none`. A backend that emitted `/prepare/x/practice`\nwould own the web client's routing and be wrong on every other client.",
+        "properties": {
+          "entityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entityid"
+          },
+          "kind": {
+            "default": "none",
+            "title": "Kind",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          }
+        },
+        "title": "GoalNextActionTarget",
+        "type": "object"
+      },
+      "GoalProgressHistoryResponse": {
+        "description": "A goal's trajectory, and an honest account of how much of one exists yet.\n\n**`points` may legitimately be empty, and that means two different things** — hence\n`firstCapturedOn`. A goal created this morning has no history because nothing has been recorded\nyet; a goal whose window predates the feature has none because the table did not exist. Both are\n\"building\", and neither is a flat line at today's value, which is what interpolating would have\ndrawn (Decision Y).\n\nThere is no `reconstructed` flag as `GrowthTrendPoint` carries, because there is nothing to\nreconstruct from: `Goal.progress` is overwritten in place with no dated event trail. Every point\nhere was observed on the day it is dated.",
+        "properties": {
+          "capturedDays": {
+            "title": "Captureddays",
+            "type": "integer"
+          },
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "firstCapturedOn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Firstcapturedon"
+          },
+          "goalId": {
+            "title": "Goalid",
+            "type": "string"
+          },
+          "points": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GoalProgressPoint"
+            },
+            "title": "Points",
+            "type": "array"
+          }
+        },
+        "required": [
+          "goalId",
+          "days",
+          "capturedDays"
+        ],
+        "title": "GoalProgressHistoryResponse",
+        "type": "object"
+      },
+      "GoalProgressPoint": {
+        "description": "One recorded day for one goal.",
+        "properties": {
+          "currentValue": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentvalue"
+          },
+          "currentValueMeasured": {
+            "default": false,
+            "title": "Currentvaluemeasured",
+            "type": "boolean"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "status": {
+            "default": "ACTIVE",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "progress"
+        ],
+        "title": "GoalProgressPoint",
         "type": "object"
       },
       "GoalProgressUpdate": {
@@ -4315,6 +4836,68 @@
         "title": "GoalResponse",
         "type": "object"
       },
+      "GoalSummaryResponse": {
+        "description": "The counts above the goals list, over the **whole** portfolio.\n\nIts own endpoint rather than fields on `GoalListResponse`, because the list is paginated and\nthese are not. Folding them into the list envelope would mean either recomputing the portfolio on\nevery page request or publishing counts that quietly described only page one — and the second is\nthe kind of number that looks right until a learner has twenty-one goals.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "integer"
+          },
+          "atRisk": {
+            "title": "Atrisk",
+            "type": "integer"
+          },
+          "averageProgress": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Averageprogress"
+          },
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "dueSoon": {
+            "title": "Duesoon",
+            "type": "integer"
+          },
+          "headline": {
+            "default": "steady",
+            "title": "Headline",
+            "type": "string"
+          },
+          "momentum": {
+            "items": {
+              "$ref": "#/components/schemas/GoalMomentumWeek"
+            },
+            "title": "Momentum",
+            "type": "array"
+          },
+          "momentumTracked": {
+            "default": false,
+            "title": "Momentumtracked",
+            "type": "boolean"
+          },
+          "overdue": {
+            "title": "Overdue",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active",
+          "completed",
+          "atRisk",
+          "dueSoon",
+          "overdue"
+        ],
+        "title": "GoalSummaryResponse",
+        "type": "object"
+      },
       "GoalUpdate": {
         "properties": {
           "courseId": {
@@ -4516,9 +5099,184 @@
         "title": "GrowthDelta",
         "type": "object"
       },
+      "GrowthDriver": {
+        "description": "One reason the curve moved, with the figures it moved by.\n\n**The service supplies `evidence`, `impact` and `change`; the model supplies only `title` and\n`detail`.** `evidence` is a rendered string of figures the service measured, not a sentence — a\nmodel asked to write \"19 active days\" from a brief containing 19 will eventually write 20, and this\nstring sits directly under a chart showing the real number. `impact` is a claim about magnitude,\nwhich is arithmetic.\n\nA driver only exists when its measure was actually captured across the range. There is no driver\nfor a series with fewer than two days in it, because one observation is not a movement.",
+        "properties": {
+          "change": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "id": {
+            "enum": [
+              "consistency",
+              "effort",
+              "mastery",
+              "retrieval"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "impact": {
+            "enum": [
+              "high",
+              "growing",
+              "steady",
+              "slipping"
+            ],
+            "title": "Impact",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "evidence",
+          "impact"
+        ],
+        "title": "GrowthDriver",
+        "type": "object"
+      },
+      "GrowthDriversResponse": {
+        "description": "What moved the curve, for the panel beneath the growth chart.\n\n**Its own endpoint rather than a field on `GrowthTrendsResponse`.** Composing prose takes seconds\non a cache miss, and the chart is the primary content of that page — folding this in would make\nthree measured series wait on an optional interpretation. The client fetches both and the chart\npaints first.",
+        "properties": {
+          "days": {
+            "title": "Days",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/GrowthDriver"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockedNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "range": {
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Range",
+            "type": "string"
+          }
+        },
+        "required": [
+          "range",
+          "days"
+        ],
+        "title": "GrowthDriversResponse",
+        "type": "object"
+      },
+      "GrowthMilestone": {
+        "description": "One thing the learner unlocked, from either milestone table.\n\n**Two inputs, one list.** Decision Q asked for a single milestone source and named `Achievement`;\nthe audit found nothing writes that table — its four rows are Prisma-era and belong to one learner —\nwhile `LearningMilestone` is written live for five. Reading only the first would publish a\npermanently empty panel for almost everyone; reading only the second would drop four real records.\n`source` says which table a row came from, so live records are distinguishable from frozen ones.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "milestone",
+              "achievement"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unlockedAt": {
+            "format": "date-time",
+            "title": "Unlockedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "unlockedAt",
+          "source"
+        ],
+        "title": "GrowthMilestone",
+        "type": "object"
+      },
       "GrowthSubject": {
         "description": "One subject's mastery, and how it moved across the requested range.\n\nA subject is a course (Decision H).",
         "properties": {
+          "activity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectActivitySummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "category": {
             "anyOf": [
               {
@@ -4575,9 +5333,23 @@
       "GrowthSubjectDetailResponse": {
         "description": "One subject, with its own mastery series across the range.",
         "properties": {
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectConcept"
+            },
+            "title": "Concepts",
+            "type": "array"
+          },
           "days": {
             "title": "Days",
             "type": "integer"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceItem"
+            },
+            "title": "Evidence",
+            "type": "array"
           },
           "points": {
             "items": {
@@ -4761,6 +5533,13 @@
           },
           "mastery": {
             "$ref": "#/components/schemas/GrowthDelta"
+          },
+          "milestones": {
+            "items": {
+              "$ref": "#/components/schemas/GrowthMilestone"
+            },
+            "title": "Milestones",
+            "type": "array"
           },
           "points": {
             "items": {
@@ -5848,6 +6627,45 @@
           "capability"
         ],
         "title": "LockedNotice",
+        "type": "object"
+      },
+      "LockedNoticeResponse": {
+        "description": "Why a panel is unavailable on this plan, in the shape the upsell card already renders.\n\nMirrors `personal_learning.models.LockedNotice` for the same reason `GoalNextActionTarget` mirrors\nits counterpart: one client component renders both, and this domain serialises with literal\ncamelCase names rather than through `CamelModel`.",
+        "properties": {
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "locked": {
+            "default": true,
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "trialAvailable": {
+            "default": false,
+            "title": "Trialavailable",
+            "type": "boolean"
+          },
+          "upgradeUrl": {
+            "default": "/subscription",
+            "title": "Upgradeurl",
+            "type": "string"
+          },
+          "upgradeValue": {
+            "default": "",
+            "title": "Upgradevalue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "capability"
+        ],
+        "title": "LockedNoticeResponse",
         "type": "object"
       },
       "LoginRequest": {
@@ -13029,6 +13847,17 @@
       },
       "StudyBlockResponse": {
         "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
           "courseId": {
             "anyOf": [
               {
@@ -13160,6 +13989,18 @@
       },
       "StudyBlockUpdate": {
         "properties": {
+          "completedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completedat"
+          },
           "courseId": {
             "anyOf": [
               {
@@ -14692,6 +15533,254 @@
           "completedCount"
         ],
         "title": "StudyPlansDashboardResponse",
+        "type": "object"
+      },
+      "SubjectActivitySummary": {
+        "description": "What the learner did on one subject across the range, as opposed to how far through it they are.\n\nEvery figure is `null` when nothing recorded it rather than `0` (Decision I), with one converse:\nonce the learner records study time anywhere in the range, `0` for a particular subject is a real\nfinding — they did not work on it — and is published as `0`.",
+        "properties": {
+          "activeDays": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activedays"
+          },
+          "focusedMinutes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focusedminutes"
+          },
+          "knowledgeCheckAccuracyPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledgecheckaccuracypercent"
+          },
+          "knowledgeChecksAnswered": {
+            "default": 0,
+            "title": "Knowledgechecksanswered",
+            "type": "integer"
+          },
+          "sessions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sessions"
+          }
+        },
+        "title": "SubjectActivitySummary",
+        "type": "object"
+      },
+      "SubjectConcept": {
+        "description": "One topic of a subject, and how far through it the learner is.\n\n**`Topic` stores no mastery score** — unlike `PrepTopic`, which has `masteryScore` and\n`targetMastery`. Everything here is derived, and `source` says from what, because the two sources are\nnot equally informative.",
+        "properties": {
+          "completed": {
+            "default": false,
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "masteryPercent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Masterypercent"
+          },
+          "sectionsCompleted": {
+            "default": 0,
+            "title": "Sectionscompleted",
+            "type": "integer"
+          },
+          "sectionsTotal": {
+            "default": 0,
+            "title": "Sectionstotal",
+            "type": "integer"
+          },
+          "source": {
+            "default": "completion",
+            "enum": [
+              "sections",
+              "completion"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "default": "not_started",
+            "enum": [
+              "not_started",
+              "needs_attention",
+              "growing",
+              "strong"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "topicId": {
+            "title": "Topicid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topicId",
+          "title"
+        ],
+        "title": "SubjectConcept",
+        "type": "object"
+      },
+      "SubjectInsight": {
+        "description": "What is working on this subject and where to look next, as the detail page renders it.\n\nTwo headings with a paragraph each. The headings are phrases and are truncated rather than\ndropped; the paragraphs are sentences and are dropped when unfinished, which is the same split\n`reflection_narrative.assemble` makes between `theme` and `closing`.",
+        "properties": {
+          "focus": {
+            "title": "Focus",
+            "type": "string"
+          },
+          "focusDetail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focusdetail"
+          },
+          "strength": {
+            "title": "Strength",
+            "type": "string"
+          },
+          "strengthDetail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Strengthdetail"
+          }
+        },
+        "required": [
+          "strength",
+          "focus"
+        ],
+        "title": "SubjectInsight",
+        "type": "object"
+      },
+      "SubjectInsightResponse": {
+        "properties": {
+          "courseId": {
+            "title": "Courseid",
+            "type": "string"
+          },
+          "insight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectInsight"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockedNotice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextStep": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectNextStep"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "range": {
+            "enum": [
+              "7d",
+              "30d",
+              "90d"
+            ],
+            "title": "Range",
+            "type": "string"
+          }
+        },
+        "required": [
+          "courseId",
+          "range"
+        ],
+        "title": "SubjectInsightResponse",
+        "type": "object"
+      },
+      "SubjectNextStep": {
+        "description": "The recommended next move on a subject.\n\n**`target` and `label` are both chosen by the service** (Decision O). The target because a model\nfree to name an entity would eventually cite one the learner does not own; the label because a\nmodel-written \"Practice Statistics\" over a service-chosen schedule route is a button that lies\nabout where it goes. `ReflectionActionTarget` rather than a path, so the client's existing route\ntable is the only place a URL is written.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/ReflectionActionTarget"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "label"
+        ],
+        "title": "SubjectNextStep",
         "type": "object"
       },
       "SubjectsSetRequest": {
@@ -22694,6 +23783,63 @@
         ]
       }
     },
+    "/api/v1/learning/growth/drivers": {
+      "get": {
+        "description": "What drove the movement in the growth series, written about the figures the chart shows.\n\n**A separate call from `/growth/trends`, on purpose.** Composing prose can take seconds on a first\nread, and the chart is the page. The client fetches both and paints the three series immediately.\n\n**Plus, as a `200` with a `locked` notice** (Decision Z), never a `403`: every figure on the page\nis free and only the interpretation is paid, so Free sees an upgrade card where the panel would be.\nA range above the learner's plan reports *that* lock instead, since an empty series has no drivers\nto explain.\n\n`evidence` and `impact` on each driver are measured here; only the heading and the sentence come\nfrom a model, and a sentence it did not finish arrives as `null` rather than as a fragment.",
+        "operationId": "get_growth_drivers_api_v1_learning_growth_drivers_get",
+        "parameters": [
+          {
+            "description": "7d, 30d or 90d",
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "description": "7d, 30d or 90d",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GrowthDriversResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Growth Drivers",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
     "/api/v1/learning/growth/subjects": {
       "get": {
         "description": "Mastery by subject, with the change across the range.\n\nA subject is a course. `change` is differenced from the daily snapshot, and this is where it\nstops being the permanent `null` Phase 2 left it as.",
@@ -22825,6 +23971,70 @@
           }
         ],
         "summary": "Get Growth Subject Detail",
+        "tags": [
+          "personal-learning",
+          "personal-learning"
+        ]
+      }
+    },
+    "/api/v1/learning/growth/subjects/{course_id}/insight": {
+      "get": {
+        "description": "One subject's strength, focus and recommended next step.\n\nSeparate from `/growth/subjects/{course_id}` for the same reason as the drivers: the mastery\nseries, the topic list and the evidence timeline must not wait on an optional interpretation.\n\nA course belonging to another learner answers `404`, not `403` — the ownership check is the one\ninside the detail read, so the id is no more probeable here than there.\n\nThe recommended step's destination and button text are chosen by the service from what was\nmeasured (Decision O), and published as a `target` rather than a path so the client keeps owning\nits route table.",
+        "operationId": "get_growth_subject_insight_api_v1_learning_growth_subjects__course_id__insight_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "course_id",
+            "required": true,
+            "schema": {
+              "title": "Course Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "enum": [
+                "7d",
+                "30d",
+                "90d"
+              ],
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectInsightResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Growth Subject Insight",
         "tags": [
           "personal-learning",
           "personal-learning"
@@ -28464,6 +29674,58 @@
         ]
       }
     },
+    "/api/v1/progress/goals/summary": {
+      "get": {
+        "description": "Everything above the goals list: the portfolio counts, the momentum chart, and what to lead with.\n\n**Declared before `/goals/{goal_id}`** deliberately: FastAPI matches in declaration order, so the\nother way round this path would arrive as a goal called \"summary\" and 404.\n\nThe counts come from one query over the whole portfolio. The list endpoint cannot answer them — it is\npaginated, so its twenty rows would give an average that changed as the learner paged.\n\n**`headline` is a token and the client writes the sentence.** The fixture's hero baked two numbers\ninto prose, which is a claim that can disagree with the tiles beneath it; the token says which\nsituation applies and the counts beside it supply every figure the sentence needs.\n\n`momentum` is composed here rather than in a sibling endpoint because it is part of the same header:\nthe chart, the tiles and the greeting are one block of the page and are better read in one request\nthan assembled from three that could describe different moments.",
+        "operationId": "get_goals_summary_api_v1_progress_goals_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "momentumWeeks",
+            "required": false,
+            "schema": {
+              "default": 4,
+              "maximum": 26,
+              "minimum": 1,
+              "title": "Momentumweeks",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Goals Summary",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
     "/api/v1/progress/goals/{goal_id}": {
       "delete": {
         "description": "Delete a goal.",
@@ -28604,6 +29866,176 @@
           }
         ],
         "summary": "Update Goal",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/evidence": {
+      "get": {
+        "description": "Recent dated work behind a goal, newest first.\n\nA goal is not itself measurable — it points at a course, a topic or a preparation, and the evidence\nis the work done on *that*. `linkedCourseId` publishes which link answered, so a client can say\n\"from Linear Algebra\" rather than implying the goal recorded this directly.\n\n**A goal with no link returns an empty list, not the learner's general activity.** Falling back to\neverything they did would attach unrelated work to a goal and make the panel look informative while\nbeing wrong.\n\nReads the domain tables, not `ActivityFeedEntry` — the feed has no course column and nothing has ever\ntagged an entry with one (§7.2), so a filter there returns nothing for everyone.",
+        "operationId": "get_goal_evidence_api_v1_progress_goals__goal_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Goal Evidence",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/history": {
+      "get": {
+        "description": "A goal's progress trajectory, from `GoalProgressSnapshot`.\n\n`get_goal` first, so a goal belonging to someone else 404s here exactly as it does everywhere\nelse — the history read is scoped by `userId` as well, but ownership is established once, in the\nsame place as every other goal route.\n\n**The window ends yesterday**, matching `growth_service._window` and for the same reason: the\nnightly writer records each learner's most recently *finished* local day, so including today asks\nfor a row that by definition does not exist and makes every range report one fewer captured day\nthan it has.\n\nAn empty `points` is a legitimate answer, and `firstCapturedOn` is what makes it readable —\nnothing recorded yet, versus history that exists outside this window (Decision Y). Neither is\nfilled in with an interpolated line.",
+        "operationId": "get_goal_history_api_v1_progress_goals__goal_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range",
+            "required": false,
+            "schema": {
+              "default": "30d",
+              "pattern": "^(7d|30d|90d)$",
+              "title": "Range",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalProgressHistoryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Goal History",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/insight": {
+      "get": {
+        "description": "One goal's written interpretation and recommended next action.\n\n**Its own endpoint rather than fields on `GoalResponse`.** The goals list returns many goals as that\nmodel, so composing prose there would mean one language model call per goal per page load. Here it\nis one per goal, stored against the figures it was written from.\n\n**Plus, as a `200` with a `locked` notice** (Decision Z), never a `403`. Every number on the goal\ndetail page is free and only the interpretation is paid, so a Free page renders an upgrade card where\nthe panel would be rather than an error over figures that are all perfectly fine.\n\nThe recommended action's destination and button text are chosen by the service from what was\nmeasured (Decision O) and published as a `target` rather than a path, so the client keeps owning its\nroute table. `signal` is derived from the same `statusLabel` and `pacePercent` the goal card shows.",
+        "operationId": "get_goal_insight_api_v1_progress_goals__goal_id__insight_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalInsightResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Goal Insight",
         "tags": [
           "progress",
           "progress"
@@ -28831,6 +30263,67 @@
           }
         ],
         "summary": "Update Goal Milestone",
+        "tags": [
+          "progress",
+          "progress"
+        ]
+      }
+    },
+    "/api/v1/progress/goals/{goal_id}/momentum": {
+      "get": {
+        "description": "Planned versus completed sessions per week for one goal.\n\nReads the goal's `ScheduleBlock` rows — a *goal plan*, which Decision R keeps distinct from a\n`StudyPlan`. Ownership is established by `get_goal` first, as on every other goal route.\n\n`completionTracked` is what makes a flat-zero `completed` series readable: until a learner marks a\nblock done, \"you completed nothing\" and \"nothing is being tracked yet\" are indistinguishable from\nthe numbers alone, and only one of them is true (Decision Y).",
+        "operationId": "get_goal_momentum_api_v1_progress_goals__goal_id__momentum_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "goal_id",
+            "required": true,
+            "schema": {
+              "title": "Goal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "weeks",
+            "required": false,
+            "schema": {
+              "default": 4,
+              "maximum": 26,
+              "minimum": 1,
+              "title": "Weeks",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalMomentumResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Goal Momentum",
         "tags": [
           "progress",
           "progress"

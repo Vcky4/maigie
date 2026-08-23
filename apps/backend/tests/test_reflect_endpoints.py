@@ -701,3 +701,817 @@ class TestDashboardDegradation:
         assert "achievements" not in sections["trends"]
         assert "trends" not in sections["achievements"]
         assert sections["activity"] == {"activity"}
+
+
+
+class TestSubjectActivity:
+    """Per-subject activity, and the two rules that decide whether a figure may be published.
+
+    §7.2's audit found that most of what the subject pages wanted is **not attributable to a course**:
+    quiz accuracy belongs to an `ExamPrep`, flashcard reviews to a deck. What is attributable is study
+    time, from `StudySession.courseId`, and knowledge-check correctness, through `Topic → Module`.
+    """
+
+    LAGOS = None  # set in `_activity`
+
+    async def _activity(self, *, session_rows, check_rows, since=None, until=None):
+        """Run `list_subject_activity`'s folding over supplied rows."""
+        from unittest.mock import patch
+        from zoneinfo import ZoneInfo
+
+        from src.domains.personal_learning.services import reflect_aggregates
+        from src.shared.time import LearnerTimezone
+
+        lagos = LearnerTimezone(
+            zone=ZoneInfo("Africa/Lagos"), name="Africa/Lagos", is_known=True, source="DEVICE"
+        )
+
+        calls = {"n": 0}
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                calls["n"] += 1
+                return _Result(session_rows if calls["n"] == 1 else check_rows)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+            return await reflect_aggregates.list_subject_activity(
+                user_id="u",
+                since=since or date(2026, 8, 17),
+                until=until or date(2026, 8, 23),
+                timezone_=lagos,
+            )
+
+    async def _by_course(self, **kwargs):
+        return (await self._activity(**kwargs)).by_course
+
+    async def test_a_learner_who_tracks_no_time_gets_nulls_not_zeros(self):
+        """Nothing in `StudySession` at all means unmeasured, and `0 sessions` would be a claim.
+
+        Phase 2 recorded that `StudySession` is written by one endpoint most learners never touch, so
+        this is the common case rather than an edge one.
+        """
+        activity = await self._by_course(
+            session_rows=[],
+            check_rows=[("course-1", 4, 3)],
+        )
+
+        row = activity["course-1"]
+        assert row.sessions is None
+        assert row.focused_minutes is None
+        assert row.active_days is None
+        # The checks were measured, so they are reported.
+        assert row.knowledge_checks_answered == 4
+        assert row.knowledge_check_accuracy_percent == 75.0
+
+    async def test_zero_is_published_once_the_learner_tracks_time_somewhere(self):
+        """The converse of Decision I, settled by `reflection_metrics.compute`'s `had_activity` gate:
+        once there is evidence the learner records time, "no sessions on this subject" is a finding."""
+        activity = await self._by_course(
+            # A session on another course, so tracking is evidently happening.
+            session_rows=[
+                ("course-other", datetime(2026, 8, 20, 9, 0, tzinfo=UTC), 30.0),
+            ],
+            check_rows=[("course-1", 2, 1)],
+        )
+
+        assert activity["course-1"].sessions == 0
+        assert activity["course-1"].focused_minutes == 0.0
+        assert activity["course-1"].active_days == 0
+        assert activity["course-other"].sessions == 1
+
+    async def test_sessions_minutes_and_days_are_counted_per_course(self):
+        activity = await self._by_course(
+            session_rows=[
+                ("course-1", datetime(2026, 8, 20, 9, 0, tzinfo=UTC), 30.0),
+                ("course-1", datetime(2026, 8, 20, 14, 0, tzinfo=UTC), 25.5),
+                ("course-1", datetime(2026, 8, 21, 9, 0, tzinfo=UTC), 10.0),
+                ("course-2", datetime(2026, 8, 20, 9, 0, tzinfo=UTC), 5.0),
+            ],
+            check_rows=[],
+        )
+
+        one = activity["course-1"]
+        assert one.sessions == 3
+        assert one.focused_minutes == 65.5
+        # Two sittings on the 20th collapse to one day.
+        assert one.active_days == 2
+        assert activity["course-2"].sessions == 1
+
+    async def test_active_days_use_the_learner_calendar_not_utc(self):
+        """23:30 UTC on the 20th is 00:30 on the **21st** in Lagos, so these are two local days, not
+        one. Bucketing in SQL would have made them one and disagreed with
+        `DailyLearningSnapshot.snapshotDate` at every boundary."""
+        activity = await self._by_course(
+            session_rows=[
+                ("course-1", datetime(2026, 8, 20, 12, 0, tzinfo=UTC), 10.0),
+                ("course-1", datetime(2026, 8, 20, 23, 30, tzinfo=UTC), 10.0),
+            ],
+            check_rows=[],
+        )
+
+        assert activity["course-1"].active_days == 2
+
+    async def test_a_session_outside_the_local_window_is_excluded(self):
+        """The UTC query is widened by a day on each side so a late-evening local session is not lost;
+        the precise filter is then applied in the learner's own calendar."""
+        activity = await self._by_course(
+            session_rows=[
+                # 16 Aug in Lagos — one day before the window opens.
+                ("course-1", datetime(2026, 8, 16, 12, 0, tzinfo=UTC), 40.0),
+                ("course-1", datetime(2026, 8, 20, 12, 0, tzinfo=UTC), 10.0),
+            ],
+            check_rows=[],
+        )
+
+        assert activity["course-1"].sessions == 1
+        assert activity["course-1"].focused_minutes == 10.0
+
+    async def test_accuracy_over_no_attempts_is_null_not_zero(self):
+        """A percentage with an empty denominator is unmeasured. `prepare_dashboard_service` already
+        follows this rule for quiz accuracy."""
+        activity = await self._by_course(
+            session_rows=[("course-1", datetime(2026, 8, 20, 9, 0, tzinfo=UTC), 10.0)],
+            check_rows=[],
+        )
+
+        assert activity["course-1"].knowledge_checks_answered == 0
+        assert activity["course-1"].knowledge_check_accuracy_percent is None
+
+    async def test_a_session_with_no_course_counts_as_tracking_but_no_subject(self):
+        """It is evidence the learner records time — which unlocks `0` for other subjects — while
+        belonging to no subject itself."""
+        activity = await self._by_course(
+            session_rows=[(None, datetime(2026, 8, 20, 9, 0, tzinfo=UTC), 45.0)],
+            check_rows=[("course-1", 1, 1)],
+        )
+
+        assert None not in activity
+        assert activity["course-1"].sessions == 0, "tracking happened, so zero is a finding"
+
+
+    async def test_a_subject_with_no_row_reads_zero_when_the_learner_tracks_time(self):
+        """Found by running this against real data, not by reading it.
+
+        `by_course` only holds courses with something recorded, so the first version returned
+        `activity: null` for every other course — a dash on the page where `0 sessions` is the truth for
+        a learner who tracks time and simply did not open that subject. `for_course` fills the gap using
+        the learner-level `tracked_any_session` flag.
+        """
+        activity_map = await self._activity(
+            session_rows=[("course-1", datetime(2026, 8, 20, 9, 0, tzinfo=UTC), 30.0)],
+            check_rows=[],
+        )
+
+        untouched = activity_map.for_course("course-never-opened")
+        assert untouched.sessions == 0
+        assert untouched.focused_minutes == 0.0
+        assert untouched.active_days == 0
+        assert untouched.knowledge_check_accuracy_percent is None
+
+    async def test_a_subject_with_no_row_reads_null_when_nothing_is_tracked(self):
+        """The other half of the same rule: no evidence of tracking anywhere means unmeasured."""
+        activity_map = await self._activity(session_rows=[], check_rows=[])
+
+        untouched = activity_map.for_course("course-never-opened")
+        assert untouched.sessions is None
+        assert untouched.focused_minutes is None
+        assert untouched.active_days is None
+
+
+class TestSubjectActivityNaming:
+    def test_the_accuracy_field_is_not_called_recall(self):
+        """§7.2: quiz accuracy cannot be attributed to a course, so a field called `recall` on a subject
+        would be measuring one thing and named after another. If `recall` appears here, either a join
+        from `ExamPrep` to `Course` now exists — in which case this test should be replaced — or
+        something has been renamed into a claim it cannot support.
+        """
+        fields = set(models.SubjectActivitySummary.model_fields)
+
+        assert "knowledge_check_accuracy_percent" in fields
+        assert not any("recall" in name for name in fields)
+
+
+
+class TestConceptStatus:
+    """The three-band ladder, plus the fourth state that keeps it honest.
+
+    `mastery_band` is imported from `prep_readiness`, not redefined — the same arrangement `is_at_risk`
+    has. Two sets of thresholds would mean a topic called "strong" on one screen and "needs attention" on
+    another.
+    """
+
+    def test_the_ladder_is_the_shared_one(self):
+        from src.domains.personal_learning.services import prep_readiness, reflect_aggregates
+
+        assert reflect_aggregates.mastery_band is prep_readiness.mastery_band
+        assert reflect_aggregates.MASTERY_STRONG_THRESHOLD == 80.0
+        assert reflect_aggregates.MASTERY_FOCUS_THRESHOLD == 70.0
+
+    def test_an_untouched_topic_is_not_started_rather_than_needing_attention(self):
+        """The reason the fourth state exists.
+
+        `mastery_band(0.0)` is `focus`, which the design renders as "Needs attention" — right for a topic
+        worked and not grasped, wrong for one never opened. A live course showed 24 of 25 topics at 0%;
+        without this state every one of them would have been flagged as a problem on first paint.
+        """
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        assert (
+            reflect_aggregates.concept_status(mastery_percent=0.0, touched=False) == "not_started"
+        )
+        assert (
+            reflect_aggregates.concept_status(mastery_percent=0.0, touched=True)
+            == "needs_attention"
+        )
+
+    @pytest.mark.parametrize(
+        ("percent", "expected"),
+        [
+            (0.0, "needs_attention"),
+            (69.9, "needs_attention"),
+            (70.0, "growing"),
+            (79.9, "growing"),
+            (80.0, "strong"),
+            (100.0, "strong"),
+        ],
+    )
+    def test_the_band_boundaries(self, percent, expected):
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        assert (
+            reflect_aggregates.concept_status(mastery_percent=percent, touched=True) == expected
+        )
+
+
+class TestConceptMastery:
+    async def _concepts(self, rows):
+        """Run `list_concept_mastery`'s folding over `(id, title, completed, total, done)` rows."""
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        class _Result:
+            def all(self):
+                return rows
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                return _Result()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+            return await reflect_aggregates.list_concept_mastery(user_id="u", course_id="c")
+
+    async def test_a_topic_with_sections_gets_a_real_gradation(self):
+        concepts = await self._concepts([("t1", "Sleep", False, 6, 3)])
+
+        assert concepts[0].mastery_percent == 50.0
+        assert concepts[0].source == "sections"
+        assert concepts[0].status == "needs_attention", "half done and worked on"
+
+    async def test_a_topic_without_sections_is_binary_and_says_so(self):
+        """`Topic` has no mastery column, so 0 or 100 is all there is. `source` publishes that rather
+        than letting a client read precision into a figure that has none — and in this database 94% of
+        topics are in this branch."""
+        incomplete, complete = await self._concepts(
+            [("t1", "Cues", False, 0, 0), ("t2", "Safety", True, 0, 0)]
+        )
+
+        assert incomplete.source == "completion"
+        assert incomplete.mastery_percent == 0.0
+        assert incomplete.status == "not_started"
+        assert complete.mastery_percent == 100.0
+        assert complete.status == "strong"
+
+    async def test_opening_one_section_counts_as_touched_before_finishing_any(self):
+        """A learner part-way through the first section has started. Zero *completed* sections with a
+        section count above zero is still 0%, but it is not `not_started`... unless nothing is done yet,
+        which is the case here — so this pins the boundary deliberately."""
+        concepts = await self._concepts([("t1", "Cues", False, 6, 0)])
+
+        assert concepts[0].mastery_percent == 0.0
+        assert concepts[0].status == "not_started", "no section finished and not marked complete"
+
+    async def test_a_topic_marked_complete_counts_as_touched_even_with_no_sections_ticked(self):
+        """Sections can be added after a topic was completed, or never ticked individually. The
+        completion flag is still evidence of work."""
+        concepts = await self._concepts([("t1", "Sleep", True, 4, 0)])
+
+        assert concepts[0].completed is True
+        assert concepts[0].status != "not_started"
+
+    async def test_section_counts_are_published_alongside_the_percentage(self):
+        """So a client can show "3 of 6 sections" instead of only "50%", which is the more useful
+        sentence and cannot be reconstructed from a rounded percentage."""
+        concepts = await self._concepts([("t1", "Sleep", False, 7, 3)])
+
+        assert concepts[0].sections_total == 7
+        assert concepts[0].sections_completed == 3
+
+    async def test_a_course_with_no_topics_returns_an_empty_list(self):
+        assert await self._concepts([]) == []
+
+
+class TestConceptMasteryScope:
+    def test_no_shared_course_branch_exists(self):
+        """`UserTopicProgress` holds progress on *shared* courses, and this read is only ever reached for
+        a course the learner owns — `list_subject_mastery` filters on `Course.userId`, and a subject is a
+        course (Decision H). A shared branch here would be code no request can reach, which is worse than
+        no branch because it would look maintained.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        source = inspect.getsource(reflect_aggregates.list_concept_mastery)
+        assert "UserTopicProgress" not in source.split('"""')[2], (
+            "a shared-course branch appeared; either the scope changed or this is dead code"
+        )
+
+    def test_no_per_topic_knowledge_check_verdict(self):
+        """`TopicCheckAttempt` is one question per topic, re-answerable after the answer is revealed, so a
+        per-topic `correct` would be a coin flip dressed as mastery. Its aggregate is published at subject
+        level instead, where averaging over many topics makes it mean something."""
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        fields = {f.name for f in reflect_aggregates.ConceptMastery.__dataclass_fields__.values()}
+        assert not any("check" in name or "correct" in name for name in fields)
+
+
+
+class TestCourseEvidence:
+    """Evidence comes from the domain tables. The feed cannot supply it.
+
+    §7.2: `ActivityFeedEntry` has no course column — `entityType`/`entityId` are keys inside a nullable
+    `context` JSON — and no writer has ever tagged an entry with `course` or `topic`, though both are in
+    the `ActivityEntity` literal. A feed filter would have passed review and returned zero rows for every
+    learner.
+    """
+
+    async def _evidence(self, *, topics=(), sections=(), sessions=(), checks=(), limit=12):
+        """Run `list_course_evidence`'s merge over supplied rows for each of its four queries."""
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        batches = [list(topics), list(sections), list(sessions), list(checks)]
+        calls = {"n": 0}
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                rows = batches[calls["n"]] if calls["n"] < len(batches) else []
+                calls["n"] += 1
+                return _Result(rows)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+            return await reflect_aggregates.list_course_evidence(
+                user_id="u", course_id="c", limit=limit
+            )
+
+    async def test_the_four_sources_are_merged_newest_first(self):
+        items = await self._evidence(
+            topics=[("t1", "Recursion", "Module 2", datetime(2026, 8, 10, 9, 0, tzinfo=UTC))],
+            sections=[("s1", "Base cases", "Recursion", datetime(2026, 8, 12, 9, 0, tzinfo=UTC))],
+            sessions=[("ss1", datetime(2026, 8, 14, 9, 0, tzinfo=UTC), 34.0)],
+            checks=[("c1", "Recursion", True, datetime(2026, 8, 11, 9, 0, tzinfo=UTC))],
+        )
+
+        assert [item.kind for item in items] == [
+            "study_session",
+            "section_completed",
+            "knowledge_check",
+            "topic_completed",
+        ]
+
+    async def test_a_session_carries_minutes_as_a_number_not_a_string(self):
+        """The fixture had `result: "34 min"`. A number the client formats cannot disagree with the
+        figure beside it, and a string cannot be summed."""
+        items = await self._evidence(
+            sessions=[("ss1", datetime(2026, 8, 14, 9, 0, tzinfo=UTC), 34.0)]
+        )
+
+        assert items[0].value == 34.0
+        assert items[0].unit == "min"
+        assert items[0].correct is None, "a study session is not correct or incorrect"
+
+    async def test_a_knowledge_check_carries_its_verdict_and_no_value(self):
+        items = await self._evidence(
+            checks=[("c1", "Recursion", False, datetime(2026, 8, 11, 9, 0, tzinfo=UTC))]
+        )
+
+        assert items[0].correct is False
+        assert items[0].value is None
+
+    async def test_ids_are_namespaced_so_two_tables_cannot_collide(self):
+        """Four sources with independent id spaces land in one list; an unprefixed id would let a topic
+        and a session share a React key."""
+        items = await self._evidence(
+            topics=[("x", "T", "M", datetime(2026, 8, 10, tzinfo=UTC))],
+            sessions=[("x", datetime(2026, 8, 11, tzinfo=UTC), 5.0)],
+        )
+
+        assert {item.id for item in items} == {"topic:x", "session:x"}
+
+    async def test_the_limit_applies_after_the_merge(self):
+        """Each query is capped at `limit`, so the merge reads at most four times that and then trims —
+        otherwise the newest few items of one kind could crowd out newer items of another."""
+        items = await self._evidence(
+            topics=[
+                ("t1", "A", "M", datetime(2026, 8, 1, tzinfo=UTC)),
+                ("t2", "B", "M", datetime(2026, 8, 2, tzinfo=UTC)),
+            ],
+            sessions=[("ss1", datetime(2026, 8, 20, tzinfo=UTC), 5.0)],
+            limit=2,
+        )
+
+        assert len(items) == 2
+        assert items[0].kind == "study_session", "the newest item survives the trim"
+
+    async def test_nothing_recorded_returns_an_empty_list(self):
+        assert await self._evidence() == []
+
+
+class TestEvidenceExcludesUndatedWork:
+    def test_the_queries_require_a_completion_timestamp(self):
+        """About half the completed topics in this database have no `completedAt`.
+
+        An evidence list is a timeline, so an undated item has nowhere to sit on it. Substituting
+        `updatedAt` would place the learner's work on the day a row was last touched by anything — which
+        is the kind of plausible-looking date this programme exists to keep out.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        source = inspect.getsource(reflect_aggregates.list_course_evidence)
+        assert source.count("completed_at.is_not(None)") == 2, (
+            "both the topic and section reads must exclude undated completions"
+        )
+
+
+class TestGoalEvidence:
+    async def _goal_evidence(self, goal, *, course_evidence=None):
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        async def _fake_course_evidence(*, user_id, course_id, limit=12):
+            return course_evidence or []
+
+        with patch.object(reflect_aggregates, "list_course_evidence", _fake_course_evidence):
+            return await reflect_aggregates.list_goal_evidence(user_id="u", goal=goal, limit=5)
+
+    async def test_a_course_linked_goal_reads_its_course(self):
+        from types import SimpleNamespace
+
+        item = SimpleNamespace(id="session:1")
+        items = await self._goal_evidence(
+            SimpleNamespace(course_id="c1", topic_id=None, prep_id=None),
+            course_evidence=[item],
+        )
+
+        assert items == [item]
+
+    async def test_an_unlinked_goal_returns_nothing_rather_than_general_activity(self):
+        """One of the six goals in this database is exactly this: `manual`, with no course, topic or prep.
+
+        Falling back to everything the learner did would attach unrelated work to a goal and make the
+        panel look informative while being wrong.
+        """
+        from types import SimpleNamespace
+
+        items = await self._goal_evidence(
+            SimpleNamespace(course_id=None, topic_id=None, prep_id=None),
+            course_evidence=[SimpleNamespace(id="should-not-appear")],
+        )
+
+        assert items == []
+
+
+
+class TestActivityTypeCounts:
+    """The activity mix, and why it is raw types rather than categories.
+
+    `days` answers *when* things happened; this answers *what*. Both go through the shared
+    `_feed_conditions`, which is what stops the three feed reads disagreeing about the same window.
+    """
+
+    def test_the_counts_share_the_feed_condition_builder(self):
+        """One builder, so the paged read, the per-day counts and the per-type counts cannot describe
+        different windows. Copying the predicate into a third reader is the failure this prevents."""
+        import inspect
+
+        from src.domains.personal_learning.repository import PersonalLearningRepository
+
+        source = inspect.getsource(PersonalLearningRepository.count_feed_entries_by_type)
+        assert "self._feed_conditions(" in source
+
+    def test_the_service_does_not_group_into_categories(self):
+        """The client already owns the activityType-to-category map — it needs one to choose an icon and
+        a label per entry. A second grouping in the service would drift from it, and the page would end
+        up showing a bar chart that disagreed with its own filter chips.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import activity_feed_service
+
+        source = inspect.getsource(activity_feed_service.list_type_counts)
+        # The docstring explains the rule and names the categories, so only the body is inspected —
+        # otherwise the explanation itself trips the assertion.
+        body = source.split('"""')[-1]
+        for category in ("practice", "mastery", "notes", "community", "milestones"):
+            assert f'"{category}"' not in body, (
+                f"a category grouping for {category!r} appeared in the service body"
+            )
+
+    def test_total_is_summed_from_the_day_counts_not_queried_again(self):
+        """So the figure above the strip and the strip itself cannot disagree — the rule
+        `reflect_dashboard_service` follows when it composes its summary from already-loaded sources."""
+        import inspect
+
+        from src.domains.personal_learning import routes
+
+        source = inspect.getsource(routes.get_activity_daily_counts)
+        assert "total=sum(count for _, count in days)" in source
+
+    def test_the_response_carries_both_the_mix_and_the_full_vocabulary(self):
+        """`byType` omits kinds with nothing in the window, so a client that wants to draw an empty bar
+        for an unused type needs `availableTypes` as well."""
+        fields = set(models.ActivityDayCountsResponse.model_fields)
+
+        assert {"days", "total", "by_type", "available_types"} <= fields
+
+
+
+class TestGrowthMilestones:
+    """Two milestone tables, one published list — and why Decision Q's choice of table was wrong.
+
+    Decision Q asked for a single Reflect milestone source and named `Achievement`. Auditing the data
+    found nothing writes it: `create_achievement` is called from nowhere in `src`, its four rows are
+    Prisma-era and belong to one learner, while `LearningMilestone` is written live for five. Reading
+    only the named table would publish a permanently empty panel for almost everyone; reading only the
+    live one would drop four real records.
+    """
+
+    async def _milestones(self, *, milestones=(), achievements=(), **kwargs):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        batches = [list(milestones), list(achievements)]
+        calls = {"n": 0}
+
+        class _Scalars:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def scalars(self):
+                return _Scalars(self._rows)
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                rows = batches[calls["n"]] if calls["n"] < len(batches) else []
+                calls["n"] += 1
+                return _Result(rows)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        _ = SimpleNamespace
+        with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+            return await reflect_aggregates.list_growth_milestones(user_id="u", **kwargs)
+
+    def _milestone_row(self, milestone_id, at, row_id="m1"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(id=row_id, milestone_id=milestone_id, achieved_at=at)
+
+    def _achievement_row(self, at, row_id="a1"):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            id=row_id,
+            achievement_type="TOPIC_COMPLETION",
+            title="10 Topics Completed",
+            description="Great progress",
+            icon="🏆",
+            unlocked_at=at,
+        )
+
+    async def test_both_tables_appear_in_one_list_newest_first(self):
+        items = await self._milestones(
+            milestones=[self._milestone_row("7_day_streak", datetime(2026, 8, 20, tzinfo=UTC))],
+            achievements=[self._achievement_row(datetime(2026, 8, 22, tzinfo=UTC))],
+        )
+
+        assert [item.source for item in items] == ["achievement", "milestone"]
+
+    async def test_a_milestone_takes_its_copy_from_the_catalogue(self):
+        """Title, description and icon live in `milestone_service.MILESTONES`; the row holds only an id."""
+        items = await self._milestones(
+            milestones=[self._milestone_row("7_day_streak", datetime(2026, 8, 20, tzinfo=UTC))]
+        )
+
+        assert items[0].title == "7-Day Study Streak"
+        assert items[0].description == "Studied on seven consecutive days."
+        assert items[0].kind == "streak"
+        assert items[0].icon
+
+    async def test_an_unknown_milestone_id_still_appears(self):
+        """It happened. Hiding a retired milestone would make it look as though it never occurred."""
+        items = await self._milestones(
+            milestones=[self._milestone_row("retired_thing", datetime(2026, 8, 20, tzinfo=UTC))]
+        )
+
+        assert len(items) == 1
+        assert items[0].title == "retired_thing"
+        assert items[0].description is None
+
+    async def test_ids_are_namespaced_across_the_two_tables(self):
+        """Two independent id spaces in one list."""
+        items = await self._milestones(
+            milestones=[self._milestone_row("7_day_streak", datetime(2026, 8, 20, tzinfo=UTC), "x")],
+            achievements=[self._achievement_row(datetime(2026, 8, 21, tzinfo=UTC), "x")],
+        )
+
+        assert {item.id for item in items} == {"milestone:x", "achievement:x"}
+
+    async def test_the_window_is_inclusive_on_both_ends(self):
+        items = await self._milestones(
+            milestones=[
+                self._milestone_row("7_day_streak", datetime(2026, 8, 17, 9, 0, tzinfo=UTC), "a"),
+                self._milestone_row("first_document", datetime(2026, 8, 23, 9, 0, tzinfo=UTC), "b"),
+                self._milestone_row("plan_complete", datetime(2026, 8, 24, 9, 0, tzinfo=UTC), "c"),
+            ],
+            since=date(2026, 8, 17),
+            until=date(2026, 8, 23),
+        )
+
+        assert {item.id for item in items} == {"milestone:a", "milestone:b"}
+
+    async def test_the_limit_applies_after_the_merge(self):
+        """Sliced after merging, so the newest few of one table cannot crowd out newer rows of the
+        other — which is exactly what slicing per table would have done."""
+        items = await self._milestones(
+            milestones=[
+                self._milestone_row("7_day_streak", datetime(2026, 8, 1, tzinfo=UTC), "old"),
+            ],
+            achievements=[self._achievement_row(datetime(2026, 8, 25, tzinfo=UTC), "new")],
+            limit=1,
+        )
+
+        assert [item.id for item in items] == ["achievement:new"]
+
+
+class TestDashboardAchievementsReadBothTables:
+    def test_the_dashboard_no_longer_reads_only_the_frozen_table(self):
+        """It read `progress_repo.list_achievements` alone, which meant four frozen rows for one learner
+        and an empty list for everyone else — on screen, indistinguishable from having achieved nothing.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import reflect_dashboard_service
+
+        source = inspect.getsource(reflect_dashboard_service._load_achievements)
+        assert "list_growth_milestones" in source
+        assert "progress_repo.list_achievements" not in source
+
+    def test_every_catalogue_entry_has_the_copy_the_panel_renders(self):
+        """A milestone with no description would render a titled card over blank space."""
+        from src.domains.personal_learning.services.milestone_service import MILESTONES
+
+        for entry in MILESTONES:
+            assert entry.get("title"), entry["id"]
+            assert entry.get("description"), f"{entry['id']} has no description"
+            assert entry.get("icon"), entry["id"]
+
+
+class TestActivityBreakdownUsesOneConnection:
+    """The density-strip payload is three queries on one session, not three concurrent reads.
+
+    The route used to `asyncio.gather` them. That opened a connection per leg, and the configured
+    database is reached through Supabase's session-mode pooler, whose tenant allowance is far smaller
+    than this application's own pool ceiling — so adding a third leg was enough to make
+    `GET /learning/activity-feed/daily-counts` return intermittent `500`s. It reproduced only when the
+    route was exercised alongside others, which is why a service-level test never saw it.
+
+    All three legs read `ActivityFeedEntry` through the same `_feed_conditions`. They were never
+    independent work, so there was nothing to parallelise.
+    """
+
+    def test_the_route_does_not_fan_out(self):
+        import inspect
+
+        from src.domains.personal_learning import routes
+
+        source = inspect.getsource(routes.get_activity_daily_counts)
+        # Comments stripped as well as the docstring: the comment explaining *why* this route no
+        # longer gathers names `asyncio.gather`, and matching that would fail the fix it documents.
+        # The same trap caught the no-category guard, whose docstring listed the categories it forbids.
+        body = "\n".join(
+            line
+            for line in source.split('"""')[-1].splitlines()
+            if not line.strip().startswith("#")
+        )
+
+        assert "gather" not in body
+        assert "list_activity_breakdown" in body
+
+    def test_one_session_is_passed_to_all_three_reads(self):
+        """Sequentially, on one session.
+
+        Three coroutines sharing one `AsyncSession` would be concurrent use of a single connection,
+        which SQLAlchemy rejects outright — so passing a session and gathering would trade an
+        intermittent pool error for a certain one.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import activity_feed_service
+
+        source = inspect.getsource(activity_feed_service.list_activity_breakdown)
+        body = source.split('"""')[-1]
+
+        assert body.count("session=session") == 3
+        assert "gather" not in body
+
+    async def test_it_returns_the_three_parts_in_order(self):
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import activity_feed_service
+
+        async def _by_day(_user_id, **_kw):
+            return [(date(2026, 8, 1), 3)]
+
+        async def _by_type(_user_id, **_kw):
+            return [("note_created", 3)]
+
+        async def _types(_user_id, **_kw):
+            return ["note_created"]
+
+        class _Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with (
+            patch.object(activity_feed_service, "get_session_factory", lambda: _Session, create=True),
+            patch(
+                "src.shared.database.get_session_factory", lambda: _Session
+            ),
+            patch.object(activity_feed_service.repo, "count_feed_entries_by_day", _by_day),
+            patch.object(activity_feed_service.repo, "count_feed_entries_by_type", _by_type),
+            patch.object(activity_feed_service.repo, "list_feed_activity_types", _types),
+        ):
+            days, by_type, available = await activity_feed_service.list_activity_breakdown(
+                user_id="u"
+            )
+
+        assert days == [(date(2026, 8, 1), 3)]
+        assert by_type == [("note_created", 3)]
+        assert available == ["note_created"]
+        # The figure the route publishes is summed from `days`, so the two cannot disagree.
+        assert sum(count for _, count in days) == sum(count for _, count in by_type)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from sqlalchemy import func, select
@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 #: points. One threshold, defined once, read by every surface that labels a goal — the alternative
 #: is `/goals` and `/reflect/goals` disagreeing about the same goal in front of the same learner.
 AT_RISK_LAG_POINTS = 15.0
+
+#: How near a deadline has to be for a goal to count as "due soon", in days.
+#:
+#: Seven, because the design's tile reads "Due this week". Defined here for the same reason
+#: `AT_RISK_LAG_POINTS` is: `/goals` and `/reflect/goals` both print a deadline count, and two
+#: definitions of "this week" would have them disagree about the same goal on the same screen.
+DUE_SOON_DAYS = 7
 
 MetricKind = Literal[
     "focused_minutes",
@@ -68,9 +75,53 @@ _STATE_KINDS = frozenset({"course_progress", "prep_readiness"})
 GoalStatusLabel = Literal["COMPLETED", "ON_TRACK", "NEEDS_ATTENTION"]
 
 
+@dataclass(frozen=True)
+class GoalPortfolio:
+    """The counts above the goals list.
+
+    **Moved here from `personal_learning.services.reflect_aggregates`**, which re-exports it. `Goal`
+    is a `progress` entity and this is arithmetic over its rows, so it belongs beside the at-risk
+    threshold it depends on. The move also lets `progress`'s own summary route read it without
+    importing `personal_learning`, which would have closed an import cycle — `reflect_aggregates`
+    already imports this module.
+    """
+
+    active: int
+    completed: int
+    at_risk: int
+    #: Active goals whose deadline falls inside the next `DUE_SOON_DAYS`.
+    due_soon: int
+    #: Active, unfinished goals whose deadline has already passed.
+    overdue: int
+    #: Mean progress across active and completed goals, or `None` when there are none.
+    #: Archived and cancelled goals are excluded: they are goals the learner stopped, and averaging
+    #: them in would make abandoning a goal look like a drop in performance.
+    average_progress: float | None
+
+
 # ---------------------------------------------------------------------------
 # Pace and status — pure
 # ---------------------------------------------------------------------------
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    """A naive datetime read as UTC, so the comparisons below cannot raise.
+
+    **`Goal.targetDate` and `Goal.createdAt` are `timestamp without time zone` in the database**, while
+    the ORM declares them `DateTime(timezone=True)`. asyncpg honours the database, so both arrive naive,
+    and every predicate here compares them against an aware `datetime.now(UTC)`. That combination raises
+    `TypeError: can't compare offset-naive and offset-aware datetimes` — which meant `GET /progress/goals`
+    returned a `500` for any goal that had a target date at all.
+
+    Normalised here rather than at each call site because there are four predicates and they must agree:
+    a goal counted overdue by one and not-at-risk by another would publish two contradictory labels for
+    the same deadline. UTC rather than the learner's zone because the column stores no offset to
+    interpret, and inventing one would move deadlines by hours; a deadline is a date the learner set, and
+    reading it as UTC is the assumption the rest of this table's writers already make.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
 
 
 def elapsed_percent(
@@ -81,6 +132,7 @@ def elapsed_percent(
     `None` rather than `0` for an open-ended goal. A goal with no deadline is not at the start of
     anything, and every consumer here has to treat "no schedule" differently from "no progress".
     """
+    created_at, target_date, now = _utc(created_at), _utc(target_date), _utc(now)
     if created_at is None or target_date is None:
         return None
     total = (target_date - created_at).total_seconds()
@@ -107,6 +159,7 @@ def is_at_risk(
 
     A goal already past its deadline and unfinished is at risk regardless of progress.
     """
+    created_at, target_date, now = _utc(created_at), _utc(target_date), _utc(now)
     if target_date is None or created_at is None:
         return False
     if progress >= 100:
@@ -118,6 +171,50 @@ def is_at_risk(
     if elapsed is None:
         return False
     return (elapsed - progress) > AT_RISK_LAG_POINTS
+
+
+def is_due_soon(
+    *,
+    status: str,
+    progress: float,
+    target_date: datetime | None,
+    now: datetime,
+) -> bool:
+    """Whether a deadline is inside the next `DUE_SOON_DAYS` and still ahead.
+
+    Deliberately excludes a deadline already passed — that is `is_overdue`, and folding the two
+    together would let a goal three weeks late be reported as "due this week", which is the one
+    reading of the tile that would make a learner relax.
+
+    Finished and abandoned goals have no deadline pressure, so only `ACTIVE` goals qualify. A goal at
+    100% that nobody marked complete is excluded too: the work is done, and chasing it would be
+    telling the learner to do something they have already done.
+    """
+    target_date, now = _utc(target_date), _utc(now)
+    if target_date is None or status != "ACTIVE" or progress >= 100:
+        return False
+    if now >= target_date:
+        return False
+    return (target_date - now) <= timedelta(days=DUE_SOON_DAYS)
+
+
+def is_overdue(
+    *,
+    status: str,
+    progress: float,
+    target_date: datetime | None,
+    now: datetime,
+) -> bool:
+    """Whether an unfinished active goal's deadline has already passed.
+
+    Published alongside `dueSoon` rather than merged into it. A learner with two goals due this week
+    and one a month overdue is in a different situation from one with three due this week, and a
+    single count cannot say which.
+    """
+    target_date, now = _utc(target_date), _utc(now)
+    if target_date is None or status != "ACTIVE" or progress >= 100:
+        return False
+    return now >= target_date
 
 
 def status_label(
@@ -373,3 +470,301 @@ async def count_achieved_milestones(goal_ids: list[str]) -> dict[str, tuple[int,
         ).all()
 
     return {goal_id: (int(achieved or 0), int(total or 0)) for goal_id, total, achieved in rows}
+
+
+async def get_goal_portfolio(*, user_id: str, now: datetime | None = None) -> GoalPortfolio:
+    """Counts for the goals section, including how many are behind their own schedule.
+
+    **Moved here from `reflect_aggregates`**, which re-exports it — see `GoalPortfolio`. One query
+    over four columns, then pure arithmetic, so the whole portfolio costs the same as a page of it.
+    This is what `/progress/goals/summary` reads: the goals list is paginated, so a page of twenty
+    cannot produce a portfolio average, and asking the client to sum pages would give a different
+    answer depending on how far the learner had scrolled.
+
+    **Cancelled goals no longer count towards `averageProgress`.** They used to, which contradicted
+    this function's own stated rule — archived goals were excluded because "averaging them in would
+    make abandoning a goal look like a drop in performance", and a cancelled goal is abandoned by a
+    more explicit route than an archived one. They were also counted in neither `active` nor
+    `completed`, so a learner who cancelled a goal at 5% saw their average fall with no visible
+    cause.
+    """
+    from src.domains.progress.db_models import Goal
+
+    moment = now or datetime.now(UTC)
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = (
+            await session.execute(
+                select(
+                    Goal.status, Goal.progress, Goal.created_at, Goal.target_date
+                ).where(Goal.user_id == user_id)
+            )
+        ).all()
+
+    active = completed = at_risk = due_soon = overdue = 0
+    progress_values: list[float] = []
+
+    for status, progress, created_at, target_date in rows:
+        if status in ("ARCHIVED", "CANCELLED"):
+            continue
+        value = float(progress or 0.0)
+        progress_values.append(value)
+
+        if status == "COMPLETED":
+            completed += 1
+            continue
+        if status != "ACTIVE":
+            continue
+
+        active += 1
+        if is_at_risk(progress=value, created_at=created_at, target_date=target_date, now=moment):
+            at_risk += 1
+        if is_due_soon(status=status, progress=value, target_date=target_date, now=moment):
+            due_soon += 1
+        if is_overdue(status=status, progress=value, target_date=target_date, now=moment):
+            overdue += 1
+
+    return GoalPortfolio(
+        active=active,
+        completed=completed,
+        at_risk=at_risk,
+        due_soon=due_soon,
+        overdue=overdue,
+        average_progress=(
+            round(sum(progress_values) / len(progress_values), 1) if progress_values else None
+        ),
+    )
+
+
+@dataclass(frozen=True)
+class GoalWeek:
+    """One week of a goal's plan: what was scheduled, and what was recorded as done."""
+
+    #: The Monday of the week, as a date.
+    week_start: date
+    planned: int
+    completed: int
+
+
+async def get_goal_momentum(
+    *, user_id: str, goal_id: str, weeks: int, now: datetime | None = None
+) -> list[GoalWeek]:
+    """Planned versus completed sessions per week for one goal, oldest week first.
+
+    Reads `ScheduleBlock`, which is what a *goal plan* is (Decision R keeps that distinct from a
+    `StudyPlan`). `regenerate_goal_plan` writes one block per preferred weekday per week, so "planned"
+    is a count of those blocks bucketed by the week they were scheduled for.
+
+    **`completed` counts blocks with a `completedAt`, and reads zero until learners start marking them.**
+    That column was added for this, because completion was recorded nowhere. It is deliberately not
+    inferred from a `StudySession` overlapping the block's window: without a `scheduleBlockId` link that
+    is a time coincidence, and it would credit a learner who sat down at the right hour and studied
+    something else.
+
+    Weeks with no planned blocks are **included, at zero**, because the question is "did the plan get
+    done" and a week the learner scheduled nothing is part of that answer. This is the opposite of the
+    activity feed's daily counts, where a missing day means nothing was recorded and is therefore
+    omitted — here the absence is itself the measurement.
+
+    Bucketed by ISO week starting Monday, in UTC. The blocks themselves are written at a fixed 09:00
+    UTC by the planner, so a learner-local bucket would be precision this data does not have.
+    """
+    from src.domains.progress.db_models import ScheduleBlock
+
+    first_monday = _first_monday(weeks=weeks, now=now)
+    rows = await _plan_blocks(
+        user_id=user_id,
+        first_monday=first_monday,
+        goal_scope=(ScheduleBlock.goal_id == goal_id),
+    )
+
+    return _bucket_weeks(rows, first_monday=first_monday, weeks=weeks)
+
+
+def _first_monday(*, weeks: int, now: datetime | None) -> date:
+    """The Monday that opens a backward window of `weeks`, including the current week."""
+    moment = now or datetime.now(UTC)
+    this_monday = moment.date() - timedelta(days=moment.weekday())
+    return this_monday - timedelta(weeks=weeks - 1)
+
+
+async def _plan_blocks(*, user_id: str, first_monday: date, goal_scope) -> list:
+    """`(startAt, completedAt)` for the goal-plan blocks inside the window.
+
+    `goal_scope` is the caller's predicate over `ScheduleBlock.goalId`: one goal for the goal chart,
+    "attached to any goal" for the portfolio chart. Shared so the two charts cannot end up reading a
+    different window or a different completion column, which is how a portfolio total stops matching
+    the sum of its parts.
+    """
+    from src.domains.progress.db_models import ScheduleBlock
+
+    factory = get_session_factory()
+    async with factory() as session:
+        return (
+            await session.execute(
+                select(ScheduleBlock.start_at, ScheduleBlock.completed_at).where(
+                    ScheduleBlock.user_id == user_id,
+                    goal_scope,
+                    ScheduleBlock.start_at
+                    >= datetime.combine(first_monday, datetime.min.time(), tzinfo=UTC),
+                )
+            )
+        ).all()
+
+
+def _bucket_weeks(rows, *, first_monday: date, weeks: int) -> list[GoalWeek]:
+    """Bucket blocks into ISO weeks starting Monday, oldest first, empty weeks at zero."""
+    buckets: dict[date, list[int]] = {
+        first_monday + timedelta(weeks=offset): [0, 0] for offset in range(weeks)
+    }
+
+    for start_at, completed_at in rows:
+        week_start = start_at.date() - timedelta(days=start_at.weekday())
+        bucket = buckets.get(week_start)
+        if bucket is None:
+            # A block scheduled beyond the requested window. Counted nowhere rather than folded into
+            # the nearest week, which would overstate that week's plan.
+            continue
+        bucket[0] += 1
+        if completed_at is not None:
+            bucket[1] += 1
+
+    return [
+        GoalWeek(week_start=week_start, planned=planned, completed=completed)
+        for week_start, (planned, completed) in sorted(buckets.items())
+    ]
+
+
+async def get_portfolio_momentum(
+    *, user_id: str, weeks: int, now: datetime | None = None
+) -> list[GoalWeek]:
+    """Planned versus completed sessions per week across **every** goal the learner holds.
+
+    The `/reflect/goals` page draws one momentum chart above the whole list rather than one per goal, so
+    this exists alongside `get_goal_momentum`. The alternative — a client summing per-goal responses —
+    would mean one request per goal to draw a single chart.
+
+    **Only blocks attached to a goal are counted.** `ScheduleBlock.goalId` is nullable, and a block with
+    no goal is part of the learner's schedule but not part of any goal's plan. Counting those would make
+    the portfolio chart taller than the sum of the goal charts beneath it, with nothing on the page to
+    explain the difference.
+
+    Shares `_plan_blocks` and `_bucket_weeks` with the per-goal read, so the two charts cannot describe
+    different windows or count completion differently.
+    """
+    from src.domains.progress.db_models import ScheduleBlock
+
+    first_monday = _first_monday(weeks=weeks, now=now)
+    rows = await _plan_blocks(
+        user_id=user_id,
+        first_monday=first_monday,
+        goal_scope=ScheduleBlock.goal_id.is_not(None),
+    )
+    return _bucket_weeks(rows, first_monday=first_monday, weeks=weeks)
+
+
+async def portfolio_completion_ever_recorded(*, user_id: str) -> bool:
+    """Whether this learner has **ever** marked any goal-plan block done.
+
+    Asked of their whole history rather than of the window, for the reason
+    `completion_ever_recorded` documents: a learner who worked their plan two months ago and then
+    paused must not have their chart captioned "not tracked yet" (Decision Y).
+    """
+    from src.domains.progress.db_models import ScheduleBlock
+
+    factory = get_session_factory()
+    async with factory() as session:
+        found = (
+            await session.execute(
+                select(ScheduleBlock.id)
+                .where(
+                    ScheduleBlock.user_id == user_id,
+                    ScheduleBlock.goal_id.is_not(None),
+                    ScheduleBlock.completed_at.is_not(None),
+                )
+                .limit(1)
+            )
+        ).first()
+    return found is not None
+
+
+async def completion_ever_recorded(*, user_id: str, goal_id: str) -> bool:
+    """Whether any block for this goal has **ever** been marked done.
+
+    Deliberately not "did anything complete inside the requested window", which is what counting the
+    returned weeks would answer. A learner who worked through their plan two months ago and has done
+    nothing for a fortnight would come back `False` from that reading, and the client would caption
+    their chart "not tracked yet" — false, and dismissive of work they actually did.
+
+    Its own query, and a cheap one: existence against the `(goalId, startAt)` index with a limit of one.
+    """
+    from src.domains.progress.db_models import ScheduleBlock
+
+    factory = get_session_factory()
+    async with factory() as session:
+        found = (
+            await session.execute(
+                select(ScheduleBlock.id)
+                .where(
+                    ScheduleBlock.user_id == user_id,
+                    ScheduleBlock.goal_id == goal_id,
+                    ScheduleBlock.completed_at.is_not(None),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return found is not None
+
+
+#: Average progress at or above which a portfolio is described as strong rather than steady.
+STRONG_PORTFOLIO_PROGRESS = 75.0
+
+#: What the goals page should lead with, as a token. The client owns the sentence.
+GoalPortfolioHeadline = Literal[
+    "none", "overdue", "at_risk", "due_soon", "all_complete", "strong", "steady"
+]
+
+
+def portfolio_headline(portfolio: GoalPortfolio) -> GoalPortfolioHeadline:
+    """Which situation the goals page should open on, from figures it already publishes.
+
+    **A token, not a sentence.** The fixture's hero read *"You have 4 active goals with an average
+    progress of 58%. Two deadlines are approaching this week."* — two numbers baked into prose that
+    could disagree with the tiles beneath it. Publishing the numbers and a token instead makes that
+    impossible: the greeting is rendered from the same fields as the tiles, and the wording is the
+    client's, which is right because a mobile hero and a web hero want different sentences.
+
+    **The ladder is here rather than in the client** for the reason Decision O gives for action
+    targets: choosing which fact is most urgent is a judgement about the learner's data, and two
+    clients making it separately would eventually disagree about whether an overdue goal or a
+    slipping one deserves the top of the page.
+
+    Ordered by what the learner most needs to know:
+
+    1. `none` — no goals at all. Not "steady at 0%", which would describe a portfolio that does not
+       exist.
+    2. `overdue` — a deadline has already passed. Ahead of `at_risk` because it is already true rather
+       than projected.
+    3. `at_risk` — behind its own schedule by more than `AT_RISK_LAG_POINTS`.
+    4. `due_soon` — a deadline inside `DUE_SOON_DAYS`, still ahead.
+    5. `all_complete` — everything finished and nothing active. A real state, and the only one where
+       the next move is to set a goal rather than to work on one.
+    6. `strong` / `steady` — nothing pressing; the two are split on `averageProgress` so the page is
+       not congratulatory about a portfolio sitting at 12%.
+
+    `averageProgress` is `None` for a learner with no goals, which case 1 has already taken, so the
+    comparison below cannot be reached with a null.
+    """
+    if not portfolio.active and not portfolio.completed:
+        return "none"
+    if portfolio.overdue:
+        return "overdue"
+    if portfolio.at_risk:
+        return "at_risk"
+    if portfolio.due_soon:
+        return "due_soon"
+    if not portfolio.active:
+        return "all_complete"
+    average = portfolio.average_progress or 0.0
+    return "strong" if average >= STRONG_PORTFOLIO_PROGRESS else "steady"
