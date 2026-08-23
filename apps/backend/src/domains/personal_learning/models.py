@@ -344,9 +344,15 @@ class ProgressSummaryResponse(BaseModel):
     dueCards: int
     consistencyScore: float | None = None
     averageSessionMinutes: float | None = None
-    # Deprecated compatibility fields. They remain nullable/zero until a real
-    # study-session and topic-completion source is introduced.
+    #: Measured desk minutes since the learner's own week began, from `StudySession.duration`.
+    #: **`None` means nothing was measured, not zero minutes** — almost nothing writes `StudySession`
+    #: yet, so `None` is the common answer, and a learner who does record sessions but studied nothing
+    #: this week gets `0.0`. These two were placeholders hardcoded to `None`/`0` for every learner;
+    #: both now read real sources (`home_service._week_so_far`).
     weeklyMinutes: float | None = None
+    #: Dated topic completions in the learner's current week, across the courses they own. Topics
+    #: completed before `completedAt` existed carry no date and are excluded rather than counted into
+    #: whichever week the row was last touched.
     topicsCompletedThisWeek: int = 0
 
 
@@ -390,13 +396,33 @@ class ReEngagementResponse(BaseModel):
     suggestedAction: NextActionResponse
 
 
+class ReadyItemResponse(BaseModel):
+    """One thing the system has prepared and the learner can start now.
+
+    Was published as a bare `dict`, so every field a client read was an assumption. The four producers
+    in `guidance_engine` agree on `type` and `title` and differ after that: plan items carry
+    `estimatedMinutes` and `actionData`, prep topics carry a `description` and `actionData`, and the
+    language-model path carries a `description` and nothing to act on. So the optional fields are
+    genuinely optional rather than a lowest common denominator, and `actionData` stays a `dict` because
+    its keys vary by `type` — `planId`/`itemId`, `prepId`/`prepTopicId`, or `action`.
+    """
+
+    #: `plan_item` | `prep_topic` | `flashcards` | `prepared`.
+    type: str
+    title: str
+    description: str | None = None
+    estimatedMinutes: int | None = None
+    actionData: dict | None = None
+
+
 class HomeResponse(BaseModel):
     greeting: str
     todaysFocus: TodaysFocusResponse | None = None
     progressSummary: ProgressSummaryResponse
     dueReviews: list[DueReviewResponse]
     scheduleBlocks: list[ScheduleBlockResponse]
-    readyForYou: list[dict] = []  # Things prepared by the system
+    #: Things prepared by the system, typed so a client is not reading an untyped blob (Decision C).
+    readyForYou: list[ReadyItemResponse] = []
     stage: str = "active"  # fresh, purpose_set, setting_up, active
     nextAction: NextActionResponse | dict | None = None
     recommendations: list[RecommendationResponse] = []  # Deprecated — replaced by readyForYou
@@ -2692,6 +2718,10 @@ class SubjectConcept(CamelModel):
     status: ConceptStatus = "not_started"
 
 
+#: The four kinds a *course* can produce. Deliberately narrower than `reflect_aggregates.EvidenceKind`,
+#: which also carries `quiz_session` and `practice_answer`: those come from the preparation tables and
+#: reach a client only through `GET /progress/goals/{id}/evidence`, whose response model is in the
+#: progress domain. Widening this Literal would publish two kinds this endpoint can never emit.
 EvidenceKind = Literal["topic_completed", "section_completed", "study_session", "knowledge_check"]
 
 

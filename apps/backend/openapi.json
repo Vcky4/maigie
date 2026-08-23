@@ -5667,8 +5667,7 @@
           "readyForYou": {
             "default": [],
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/ReadyItemResponse"
             },
             "title": "Readyforyou",
             "type": "array"
@@ -11262,6 +11261,59 @@
           "suggestedAction"
         ],
         "title": "ReEngagementResponse",
+        "type": "object"
+      },
+      "ReadyItemResponse": {
+        "description": "One thing the system has prepared and the learner can start now.\n\nWas published as a bare `dict`, so every field a client read was an assumption. The four producers\nin `guidance_engine` agree on `type` and `title` and differ after that: plan items carry\n`estimatedMinutes` and `actionData`, prep topics carry a `description` and `actionData`, and the\nlanguage-model path carries a `description` and nothing to act on. So the optional fields are\ngenuinely optional rather than a lowest common denominator, and `actionData` stays a `dict` because\nits keys vary by `type` — `planId`/`itemId`, `prepId`/`prepTopicId`, or `action`.",
+        "properties": {
+          "actionData": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actiondata"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "estimatedMinutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimatedminutes"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title"
+        ],
+        "title": "ReadyItemResponse",
         "type": "object"
       },
       "RecommendationResponse": {
@@ -29874,7 +29926,7 @@
     },
     "/api/v1/progress/goals/{goal_id}/evidence": {
       "get": {
-        "description": "Recent dated work behind a goal, newest first.\n\nA goal is not itself measurable — it points at a course, a topic or a preparation, and the evidence\nis the work done on *that*. `linkedCourseId` publishes which link answered, so a client can say\n\"from Linear Algebra\" rather than implying the goal recorded this directly.\n\n**A goal with no link returns an empty list, not the learner's general activity.** Falling back to\neverything they did would attach unrelated work to a goal and make the panel look informative while\nbeing wrong.\n\nReads the domain tables, not `ActivityFeedEntry` — the feed has no course column and nothing has ever\ntagged an entry with one (§7.2), so a filter there returns nothing for everyone.",
+        "description": "Recent dated work behind a goal, newest first.\n\nA goal is not itself measurable — it points at a course, a topic or a preparation, and the evidence\nis the work done on *that*. `linkedCourseId` publishes which link answered, so a client can say\n\"from Linear Algebra\" rather than implying the goal recorded this directly.\n\n**A goal with no link returns an empty list, not the learner's general activity.** Falling back to\neverything they did would attach unrelated work to a goal and make the panel look informative while\nbeing wrong.\n\nA preparation-linked goal reads the preparation tables, so `kind` can also be `quiz_session` or\n`practice_answer` here. `ExamPrep` has no join to `Course`, so those are a separate body of evidence\nrather than a view of the course ones.\n\nReads the domain tables, not `ActivityFeedEntry` — the feed has no course column and nothing has ever\ntagged an entry with one (§7.2), so a filter there returns nothing for everyone.",
         "operationId": "get_goal_evidence_api_v1_progress_goals__goal_id__evidence_get",
         "parameters": [
           {

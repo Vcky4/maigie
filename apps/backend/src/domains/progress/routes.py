@@ -280,6 +280,10 @@ async def get_goal_evidence(
     everything they did would attach unrelated work to a goal and make the panel look informative while
     being wrong.
 
+    A preparation-linked goal reads the preparation tables, so `kind` can also be `quiz_session` or
+    `practice_answer` here. `ExamPrep` has no join to `Course`, so those are a separate body of evidence
+    rather than a view of the course ones.
+
     Reads the domain tables, not `ActivityFeedEntry` — the feed has no course column and nothing has ever
     tagged an entry with one (§7.2), so a filter there returns nothing for everyone.
     """

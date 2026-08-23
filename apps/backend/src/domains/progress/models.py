@@ -209,15 +209,21 @@ class GoalEvidenceItem(BaseModel):
     """
 
     id: str
-    #: `topic_completed` | `section_completed` | `study_session` | `knowledge_check`.
+    #: A course- or topic-linked goal yields `topic_completed` | `section_completed` | `study_session` |
+    #: `knowledge_check`. A preparation-linked one yields `quiz_session` | `practice_answer`, which come
+    #: from different tables entirely — `ExamPrep` has no join to `Course` (§7.2). This is the only
+    #: endpoint that can publish all six, which is why it stays a `str` rather than mirroring the
+    #: narrower Literal on the subject-detail response.
     kind: str
     title: str
     detail: str | None = None
     occurredAt: str
-    #: Numeric rather than pre-formatted, so it cannot disagree with the figure beside it.
+    #: Numeric rather than pre-formatted, so it cannot disagree with the figure beside it. A completed
+    #: quiz publishes its score here; a `practice_answer` has no figure and reports `correct` instead.
     value: float | None = None
     unit: str | None = None
-    #: Only meaningful for `knowledge_check`.
+    #: Only meaningful for `knowledge_check` and `practice_answer`. A study session or a quiz score is
+    #: not correct or incorrect.
     correct: bool | None = None
 
 

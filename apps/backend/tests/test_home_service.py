@@ -136,10 +136,21 @@ class TestBuildProgressSummary:
         result = _build_progress_summary(profile, {"currentStreak": 4})
         assert result["currentStreak"] == 4
 
-    def test_weekly_minutes_is_none(self):
-        """weeklyMinutes is None until real study-session tracking is available."""
+    def test_the_week_figures_are_reported_not_invented(self):
+        """Both were hardcoded — `weeklyMinutes` to `None` and `topicsCompletedThisWeek` to `0`, for
+        every learner on every request. They now come from `_week_so_far`, and the builder's job is to
+        report what it was given rather than to decide it."""
         profile = FakeProfile(avg_session_minutes=30.0)
-        result = _build_progress_summary(profile, {})
+        result = _build_progress_summary(
+            profile, {}, weekly_minutes=42.5, topics_completed=3
+        )
+        assert result["weeklyMinutes"] == 42.5
+        assert result["topicsCompletedThisWeek"] == 3
+
+    def test_unmeasured_minutes_stay_none_rather_than_zero(self):
+        """Almost nothing writes `StudySession`, so `None` is the common answer. `0` would tell the
+        learner they studied nothing, which is a different claim from nothing being measured."""
+        result = _build_progress_summary(FakeProfile(), {}, weekly_minutes=None)
         assert result["weeklyMinutes"] is None
 
     def test_none_profile_uses_defaults(self):
@@ -334,3 +345,93 @@ class TestBuildRecommendations:
         assert item["title"] == "ML Intro"
         assert item["reason"] == "Trending"
         assert item["actionData"]["recommendationId"] == "r1"
+
+
+class TestWeekSoFar:
+    """The two figures that used to be placeholders.
+
+    `weeklyMinutes` and `topicsCompletedThisWeek` were hardcoded to `None` and `0` on every home
+    response, with a comment saying they would stay that way until a real source existed. Both sources
+    did exist: `knowledge_repo.completed_topic_dates` and `StudySession.duration`.
+    """
+
+    async def _week(self, *, completions=(), week_sessions=None, any_sessions=None):
+        """Run `_week_so_far` with both repository reads faked."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import home_service
+
+        now = datetime.now(UTC)
+        monday = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+        class _Knowledge:
+            async def completed_topic_dates(self, user_id, *, since=None):
+                return [monday + offset for offset in completions]
+
+        class _Progress:
+            async def list_sessions(self, user_id, *, since=None, course_id=None):
+                if since is None:
+                    return list(any_sessions or [])
+                return list(week_sessions or [])
+
+        from src.shared.time import UNKNOWN_TIMEZONE
+
+        async def _timezone(_user_id):
+            return UNKNOWN_TIMEZONE
+
+        with (
+            patch("src.shared.time.resolve_learner_timezone", _timezone),
+            patch("src.domains.knowledge.repository.knowledge_repo", _Knowledge()),
+            patch("src.domains.progress.repository.progress_repo", _Progress()),
+        ):
+            return await home_service._week_so_far("u1")
+
+    def _session(self, *, days_into_week: float, minutes: float):
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+
+        now = datetime.now(UTC)
+        monday = (now - timedelta(days=now.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return SimpleNamespace(
+            start_time=monday + timedelta(days=days_into_week), duration=minutes
+        )
+
+    async def test_topics_completed_this_week_are_counted(self):
+        from datetime import timedelta
+
+        minutes, topics = await self._week(
+            completions=(timedelta(hours=2), timedelta(days=1, hours=3))
+        )
+        assert topics == 2
+        assert minutes is None, "no sessions anywhere means nothing was measured"
+
+    async def test_a_completion_outside_the_week_is_not_counted(self):
+        from datetime import timedelta
+
+        _, topics = await self._week(completions=(timedelta(days=9),))
+        assert topics == 0, "a completion beyond this week belongs to the next one"
+
+    async def test_minutes_are_summed_from_the_week(self):
+        minutes, _ = await self._week(
+            week_sessions=[
+                self._session(days_into_week=0, minutes=20.0),
+                self._session(days_into_week=2, minutes=22.5),
+            ]
+        )
+        assert minutes == 42.5
+
+    async def test_a_learner_who_tracks_time_but_not_this_week_gets_zero(self):
+        """A real finding — "you recorded nothing this week" — and different from unmeasured."""
+        minutes, _ = await self._week(
+            week_sessions=[], any_sessions=[self._session(days_into_week=-30, minutes=15.0)]
+        )
+        assert minutes == 0.0
+
+    async def test_a_learner_who_has_never_tracked_time_gets_none(self):
+        minutes, _ = await self._week(week_sessions=[], any_sessions=[])
+        assert minutes is None

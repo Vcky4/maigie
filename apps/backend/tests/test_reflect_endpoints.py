@@ -1515,3 +1515,211 @@ class TestActivityBreakdownUsesOneConnection:
         assert available == ["note_created"]
         # The figure the route publishes is summed from `days`, so the two cannot disagree.
         assert sum(count for _, count in days) == sum(count for _, count in by_type)
+
+
+class TestPrepEvidence:
+    """A preparation-linked goal has its own evidence reader.
+
+    `ExamPrep` has no join to `Course` anywhere: `QuizSession.prepId` points at `ExamPrep` and its
+    `topicId` at `PrepTopic`, a different table from the knowledge `Topic` the course reader walks. So a
+    prep-linked goal was returning an empty panel while the learner had done real work.
+    """
+
+    async def _prep_evidence(self, *, quizzes=(), answers=(), limit=12):
+        """Run `list_prep_evidence`'s merge over supplied rows for each of its two queries."""
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        batches = [list(quizzes), list(answers)]
+        calls = {"n": 0}
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def all(self):
+                return self._rows
+
+        class _Session:
+            async def execute(self, *_a, **_k):
+                rows = batches[calls["n"]] if calls["n"] < len(batches) else []
+                calls["n"] += 1
+                return _Result(rows)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_exc):
+                return False
+
+        with patch.object(reflect_aggregates, "get_session_factory", lambda: _Session):
+            return await reflect_aggregates.list_prep_evidence(
+                user_id="u", prep_id="p", limit=limit
+            )
+
+    async def test_both_sources_are_merged_newest_first(self):
+        items = await self._prep_evidence(
+            quizzes=[("q1", "Integrals", datetime(2026, 8, 10, 9, 0, tzinfo=UTC), 80.0)],
+            answers=[("o1", "Limits", datetime(2026, 8, 12, 9, 0, tzinfo=UTC), True)],
+        )
+
+        assert [item.kind for item in items] == ["practice_answer", "quiz_session"]
+
+    async def test_a_completed_quiz_carries_its_score_as_a_number(self):
+        items = await self._prep_evidence(
+            quizzes=[("q1", "Integrals", datetime(2026, 8, 10, tzinfo=UTC), 62.5)]
+        )
+
+        assert items[0].value == 62.5
+        assert items[0].unit == "%"
+        assert items[0].correct is None, "a quiz score is not correct or incorrect"
+        assert items[0].detail == "Integrals", "the topic the quiz was scoped to"
+
+    async def test_a_quiz_with_no_recorded_score_is_unmeasured_not_zero(self):
+        """`scorePercentage` is nullable even on a completed session. Publishing `0.0` would read as
+        every answer wrong, which is a different statement from nothing recorded (Decision I)."""
+        items = await self._prep_evidence(
+            quizzes=[("q1", None, datetime(2026, 8, 10, tzinfo=UTC), None)]
+        )
+
+        assert items[0].value is None
+        assert items[0].unit is None
+        assert items[0].detail is None, "a whole-prep quiz has no topic to name"
+
+    async def test_a_practice_answer_carries_its_verdict_and_no_figure(self):
+        items = await self._prep_evidence(
+            answers=[("o1", "Limits", datetime(2026, 8, 12, tzinfo=UTC), False)]
+        )
+
+        assert items[0].correct is False
+        assert items[0].value is None
+        assert items[0].title == "Limits"
+
+    async def test_an_answer_with_no_topic_still_reads_as_a_question(self):
+        items = await self._prep_evidence(
+            answers=[("o1", None, datetime(2026, 8, 12, tzinfo=UTC), True)]
+        )
+
+        assert items[0].title == "Practice question"
+
+    async def test_ids_are_namespaced_so_the_two_tables_cannot_collide(self):
+        items = await self._prep_evidence(
+            quizzes=[("x", None, datetime(2026, 8, 10, tzinfo=UTC), 50.0)],
+            answers=[("x", None, datetime(2026, 8, 11, tzinfo=UTC), True)],
+        )
+
+        assert {item.id for item in items} == {"quiz:x", "practice:x"}
+
+    async def test_the_limit_applies_after_the_merge(self):
+        items = await self._prep_evidence(
+            quizzes=[
+                ("q1", None, datetime(2026, 8, 1, tzinfo=UTC), 10.0),
+                ("q2", None, datetime(2026, 8, 2, tzinfo=UTC), 20.0),
+            ],
+            answers=[("o1", None, datetime(2026, 8, 20, tzinfo=UTC), True)],
+            limit=2,
+        )
+
+        assert len(items) == 2
+        assert items[0].kind == "practice_answer", "the newest item survives the trim"
+
+    async def test_nothing_recorded_returns_an_empty_list(self):
+        assert await self._prep_evidence() == []
+
+
+class TestPrepEvidenceScope:
+    """The two things this reader deliberately does not do."""
+
+    def test_answers_from_a_completed_session_are_excluded(self):
+        """A completed session is already published with a score summarising exactly those answers.
+
+        Publishing both would list one five-question quiz as six rows and push everything older off the
+        panel. The rule is stated against the session's own state rather than "whatever we already
+        emitted", so it cannot change meaning with `limit`.
+        """
+        import inspect
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        source = inspect.getsource(reflect_aggregates.list_prep_evidence)
+        body = source.split('"""')[-1]
+        lines = [line for line in body.splitlines() if not line.strip().startswith("#")]
+        stripped = "\n".join(lines)
+
+        assert "completed_at.is_not(None)" in stripped, "completed sessions are the quiz source"
+        assert "completed_at.is_(None)" in stripped, (
+            "answers are read only for sessions that never completed"
+        )
+
+    def test_no_date_is_borrowed_from_updated_at(self):
+        """`PrepTopic` has no `completedAt`, so a "topic mastered" item could only be dated by
+        `updatedAt` — the same substitution the course reader refuses, because it dates the learner's
+        work to whenever a row was last touched."""
+        import inspect
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        source = inspect.getsource(reflect_aggregates.list_prep_evidence)
+        body = source.split('"""')[-1]
+        lines = [line for line in body.splitlines() if not line.strip().startswith("#")]
+
+        assert "updated_at" not in "\n".join(lines)
+
+    def test_the_exam_date_is_never_read(self):
+        """`ExamPrep.examDate` is `timestamp without time zone` while the ORM declares
+        `DateTime(timezone=True)` — the exact mismatch that made `GET /progress/goals` return a 500 for
+        every goal with a target date."""
+        import inspect
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        source = inspect.getsource(reflect_aggregates.list_prep_evidence)
+        body = source.split('"""')[-1]
+        lines = [line for line in body.splitlines() if not line.strip().startswith("#")]
+
+        assert "exam_date" not in "\n".join(lines)
+
+
+class TestPrepLinkedGoalReachesTheReader:
+    async def _goal_evidence(self, goal, *, course=None, prep=None):
+        from unittest.mock import patch
+
+        from src.domains.personal_learning.services import reflect_aggregates
+
+        async def _fake_course(*, user_id, course_id, limit=12):
+            return course or []
+
+        async def _fake_prep(*, user_id, prep_id, limit=12):
+            return prep or []
+
+        with (
+            patch.object(reflect_aggregates, "list_course_evidence", _fake_course),
+            patch.object(reflect_aggregates, "list_prep_evidence", _fake_prep),
+        ):
+            return await reflect_aggregates.list_goal_evidence(user_id="u", goal=goal, limit=5)
+
+    async def test_a_prep_linked_goal_reads_the_prep_tables(self):
+        from types import SimpleNamespace
+
+        item = SimpleNamespace(id="quiz:1")
+        items = await self._goal_evidence(
+            SimpleNamespace(course_id=None, topic_id=None, prep_id="p1"),
+            prep=[item],
+        )
+
+        assert items == [item]
+
+    async def test_a_course_link_wins_when_a_goal_carries_both(self):
+        """A goal with both is a goal about a course that happens to have a preparation attached, and the
+        course reader covers the wider ground."""
+        from types import SimpleNamespace
+
+        course_item = SimpleNamespace(id="session:1")
+        items = await self._goal_evidence(
+            SimpleNamespace(course_id="c1", topic_id=None, prep_id="p1"),
+            course=[course_item],
+            prep=[SimpleNamespace(id="quiz:1")],
+        )
+
+        assert items == [course_item]

@@ -681,7 +681,14 @@ async def list_concept_mastery(*, user_id: str, course_id: str) -> list[ConceptM
 
 #: What kind of thing happened. A closed set, because each one is a different query against a
 #: different table and a client renders each with its own icon and phrasing.
-EvidenceKind = Literal["topic_completed", "section_completed", "study_session", "knowledge_check"]
+EvidenceKind = Literal[
+    "topic_completed",
+    "section_completed",
+    "study_session",
+    "knowledge_check",
+    "quiz_session",
+    "practice_answer",
+]
 
 
 @dataclass(frozen=True)
@@ -876,6 +883,130 @@ async def list_course_evidence(
     return items[:limit]
 
 
+async def list_prep_evidence(
+    *, user_id: str, prep_id: str, limit: int = 12
+) -> list[EvidenceItem]:
+    """Recent dated evidence for one exam preparation, newest first.
+
+    The sibling of `list_course_evidence`, and it exists because `ExamPrep` has no join to `Course`
+    anywhere: `QuizSession.prepId` points at `ExamPrep` and `QuizSession.topicId` at `PrepTopic`, which
+    is a different table from the knowledge `Topic` the course reader walks. A goal linked to a
+    preparation was returning an empty panel while the learner had done real work.
+
+    **Two sources, and the split between them is the design.**
+
+    A *completed* quiz session is one evidence item carrying its own score. An *incomplete* one has no
+    score and no completion instant, but its individual answers are recorded in `PracticeObservation`
+    with a real `observedAt` and a server-graded `isCorrect` — so the answers stand in for a session
+    that never closed. In this database that is most of the work: of 104 sessions only 13 ever reached
+    `completedAt`, while 83 observations exist.
+
+    **An observation belonging to a completed session is deliberately excluded.** Its session is already
+    published above, with a score summarising exactly those answers, so including both would list one
+    five-question quiz as six rows and push everything older off the panel. The rule is stated in terms
+    of the session's own state rather than "whatever we already emitted", so it does not change meaning
+    with `limit`.
+
+    Not built here, each for a reason:
+
+    - **`PrepTopic` reaching `MASTERED`.** That table has no `completedAt`, so the only available date is
+      `updatedAt` — the same substitution `list_course_evidence` refuses for undated topic completions,
+      because it dates the learner's work to whenever a row was last touched. Live, exactly one topic in
+      the whole database is `MASTERED`, so the rule costs one row and keeps the timeline honest.
+    - **`PrepReadinessSnapshot`.** It is a daily state capture, not an event. A list of "readiness was
+      recorded" rows is volume without information.
+    - **`ExamPrep.examDate`.** Nothing here reads it. That column is `timestamp without time zone` in
+      Postgres while the ORM declares `DateTime(timezone=True)`, which is precisely the mismatch that
+      made `GET /progress/goals` return a 500 for every goal with a target date.
+    """
+    from src.domains.personal_learning.db_models import (
+        PracticeObservation,
+        PrepTopic,
+        QuizSession,
+    )
+
+    factory = get_session_factory()
+    async with factory() as session:
+        # Both scoping columns sit on the row itself — `QuizSession` carries `userId` as well as
+        # `prepId` — so a foreign prep id returns nothing without needing a join to prove it.
+        quiz_rows = (
+            await session.execute(
+                select(
+                    QuizSession.id,
+                    PrepTopic.title,
+                    QuizSession.completed_at,
+                    QuizSession.score_percentage,
+                )
+                .select_from(QuizSession)
+                .outerjoin(PrepTopic, PrepTopic.id == QuizSession.topic_id)
+                .where(
+                    QuizSession.user_id == user_id,
+                    QuizSession.prep_id == prep_id,
+                    QuizSession.completed_at.is_not(None),
+                )
+                .order_by(QuizSession.completed_at.desc())
+                .limit(limit)
+            )
+        ).all()
+
+        answer_rows = (
+            await session.execute(
+                select(
+                    PracticeObservation.id,
+                    PrepTopic.title,
+                    PracticeObservation.observed_at,
+                    PracticeObservation.is_correct,
+                )
+                .select_from(PracticeObservation)
+                .join(QuizSession, QuizSession.id == PracticeObservation.quiz_session_id)
+                .outerjoin(PrepTopic, PrepTopic.id == PracticeObservation.prep_topic_id)
+                .where(
+                    PracticeObservation.user_id == user_id,
+                    PracticeObservation.prep_id == prep_id,
+                    QuizSession.completed_at.is_(None),
+                )
+                .order_by(PracticeObservation.observed_at.desc())
+                .limit(limit)
+            )
+        ).all()
+
+    items: list[EvidenceItem] = []
+
+    for quiz_id, topic_title, completed_at, score in quiz_rows:
+        items.append(
+            EvidenceItem(
+                id=f"quiz:{quiz_id}",
+                kind="quiz_session",
+                title="Practice quiz",
+                # The topic when the quiz was scoped to one. The preparation's own subject is not
+                # repeated: this panel is already scoped to the goal that points at it.
+                detail=topic_title,
+                occurred_at=completed_at,
+                # `None` stays `None`. A completed session with no recorded score is unmeasured, and
+                # publishing `0.0` would read as every answer wrong (Decision I).
+                value=None if score is None else round(float(score), 1),
+                unit=None if score is None else "%",
+            )
+        )
+
+    for observation_id, topic_title, observed_at, is_correct in answer_rows:
+        items.append(
+            EvidenceItem(
+                id=f"practice:{observation_id}",
+                kind="practice_answer",
+                title=topic_title or "Practice question",
+                detail=None,
+                occurred_at=observed_at,
+                # Server-graded and not null on this table, unlike the quiz score.
+                correct=bool(is_correct),
+            )
+        )
+
+    # After the merge, so the newest of one kind cannot crowd out newer items of the other.
+    items.sort(key=lambda item: item.occurred_at, reverse=True)
+    return items[:limit]
+
+
 async def list_goal_evidence(*, user_id: str, goal, limit: int = 12) -> list[EvidenceItem]:
     """Evidence for a goal, through whatever the goal is actually linked to.
 
@@ -889,10 +1020,18 @@ async def list_goal_evidence(*, user_id: str, goal, limit: int = 12) -> list[Evi
 
     `topicId` resolves to its course, because evidence for "finish this topic" sensibly includes the
     sessions and checks around it, and the per-topic tables are too thin to fill a panel on their own.
-    Preparation-linked goals are **not** covered: `ExamPrep` has no join to `Course` anywhere (§7.2), so
-    prep evidence would need its own reader over the prep tables — recorded rather than approximated.
+
+    `prepId` goes to `list_prep_evidence` rather than resolving to a course, because `ExamPrep` has no
+    join to `Course` anywhere (§7.2) — the prep tables are a separate body of evidence, not a view of
+    the course ones. The course link is checked first: a goal carrying both is a goal about a course
+    that happens to have a preparation attached, and the course reader covers the wider ground.
     """
     course_id = getattr(goal, "course_id", None)
+
+    if course_id is None and not getattr(goal, "topic_id", None):
+        prep_id = getattr(goal, "prep_id", None)
+        if prep_id:
+            return await list_prep_evidence(user_id=user_id, prep_id=prep_id, limit=limit)
 
     if course_id is None and getattr(goal, "topic_id", None):
         factory = get_session_factory()

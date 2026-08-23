@@ -38,8 +38,12 @@ async def get_home(*, user_id: str) -> dict[str, Any]:
         flashcard_service.get_statistics(user_id=user_id),
     )
 
-    # Get progress summary
-    progress_summary = _build_progress_summary(profile, flashcard_stats)
+    # Get progress summary. The week figures are read here rather than inside the builder so that
+    # stays pure — and because both need the learner's own week, which is a query, not a constant.
+    week_minutes, week_topics = await _week_so_far(user_id)
+    progress_summary = _build_progress_summary(
+        profile, flashcard_stats, weekly_minutes=week_minutes, topics_completed=week_topics
+    )
 
     # Get due reviews and schedule blocks concurrently
     due_flashcards, schedule_blocks = await asyncio.gather(
@@ -177,7 +181,98 @@ async def _compute_todays_focus(
     }
 
 
-def _build_progress_summary(profile: Any | None, flashcard_stats: dict) -> dict[str, Any]:
+async def _week_so_far(user_id: str) -> tuple[float | None, int]:
+    """`(weeklyMinutes, topicsCompletedThisWeek)` since the learner's own week began.
+
+    **These two were hardcoded `None` and `0`.** They were published on every home response with a
+    comment saying they would stay that way "until a real study-session and topic-completion source is
+    introduced". Both sources exist, so a client reading `topicsCompletedThisWeek` was being told zero
+    about a learner who had completed five.
+
+    The window is Monday 00:00 in the learner's timezone, converted back to instants for the query —
+    both columns are `timestamptz`, and comparing them against a local wall clock would shift the week
+    by the learner's offset. Same construction as `course_service` and `study_plan_service`, so the
+    three cannot disagree about which week it is.
+
+    `weeklyMinutes` is measured desk time from `StudySession.duration`, which is minutes. It stays
+    **`None` for a learner who has never recorded a session at all**, and is `0.0` for one who records
+    them and did nothing this week — a different statement, and the one that Decision I exists for.
+    Almost nothing writes `StudySession` today, so `None` is the common answer; publishing `0` would
+    read as "you studied nothing" rather than "nothing was measured".
+    """
+    from src.domains.knowledge.repository import knowledge_repo
+    from src.domains.progress.repository import progress_repo
+    from src.shared.time import resolve_learner_timezone, to_learner_local
+
+    learner_timezone = await resolve_learner_timezone(user_id)
+    now_local = to_learner_local(datetime.now(UTC), learner_timezone)
+    week_start_local = (now_local - timedelta(days=now_local.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    # The instant the learner's week began, for the queries. Both reads are then narrowed in the
+    # learner's own frame, so this only has to be early enough — not exact.
+    week_start = week_start_local.astimezone(UTC)
+    week_local_end = week_start_local + timedelta(days=7)
+
+    try:
+        completions = await knowledge_repo.completed_topic_dates(
+            user_id, since=week_start - timedelta(days=1)
+        )
+        # `completed_topic_dates` already excludes undated completions, so a topic finished before
+        # `completedAt` existed is not dated into this week. Compared in the learner's frame for the
+        # same reason as the sessions below: it tolerates a naive column and it puts a late-Sunday
+        # completion in the week the learner actually did it.
+        topics_completed = sum(
+            1
+            for when in completions
+            if week_start_local <= to_learner_local(when, learner_timezone) < week_local_end
+        )
+    except Exception:  # pragma: no cover - a failed read must not cost the whole home response
+        logger.warning("home: topic completions unavailable", exc_info=True)
+        topics_completed = 0
+
+    weekly_minutes: float | None = None
+    try:
+        # A day wider on the near side, then filtered precisely in the learner's own frame below, so a
+        # session late on Sunday local time is not dropped by a UTC boundary.
+        week_sessions = await progress_repo.list_sessions(
+            user_id, since=week_start - timedelta(days=1)
+        )
+        # **Through `to_learner_local`, not a raw comparison.** `StudySession.startTime` is
+        # `timestamp without time zone` in Postgres while the ORM declares `DateTime(timezone=True)`,
+        # so asyncpg returns naive datetimes and `start_time < week_end` raises
+        # `TypeError: can't compare offset-naive and offset-aware datetimes` — the same mismatch that
+        # made `GET /progress/goals` a 500. That helper already reads a naive value as UTC, which is how
+        # these columns are written, so the rule lives in one place rather than being restated here.
+        in_window = [
+            session
+            for session in week_sessions
+            if session.start_time
+            and week_start_local
+            <= to_learner_local(session.start_time, learner_timezone)
+            < week_local_end
+        ]
+        if in_window:
+            # `StudySession.duration` is minutes, unlike `QuizSession.durationSeconds`.
+            weekly_minutes = round(sum(float(s.duration or 0.0) for s in in_window), 1)
+        else:
+            # Only reached when the week is empty: distinguishes "tracks time, none this week" from
+            # "never tracked time". `StudySession` is small and indexed on `(userId, startTime)`.
+            weekly_minutes = 0.0 if await progress_repo.list_sessions(user_id) else None
+    except Exception:  # pragma: no cover
+        logger.warning("home: study sessions unavailable", exc_info=True)
+        weekly_minutes = None
+
+    return weekly_minutes, topics_completed
+
+
+def _build_progress_summary(
+    profile: Any | None,
+    flashcard_stats: dict,
+    *,
+    weekly_minutes: float | None = None,
+    topics_completed: int = 0,
+) -> dict[str, Any]:
     """Build a truthful progress summary from persisted learner activity."""
     avg_minutes = getattr(profile, "avg_session_minutes", None)
     consistency = getattr(profile, "consistency_score", None)
@@ -192,8 +287,8 @@ def _build_progress_summary(profile: Any | None, flashcard_stats: dict) -> dict[
         "dueCards": flashcard_stats.get("dueToday", 0),
         "consistencyScore": round(float(consistency), 1) if consistency is not None else None,
         "averageSessionMinutes": round(float(avg_minutes), 1) if avg_minutes is not None else None,
-        "weeklyMinutes": None,
-        "topicsCompletedThisWeek": 0,
+        "weeklyMinutes": weekly_minutes,
+        "topicsCompletedThisWeek": topics_completed,
     }
 
 
